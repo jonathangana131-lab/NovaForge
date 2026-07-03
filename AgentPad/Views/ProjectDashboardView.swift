@@ -626,6 +626,7 @@ struct ProjectDashboardView: View {
                     }
                     .scrollContentBackground(.hidden)
                     .scrollDismissesKeyboard(.interactively)
+                    .agentDockEdgeFade()
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         BottomDockContentShield(height: BottomDockMetrics.scrollClearance)
                     }
@@ -2160,10 +2161,8 @@ struct ProjectDashboardView: View {
 
     private var projectOSEvidenceSummaryText: String {
         var parts: [String] = []
-        if summary.proofItems.isEmpty {
-            parts.append("0 proof")
-        } else {
-            parts.append("\(summary.proofItems.count) proof")
+        if !summary.proofItems.isEmpty {
+            parts.append("\(summary.proofItems.count) proof\(summary.proofItems.count == 1 ? "" : "s")")
         }
         if !projectArtifacts.isEmpty {
             parts.append("\(projectArtifacts.count) artifact\(projectArtifacts.count == 1 ? "" : "s")")
@@ -2171,6 +2170,7 @@ struct ProjectDashboardView: View {
         if !projectFileChanges.isEmpty {
             parts.append("\(projectFileChanges.count) file\(projectFileChanges.count == 1 ? "" : "s")")
         }
+        if parts.isEmpty { return "No proof yet" }
         return parts.joined(separator: " · ")
     }
 

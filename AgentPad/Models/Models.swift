@@ -5581,7 +5581,11 @@ enum ProjectMissionSummarizer {
                 severity: .failure
             ))
         }
-        for event in events.filter({ $0.severity == .success || $0.kind == .projectCreated }).prefix(3) {
+        let proofWorthyEventKinds: Set<ProjectEventKind> = [
+            .toolCompleted, .runCompleted, .artifactCreated, .artifactPreviewed,
+            .fileChanged, .terminalCommand, .agentProofCreated, .missionCheckpoint
+        ]
+        for event in events.filter({ $0.severity == .success && proofWorthyEventKinds.contains($0.kind) }).prefix(3) {
             items.append(ProjectProofItem(
                 id: "event-\(event.id.uuidString)",
                 title: timelineTitle(for: event),
