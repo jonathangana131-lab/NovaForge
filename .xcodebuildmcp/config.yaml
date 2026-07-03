@@ -1,0 +1,14 @@
+schemaVersion: 1
+
+enabledWorkflows:
+  - simulator
+  - ui-automation
+  - debugging
+
+sessionDefaults:
+  projectPath: ./AgentPad.xcodeproj
+  scheme: AgentPad
+  configuration: Debug
+  simulatorId: 4B9AB34A-404C-485F-B0BC-964F24D0AE83
+  useLatestOS: true
+

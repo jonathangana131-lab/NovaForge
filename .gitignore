@@ -1,0 +1,50 @@
+.DS_Store
+**/.DS_Store
+
+# Xcode and Swift local state.
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+Build/
+.build/
+.swiftpm/
+.cursor/
+.vscode/
+
+# Generated local tooling payloads that make desktop git scans unusably heavy.
+AppShortsStudio/
+Business/
+Business/automation/node_modules/
+Business/automation/.local-node/
+Business/automation/.tooling/
+Business/automation/.n8n/
+Business/automation/.npm-cache*/
+Business/automation/tmp/
+Business/content-machine/out/
+NovaForgeScreenshots/
+NovaForge_Content_Ops/
+NovaForge_Content_Ops/drafts/
+
+# Local build/test output.
+QA/*
+!QA/codex-smoke-workflow.md
+QA/DerivedData/
+QA/DerivedData*/
+QA/Profiles/
+QA/codex-fast-screenshot/
+QA/Screenshots/
+QA/Logs/
+QA/Results/
+QA/TestResults/
+QA/agent-lanes/
+*.xcresult/
+*.log
+
+# Local secrets and data stores.
+env
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
