@@ -808,43 +808,46 @@ struct ProjectDashboardView: View {
                     }
 
                     Text(project.name)
-                        .font(.system(size: 22, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.ink)
+                        .font(.system(size: 12, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.secondaryText)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .minimumScaleFactor(0.8)
                         .accessibilityIdentifier("projectOSActiveProject")
 
                     Text(projectOSMissionText)
-                        .font(.system(size: 11.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.secondaryText)
+                        .font(.system(size: 17.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.ink)
                         .lineLimit(2)
+                        .minimumScaleFactor(0.82)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("projectOSMission")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1))")
-                    .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .monospacedDigit()
-                    .foregroundStyle(tint)
-                    .padding(.horizontal, 8)
-                    .frame(height: 26)
-                    .background(tint.opacity(0.10), in: Capsule(style: .continuous))
-                    .accessibilityIdentifier("projectOSProgressCount")
+                if projectOSProgressFraction > 0 || runtimeStatus.isWorking {
+                    Text("\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1))")
+                        .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .monospacedDigit()
+                        .foregroundStyle(tint)
+                        .padding(.horizontal, 8)
+                        .frame(height: 26)
+                        .background(tint.opacity(0.10), in: Capsule(style: .continuous))
+                        .accessibilityIdentifier("projectOSProgressCount")
+                }
             }
 
-            ProgressView(value: projectOSProgressFraction, total: 1)
-                .progressViewStyle(.linear)
-                .tint(tint)
-                .frame(height: 7)
-                .clipShape(Capsule(style: .continuous))
-                .accessibilityLabel("ProjectOS progress")
-                .accessibilityValue("\(Int((projectOSProgressFraction * 100).rounded())) percent")
+            if projectOSProgressFraction > 0 || runtimeStatus.isWorking {
+                ProgressView(value: projectOSProgressFraction, total: 1)
+                    .progressViewStyle(.linear)
+                    .tint(tint)
+                    .frame(height: 7)
+                    .clipShape(Capsule(style: .continuous))
+                    .accessibilityLabel("ProjectOS progress")
+                    .accessibilityValue("\(Int((projectOSProgressFraction * 100).rounded())) percent")
+            }
 
             projectOSExecutionStatePanel
-            projectOSCommandBriefPanel
             self.projectOSAdaptiveIntentPanel
-            projectOSPlanPreviewPanel
         }
         .padding(14)
         .agentGlass(radius: 24, interactive: false, tint: tint.opacity(0.13))
@@ -952,33 +955,37 @@ struct ProjectDashboardView: View {
 
     @ViewBuilder
     private var projectOSExecutionActionRow: some View {
+        // Navigation-only by design: Run / Stop / Approve / Resume live in ONE
+        // place — the pinned command center at the top of the screen. This row
+        // only ever offers context jumps (plus Reject during approvals, whose
+        // affirmative twin is the pinned button).
         switch dashboardExecutionState {
         case .approvalRequired:
             HStack(spacing: 8) {
-                projectOSIntentSmallButton(title: "Approve", symbol: "checkmark.shield.fill", tint: AgentPalette.green) {
-                    approvePendingTool()
-                }
                 projectOSIntentSmallButton(title: "Reject", symbol: "xmark.shield.fill", tint: AgentPalette.rose) {
                     rejectPendingTool()
-                }
-            }
-            .accessibilityIdentifier("projectOSApprovalActions")
-        case .running, .planning:
-            HStack(spacing: 8) {
-                projectOSIntentSmallButton(title: "Stop", symbol: "stop.fill", tint: AgentPalette.rose) {
-                    stopWorkspaceRun()
                 }
                 projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
                     openTab(.runs)
                 }
             }
-        case .blocked, .failed, .resumed:
+            .accessibilityIdentifier("projectOSApprovalActions")
+        case .running, .planning:
             HStack(spacing: 8) {
-                projectOSIntentSmallButton(title: dashboardExecutionState == .resumed ? "Resume" : "Recover", symbol: "arrow.clockwise", tint: dashboardExecutionTint(dashboardExecutionState)) {
-                    runProjectCommand(project, recommendedCommandIntent, trimmedCommandContext)
+                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                    openTab(.runs)
                 }
                 projectOSIntentSmallButton(title: "Timeline", symbol: "timeline.selection", tint: AgentPalette.cyan) {
                     selectedDetailScope = .timeline
+                }
+            }
+        case .blocked, .failed, .resumed:
+            HStack(spacing: 8) {
+                projectOSIntentSmallButton(title: "Timeline", symbol: "timeline.selection", tint: AgentPalette.cyan) {
+                    selectedDetailScope = .timeline
+                }
+                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                    openTab(.runs)
                 }
             }
         case .proofReady, .succeeded:
@@ -992,11 +999,11 @@ struct ProjectDashboardView: View {
             }
         case .idle, .waiting:
             HStack(spacing: 8) {
-                projectOSIntentSmallButton(title: "Run", symbol: "play.fill", tint: commandTint(for: recommendedCommandIntent)) {
-                    runProjectCommand(project, recommendedCommandIntent, trimmedCommandContext)
-                }
                 projectOSIntentSmallButton(title: "Plan", symbol: "list.bullet.clipboard.fill", tint: AgentPalette.cyan) {
                     selectedDetailScope = .plan
+                }
+                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                    openTab(.runs)
                 }
             }
         }
