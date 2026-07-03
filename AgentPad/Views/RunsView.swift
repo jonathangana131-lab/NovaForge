@@ -782,6 +782,26 @@ struct RunsView: View {
                 .presentationDetents([.fraction(0.72), .large])
                 .presentationDragIndicator(.visible)
         }
+        .task {
+            #if DEBUG || targetEnvironment(simulator)
+            guard ProcessInfo.processInfo.arguments.contains("--open-run-replay-demo"),
+                  replayTarget == nil else { return }
+            for _ in 0..<24 {
+                if let run = runs.first(where: { $0.status == .completed }) {
+                    try? await Task.sleep(for: .milliseconds(700))
+                    replayTarget = RunReplayTarget(
+                        id: run.id,
+                        name: run.name,
+                        status: run.status,
+                        windowStart: run.createdAt.addingTimeInterval(-1),
+                        windowEnd: (run.completedAt ?? run.createdAt).addingTimeInterval(1)
+                    )
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            #endif
+        }
         .fullScreenCover(item: $previewArtifact) { artifact in
             ArtifactPreviewSheet(
                 artifact: artifact,

@@ -101,6 +101,10 @@ echo "simulator ready: $UDID"
 
 echo "==> Installing app"
 ls -la "$APP_PATH"
+echo "==> Verifying widget extension embedding"
+ls -la "$APP_PATH/PlugIns/"
+test -d "$APP_PATH/PlugIns/NovaForgeWidgets.appex"
+echo "widget appex embedded OK"
 xcrun simctl install "$UDID" "$APP_PATH"
 
 # ---------------------------------------------------------------------------
@@ -171,6 +175,7 @@ shot "31-arctic-project" --reset-ui --open-project --theme=arctic --project-proo
 shot "32-arctic-files" --reset-ui --open-files --theme=arctic
 shot "33-ember-project" --reset-ui --open-project --theme=ember --project-proof-demo
 shot "34-ember-runs" --reset-ui --open-runs --theme=ember --project-proof-demo
+shot "35-run-replay" WAIT=14 --reset-ui --open-runs --project-proof-demo --open-run-replay-demo
 
 # ---------------------------------------------------------------------------
 record_clip() {
