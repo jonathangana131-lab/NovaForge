@@ -2760,7 +2760,7 @@ private struct ChatHeaderView: View {
     }
 
     private var projectTitle: String {
-        guard let scopedProject else { return "General workspace" }
+        guard let scopedProject else { return "Choose project" }
         let trimmed = scopedProject.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? ProjectBootstrap.defaultProjectName : trimmed
     }
@@ -2770,7 +2770,9 @@ private struct ChatHeaderView: View {
     }
 
     private var scopeModeLabel: String {
-        scopedProject == nil ? "General Chat" : "Project Chat"
+        // Single-word labels: the old two-word versions truncated to
+        // "GENERAL C..." inside the fixed-height chip.
+        scopedProject == nil ? "General" : "Project"
     }
 
     private var scopeModeTint: Color {
@@ -2877,7 +2879,8 @@ private struct ChatHeaderView: View {
                             .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
                             .foregroundStyle(scopedProject == nil ? AgentPalette.secondaryText : AgentPalette.cyan)
                             .lineLimit(1)
-                            .truncationMode(.middle)
+                            .truncationMode(.tail)
+                            .layoutPriority(1)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("chatProjectScopeMenu")
@@ -2928,8 +2931,7 @@ private struct ChatHeaderView: View {
     }
 
     private var messageCountText: String {
-        let count = conversation.messageCount
-        return "\(count) \(count == 1 ? "message" : "messages")"
+        "\(conversation.messageCount)"
     }
 
     private var modelSummary: String {
