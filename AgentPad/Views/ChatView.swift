@@ -516,9 +516,12 @@ struct ChatView: View {
                                     }
 
                                     if cachedMessages.isEmpty && !hasForeignActiveRun && !hasRunState {
-                                        CleanChatEmptyState()
-                                            .padding(.horizontal)
-                                            .transition(.opacity)
+                                        CleanChatEmptyState { starterPrompt in
+                                            prompt = starterPrompt
+                                            composerFocused = true
+                                        }
+                                        .padding(.horizontal)
+                                        .transition(.opacity)
                                     }
 
                                     if hasForeignActiveRun {
@@ -1501,12 +1504,75 @@ private final class ChatTransientState: ObservableObject {
 }
 
 private struct CleanChatEmptyState: View {
+    var apply: (String) -> Void = { _ in }
+
+    private static let starters: [(symbol: String, title: String, prompt: String)] = [
+        ("hammer.fill", "Build something", "Build me a small SwiftUI view and save it to the workspace"),
+        ("list.bullet.clipboard.fill", "Plan a mission", "Draft a step-by-step plan for my next feature and wait for my go"),
+        ("doc.text.magnifyingglass", "Explore my files", "Summarize what is in my workspace right now")
+    ]
+
     var body: some View {
-        Rectangle()
-            .fill(AgentPalette.cyan.opacity(0.001))
-            .frame(width: 1, height: 1)
-            .frame(maxWidth: .infinity, alignment: .center)
-        .accessibilityElement(children: .combine)
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(AgentPalette.primaryAccent.opacity(0.14))
+                    .frame(width: 74, height: 74)
+                    .blur(radius: 14)
+                Circle()
+                    .fill(AgentPalette.primaryAccent.opacity(0.10))
+                    .frame(width: 58, height: 58)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(AgentPalette.primaryAccent)
+            }
+
+            VStack(spacing: 6) {
+                Text("Ready when you are")
+                    .font(.system(size: 19, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.ink)
+                Text("Your on-device agent. Ask anything,\nor hand it a mission.")
+                    .font(.system(size: 12.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+            }
+
+            VStack(spacing: 8) {
+                ForEach(Self.starters, id: \.title) { starter in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        apply(starter.prompt)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: starter.symbol)
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(AgentPalette.primaryAccent)
+                                .frame(width: 24, height: 24)
+                                .background(AgentPalette.primaryAccent.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            Text(starter.title)
+                                .font(.system(size: 13, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(AgentPalette.ink)
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 10, weight: .black))
+                                .foregroundStyle(AgentPalette.tertiaryText)
+                        }
+                        .padding(.horizontal, 13)
+                        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .agentRowSurface(radius: 15, tint: AgentPalette.primaryAccent)
+                    .accessibilityLabel(starter.title)
+                }
+            }
+            .frame(maxWidth: 340)
+        }
+        .padding(.top, 46)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Clean chat ready")
         .accessibilityIdentifier("cleanChatEmptyState")
     }

@@ -793,10 +793,11 @@ struct ProjectDashboardView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
-                        Text("ProjectOS Command Center")
+                        Text("Command Center")
                             .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
                             .foregroundStyle(tint)
                             .textCase(.uppercase)
+                            .kerning(1.1)
                         Text(adaptiveIntent.mode.displayName)
                             .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
                             .foregroundStyle(tint)
@@ -917,27 +918,35 @@ struct ProjectDashboardView: View {
     }
 
     private var projectOSExecutionStateLadder: some View {
-        let active = dashboardExecutionState
-        let columns = [GridItem(.adaptive(minimum: 86), spacing: 6, alignment: .leading)]
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
-            ForEach(DashboardExecutionState.allCases) { state in
-                let isActive = state == active
-                let tint = dashboardExecutionTint(state)
-                Label(state.shortTitle, systemImage: state.symbolName)
-                    .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(isActive ? tint : AgentPalette.tertiaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, minHeight: 25, alignment: .center)
-                    .background((isActive ? tint : AgentPalette.secondaryText).opacity(isActive ? 0.12 : 0.06), in: Capsule(style: .continuous))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .strokeBorder(isActive ? tint.opacity(0.28) : AgentPalette.border.opacity(0.10), lineWidth: 0.55)
-                    )
-                    .accessibilityLabel("\(state.shortTitle)\(isActive ? ", current" : "")")
-            }
+        // The previous implementation rendered ALL ten execution states as a
+        // permanent chip grid — a state machine dumped into the UI. This is a
+        // live journey rail instead: three phases (Plan → Build → Prove), the
+        // current one lit with the execution tint and shimmering while work
+        // is actually happening. The state pill + headline above already name
+        // the precise state.
+        let state = dashboardExecutionState
+        let phase: Int
+        switch state {
+        case .idle, .waiting, .planning:
+            phase = 0
+        case .running, .approvalRequired, .blocked, .failed, .resumed:
+            phase = 1
+        case .succeeded, .proofReady:
+            phase = 2
         }
+        let live: Bool
+        switch state {
+        case .planning, .running, .approvalRequired:
+            live = true
+        default:
+            live = false
+        }
+        return NovaExecutionJourneyRail(
+            activePhase: phase,
+            isLive: live,
+            isTrouble: state == .failed || state == .blocked,
+            tint: dashboardExecutionTint(state)
+        )
         .accessibilityIdentifier("projectOSExecutionStateLadder")
     }
 
@@ -6261,5 +6270,85 @@ private extension View {
         } else {
             self
         }
+    }
+}
+
+/// Liquid journey rail for the Command Center: replaces the all-states chip
+/// grid with a three-phase Plan → Build → Prove indicator. Completed phases
+/// show a check, the active phase carries the execution tint and shimmers
+/// while work is live, and trouble states sharpen the active stroke.
+private struct NovaExecutionJourneyRail: View {
+    let activePhase: Int
+    let isLive: Bool
+    let isTrouble: Bool
+    let tint: Color
+
+    private static let phases: [(title: String, symbol: String)] = [
+        ("Plan", "list.bullet.clipboard.fill"),
+        ("Build", "hammer.fill"),
+        ("Prove", "checkmark.seal.fill")
+    ]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<Self.phases.count, id: \.self) { index in
+                segment(index: index)
+                if index < Self.phases.count - 1 {
+                    connector(index: index)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Current phase: \(Self.phases[min(max(activePhase, 0), Self.phases.count - 1)].title)")
+    }
+
+    private func segment(index: Int) -> some View {
+        let phase = Self.phases[index]
+        let isActive = index == activePhase
+        let isDone = index < activePhase
+        let segmentTint: Color = isActive ? tint : (isDone ? AgentPalette.green : AgentPalette.tertiaryText)
+        return HStack(spacing: 6) {
+            Image(systemName: isDone ? "checkmark" : phase.symbol)
+                .font(.system(size: 9, weight: .black))
+                .foregroundStyle(segmentTint)
+
+            if isActive && isLive {
+                LiveShimmerText(
+                    text: phase.title,
+                    baseColor: segmentTint,
+                    highlightColor: AgentPalette.ink,
+                    font: .system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign)
+                )
+                .lineLimit(1)
+            } else {
+                Text(phase.title)
+                    .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(segmentTint)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 30)
+        .background(
+            (isActive ? tint : (isDone ? AgentPalette.green : AgentPalette.secondaryText))
+                .opacity(isActive ? 0.13 : (isDone ? 0.08 : 0.05)),
+            in: Capsule(style: .continuous)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(
+                    isActive
+                        ? tint.opacity(isTrouble ? 0.52 : 0.32)
+                        : AgentPalette.border.opacity(isDone ? 0.20 : 0.10),
+                    lineWidth: isActive ? 0.8 : 0.55
+                )
+        )
+    }
+
+    private func connector(index: Int) -> some View {
+        Capsule(style: .continuous)
+            .fill(index < activePhase ? AgentPalette.green.opacity(0.42) : AgentPalette.border.opacity(0.24))
+            .frame(width: 10, height: 1.5)
     }
 }

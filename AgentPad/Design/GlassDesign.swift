@@ -543,7 +543,7 @@ struct MatrixRainBackdrop: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .compositingGroup()
-        .opacity(animated ? 0.58 : 0.24)
+        .opacity(animated ? 0.78 : 0.30)
     }
 }
 

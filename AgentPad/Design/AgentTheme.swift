@@ -178,7 +178,7 @@ enum AgentTheme: String, CaseIterable, Identifiable {
                 glassStroke: Color(red: 0.330, green: 1.000, blue: 0.480).opacity(0.22),
                 glow: Color(red: 0.110, green: 1.000, blue: 0.340).opacity(0.58),
                 shadow: Color.black.opacity(0.50),
-                backgroundMotionOpacity: 0.60,
+                backgroundMotionOpacity: 0.92,
                 glowRadius: 18
             )
 
