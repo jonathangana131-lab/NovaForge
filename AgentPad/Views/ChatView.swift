@@ -1555,7 +1555,6 @@ private struct ChatLayoutContract: Equatable {
     }
 }
 
-@MainActor
 private struct ChatTranscriptBackdrop: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 

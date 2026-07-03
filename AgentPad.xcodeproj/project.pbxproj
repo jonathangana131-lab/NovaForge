@@ -77,6 +77,7 @@
 		AB2000000000000000000007 /* ProjectOSEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000007 /* ProjectOSEngine.swift */; };
 		AB2000000000000000000008 /* ProjectSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000008 /* ProjectSummary.swift */; };
 		AB2000000000000000000009 /* ProjectNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000009 /* ProjectNaming.swift */; };
+		AB1000000000000000000010 /* CodeHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000010 /* CodeHighlighter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -152,6 +153,7 @@
 		AB0000000000000000000007 /* ProjectOSEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOSEngine.swift; sourceTree = "<group>"; };
 		AB0000000000000000000008 /* ProjectSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectSummary.swift; sourceTree = "<group>"; };
 		AB0000000000000000000009 /* ProjectNaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNaming.swift; sourceTree = "<group>"; };
+		AB0000000000000000000010 /* CodeHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeHighlighter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -219,6 +221,7 @@
 			children = (
 				AA0000000000000000000003 /* GlassDesign.swift */,
 				AA0000000000000000000000 /* AgentTheme.swift */,
+				AB0000000000000000000010 /* CodeHighlighter.swift */,
 			);
 			path = Design;
 			sourceTree = "<group>";
@@ -496,6 +499,7 @@
 				AB1000000000000000000007 /* ProjectOSEngine.swift in Sources */,
 				AB1000000000000000000008 /* ProjectSummary.swift in Sources */,
 				AB1000000000000000000009 /* ProjectNaming.swift in Sources */,
+				AB1000000000000000000010 /* CodeHighlighter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

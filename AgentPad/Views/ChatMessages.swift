@@ -838,7 +838,7 @@ struct CodeBlockView: View {
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(renderedContent)
+                Text(CodeSyntaxHighlighter.highlighted(renderedContent, language: language))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(AgentPalette.codeText)
                     .padding(12)

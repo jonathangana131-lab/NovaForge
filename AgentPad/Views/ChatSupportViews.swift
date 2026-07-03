@@ -192,6 +192,7 @@ struct ChatStreamingFrameRateProbe: View {
     }
 }
 
+@MainActor
 final class ChatKeyboardState: ObservableObject {
     @Published private(set) var overlapHeight: CGFloat = 0
     @Published private(set) var minY: CGFloat = .greatestFiniteMagnitude

@@ -14,6 +14,7 @@ struct AgentPalette {
         let resolvedTheme = theme ?? AgentTheme.current
         AgentTheme.refreshCurrentCache(resolvedTheme)
         cachedPalette = resolvedTheme.palette
+        CodeSyntaxHighlighter.themeDidChange()
     }
 
     private static var theme: AgentThemePalette {
