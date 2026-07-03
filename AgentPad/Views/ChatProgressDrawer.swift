@@ -233,9 +233,6 @@ struct AgentProgressDrawer: View {
         Array(artifacts.dropFirst())
     }
 
-    private var completedSteps: Int {
-        visibleTraceEvents.filter { $0.status == .success }.count
-    }
 
     private var issueCount: Int {
         visibleTraceEvents.filter { $0.status == .failed || $0.status == .paused }.count

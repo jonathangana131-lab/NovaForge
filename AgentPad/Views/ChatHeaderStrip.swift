@@ -216,11 +216,6 @@ struct ChatHeaderView: View {
         "\(conversation.messageCount)"
     }
 
-    private var modelSummary: String {
-        let short = LocalModelCatalog.variant(for: settings.modelID)?.shortName ?? settings.modelID
-        if short.count <= 22 { return short }
-        return String(short.prefix(19)) + "…"
-    }
 
     private var statusTint: Color {
         if hasForeignActiveRun { return AgentPalette.cyan }

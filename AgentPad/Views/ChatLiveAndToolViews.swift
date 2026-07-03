@@ -125,18 +125,6 @@ struct AssistantToolCallBubble: View {
         }
     }
 
-    private static func isApprovalCandidate(_ name: String) -> Bool {
-        [
-            "write_file",
-            "append_file",
-            "replace_text",
-            "run_command",
-            "make_directory",
-            "delete_path",
-            "move_path",
-            "copy_path"
-        ].contains(name)
-    }
 
     private static func compactDisplayName(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
