@@ -729,6 +729,9 @@ private struct ArtifactPreviewStudio: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            // Without an explicit expansion the identity column settles at its
+            // ideal width and the title row starves down to "proje…".
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 0)
 

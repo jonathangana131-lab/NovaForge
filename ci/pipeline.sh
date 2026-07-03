@@ -108,6 +108,9 @@ echo "==> Screenshot tour (full surface census)"
 # Let SpringBoard settle so first-boot system banners (Apple Intelligence
 # onboarding etc.) clear before we start photographing.
 sleep 15
+# Kill first-boot keyboard education sheets so keyboard captures show keys.
+xcrun simctl spawn "$UDID" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true 2>/dev/null || true
+xcrun simctl spawn "$UDID" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true 2>/dev/null || true
 mkdir -p captures
 # shot <name> [WAIT=n] [launch args...] — every stateful capture passes
 # --reset-ui so fixtures from earlier shots never contaminate later ones.

@@ -1414,11 +1414,12 @@ struct DockGutterScrim: View {
     var height: CGFloat = BottomDockMetrics.gutterScrimHeight
 
     var body: some View {
+        let boost: Double = AgentTheme.current == .matrixRain ? 0.10 : 0
         LinearGradient(
             stops: [
                 .init(color: AgentPalette.pearl.opacity(0), location: 0),
-                .init(color: AgentPalette.pearl.opacity(0.58), location: 0.44),
-                .init(color: AgentPalette.pearl.opacity(0.95), location: 1)
+                .init(color: AgentPalette.pearl.opacity(min(1, 0.58 + boost)), location: 0.44),
+                .init(color: AgentPalette.pearl.opacity(1.0), location: 1)
             ],
             startPoint: .top,
             endPoint: .bottom
