@@ -338,6 +338,11 @@ struct SettingsView: View {
                         .lineLimit(3)
                 }
 
+                if settings.provider == .local {
+                    ModelStoragePanel(runtime: runtime, settings: settings)
+                    ModelBenchmarkPanel(runtime: runtime, settings: settings)
+                }
+
                 if settings.provider == .custom {
                     SettingsTextField(
                         title: "Custom endpoint URL",

@@ -395,13 +395,6 @@ struct ProjectDashboardView: View {
         return ProjectOSIntentDeriver.makeIdleIntent(project: project)
     }
 
-    var adaptiveIntentHistory: [ProjectOSIntentSnapshot] {
-        activeProjectOSRun.map { Array($0.intentHistory.reversed()) } ?? [adaptiveIntent]
-    }
-
-    var adaptiveIntentSurface: ProjectOSAdaptiveSurface {
-        activeProjectOSRun?.selectedAdaptiveSurface ?? adaptiveIntent.preferredSurface
-    }
 
     var summary: ProjectMissionSummary {
         cachedSummary
@@ -865,48 +858,6 @@ struct ProjectDashboardView: View {
         projectOSStatusSymbol(for: projectOSStatus)
     }
 
-    var projectOSStateHeadline: String {
-        if runStartFeedback { return "Starting the next ProjectOS run" }
-
-        switch projectOSStatus {
-        case .idle:
-            return "Ready for the next project step"
-        case .planning:
-            return "Planning the next move"
-        case .running:
-            return runtimeStatus.title == "Workspace ready" ? "Project run in progress" : runtimeStatus.title
-        case .waiting:
-            return runtimeStatus.tone == .approval ? "Approval needed before files change" : "Waiting on a project gate"
-        case .blocked:
-            return "Blocked until recovery runs"
-        case .failed:
-            return "Recovery available after failure"
-        case .completed:
-            return "Proof captured and ready to review"
-        case .stopped:
-            return "Paused with a resumable next step"
-        }
-    }
-
-    var projectOSStateDetail: String {
-        if runStartFeedback { return "NovaForge has accepted the command and is opening the run lane." }
-        if runtimeStatus.isVisible { return runtimeStatus.detail }
-
-        switch projectOSStatus {
-        case .idle:
-            return summary.workflowSpine.currentDetail
-        case .planning, .running:
-            return projectOSCurrentReasonText
-        case .waiting:
-            return projectOSBlockerText
-        case .blocked, .failed:
-            return projectOSBlockerText
-        case .completed:
-            return projectOSProofText
-        case .stopped:
-            return projectOSBlockerText
-        }
-    }
 
     var projectOSExecutionStateDetail: String {
         switch dashboardExecutionState {
@@ -963,41 +914,6 @@ struct ProjectDashboardView: View {
         return "\(runText) · \(terminalText)"
     }
 
-    var projectOSAttentionText: String {
-        if runtimeStatus.tone == .approval { return "Approve or reject the pending tool request." }
-        if runtimeStatus.tone == .paused { return "Resume the interrupted run when ready." }
-        if runtimeStatus.tone == .error { return runtimeStatus.detail }
-        if !summary.blocker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return summary.blocker }
-        if autoContinueState.state == .blocked { return autoContinueState.detail }
-        if summary.pendingApprovalCount > 0 { return "\(summary.pendingApprovalCount) approval waiting." }
-        if summary.failureCount > 0 { return "\(summary.failureCount) issue needs review." }
-        if autoContinueState.isCountingDown { return "Auto-continue starts in \(autoContinueState.remainingSeconds)s." }
-        return "No blocker recorded."
-    }
-
-    var projectOSAttentionSymbol: String {
-        if runtimeStatus.tone == .approval || summary.pendingApprovalCount > 0 { return "checkmark.shield.fill" }
-        if runtimeStatus.tone == .paused { return "pause.circle.fill" }
-        if runtimeStatus.tone == .error || !summary.blocker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || summary.failureCount > 0 { return "exclamationmark.triangle.fill" }
-        if autoContinueState.state == .blocked { return "hand.raised.fill" }
-        if autoContinueState.isCountingDown { return "timer" }
-        return "checkmark.circle.fill"
-    }
-
-    var projectOSAttentionTint: Color {
-        if runtimeStatus.tone == .approval || summary.pendingApprovalCount > 0 { return AgentPalette.cyan }
-        if runtimeStatus.tone == .paused { return AgentPalette.lilac }
-        if runtimeStatus.tone == .error || !summary.blocker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || summary.failureCount > 0 { return AgentPalette.rose }
-        if autoContinueState.state == .blocked { return AgentPalette.rose }
-        if autoContinueState.isCountingDown { return AgentPalette.green }
-        return AgentPalette.green
-    }
-
-    var projectOSChangedText: String {
-        let spine = summary.workflowSpine
-        if spine.changedTitle == "No project changes yet" { return spine.changedDetail }
-        return "\(spine.changedTitle): \(spine.changedDetail)"
-    }
 
     var projectOSMissionText: String {
         let runMission = activeProjectOSRun?.mission.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1139,67 +1055,6 @@ struct ProjectDashboardView: View {
         }
     }
 
-    func projectOSIntentTint(_ mode: ProjectOSIntentMode) -> Color {
-        switch mode {
-        case .idle, .readingContext, .inspectingFiles, .runningCommand, .capturingScreenshot, .waitingApproval:
-            return AgentPalette.cyan
-        case .planning, .runningTool, .stoppedResumable:
-            return AgentPalette.lilac
-        case .editingCode, .runningTests, .verifyingOutput, .producingProof, .summarizingCompletion, .completedProof:
-            return AgentPalette.green
-        case .blocked:
-            return AgentPalette.rose
-        }
-    }
-
-    func projectOSIntentSymbol(_ mode: ProjectOSIntentMode) -> String {
-        switch mode {
-        case .idle: return "target"
-        case .planning: return "list.bullet.clipboard.fill"
-        case .readingContext: return "doc.text.magnifyingglass"
-        case .inspectingFiles: return "text.viewfinder"
-        case .editingCode: return "doc.badge.gearshape.fill"
-        case .runningTool: return "wrench.and.screwdriver.fill"
-        case .runningCommand: return "terminal.fill"
-        case .runningTests: return "checkmark.shield.fill"
-        case .waitingApproval: return "checkmark.shield.fill"
-        case .blocked: return "exclamationmark.triangle.fill"
-        case .verifyingOutput: return "checkmark.seal.fill"
-        case .capturingScreenshot: return "camera.viewfinder"
-        case .producingProof: return "shippingbox.fill"
-        case .summarizingCompletion: return "text.badge.checkmark"
-        case .completedProof: return "checkmark.seal.fill"
-        case .stoppedResumable: return "pause.circle.fill"
-        }
-    }
-
-    func projectOSIntentObjectSymbol(_ kind: ProjectOSWorkObjectKind) -> String {
-        switch kind {
-        case .none: return "circle.dashed"
-        case .project: return "scope"
-        case .step: return "point.3.connected.trianglepath.dotted"
-        case .file: return "doc.text.fill"
-        case .command: return "terminal.fill"
-        case .tool: return "wrench.and.screwdriver.fill"
-        case .testBuildGate: return "checkmark.shield.fill"
-        case .artifact: return "shippingbox.fill"
-        case .approval: return "checkmark.shield.fill"
-        case .blocker: return "exclamationmark.triangle.fill"
-        case .proof: return "checkmark.seal.fill"
-        }
-    }
-
-    func projectOSIntentObjectValue(_ intent: ProjectOSIntentSnapshot) -> String {
-        if !intent.filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.filePath }
-        if !intent.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.command }
-        if !intent.toolName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.toolName }
-        if !intent.testBuildGate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.testBuildGate }
-        if !intent.artifactPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.artifactPath }
-        if !intent.blocker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.blocker }
-        if !intent.proof.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.proof }
-        if !intent.objectDetail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return intent.objectDetail }
-        return intent.objectTitle
-    }
 
     func projectOSStatusSymbol(for status: ProjectOSRunStatus) -> String {
         switch status {
@@ -1563,14 +1418,6 @@ private struct ProjectStableSurface<Content: View>: View, Equatable {
 }
 
 extension View {
-    @ViewBuilder
-    func projectMoreSurface(expanded: Bool) -> some View {
-        if expanded {
-            agentSurface(radius: 18, tint: AgentPalette.lilac.opacity(0.06))
-        } else {
-            self
-        }
-    }
 
     @ViewBuilder
     func projectScrollResponse(enabled: Bool) -> some View {

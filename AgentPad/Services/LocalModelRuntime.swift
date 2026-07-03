@@ -196,6 +196,22 @@ struct LocalModelDownloadProgress: Sendable {
     }
 }
 
+struct LocalModelBenchmarkResult: Equatable, Sendable {
+    let modelName: String
+    let timeToFirstToken: TimeInterval
+    let totalDuration: TimeInterval
+    let generatedCharacters: Int
+
+    /// Rough token estimate — llama.cpp doesn't surface counts through this
+    /// path, and honest ≈ beats fabricated precision.
+    var estimatedTokens: Int { max(1, Int(Double(generatedCharacters) / 3.8)) }
+
+    var tokensPerSecond: Double {
+        let generation = max(totalDuration - timeToFirstToken, 0.05)
+        return Double(estimatedTokens) / generation
+    }
+}
+
 enum LocalModelRuntimeError: LocalizedError {
     case modelNotDownloaded(String)
     case runtimeUnavailable

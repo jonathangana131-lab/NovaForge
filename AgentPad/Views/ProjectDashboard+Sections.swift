@@ -10,56 +10,6 @@ import SwiftData
 import SwiftUI
 
 extension ProjectDashboardView {
-    var projectMoreSection: some View {
-        let expanded = showsProjectDetails
-        return VStack(alignment: .leading, spacing: expanded ? 12 : 0) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation((reduceMotion || !AgentPerformance.allowsDecorativeMotion) ? nil : .smooth(duration: 0.28)) {
-                    showsProjectDetails.toggle()
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: showsProjectDetails ? "chevron.up.circle.fill" : "ellipsis.circle.fill")
-                        .font(.system(size: 14, weight: .black))
-                        .foregroundStyle(AgentPalette.lilac)
-                        .frame(width: 28, height: 28)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("More")
-                            .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.ink)
-                        if expanded {
-                            Text("Gates, metrics, proof, timeline")
-                                .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.tertiaryText)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, expanded ? 13 : 6)
-                .padding(.vertical, expanded ? 13 : 5)
-                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget, alignment: .leading)
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .projectMoreSurface(expanded: expanded)
-            .accessibilityLabel(showsProjectDetails ? "Hide more project details" : "Show more project details")
-            .accessibilityIdentifier("projectMoreButton")
-
-            if showsProjectDetails {
-                VStack(alignment: .leading, spacing: 14) {
-                    projectDetailScopePicker
-                    projectDetailScopeContent
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("projectMoreDetails")
-            }
-        }
-    }
 
     var projectDetailScopePicker: some View {
         Picker("Project detail scope", selection: $selectedDetailScope) {
@@ -72,26 +22,6 @@ extension ProjectDashboardView {
         .accessibilityIdentifier("projectDetailScopePicker")
     }
 
-    @ViewBuilder
-    var projectDetailScopeContent: some View {
-        switch selectedDetailScope {
-        case .review:
-            projectReviewSection
-            missionOSPanel
-            missionOSGateSection
-        case .plan:
-            projectPlanDeepSection
-            projectCommandCenter
-        case .evidence:
-            latestEvidenceSection
-            proofLedgerSection
-            artifactsSection
-            fileChangesSection
-        case .timeline:
-            projectSignals
-            timelineSection
-        }
-    }
 
     var projectSwitcherSheet: some View {
         ZStack {
@@ -488,92 +418,6 @@ extension ProjectDashboardView {
         .accessibilityIdentifier("projectPlanDeepSection")
     }
 
-    var projectSpinePanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 10) {
-                Label("Active Project", systemImage: "target")
-                    .font(.system(size: 14, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.ink)
-                Spacer(minLength: 0)
-                statusBadge
-            }
-
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(statusTint.opacity(0.16))
-                    Circle()
-                        .stroke(statusTint.opacity(0.34), lineWidth: 1)
-                    Image(systemName: statusSymbol)
-                        .font(.system(size: 22, weight: .black))
-                        .foregroundStyle(statusTint)
-                }
-                .frame(width: 58, height: 58)
-
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 7) {
-                        miniBadge(title: "Current state", symbol: "gauge.with.dots.needle.bottom.50percent", tint: statusTint)
-                        miniBadge(title: project.workspaceName, symbol: "folder.fill", tint: AgentPalette.cyan)
-                    }
-
-                    Text(project.name)
-                        .font(.system(size: 29, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.72)
-                        .accessibilityIdentifier("projectActiveName")
-
-                    Text(missionCopy)
-                        .font(.system(size: 13, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            HStack(spacing: 10) {
-                spineDatum(title: "Trust", value: summary.trustText, symbol: "checkmark.shield.fill", tint: trustTint)
-                spineDatum(title: "Last Activity", value: lastActivityText, symbol: "clock.fill", tint: AgentPalette.green)
-            }
-
-            executionLoopPanel
-
-            VStack(alignment: .leading, spacing: 10) {
-                missionSignal(title: "Last", value: summary.lastEventTitle, symbol: "waveform.path.ecg", tint: AgentPalette.cyan)
-                missionSignal(title: "Next", value: summary.nextStep, symbol: "arrow.right.circle.fill", tint: AgentPalette.green, accessibilityIdentifier: "projectNextStepValue")
-                missionSignal(title: "Proof", value: latestProofText, symbol: "checkmark.seal.fill", tint: AgentPalette.indigo)
-                missionSignal(
-                    title: "Blocker",
-                    value: summary.blocker.isEmpty ? "No blocker recorded" : summary.blocker,
-                    symbol: summary.blocker.isEmpty ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
-                    tint: summary.blocker.isEmpty ? AgentPalette.lilac : AgentPalette.rose
-                )
-            }
-            .padding(.top, 2)
-
-        }
-        .padding(16)
-        .background(
-            LinearGradient(
-                colors: [
-                    AgentPalette.surface,
-                    statusTint.opacity(0.13),
-                    AgentPalette.lilac.opacity(0.07),
-                    AgentPalette.surfaceAlt.opacity(0.72)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(statusTint.opacity(0.28), lineWidth: 0.7)
-        )
-        .shadow(color: AgentPalette.shadow.opacity(0.10), radius: 14, x: 0, y: 8)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("projectBriefing")
-    }
 
     struct ProjectMetricCard: Identifiable {
         let id: String
@@ -1088,12 +932,6 @@ extension ProjectDashboardView {
         summary.missionText
     }
 
-    var lastActivityText: String {
-        if Calendar.current.isDateInToday(project.lastActivityAt) {
-            return DateFormatter.localizedString(from: project.lastActivityAt, dateStyle: .none, timeStyle: .short)
-        }
-        return DateFormatter.localizedString(from: project.lastActivityAt, dateStyle: .short, timeStyle: .none)
-    }
 
     var latestChatDetail: String {
         guard let latest = projectConversations.first else {
@@ -1297,10 +1135,6 @@ extension ProjectDashboardView {
         return "\(projectFileChanges.count) recorded change\(projectFileChanges.count == 1 ? "" : "s")"
     }
 
-    var timelineSectionSubtitle: String {
-        if projectEvents.isEmpty { return "No timeline events yet" }
-        return "\(projectEvents.count) recorded event\(projectEvents.count == 1 ? "" : "s")"
-    }
 
     var trustTint: Color {
         if summary.failureCount > 0 { return AgentPalette.rose }
@@ -1507,35 +1341,6 @@ extension ProjectDashboardView {
         .accessibilityLabel("\(label): \(value)")
     }
 
-    func spineDatum(title: String, value: String, symbol: String, tint: Color) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .black))
-                .foregroundStyle(tint)
-                .frame(width: 22, height: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.tertiaryText)
-                Text(value.isEmpty ? "None" : value)
-                    .font(.system(size: 11, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.ink)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.78)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(AgentPalette.row.opacity(0.74))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .strokeBorder(tint.opacity(0.18), lineWidth: 0.55)
-        )
-    }
 
     func missionSignal(title: String, value: String, symbol: String, tint: Color, accessibilityIdentifier: String? = nil) -> some View {
         HStack(alignment: .top, spacing: 10) {

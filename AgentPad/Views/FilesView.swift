@@ -1278,10 +1278,6 @@ struct FilesView: View {
         .accessibilityIdentifier("filesProjectOverview")
     }
 
-    var projectExplorerSubtitle: String {
-        if items.isEmpty { return "Empty workspace ready for files" }
-        return "\(items.count) item\(items.count == 1 ? "" : "s") in this folder · previews open instantly"
-    }
 
     var compactProjectSummary: String {
         var parts: [String] = []

@@ -1185,45 +1185,6 @@ struct RunsView: View {
         return "\(cachedStats.total) logged · \(cachedStats.completed) done · \(cachedStats.failures) failed · \(cachedStats.pending) pending"
     }
 
-    var metricsBar: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Logged")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                Text("\(cachedStats.total)")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(AgentPalette.ink)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .agentSurface(radius: 14)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Avg Duration")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                Text(cachedStats.averageDurationText)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(AgentPalette.ink)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .agentSurface(radius: 14)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Success Rate")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                Text(cachedStats.successRateText)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(AgentPalette.ink)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .agentSurface(radius: 14)
-        }
-    }
 
     var filterSelector: some View {
         HStack(spacing: 8) {
