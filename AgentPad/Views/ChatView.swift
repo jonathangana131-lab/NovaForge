@@ -1200,7 +1200,10 @@ struct ChatView: View {
         guard ownsActiveRunState else { return false }
         if hasActionableRunState { return true }
         guard !composerFocused, trimmedPrompt.isEmpty else { return false }
-        return hasCompletedRunEvidence
+        // Completion evidence only earns the bar above a transcript that
+        // actually contains the completed work. A fresh, empty conversation
+        // stays clean — the welcome state owns that moment.
+        return hasCompletedRunEvidence && !cachedMessages.isEmpty
     }
 
     private var hasActionableRunState: Bool {
