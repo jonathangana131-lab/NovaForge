@@ -1412,4 +1412,19 @@ extension View {
                 .ignoresSafeArea(edges: .bottom)
         }
     }
+
+    /// Native iOS 26 progressive fade where scroll content passes beneath the
+    /// floating tab dock. Without it, stray text renders razor-sharp in the
+    /// home-indicator gutter around the dock pill (glaring in the matrix
+    /// theme, where mono glyphs glow). No-ops under conservative rendering.
+    @ViewBuilder
+    func agentDockEdgeFade() -> some View {
+        if AgentPlatformCompatibility.usesConservativeRendering {
+            self
+        } else if #available(iOS 26.0, *) {
+            self.scrollEdgeEffectStyle(.soft, for: .bottom)
+        } else {
+            self
+        }
+    }
 }

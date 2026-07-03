@@ -757,6 +757,7 @@ struct RunsView: View {
                 }
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
+                .agentDockEdgeFade()
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     BottomDockContentShield(height: tabBarClearance)
                 }

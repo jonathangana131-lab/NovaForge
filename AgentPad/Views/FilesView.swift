@@ -1012,6 +1012,7 @@ struct FilesView: View {
                     }
                 }
                 .scrollContentBackground(.hidden)
+                .agentDockEdgeFade()
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     BottomDockContentShield(height: tabBarClearance)
                 }
@@ -1247,7 +1248,7 @@ struct FilesView: View {
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("\(cachedStats.fileCount) files")
+                    Text("\(cachedStats.fileCount) file\(cachedStats.fileCount == 1 ? "" : "s")")
                         .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.lilac)
                         .lineLimit(1)
@@ -1257,7 +1258,7 @@ struct FilesView: View {
                     .font(.system(size: 9.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.secondaryText)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
             }
 
             Spacer(minLength: 0)
@@ -1284,9 +1285,15 @@ struct FilesView: View {
 
     private var compactProjectSummary: String {
         var parts: [String] = []
-        if cachedStats.folderCount > 0 { parts.append("\(cachedStats.folderCount) folders") }
-        if cachedStats.previewableCount > 0 { parts.append("\(cachedStats.previewableCount) previews") }
-        parts.append(cachedStats.recentCount > 0 ? "\(cachedStats.recentCount) fresh changes" : "no fresh changes")
+        if cachedStats.folderCount > 0 {
+            parts.append("\(cachedStats.folderCount) folder\(cachedStats.folderCount == 1 ? "" : "s")")
+        }
+        if cachedStats.previewableCount > 0 {
+            parts.append("\(cachedStats.previewableCount) preview\(cachedStats.previewableCount == 1 ? "" : "s")")
+        }
+        parts.append(cachedStats.recentCount > 0
+            ? "\(cachedStats.recentCount) fresh change\(cachedStats.recentCount == 1 ? "" : "s")"
+            : "no fresh changes")
         if let newest = cachedStats.newestName { parts.append("latest: \(newest)") }
         return parts.joined(separator: " · ")
     }

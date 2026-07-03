@@ -2858,6 +2858,7 @@ private struct ChatHeaderView: View {
                         .foregroundStyle(scopeModeTint)
                         .textCase(.uppercase)
                         .lineLimit(1)
+                        .fixedSize()
                         .padding(.horizontal, 7)
                         .frame(height: 20)
                         .agentControlSurface(radius: 8, tint: scopeModeTint.opacity(0.10), selected: scopedProject != nil)
@@ -2897,6 +2898,8 @@ private struct ChatHeaderView: View {
                         .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(settings.provider.tint)
                         .lineLimit(1)
+                        .fixedSize()
+                        .layoutPriority(2)
 
                     if conversation.messageCount > 0 {
                         Text("•")
@@ -3300,12 +3303,13 @@ private struct ChatMemoryChipButton: View {
                         .foregroundStyle(chip.tone.tint)
                         .textCase(.uppercase)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     Text(chip.detail)
                         .font(.system(size: 10.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .minimumScaleFactor(0.78)
+                        .truncationMode(.tail)
+                        .minimumScaleFactor(0.72)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -3317,7 +3321,7 @@ private struct ChatMemoryChipButton: View {
             }
             .padding(.leading, 7)
             .padding(.trailing, 8)
-            .frame(width: chip.isProminent ? 164 : 142, height: 42)
+            .frame(width: chip.isProminent ? 172 : 150, height: 42)
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .agentControlSurface(radius: 14, tint: chip.tone.tint.opacity(chip.isProminent ? 0.13 : 0.08), selected: chip.isProminent)
         }
