@@ -3747,7 +3747,7 @@ struct ProjectDashboardView: View {
 
     private var projectSwitcherSheet: some View {
         ZStack {
-            AgentBackground(isWorking: false, isAnimated: false)
+            AgentBackground()
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 14) {
@@ -6052,7 +6052,7 @@ private struct ProjectIntakeSheet: View {
                 .padding(18)
             }
             .scrollContentBackground(.hidden)
-            .background(AgentBackground(isAnimated: false).ignoresSafeArea())
+            .background(AgentBackground().ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -6157,7 +6157,7 @@ private struct ProjectEditSheet: View {
                 .padding(18)
             }
             .scrollContentBackground(.hidden)
-            .background(AgentBackground(isAnimated: false).ignoresSafeArea())
+            .background(AgentBackground().ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

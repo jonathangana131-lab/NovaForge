@@ -93,7 +93,7 @@ struct CodeEditorView: View {
 
     var body: some View {
         ZStack {
-            AgentBackground(isAnimated: false)
+            AgentBackground()
             VStack(spacing: 0) {
                 header
                 editorStatusStrip

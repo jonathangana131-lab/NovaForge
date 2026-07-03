@@ -1080,7 +1080,7 @@ struct TerminalConsoleView: View {
     
     private var historySheet: some View {
         ZStack {
-            AgentBackground(isAnimated: false)
+            AgentBackground()
             VStack(alignment: .leading, spacing: 18) {
                 HeaderView(title: "History", subtitle: "Previously executed commands", symbol: "clock")
                 
