@@ -215,6 +215,15 @@ struct AppRootView: View {
         .task {
             runRootLaunchTasks()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.openTab)) { note in
+            guard let raw = note.userInfo?[NovaForgeIntentSignal.tabKey] as? String,
+                  let tab = AppTab(rawValue: raw) else { return }
+            selectedTab = tab
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.askPrompt)) { _ in
+            // ChatView owns the composer prefill; the root just lands on chat.
+            selectedTab = .chat
+        }
         .onChange(of: settings?.activeWorkspaceName, initial: true) { _, newValue in
             repairActiveWorkspaceNameChange(newValue)
         }

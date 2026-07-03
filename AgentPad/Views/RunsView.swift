@@ -20,6 +20,7 @@ struct RunsView: View {
     @State var searchText = ""
     @State var debouncedSearchText = ""
     @State var previewArtifact: WorkspaceArtifact?
+    @State var replayTarget: RunReplayTarget?
 
     @State var cachedStats = RunStats()
     @State var cachedFilteredRuns: [RunRowData] = []
@@ -744,6 +745,15 @@ struct RunsView: View {
                                     },
                                     revealCard: { anchor in
                                         revealRun(row.id, anchor: anchor, proxy: scrollProxy)
+                                    },
+                                    openReplay: {
+                                        replayTarget = RunReplayTarget(
+                                            id: row.id,
+                                            name: row.displayName,
+                                            status: row.status,
+                                            windowStart: row.createdAt,
+                                            windowEnd: row.createdAt.addingTimeInterval(max(1, row.durationMs / 1_000) + 1)
+                                        )
                                     }
                                 )
                                 .id(row.id)
@@ -766,6 +776,11 @@ struct RunsView: View {
                     BottomDockContentShield(height: tabBarClearance)
                 }
             }
+        }
+        .sheet(item: $replayTarget) { target in
+            RunReplaySheet(target: target)
+                .presentationDetents([.fraction(0.72), .large])
+                .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $previewArtifact) { artifact in
             ArtifactPreviewSheet(

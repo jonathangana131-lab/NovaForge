@@ -89,6 +89,7 @@
 		AB1000000000000000000019 /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000019 /* DiffEngine.swift */; };
 		AB2000000000000000000019 /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000019 /* DiffEngine.swift */; };
 		AB1000000000000000000020 /* DiffReviewSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000020 /* DiffReviewSection.swift */; };
+		AB1000000000000000000021 /* RunReplaySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000021 /* RunReplaySheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -175,6 +176,7 @@
 		AB0000000000000000000018 /* RunCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCards.swift; sourceTree = "<group>"; };
 		AB0000000000000000000019 /* DiffEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffEngine.swift; sourceTree = "<group>"; };
 		AB0000000000000000000020 /* DiffReviewSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffReviewSection.swift; sourceTree = "<group>"; };
+		AB0000000000000000000021 /* RunReplaySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunReplaySheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -317,6 +319,7 @@
 				AB0000000000000000000017 /* FilesView+Search.swift */,
 				AB0000000000000000000018 /* RunCards.swift */,
 				AB0000000000000000000020 /* DiffReviewSection.swift */,
+				AB0000000000000000000021 /* RunReplaySheet.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -541,6 +544,7 @@
 				AB1000000000000000000018 /* RunCards.swift in Sources */,
 				AB1000000000000000000019 /* DiffEngine.swift in Sources */,
 				AB1000000000000000000020 /* DiffReviewSection.swift in Sources */,
+				AB1000000000000000000021 /* RunReplaySheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

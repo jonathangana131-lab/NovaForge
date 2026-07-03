@@ -690,6 +690,15 @@ struct ChatView: View {
                 applyProjectResumeDraftIfNeeded(focusComposer: projectResumeDraftRevision > 0)
                 restorePersistedDraftIfAvailable()
             }
+            .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.askPrompt)) { note in
+                guard let text = note.userInfo?[NovaForgeIntentSignal.promptKey] as? String,
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                prompt = text
+                composerFocused = true
+                if shouldAutoScrollForKeyboard {
+                    requestJumpToLatest(animated: true, delay: .milliseconds(200))
+                }
+            }
             .onDisappear {
                 transient.cancelLayoutTasks()
             }

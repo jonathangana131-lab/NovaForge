@@ -21,6 +21,7 @@ struct RunCard: View {
     let rejectPendingTool: () -> Void
     let dismissSearch: () -> Void
     let revealCard: (UnitPoint) -> Void
+    var openReplay: (() -> Void)?
     @State private var showingArguments = false
     @State private var showingOutput = false
     @State private var confirmingDelete = false
@@ -193,6 +194,32 @@ struct RunCard: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
                     Divider()
+
+                    if let openReplay, row.status == .completed || row.status == .failed || row.status == .rejected {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            openReplay()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "memories")
+                                    .font(.system(size: 12, weight: .black))
+                                    .foregroundStyle(AgentPalette.cyan)
+                                Text("Replay this run")
+                                    .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                    .foregroundStyle(AgentPalette.ink)
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundStyle(AgentPalette.tertiaryText)
+                            }
+                            .padding(.horizontal, 11)
+                            .frame(minHeight: 40)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .agentControlSurface(radius: 13, tint: AgentPalette.cyan.opacity(0.10), selected: false)
+                        .accessibilityIdentifier("runReplayButton")
+                    }
 
                     if let proof = row.terminalProof {
                         RunTerminalProofCard(
