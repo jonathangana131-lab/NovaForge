@@ -847,7 +847,6 @@ struct ProjectDashboardView: View {
             }
 
             projectOSExecutionStatePanel
-            self.projectOSAdaptiveIntentPanel
         }
         .padding(14)
         .agentGlass(radius: 24, interactive: false, tint: tint.opacity(0.13))

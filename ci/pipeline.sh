@@ -105,6 +105,9 @@ xcrun simctl install "$UDID" "$APP_PATH"
 
 # ---------------------------------------------------------------------------
 echo "==> Screenshot tour"
+# Let SpringBoard settle so first-boot system banners (Apple Intelligence
+# onboarding etc.) clear before we start photographing.
+sleep 15
 mkdir -p captures
 shot() {
   NAME="$1"; shift

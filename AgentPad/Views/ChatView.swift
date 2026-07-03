@@ -145,7 +145,9 @@ struct ChatView: View {
         if runtime.pendingTool != nil { return .approval }
         if runtime.lastError != nil || runtime.wasInterrupted { return .failure }
         if runtime.isWorking || runtime.queuedPromptCount > 0 { return .progress }
-        if hasCompletedRunEvidence { return .completion }
+        // Completion banners only make sense above a transcript that actually
+        // contains the completed work — never on a fresh, empty conversation.
+        if hasCompletedRunEvidence && !cachedMessages.isEmpty { return .completion }
         return .hidden
     }
 
@@ -515,7 +517,7 @@ struct ChatView: View {
                                         EmptyView()
                                     }
 
-                                    if cachedMessages.isEmpty && !hasForeignActiveRun && !hasRunState {
+                                    if cachedMessages.isEmpty && !hasForeignActiveRun && !(ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil)) {
                                         CleanChatEmptyState { starterPrompt in
                                             prompt = starterPrompt
                                             composerFocused = true
