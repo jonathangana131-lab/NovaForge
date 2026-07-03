@@ -74,12 +74,6 @@ struct AgentTraceEvent: Identifiable, Hashable {
 
 @MainActor
 final class LiveStreamBuffer: ObservableObject {
-    private var maxVisibleCharacters: Int {
-        AgentPerformance.isPerformanceMode ? 520 : 760
-    }
-    private var maxVisibleLines: Int {
-        AgentPerformance.isPerformanceMode ? 6 : 9
-    }
     private let minimumDisplayInterval: Duration = .milliseconds(110)
     private let minimumInitialDisplayCharacters = 1
     private let maximumPendingCharacters = 180
@@ -93,7 +87,10 @@ final class LiveStreamBuffer: ObservableObject {
     var characterCount: Int { frame.characterCount }
     var revision: Int { frame.revision }
     var isEmpty: Bool { frame.characterCount == 0 }
-    var isShowingTail: Bool { frame.characterCount > maxVisibleCharacters }
+    /// The live bubble no longer truncates to a tail window; the transcript is
+    /// bottom-anchored at the layout level instead, so the full streamed text
+    /// is always the display text.
+    var isShowingTail: Bool { false }
 
     func reset() {
         flushTask?.cancel()
@@ -126,11 +123,8 @@ final class LiveStreamBuffer: ObservableObject {
         pendingText.removeAll(keepingCapacity: true)
         let updatedCharacterCount = frame.characterCount + delta.count
         visibleText += delta
-        if visibleText.count > maxVisibleCharacters {
-            visibleText = String(visibleText.suffix(maxVisibleCharacters))
-        }
         frame = LiveStreamFrame(
-            displayText: Self.displayText(from: visibleText, maxVisibleLines: maxVisibleLines),
+            displayText: visibleText,
             characterCount: updatedCharacterCount,
             revision: frame.revision + 1
         )
@@ -160,13 +154,6 @@ final class LiveStreamBuffer: ObservableObject {
         }
     }
 
-    private static func displayText(from visibleText: String, maxVisibleLines: Int) -> String {
-        let lines = visibleText.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.count > maxVisibleLines else {
-            return visibleText
-        }
-        return lines.suffix(maxVisibleLines).joined(separator: "\n")
-    }
 }
 
 fileprivate struct LiveStreamFrame: Equatable {
@@ -188,7 +175,20 @@ final class AgentRuntime {
     var activityDetail = "Waiting for your next request."
     var activeToolName: String?
     var activeToolDetail = ""
-    var traceEvents: [AgentTraceEvent] = []
+    var traceEvents: [AgentTraceEvent] = [] {
+        didSet {
+            // Maintain cheap derived flags so view bodies can depend on
+            // "are there traces" / "was there a success" without observing the
+            // growing array itself (which would re-render whole surfaces on
+            // every appended event). These flip at most twice per run.
+            let hasEvents = !traceEvents.isEmpty
+            if hasTraceEvents != hasEvents { hasTraceEvents = hasEvents }
+            let hasSuccess = hasEvents && traceEvents.contains { $0.status == .success }
+            if hasSuccessfulTraceEvent != hasSuccess { hasSuccessfulTraceEvent = hasSuccess }
+        }
+    }
+    private(set) var hasTraceEvents = false
+    private(set) var hasSuccessfulTraceEvent = false
     var plannedProgressSteps: [WorkspaceProgressStep] = []
     var currentArtifacts: [WorkspaceArtifact] = []
     var queuedPromptCount = 0

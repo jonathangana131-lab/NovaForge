@@ -152,7 +152,7 @@ struct ChatView: View {
     private var hasCompletedRunEvidence: Bool {
         runtime.lastRunDuration != nil ||
             runtime.runState == .completed ||
-            runtime.traceEvents.contains { $0.status == .success } ||
+            runtime.hasSuccessfulTraceEvent ||
             !runtime.currentArtifacts.isEmpty ||
             !cachedArtifacts.isEmpty ||
             cachedDurableRunSnapshot.hasCompletionEvidence
@@ -208,7 +208,7 @@ struct ChatView: View {
             runtime.lastRunDuration != nil ||
             runtime.runState == .completed ||
             !runtime.currentArtifacts.isEmpty ||
-            !runtime.traceEvents.isEmpty ||
+            runtime.hasTraceEvents ||
             cachedDurableRunSnapshot.hasCompletionEvidence
     }
 
@@ -557,9 +557,7 @@ struct ChatView: View {
                                         ChatLiveResponseIsland(
                                             runtime: runtime,
                                             isVisibleForFrameProfiling: isVisibleForFrameProfiling
-                                        ) { isShowingTail in
-                                            handleLiveStreamRevisionChange(isShowingTail: isShowingTail)
-                                        }
+                                        )
                                         .id("liveResponse")
                                     }
                                 }
@@ -575,6 +573,14 @@ struct ChatView: View {
                         .accessibilityIdentifier("chatTranscriptScroll")
                         .scrollContentBackground(.hidden)
                         .scrollDismissesKeyboard(.interactively)
+                        // Layout-level bottom pinning: while the user is at the
+                        // bottom, content growth (streaming text, tool rows)
+                        // keeps the transcript pinned with NO scrollTo calls,
+                        // no animation fights, and no per-flush layout jumps.
+                        // Detach/re-pin is still governed by the scroll
+                        // attachment state machine below.
+                        .defaultScrollAnchor(.bottom, for: .initialOffset)
+                        .defaultScrollAnchor(shouldKeepTranscriptPinned ? .bottom : nil, for: .sizeChanges)
                         .contentShape(Rectangle())
                         .simultaneousGesture(
                             DragGesture(minimumDistance: 14, coordinateSpace: .named(Self.chatScrollSpace))
@@ -779,14 +785,6 @@ struct ChatView: View {
             if hasLatestJumpTarget, shouldKeepTranscriptPinned {
                 requestJumpToLatest()
             }
-        }
-        .onChange(of: runtime.traceEvents.count) {
-            guard hasLatestJumpTarget, shouldKeepTranscriptPinned else { return }
-            requestJumpToLatest()
-        }
-        .onChange(of: runtime.activeToolName) {
-            guard hasLatestJumpTarget, shouldKeepTranscriptPinned else { return }
-            requestJumpToLatest()
         }
         .sheet(item: Binding(get: { ownsActiveRunState ? runtime.pendingTool : nil }, set: { _ in })) { request in
             ApprovalSheet(
@@ -1227,7 +1225,7 @@ struct ChatView: View {
 
     private var hasLatestJumpTarget: Bool {
         !cachedMessages.isEmpty ||
-            (ownsActiveRunState && (runtime.isWorking || !runtime.traceEvents.isEmpty || cachedDurableRunSnapshot.hasCompletionEvidence))
+            (ownsActiveRunState && (runtime.isWorking || runtime.hasTraceEvents || cachedDurableRunSnapshot.hasCompletionEvidence))
     }
 
     private var shouldKeepTranscriptPinned: Bool {
@@ -1295,17 +1293,6 @@ struct ChatView: View {
         case .idle, .running, .waitingForApproval:
             break
         }
-    }
-
-    private func handleLiveStreamRevisionChange(isShowingTail: Bool) {
-        guard ownsActiveRunState, runtime.isWorking else { return }
-        guard scrollAttachment != .detached else { return }
-        let now = Date()
-        let minimumInterval = isShowingTail ? 0.55 : 1.1
-        guard now.timeIntervalSince(transient.lastLiveStreamJumpRequestAt) >= minimumInterval else { return }
-        transient.lastLiveStreamJumpRequestAt = now
-        scrollAttachment = .restoring
-        requestJumpToLatest(animated: false, delay: .milliseconds(isShowingTail ? 35 : 80))
     }
 
     private func keepLatestReadableAfterAccessoryResize() {
@@ -1597,23 +1584,13 @@ private struct ActiveResponseElsewhereDock: View {
 private struct ChatLiveResponseIsland: View {
     let runtime: AgentRuntime
     let isVisibleForFrameProfiling: Bool
-    let onAutoScrollRevision: (Bool) -> Void
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Live Response Island Body")
         let isWorking = runtime.isWorking
         let stream = runtime.liveStream
         ZStack(alignment: .topLeading) {
-            LiveResponseView(isWorking: isWorking, stream: stream)
-
-            LiveStreamAutoScrollObserver(
-                stream: stream,
-                isWorking: isWorking,
-                onRevision: onAutoScrollRevision
-            )
-            .frame(width: 0, height: 0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+            LiveResponseView(isWorking: isWorking, stream: stream, runtime: runtime)
 
             if AgentPerformance.shouldProfileFrameRate {
                 ChatStreamingFrameRateProbe(
@@ -1623,20 +1600,6 @@ private struct ChatLiveResponseIsland: View {
                 )
             }
         }
-    }
-}
-
-private struct LiveStreamAutoScrollObserver: View {
-    @ObservedObject var stream: LiveStreamBuffer
-    let isWorking: Bool
-    let onRevision: (Bool) -> Void
-
-    var body: some View {
-        Color.clear
-            .onChange(of: stream.revision) {
-                guard isWorking else { return }
-                onRevision(stream.isShowingTail)
-            }
     }
 }
 
@@ -3635,7 +3598,7 @@ private struct ChatContextBar: View {
     private var hasCompletedRunEvidence: Bool {
         runtime.lastRunDuration != nil ||
             runtime.runState == .completed ||
-            runtime.traceEvents.contains { $0.status == .success } ||
+            runtime.hasSuccessfulTraceEvent ||
             primaryArtifact != nil ||
             durableSnapshot.hasCompletionEvidence
     }
