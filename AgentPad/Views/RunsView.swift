@@ -555,13 +555,15 @@ struct RunsView: View {
         var totalDurationMs = 0.0
 
         var averageDurationText: String {
-            guard finished > 0 else { return "0ms" }
+            // No data reads as an em dash, not a fake measurement.
+            guard finished > 0 else { return "\u{2014}" }
             let avg = totalDurationMs / Double(finished)
             return avg < 1000 ? String(format: "%.0fms", avg) : String(format: "%.1fs", avg / 1000.0)
         }
 
         var successRateText: String {
-            guard finished > 0 else { return "100%" }
+            // "100%" of zero runs is a lie; show an em dash until data exists.
+            guard finished > 0 else { return "\u{2014}" }
             let rate = Double(completed) / Double(finished) * 100.0
             return String(format: "%.0f%%", rate)
         }
