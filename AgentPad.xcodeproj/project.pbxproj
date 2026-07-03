@@ -64,6 +64,19 @@
 		AA0000000000000000000222 /* OpenAIClientStreamingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000028 /* OpenAIClientStreamingTests.swift */; };
 		AA0000000000000000000223 /* FilesWorkspacePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000029 /* FilesWorkspacePersistenceTests.swift */; };
 		AA0000000000000000000301 /* AgentPadUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000031 /* AgentPadUITests.swift */; };
+		AB1000000000000000000001 /* ChatSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000001 /* ChatSupportViews.swift */; };
+		AB1000000000000000000002 /* ChatComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000002 /* ChatComposer.swift */; };
+		AB1000000000000000000003 /* ChatHeaderStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000003 /* ChatHeaderStrip.swift */; };
+		AB1000000000000000000004 /* ChatRunSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000004 /* ChatRunSnapshots.swift */; };
+		AB1000000000000000000005 /* ChatProgressDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000005 /* ChatProgressDrawer.swift */; };
+		AB1000000000000000000006 /* AppLaunchPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000006 /* AppLaunchPersistence.swift */; };
+		AB1000000000000000000007 /* ProjectOSEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000007 /* ProjectOSEngine.swift */; };
+		AB1000000000000000000008 /* ProjectSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000008 /* ProjectSummary.swift */; };
+		AB1000000000000000000009 /* ProjectNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000009 /* ProjectNaming.swift */; };
+		AB2000000000000000000006 /* AppLaunchPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000006 /* AppLaunchPersistence.swift */; };
+		AB2000000000000000000007 /* ProjectOSEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000007 /* ProjectOSEngine.swift */; };
+		AB2000000000000000000008 /* ProjectSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000008 /* ProjectSummary.swift */; };
+		AB2000000000000000000009 /* ProjectNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000009 /* ProjectNaming.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -130,6 +143,15 @@
 		AA0000000000000000000701 /* NovaForge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaForge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000702 /* AgentPadTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentPadTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000703 /* AgentPadUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentPadUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0000000000000000000001 /* ChatSupportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSupportViews.swift; sourceTree = "<group>"; };
+		AB0000000000000000000002 /* ChatComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposer.swift; sourceTree = "<group>"; };
+		AB0000000000000000000003 /* ChatHeaderStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHeaderStrip.swift; sourceTree = "<group>"; };
+		AB0000000000000000000004 /* ChatRunSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRunSnapshots.swift; sourceTree = "<group>"; };
+		AB0000000000000000000005 /* ChatProgressDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatProgressDrawer.swift; sourceTree = "<group>"; };
+		AB0000000000000000000006 /* AppLaunchPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchPersistence.swift; sourceTree = "<group>"; };
+		AB0000000000000000000007 /* ProjectOSEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOSEngine.swift; sourceTree = "<group>"; };
+		AB0000000000000000000008 /* ProjectSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectSummary.swift; sourceTree = "<group>"; };
+		AB0000000000000000000009 /* ProjectNaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNaming.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -205,6 +227,10 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000002 /* Models.swift */,
+				AB0000000000000000000006 /* AppLaunchPersistence.swift */,
+				AB0000000000000000000007 /* ProjectOSEngine.swift */,
+				AB0000000000000000000008 /* ProjectSummary.swift */,
+				AB0000000000000000000009 /* ProjectNaming.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -252,6 +278,11 @@
 				AA0000000000000000000042 /* ChatDrawerView.swift */,
 				AA0000000000000000000043 /* ArtifactPreviewSheet.swift */,
 				AA0000000000000000000044 /* ChatLiveAndToolViews.swift */,
+				AB0000000000000000000001 /* ChatSupportViews.swift */,
+				AB0000000000000000000002 /* ChatComposer.swift */,
+				AB0000000000000000000003 /* ChatHeaderStrip.swift */,
+				AB0000000000000000000004 /* ChatRunSnapshots.swift */,
+				AB0000000000000000000005 /* ChatProgressDrawer.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -456,6 +487,15 @@
 				AA0000000000000000000144 /* ChatLiveAndToolViews.swift in Sources */,
 				AA0000000000000000000145 /* LocalModelRuntime.swift in Sources */,
 				AA0000000000000000000146 /* LocalAgentPlanner.swift in Sources */,
+				AB1000000000000000000001 /* ChatSupportViews.swift in Sources */,
+				AB1000000000000000000002 /* ChatComposer.swift in Sources */,
+				AB1000000000000000000003 /* ChatHeaderStrip.swift in Sources */,
+				AB1000000000000000000004 /* ChatRunSnapshots.swift in Sources */,
+				AB1000000000000000000005 /* ChatProgressDrawer.swift in Sources */,
+				AB1000000000000000000006 /* AppLaunchPersistence.swift in Sources */,
+				AB1000000000000000000007 /* ProjectOSEngine.swift in Sources */,
+				AB1000000000000000000008 /* ProjectSummary.swift in Sources */,
+				AB1000000000000000000009 /* ProjectNaming.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -486,6 +526,10 @@
 				AA0000000000000000000221 /* LocalModelRuntime.swift in Sources */,
 				AA0000000000000000000222 /* OpenAIClientStreamingTests.swift in Sources */,
 				AA0000000000000000000223 /* FilesWorkspacePersistenceTests.swift in Sources */,
+				AB2000000000000000000006 /* AppLaunchPersistence.swift in Sources */,
+				AB2000000000000000000007 /* ProjectOSEngine.swift in Sources */,
+				AB2000000000000000000008 /* ProjectSummary.swift in Sources */,
+				AB2000000000000000000009 /* ProjectNaming.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
