@@ -7,6 +7,11 @@
 # the build fails.
 set -euo pipefail
 
+# Mirror EVERYTHING this script does into pipeline.log — the publish trap
+# ships its tail to the ci-shots branch, so failures are always inspectable
+# from outside without the Actions log API.
+exec > >(tee -a pipeline.log) 2>&1
+
 BUNDLE="com.joey.NovaForge"
 ICON="AgentPad/App/Assets.xcassets/AppIcon.appiconset/icon_1024.png"
 IMPORT_TARBALL_URL="https://pub.hyperagent.com/api/published/pbf01KWKBBTZB_0ZV3WMJ212R4ZGSN/novaforge-import.tar.gz"
@@ -19,9 +24,11 @@ APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/NovaForge.app"
 # ---------------------------------------------------------------------------
 publish_captures() {
   set +e
+  set +x
   echo "==> Publishing captures to ci-shots branch"
   mkdir -p captures
   [ -f build.log ] && tail -300 build.log > captures/build-log-tail.txt
+  [ -f pipeline.log ] && tail -400 pipeline.log > captures/pipeline-log-tail.txt
   if [ -z "$(ls -A captures)" ]; then
     echo "nothing to publish"
     return 0
@@ -40,6 +47,9 @@ publish_captures() {
   echo "captures published"
 }
 trap publish_captures EXIT
+
+# Trace every command from here on (captured into pipeline.log).
+set -x
 
 # ---------------------------------------------------------------------------
 echo "==> Selecting newest Xcode"
@@ -75,13 +85,19 @@ xcodebuild \
   build 2>&1 | tee build.log | tail -40
 
 # ---------------------------------------------------------------------------
-echo "==> Creating and booting simulator"
-DEVICE_TYPE=$(xcrun simctl list -j devicetypes | jq -r '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier')
-RUNTIME=$(xcrun simctl list -j runtimes | jq -r '[.runtimes[] | select(.platform == "iOS" and .isAvailable == true)] | last | .identifier')
-echo "device: $DEVICE_TYPE / runtime: $RUNTIME"
-UDID=$(xcrun simctl create "NovaCI" "$DEVICE_TYPE" "$RUNTIME")
-xcrun simctl boot "$UDID"
+echo "==> Selecting a simulator"
+# Prefer a pre-provisioned iPhone simulator from the runner image — these are
+# guaranteed-valid (device type + runtime pairing already exists). Fall back
+# to creating one only if none exist.
+UDID=$(xcrun simctl list -j devices available | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.isAvailable == true and (.name | startswith("iPhone")))] | last | .udid // empty')
+if [ -z "$UDID" ]; then
+  echo "no pre-provisioned iPhone simulator; creating one"
+  DEVICE_TYPE=$(xcrun simctl list -j devicetypes | jq -r '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier')
+  UDID=$(xcrun simctl create "NovaCI" "$DEVICE_TYPE")
+fi
+xcrun simctl list devices | grep -i "$UDID" || true
 xcrun simctl bootstatus "$UDID" -b
+echo "simulator ready: $UDID"
 
 echo "==> Installing app"
 ls -la "$APP_PATH"
