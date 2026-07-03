@@ -3,7 +3,7 @@ import SwiftData
 import SwiftUI
 
 struct RunsView: View {
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.modelContext) var modelContext
     var runtime: AgentRuntime
     var project: Project
     let openArtifactLandscapeFullScreen: (WorkspaceArtifact) -> Void
@@ -12,38 +12,38 @@ struct RunsView: View {
     let approvePendingTool: () -> Void
     let rejectPendingTool: () -> Void
     let openChat: () -> Void
-    @Query private var runs: [ToolRun]
-    @Query private var terminalRecords: [TerminalCommandRecord]
-    @SceneStorage("RunsView.filterType") private var restoredFilterTypeRawValue = FilterType.all.rawValue
-    @SceneStorage("RunsView.expandedRunID") private var expandedRunIDString = ""
+    @Query var runs: [ToolRun]
+    @Query var terminalRecords: [TerminalCommandRecord]
+    @SceneStorage("RunsView.filterType") var restoredFilterTypeRawValue = FilterType.all.rawValue
+    @SceneStorage("RunsView.expandedRunID") var expandedRunIDString = ""
 
-    @State private var searchText = ""
-    @State private var debouncedSearchText = ""
-    @State private var previewArtifact: WorkspaceArtifact?
+    @State var searchText = ""
+    @State var debouncedSearchText = ""
+    @State var previewArtifact: WorkspaceArtifact?
 
-    @State private var cachedStats = RunStats()
-    @State private var cachedFilteredRuns: [RunRowData] = []
-    @State private var cachedMatchingRunCount = 0
-    @State private var cachedSparklineDurations: [Double] = []
-    @State private var runDeleteError: String?
-    @FocusState private var searchFocused: Bool
+    @State var cachedStats = RunStats()
+    @State var cachedFilteredRuns: [RunRowData] = []
+    @State var cachedMatchingRunCount = 0
+    @State var cachedSparklineDurations: [Double] = []
+    @State var runDeleteError: String?
+    @FocusState var searchFocused: Bool
 
-    private static let fetchedRunLimit = 500
-    private static let visibleRunLimit = 80
-    private static let fetchedTerminalRecordLimit = 500
-    private static let searchableArgumentsLimit = 2_000
-    private static let searchableOutputLimit = 600
-    private let tabBarClearance: CGFloat = BottomDockMetrics.scrollClearance
+    static let fetchedRunLimit = 500
+    static let visibleRunLimit = 80
+    static let fetchedTerminalRecordLimit = 500
+    static let searchableArgumentsLimit = 2_000
+    static let searchableOutputLimit = 600
+    let tabBarClearance: CGFloat = BottomDockMetrics.scrollClearance
 
-    private var activeFilterType: FilterType {
+    var activeFilterType: FilterType {
         FilterType(rawValue: restoredFilterTypeRawValue) ?? .all
     }
 
-    private var missionContract: MissionOSContract {
+    var missionContract: MissionOSContract {
         ProjectMissionSummarizer.summarize(project: project, context: modelContext).missionContract
     }
 
-    private var artifactIterationPrompt: String {
+    var artifactIterationPrompt: String {
         ProjectMissionSummarizer.summarize(project: project, context: modelContext).workflowSpine.iterationPrompt
     }
 
@@ -87,7 +87,7 @@ struct RunsView: View {
         var id: String { rawValue }
     }
 
-    fileprivate struct RunRowData: Identifiable, Equatable {
+    struct RunRowData: Identifiable, Equatable {
         let id: UUID
         let name: String
         let status: ToolRunStatus
@@ -436,7 +436,7 @@ struct RunsView: View {
         }
     }
 
-    fileprivate struct RunTimelinePhase: Identifiable, Equatable {
+    struct RunTimelinePhase: Identifiable, Equatable {
         enum Status: Equatable {
             case pending
             case current
@@ -452,7 +452,7 @@ struct RunsView: View {
         let timestampText: String
     }
 
-    fileprivate struct TerminalProofData: Identifiable, Equatable {
+    struct TerminalProofData: Identifiable, Equatable {
         let id: UUID
         let command: String
         let output: String
@@ -545,7 +545,7 @@ struct RunsView: View {
         }
     }
 
-    private struct RunStats {
+    struct RunStats {
         var total = 0
         var mutations = 0
         var failures = 0
@@ -574,7 +574,7 @@ struct RunsView: View {
         }
     }
 
-    private func updateCachedData() {
+    func updateCachedData() {
         AgentPerformance.event("Runs Filter Update")
         let signpostID = AgentPerformance.begin("Runs Cache Update")
         defer {
@@ -626,7 +626,7 @@ struct RunsView: View {
         AgentPerformance.value("Runs Filtered Rows", Double(filtered.count))
     }
 
-    private func terminalRecordsBySourceRunID() -> [String: TerminalCommandRecord] {
+    func terminalRecordsBySourceRunID() -> [String: TerminalCommandRecord] {
         var linkedRecords: [String: TerminalCommandRecord] = [:]
         for record in terminalRecords {
             guard let sourceID = record.sourceToolRunIDString else { continue }
@@ -637,7 +637,7 @@ struct RunsView: View {
         return linkedRecords
     }
 
-    private func preview(_ artifact: WorkspaceArtifact) {
+    func preview(_ artifact: WorkspaceArtifact) {
         AgentPerformance.event("Artifact Preview Open")
         ProjectEventRecorder.noteArtifactPreview(
             artifact,
@@ -648,7 +648,7 @@ struct RunsView: View {
         previewArtifact = artifact
     }
 
-    private func matches(_ run: ToolRun, query: String) -> Bool {
+    func matches(_ run: ToolRun, query: String) -> Bool {
         guard !query.isEmpty else { return true }
 
         if run.name.localizedCaseInsensitiveContains(query) ||
@@ -664,20 +664,33 @@ struct RunsView: View {
         return Self.boundedContains(run.output, query: query, limit: Self.searchableOutputLimit)
     }
 
-    private static func boundedContains(_ text: String, query: String, limit: Int) -> Bool {
+    static func boundedContains(_ text: String, query: String, limit: Int) -> Bool {
         guard !text.isEmpty else { return false }
         let end = text.index(text.startIndex, offsetBy: min(limit, text.count))
         return text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: text.startIndex..<end) != nil
     }
 
     @MainActor
-    private func revealRun(_ id: UUID, anchor: UnitPoint, proxy: ScrollViewProxy) {
+    func revealRun(_ id: UUID, anchor: UnitPoint, proxy: ScrollViewProxy) {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(140))
             withAnimation(.smooth(duration: 0.24)) {
                 proxy.scrollTo(id, anchor: anchor)
             }
         }
+    }
+
+    func expansionBinding(for row: RunRowData) -> Binding<Bool> {
+        Binding(
+            get: { expandedRunIDString == row.id.uuidString },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedRunIDString = row.id.uuidString
+                } else if expandedRunIDString == row.id.uuidString {
+                    expandedRunIDString = ""
+                }
+            }
+        )
     }
 
     var body: some View {
@@ -714,16 +727,7 @@ struct RunsView: View {
                             ForEach(cachedFilteredRuns) { row in
                                 RunCard(
                                     row: row,
-                                    expanded: Binding(
-                                        get: { expandedRunIDString == row.id.uuidString },
-                                        set: { isExpanded in
-                                            if isExpanded {
-                                                expandedRunIDString = row.id.uuidString
-                                            } else if expandedRunIDString == row.id.uuidString {
-                                                expandedRunIDString = ""
-                                            }
-                                        }
-                                    ),
+                                    expanded: expansionBinding(for: row),
                                     hasLivePendingApproval: runtime.pendingTool != nil,
                                     deleteRun: { deleteRun(id: row.id) },
                                     openArtifact: { artifact in
@@ -806,7 +810,7 @@ struct RunsView: View {
         }
     }
 
-    private func deleteRun(id: UUID) {
+    func deleteRun(id: UUID) {
         var descriptor = FetchDescriptor<ToolRun>(predicate: #Predicate<ToolRun> { run in
             run.id == id
         })
@@ -838,31 +842,31 @@ struct RunsView: View {
         }
     }
 
-    private var hasOffscreenRuns: Bool {
+    var hasOffscreenRuns: Bool {
         cachedFilteredRuns.count < cachedMatchingRunCount ||
         (activeFilterType == .all && debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && runs.count >= Self.fetchedRunLimit)
     }
 
-    private var emptyRunsTitle: String {
+    var emptyRunsTitle: String {
         cachedStats.total == 0 ? "No runs yet" : "No matching run events"
     }
 
-    private var emptyRunsDetail: String {
+    var emptyRunsDetail: String {
         if cachedStats.total == 0 {
             return "Tool calls, approvals, and terminal proof will appear here after NovaForge acts."
         }
         return "Adjust the search or filter to review more run evidence."
     }
 
-    private var emptyRunsSymbol: String {
+    var emptyRunsSymbol: String {
         cachedStats.total == 0 ? "waveform.path.ecg.rectangle" : "line.3.horizontal.decrease.circle"
     }
 
-    private var emptyRunsTint: Color {
+    var emptyRunsTint: Color {
         cachedStats.total == 0 ? AgentPalette.lilac : AgentPalette.secondaryText
     }
 
-    private var runsCommandFocusPanel: some View {
+    var runsCommandFocusPanel: some View {
         let tint = runsFocusTint
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
@@ -930,7 +934,7 @@ struct RunsView: View {
     }
 
     @ViewBuilder
-    private var runsFocusActions: some View {
+    var runsFocusActions: some View {
         if runtime.pendingTool != nil {
             HStack(spacing: 8) {
                 runsFocusButton(title: "Approve", symbol: "checkmark.shield.fill", tint: AgentPalette.green, action: approvePendingTool)
@@ -955,7 +959,7 @@ struct RunsView: View {
         }
     }
 
-    private func runsFocusButton(title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
+    func runsFocusButton(title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             action()
@@ -971,7 +975,7 @@ struct RunsView: View {
         .agentControlSurface(radius: 12, tint: tint.opacity(0.14), selected: true)
     }
 
-    private var runsFocusTitle: String {
+    var runsFocusTitle: String {
         if let pendingTool = runtime.pendingTool {
             return "\(pendingTool.name) is waiting for approval"
         }
@@ -984,7 +988,7 @@ struct RunsView: View {
         return "Ready to capture the first run"
     }
 
-    private var runsFocusDetail: String {
+    var runsFocusDetail: String {
         if runtime.pendingTool != nil || runtime.wasInterrupted || runtime.lastError != nil || runtime.isWorking {
             return runtime.activityDetail
         }
@@ -1000,7 +1004,7 @@ struct RunsView: View {
         return "Tool calls, approvals, terminal proof, and changed artifacts will appear here as NovaForge works."
     }
 
-    private var runsFocusBadge: String {
+    var runsFocusBadge: String {
         if runtime.pendingTool != nil { return "Approval" }
         if runtime.wasInterrupted { return "Resume" }
         if runtime.lastError != nil { return "Recover" }
@@ -1010,7 +1014,7 @@ struct RunsView: View {
         return "Idle"
     }
 
-    private var runsFocusSymbol: String {
+    var runsFocusSymbol: String {
         if runtime.pendingTool != nil { return "checkmark.shield.fill" }
         if runtime.wasInterrupted { return "pause.circle.fill" }
         if runtime.lastError != nil || cachedStats.failures > 0 { return "exclamationmark.triangle.fill" }
@@ -1019,7 +1023,7 @@ struct RunsView: View {
         return "waveform.path.ecg"
     }
 
-    private var runsFocusTint: Color {
+    var runsFocusTint: Color {
         if runtime.pendingTool != nil { return AgentPalette.cyan }
         if runtime.wasInterrupted { return AgentPalette.lilac }
         if runtime.lastError != nil || cachedStats.failures > 0 { return AgentPalette.rose }
@@ -1027,7 +1031,7 @@ struct RunsView: View {
         return AgentPalette.lilac
     }
 
-    private var auditDashboard: some View {
+    var auditDashboard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 ZStack {
@@ -1156,7 +1160,7 @@ struct RunsView: View {
         .accessibilityIdentifier("runsAuditDashboard")
     }
 
-    private var auditSubtitle: String {
+    var auditSubtitle: String {
         if cachedStats.total == 0 { return "No tools have run yet" }
         if runs.count >= Self.fetchedRunLimit { return "Newest \(Self.fetchedRunLimit) fetched · older runs kept out of render path" }
         if hasOffscreenRuns { return "\(cachedMatchingRunCount) match · newest \(cachedFilteredRuns.count) shown" }
@@ -1166,7 +1170,7 @@ struct RunsView: View {
         return "\(cachedStats.total) logged · \(cachedStats.completed) done · \(cachedStats.failures) failed · \(cachedStats.pending) pending"
     }
 
-    private var metricsBar: some View {
+    var metricsBar: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Logged")
@@ -1206,7 +1210,7 @@ struct RunsView: View {
         }
     }
 
-    private var filterSelector: some View {
+    var filterSelector: some View {
         HStack(spacing: 8) {
             ForEach(FilterType.allCases) { filter in
                 Button {

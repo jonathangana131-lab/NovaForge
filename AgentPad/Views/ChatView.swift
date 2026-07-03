@@ -795,7 +795,8 @@ struct ChatView: View {
             ApprovalSheet(
                 request: request,
                 approve: { runtime.approvePendingTool(conversation: conversation, settings: settings, context: modelContext, project: scopedProject) },
-                reject: { runtime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: scopedProject) }
+                reject: { runtime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: scopedProject) },
+                workspace: runtime.workspace
             )
             .presentationDetents([.fraction(0.68), .large])
             .presentationDragIndicator(.visible)

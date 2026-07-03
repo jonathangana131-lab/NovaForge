@@ -86,6 +86,9 @@
 		AB1000000000000000000016 /* FilesView+Browser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000016 /* FilesView+Browser.swift */; };
 		AB1000000000000000000017 /* FilesView+Search.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000017 /* FilesView+Search.swift */; };
 		AB1000000000000000000018 /* RunCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000018 /* RunCards.swift */; };
+		AB1000000000000000000019 /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000019 /* DiffEngine.swift */; };
+		AB2000000000000000000019 /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000019 /* DiffEngine.swift */; };
+		AB1000000000000000000020 /* DiffReviewSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000020 /* DiffReviewSection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -170,6 +173,8 @@
 		AB0000000000000000000016 /* FilesView+Browser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FilesView+Browser.swift"; sourceTree = "<group>"; };
 		AB0000000000000000000017 /* FilesView+Search.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FilesView+Search.swift"; sourceTree = "<group>"; };
 		AB0000000000000000000018 /* RunCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCards.swift; sourceTree = "<group>"; };
+		AB0000000000000000000019 /* DiffEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffEngine.swift; sourceTree = "<group>"; };
+		AB0000000000000000000020 /* DiffReviewSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffReviewSection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -275,6 +280,7 @@
 				AA0000000000000000000008 /* CommandRunner.swift */,
 				AA0000000000000000000009 /* SandboxToolExecutor.swift */,
 				AA0000000000000000000018 /* WorkspaceArtifact.swift */,
+				AB0000000000000000000019 /* DiffEngine.swift */,
 			);
 			path = Tools;
 			sourceTree = "<group>";
@@ -310,6 +316,7 @@
 				AB0000000000000000000016 /* FilesView+Browser.swift */,
 				AB0000000000000000000017 /* FilesView+Search.swift */,
 				AB0000000000000000000018 /* RunCards.swift */,
+				AB0000000000000000000020 /* DiffReviewSection.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -532,6 +539,8 @@
 				AB1000000000000000000016 /* FilesView+Browser.swift in Sources */,
 				AB1000000000000000000017 /* FilesView+Search.swift in Sources */,
 				AB1000000000000000000018 /* RunCards.swift in Sources */,
+				AB1000000000000000000019 /* DiffEngine.swift in Sources */,
+				AB1000000000000000000020 /* DiffReviewSection.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -566,6 +575,7 @@
 				AB2000000000000000000007 /* ProjectOSEngine.swift in Sources */,
 				AB2000000000000000000008 /* ProjectSummary.swift in Sources */,
 				AB2000000000000000000009 /* ProjectNaming.swift in Sources */,
+				AB2000000000000000000019 /* DiffEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

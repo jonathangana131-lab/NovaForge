@@ -992,7 +992,10 @@ struct ApprovalSheet: View {
     let request: ToolRequest
     let approve: () -> Void
     let reject: () -> Void
+    var workspace: SandboxWorkspace?
     @State private var showingArguments = false
+    @State private var reviewDiff: FileDiff?
+    @State private var reviewPath: String?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -1021,6 +1024,10 @@ struct ApprovalSheet: View {
                         }
 
                         approvalFieldList
+
+                        if let reviewDiff, let reviewPath {
+                            DiffReviewSection(diff: reviewDiff, path: reviewPath)
+                        }
 
                         Button {
                             withAnimation(.smooth(duration: 0.2)) {
@@ -1095,6 +1102,28 @@ struct ApprovalSheet: View {
             .padding(.horizontal)
             .padding(.bottom)
         }
+        .task(id: request.id) {
+            computeReviewDiff()
+        }
+    }
+
+    private func computeReviewDiff() {
+        reviewDiff = nil
+        reviewPath = nil
+        guard request.isMutating,
+              let workspace,
+              let path = request.arguments["path"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty else { return }
+        let existing = try? workspace.read(path)
+        guard let proposed = DiffEngine.proposedContent(
+            toolName: request.name,
+            arguments: request.arguments,
+            existing: existing
+        ) else { return }
+        let diff = DiffEngine.diff(old: existing, new: proposed)
+        guard !diff.isEmpty || diff.isNewFile else { return }
+        reviewDiff = diff
+        reviewPath = path
     }
 
     private var approvalFieldList: some View {

@@ -1248,7 +1248,7 @@ struct ProjectDashboardView: View {
 
 }
 
-private struct ProjectPrimarySurfaceKey: Equatable {
+struct ProjectPrimarySurfaceKey: Equatable {
     let projectID: UUID
     let projectName: String
     let workspaceName: String
@@ -1562,7 +1562,7 @@ private struct ProjectStableSurface<Content: View>: View, Equatable {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder
     func projectMoreSurface(expanded: Bool) -> some View {
         if expanded {
