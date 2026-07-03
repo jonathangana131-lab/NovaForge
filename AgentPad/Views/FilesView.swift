@@ -2050,7 +2050,7 @@ struct FilesView: View {
                 
                 if !items.isEmpty {
                     Spacer()
-                    Text("\(items.count) items")
+                    Text("\(items.count) item\(items.count == 1 ? "" : "s")")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(AgentPalette.secondaryText)
                         .padding(.horizontal, 6)

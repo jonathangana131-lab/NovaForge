@@ -134,11 +134,11 @@ shot "07-terminal" --open-terminal
 
 # --- Chat depth: streaming, tools, code, failure, approval, keyboard --------
 shot "08-chat-stream" --reset-ui --open-chat --stress-streaming
-shot "09-chat-tools" --reset-ui --open-chat --running-tool-call-demo
-shot "10-chat-code" --reset-ui --open-chat --code-block-demo
-shot "11-chat-failed" --reset-ui --open-chat --failed-tool-call-demo
+shot "09-chat-tools" --reset-ui --open-chat --open-project-chat --running-tool-call-demo
+shot "10-chat-code" --reset-ui --open-chat --open-project-chat --code-block-demo
+shot "11-chat-failed" --reset-ui --open-chat --open-project-chat --failed-tool-call-demo
 shot "12-chat-approval" --reset-ui --open-chat --pending-approval-demo
-shot "13-chat-keyboard" WAIT=11 --reset-ui --open-chat --keyboard-focus-demo
+shot "13-chat-keyboard" WAIT=11 --reset-ui --open-chat --settings-local-model-ready --keyboard-focus-demo
 
 # --- Project journey states -------------------------------------------------
 shot "14-project-running" --reset-ui --open-project --project-running-demo

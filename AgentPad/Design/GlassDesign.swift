@@ -1403,6 +1403,31 @@ enum BottomDockMetrics {
     static let shieldHeight: CGFloat = 126
     static let scrollClearance: CGFloat = 176
     static let terminalScrollClearance: CGFloat = 224
+    static let gutterScrimHeight: CGFloat = 150
+}
+
+/// Theme-aware gradient that dissolves scroll content before it reaches the
+/// floating dock and home-indicator gutter. Without it, razor-sharp text
+/// collides with the dock pill and refracts through its Liquid Glass as
+/// doubled ghost glyphs (worst in matrix and whiteGold captures).
+struct DockGutterScrim: View {
+    var height: CGFloat = BottomDockMetrics.gutterScrimHeight
+
+    var body: some View {
+        LinearGradient(
+            stops: [
+                .init(color: AgentPalette.pearl.opacity(0), location: 0),
+                .init(color: AgentPalette.pearl.opacity(0.58), location: 0.44),
+                .init(color: AgentPalette.pearl.opacity(0.95), location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: height)
+        .frame(maxWidth: .infinity)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
 }
 
 extension View {
