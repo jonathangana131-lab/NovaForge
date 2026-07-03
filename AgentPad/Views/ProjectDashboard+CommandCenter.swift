@@ -361,39 +361,6 @@ extension ProjectDashboardView {
     }
 
 
-        tint: Color,
-        identifier: String
-    ) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .black))
-                .foregroundStyle(tint)
-                .frame(width: 22, height: 22)
-                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.tertiaryText)
-                    .textCase(.uppercase)
-                Text(value.isEmpty ? "None" : value)
-                    .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 3)
-                    .minimumScaleFactor(0.82)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 76 : 62, alignment: .topLeading)
-        .background(AgentPalette.row.opacity(0.46), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title): \(value)")
-        .accessibilityIdentifier("projectOSBrief-\(identifier)")
-    }
-
     func projectOSIntentSmallButton(
         title: String,
         symbol: String,
