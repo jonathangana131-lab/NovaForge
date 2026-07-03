@@ -940,39 +940,14 @@ struct FilesView: View {
     var body: some View {
         ZStack {
             VStack(spacing: 12) {
-                HeaderView(
-                    title: "Files",
-                    subtitle: "\(project.name) · \(runtime.workspace.workspaceName)",
-                    symbol: "folder.fill",
-                    tint: AgentPalette.cyan
-                )
-                .padding(.horizontal)
-                .padding(.top, 14)
+                filesScreenHeader
+                    .padding(.horizontal)
+                    .padding(.top, 14)
 
                 if runtime.shouldShowWorkspaceStatusStrip {
                     WorkspaceStatusStrip(runtime: runtime, openChat: openChat)
                         .padding(.horizontal)
                         .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                MissionOSStatusStrip(contract: missionContract, surfaceName: "Files")
-                    .equatable()
-                    .padding(.horizontal)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-
-                projectExplorerOverview
-                    .padding(.horizontal)
-
-                if hasProjectEvidenceShortcuts {
-                    projectEvidenceShortcuts
-                        .padding(.horizontal)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                if !items.isEmpty {
-                    fileStats
-                        .padding(.horizontal)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 breadcrumbs
@@ -1233,150 +1208,47 @@ struct FilesView: View {
         .scrollDismissesKeyboard(.interactively)
     }
 
-    var projectExplorerOverview: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "rectangle.stack.badge.play")
-                .font(.system(size: 13, weight: .black))
-                .foregroundStyle(AgentPalette.cyan)
-                .frame(width: 32, height: 32)
-                .background(AgentPalette.cyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    /// Facelift screen opener: hero title with workspace strapline, live
+    /// file telemetry in the status line, and one quiet mission readout.
+    /// Replaces the old banner + explorer card + stat-chip stack.
+    var filesScreenHeader: some View {
+        let contract = missionContract
+        return VStack(spacing: 0) {
+            NovaScreenHeader(
+                kicker: "Workspace // \(runtime.workspace.workspaceName)",
+                title: "Files",
+                subtitle: filesHeaderStatusLine,
+                symbol: "folder.fill",
+                tint: AgentPalette.cyan,
+                isActive: runtime.isWorking
+            )
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 7) {
-                    Text(currentPath.isEmpty ? "Root workspace" : currentPath)
-                        .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text("\(cachedStats.fileCount) file\(cachedStats.fileCount == 1 ? "" : "s")")
-                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.lilac)
-                        .lineLimit(1)
-                }
-
-                Text(compactProjectSummary)
-                    .font(.system(size: 9.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-
-            Spacer(minLength: 0)
-
-            Text(cachedStats.totalBytesText)
-                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.storageAccent)
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                .agentControlSurface(radius: 9, tint: AgentPalette.storageAccent.opacity(0.10), selected: false)
+            NovaMissionMicroStrip(
+                phaseName: contract.phase.displayName,
+                directive: contract.operatorDirective.isEmpty ? contract.proofRequirement : contract.operatorDirective,
+                readiness: contract.readinessScore,
+                tint: AgentPalette.cyan
+            )
+            .padding(.top, 10)
         }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 52)
-        .agentSurface(radius: 18, tint: AgentPalette.cyan.opacity(0.06))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Project Explorer")
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("filesProjectOverview")
     }
 
-
-    var compactProjectSummary: String {
+    var filesHeaderStatusLine: String {
         var parts: [String] = []
+        parts.append("\(cachedStats.fileCount) file\(cachedStats.fileCount == 1 ? "" : "s")")
         if cachedStats.folderCount > 0 {
             parts.append("\(cachedStats.folderCount) folder\(cachedStats.folderCount == 1 ? "" : "s")")
         }
-        if cachedStats.previewableCount > 0 {
-            parts.append("\(cachedStats.previewableCount) preview\(cachedStats.previewableCount == 1 ? "" : "s")")
+        parts.append(cachedStats.totalBytesText)
+        if cachedStats.recentCount > 0 {
+            parts.append("\(cachedStats.recentCount) fresh")
         }
-        parts.append(cachedStats.recentCount > 0
-            ? "\(cachedStats.recentCount) fresh change\(cachedStats.recentCount == 1 ? "" : "s")"
-            : "no fresh changes")
-        if let newest = cachedStats.newestName { parts.append("latest: \(newest)") }
+        if let newest = cachedStats.newestName {
+            parts.append("latest \(newest)")
+        }
         return parts.joined(separator: " · ")
-    }
-
-    var latestProjectArtifact: ProjectArtifact? {
-        project.artifacts.sorted { lhs, rhs in
-            if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
-            return lhs.path < rhs.path
-        }.first
-    }
-
-    var latestProjectFileChange: ProjectFileChange? {
-        project.fileChanges.sorted { lhs, rhs in
-            if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
-            return lhs.path < rhs.path
-        }.first
-    }
-
-    var hasProjectEvidenceShortcuts: Bool {
-        latestProjectArtifact != nil || latestProjectFileChange != nil
-    }
-
-    var projectEvidenceShortcuts: some View {
-        HStack(spacing: 8) {
-            if let artifact = latestProjectArtifact {
-                projectEvidenceButton(
-                    title: "Latest artifact",
-                    detail: artifact.title.isEmpty ? artifact.path : artifact.title,
-                    symbol: artifact.kind == .web || artifact.previewMode == .web ? "play.rectangle.fill" : "shippingbox.fill",
-                    tint: artifact.previewMode == .web || artifact.previewMode == .nativeGame ? AgentPalette.green : AgentPalette.cyan
-                ) {
-                    previewArtifactPath(artifact.path)
-                }
-            }
-
-            if let change = latestProjectFileChange {
-                projectEvidenceButton(
-                    title: "Latest change",
-                    detail: readableEvidencePath(change.path),
-                    symbol: "doc.text.fill",
-                    tint: AgentPalette.lilac
-                ) {
-                    openWorkspaceEvidencePath(change.path)
-                }
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("filesProjectEvidenceShortcuts")
-    }
-
-    func projectEvidenceButton(
-        title: String,
-        detail: String,
-        symbol: String,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            action()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: symbol)
-                    .font(.system(size: 10.5, weight: .black))
-                    .foregroundStyle(tint)
-                    .frame(width: 26, height: 26)
-                    .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.tertiaryText)
-                        .textCase(.uppercase)
-                    Text(detail)
-                        .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(9)
-            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
-            .agentRowSurface(radius: 15, tint: tint.opacity(0.12), selected: true)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title): \(detail)")
     }
 
     func reload() {
@@ -1675,42 +1547,29 @@ private struct FilesEmptyState: View {
     let openChat: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            AgentCenteredStateView(
-                title: "Workspace folder is empty",
-                detail: "Create a file here or ask NovaForge to generate one from Chat.",
-                symbol: "folder.badge.plus",
-                tint: AgentPalette.cyan
-            )
-
-            HStack(spacing: 10) {
-                Button {
-                    create()
-                } label: {
-                    Label("New File", systemImage: "doc.badge.plus")
-                        .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
-                        .agentControlSurface(radius: 12, tint: AgentPalette.cyan.opacity(0.16), selected: true)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("filesEmptyCreateFile")
-
-                Button {
-                    openChat()
-                } label: {
-                    Label("Ask Chat", systemImage: "sparkles")
-                        .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
-                        .agentControlSurface(radius: 12, tint: AgentPalette.lilac.opacity(0.16), selected: true)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("filesEmptyOpenChat")
-            }
-        }
-        .padding(16)
-        .agentSurface(radius: 22, tint: AgentPalette.cyan.opacity(0.08))
-        .padding(.horizontal)
-        .padding(.vertical, 20)
+        NovaOrbitalEmptyState(
+            symbol: "folder.badge.plus",
+            title: "Nothing forged here yet",
+            detail: "This workspace folder is standing by. Create the first file, or hand NovaForge a mission from Chat and it will land evidence here.",
+            tint: AgentPalette.cyan,
+            actions: [
+                .init(
+                    title: "New File",
+                    symbol: "doc.badge.plus",
+                    tint: AgentPalette.cyan,
+                    accessibilityIdentifier: "filesEmptyCreateFile",
+                    handler: create
+                ),
+                .init(
+                    title: "Ask Chat",
+                    symbol: "sparkles",
+                    tint: AgentPalette.lilac,
+                    accessibilityIdentifier: "filesEmptyOpenChat",
+                    handler: openChat
+                )
+            ]
+        )
+        .padding(.vertical, 12)
     }
 }
 

@@ -699,31 +699,25 @@ struct RunsView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     LazyVStack(spacing: 14) {
-                        HStack(spacing: 12) {
-                            HeaderView(title: "Runs", subtitle: "\(project.name) tools and approvals", symbol: "waveform.path.ecg", tint: AgentPalette.lilac)
-                        }
-                        .padding(.bottom, 4)
+                        runsScreenHeader
+                            .padding(.bottom, 2)
 
                         if runtime.shouldShowWorkspaceStatusStrip {
                             WorkspaceStatusStrip(runtime: runtime, openChat: openChat)
                                 .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        MissionOSStatusStrip(contract: missionContract, surfaceName: "Runs")
-                            .equatable()
-                            .transition(.move(edge: .top).combined(with: .opacity))
-
                         runsCommandFocusPanel
                         auditDashboard
 
                         if cachedFilteredRuns.isEmpty {
-                            AgentCenteredStateView(
+                            NovaOrbitalEmptyState(
+                                symbol: emptyRunsSymbol,
                                 title: emptyRunsTitle,
                                 detail: emptyRunsDetail,
-                                symbol: emptyRunsSymbol,
                                 tint: emptyRunsTint
                             )
-                            .padding(.top, 4)
+                            .padding(.top, -6)
                         } else {
                             ForEach(cachedFilteredRuns) { row in
                                 RunCard(
@@ -901,69 +895,85 @@ struct RunsView: View {
         cachedStats.total == 0 ? AgentPalette.lilac : AgentPalette.secondaryText
     }
 
+    var runsScreenHeader: some View {
+        let contract = missionContract
+        return VStack(spacing: 0) {
+            NovaScreenHeader(
+                kicker: "Proof Engine // \(project.name)",
+                title: "Runs",
+                subtitle: runsHeaderStatusLine,
+                symbol: "waveform.path.ecg",
+                tint: AgentPalette.lilac,
+                isActive: runtime.isWorking
+            )
+
+            NovaMissionMicroStrip(
+                phaseName: contract.phase.displayName,
+                directive: contract.operatorDirective.isEmpty ? contract.proofRequirement : contract.operatorDirective,
+                readiness: contract.readinessScore,
+                tint: AgentPalette.lilac,
+                onTap: openProject
+            )
+            .padding(.top, 10)
+        }
+    }
+
+    var runsHeaderStatusLine: String {
+        if cachedStats.total == 0 { return "Every tool call becomes auditable proof" }
+        var parts = ["\(cachedStats.total) logged"]
+        if cachedStats.completed > 0 { parts.append("\(cachedStats.completed) done") }
+        if cachedStats.failures > 0 { parts.append("\(cachedStats.failures) failed") }
+        if cachedStats.pending > 0 { parts.append("\(cachedStats.pending) pending") }
+        return parts.joined(separator: " · ")
+    }
+
     var runsCommandFocusPanel: some View {
         let tint = runsFocusTint
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: runsFocusSymbol)
-                    .font(.system(size: 14, weight: .black))
-                    .foregroundStyle(tint)
-                    .frame(width: 34, height: 34)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 7) {
-                        Text("Run Command Center")
-                            .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.tertiaryText)
-                            .textCase(.uppercase)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text("Run Command")
+                            .novaKickerText(AgentPalette.tertiaryText)
                         Text(runsFocusBadge)
-                            .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(tint)
-                            .lineLimit(1)
-                            .padding(.horizontal, 7)
+                            .novaLabel(tint)
+                            .padding(.horizontal, 8)
                             .frame(height: 19)
-                            .background(tint.opacity(0.10), in: Capsule(style: .continuous))
+                            .background(tint.opacity(0.12), in: Capsule(style: .continuous))
                     }
 
                     Text(runsFocusTitle)
-                        .font(.system(size: 15, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.display)
                         .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.72)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("runsFocusTitle")
 
                     Text(runsFocusDetail)
-                        .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.body)
                         .foregroundStyle(AgentPalette.secondaryText)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("runsFocusDetail")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+
+                NovaReticleGlyph(symbol: runsFocusSymbol, tint: tint, size: 54, isActive: runtime.isWorking)
             }
 
-            HStack(spacing: 7) {
-                RunFocusMetric(value: "\(cachedStats.pending)", label: "Approvals", symbol: "checkmark.shield.fill", tint: cachedStats.pending > 0 ? AgentPalette.cyan : AgentPalette.tertiaryText)
-                RunFocusMetric(value: "\(cachedStats.failures)", label: "Issues", symbol: "exclamationmark.triangle.fill", tint: cachedStats.failures > 0 ? AgentPalette.rose : AgentPalette.green)
-                RunFocusMetric(value: "\(cachedStats.completed)", label: "Proof", symbol: "checkmark.seal.fill", tint: cachedStats.completed > 0 ? AgentPalette.green : AgentPalette.tertiaryText)
-            }
+            NovaTelemetryStrip(items: [
+                NovaTelemetryItem("Approvals", "\(cachedStats.pending)", tint: AgentPalette.cyan),
+                NovaTelemetryItem("Issues", "\(cachedStats.failures)", tint: AgentPalette.rose),
+                NovaTelemetryItem("Proof", "\(cachedStats.completed)", tint: AgentPalette.green)
+            ])
 
             runsFocusActions
         }
-        .padding(12)
-        .background(
-            LinearGradient(
-                colors: [AgentPalette.surface, tint.opacity(0.10), AgentPalette.surfaceAlt.opacity(0.35)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(tint.opacity(0.18), lineWidth: 0.65)
-        )
+        .padding(16)
+        .agentSurface(radius: 24, tint: tint.opacity(0.10))
+        .overlay(NovaCornerTicks(tint: tint.opacity(0.38), length: 9, thickness: 1.3, inset: 8))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("runsCommandFocusPanel")
     }
@@ -996,18 +1006,24 @@ struct RunsView: View {
 
     func runsFocusButton(title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            NovaHaptics.tick()
             action()
         } label: {
-            Label(title, systemImage: symbol)
-                .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+            HStack(spacing: 7) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .bold))
+                Text(title)
+                    .font(NovaType.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(AgentPalette.ink)
-        .agentControlSurface(radius: 12, tint: tint.opacity(0.14), selected: true)
+        .background(Capsule(style: .continuous).fill(tint.opacity(0.13)))
+        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.30), lineWidth: 0.8))
     }
 
     var runsFocusTitle: String {
@@ -1067,58 +1083,16 @@ struct RunsView: View {
     }
 
     var auditDashboard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .fill(AgentPalette.lilac.opacity(0.14))
-                        .frame(width: 42, height: 42)
-                    Image(systemName: "chart.xyaxis.line")
-                        .font(.system(size: 17, weight: .black))
-                        .foregroundStyle(AgentPalette.lilac)
-                }
+        VStack(alignment: .leading, spacing: 13) {
+            NovaSectionMark(title: "Run Audit", detail: auditSectionDetail, tint: AgentPalette.lilac)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Run Audit")
-                        .font(.system(size: 15, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.ink)
-                    Text(auditSubtitle)
-                        .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
-
-                Text("\(cachedFilteredRuns.count) shown")
-                    .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.lilac)
-                    .padding(.horizontal, 8)
-                    .frame(height: 24)
-                    .agentControlSurface(radius: 9, tint: AgentPalette.lilac.opacity(0.12), selected: true)
-            }
-
-            HStack(spacing: 8) {
-                AuditMetric(value: cachedStats.successRateText, label: "Done Rate", symbol: "checkmark.seal.fill", tint: AgentPalette.green)
-                AuditMetric(value: cachedStats.averageDurationText, label: "Average", symbol: "timer", tint: AgentPalette.lilac)
-                AuditMetric(value: "\(cachedStats.failures)", label: "Issues", symbol: "exclamationmark.triangle.fill", tint: cachedStats.failures > 0 ? AgentPalette.rose : AgentPalette.cyan)
-            }
-
-            Label(cachedStats.successRateExplanation, systemImage: "info.circle.fill")
-                .font(.system(size: 9.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.secondaryText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .agentRowSurface(radius: 11, tint: AgentPalette.green.opacity(0.04))
-                .accessibilityIdentifier("runsSuccessRateExplanation")
-
-            HStack(spacing: 8) {
-                AuditMetric(value: "\(cachedStats.total)", label: "Logged", symbol: "list.bullet.rectangle.fill", tint: AgentPalette.cyan)
-                AuditMetric(value: "\(cachedStats.mutations)", label: "Writes", symbol: "pencil.and.outline", tint: AgentPalette.storageAccent)
-                AuditMetric(value: "\(cachedStats.pending)", label: "Pending", symbol: "shield.lefthalf.filled", tint: cachedStats.pending > 0 ? AgentPalette.lilac : AgentPalette.secondaryText)
-            }
+            NovaTelemetryStrip(items: [
+                NovaTelemetryItem("Done", cachedStats.successRateText, tint: AgentPalette.green, isEmphasized: cachedStats.completed > 0),
+                NovaTelemetryItem("Avg", cachedStats.averageDurationText, tint: AgentPalette.lilac, isEmphasized: cachedStats.completed > 0),
+                NovaTelemetryItem("Logged", "\(cachedStats.total)", tint: AgentPalette.cyan),
+                NovaTelemetryItem("Writes", "\(cachedStats.mutations)", tint: AgentPalette.storageAccent),
+                NovaTelemetryItem("Pending", "\(cachedStats.pending)", tint: AgentPalette.warning)
+            ], compact: true)
 
             HStack(spacing: 9) {
                 Image(systemName: "magnifyingglass")
@@ -1126,7 +1100,7 @@ struct RunsView: View {
                     .foregroundStyle(AgentPalette.secondaryText)
                 TextField("Search tool, status, path, or command", text: $searchText)
                     .textFieldStyle(.plain)
-                    .font(.subheadline.weight(.semibold))
+                    .font(NovaType.body)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.search)
@@ -1154,72 +1128,54 @@ struct RunsView: View {
                     .accessibilityIdentifier("runsSearchClearButton")
                 }
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: AgentDesign.minimumTouchTarget)
-            .agentControlSurface(radius: 15, tint: AgentPalette.lilac.opacity(0.10))
-
-            if !runs.isEmpty {
-                HStack(spacing: 7) {
-                    Label("Newest first", systemImage: "waveform.path.ecg")
-                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.lilac)
-                        .textCase(.uppercase)
-                    Spacer(minLength: 0)
-                    Text("\(min(cachedSparklineDurations.count, 10)) recent durations tracked")
-                        .font(.system(size: 8.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.tertiaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .agentRowSurface(radius: 11, tint: AgentPalette.lilac.opacity(0.04))
-            }
+            .padding(.horizontal, 15)
+            .frame(minHeight: AgentDesign.minimumTouchTarget + 2)
+            .background(Capsule(style: .continuous).fill(AgentPalette.controlFill.opacity(0.55)))
+            .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.lilac.opacity(searchFocused ? 0.42 : 0.16), lineWidth: 0.8))
 
             HStack {
                 filterSelector
                 Spacer(minLength: 0)
             }
         }
-        .padding(12)
-        .background(
-            LinearGradient(
-                colors: [AgentPalette.surface, AgentPalette.lilac.opacity(0.10), AgentPalette.cyan.opacity(0.05)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-        )
-        .agentSurface(radius: 22, tint: AgentPalette.lilac.opacity(0.08))
+        .padding(.top, 4)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("runsAuditDashboard")
     }
 
-    var auditSubtitle: String {
-        if cachedStats.total == 0 { return "No tools have run yet" }
-        if runs.count >= Self.fetchedRunLimit { return "Newest \(Self.fetchedRunLimit) fetched · older runs kept out of render path" }
-        if hasOffscreenRuns { return "\(cachedMatchingRunCount) match · newest \(cachedFilteredRuns.count) shown" }
-        if cachedStats.pending == 0 {
-            return "\(cachedStats.total) logged · \(cachedStats.completed) done · \(cachedStats.failures) failed"
-        }
-        return "\(cachedStats.total) logged · \(cachedStats.completed) done · \(cachedStats.failures) failed · \(cachedStats.pending) pending"
+    var auditSectionDetail: String {
+        if cachedStats.total == 0 { return "Standing by" }
+        if hasOffscreenRuns { return "\(cachedFilteredRuns.count) of \(cachedMatchingRunCount) shown" }
+        return "\(cachedFilteredRuns.count) shown"
     }
-
 
     var filterSelector: some View {
         HStack(spacing: 8) {
             ForEach(FilterType.allCases) { filter in
                 Button {
+                    NovaHaptics.lensChanged()
                     withAnimation(.smooth(duration: 0.22)) {
                         restoredFilterTypeRawValue = filter.rawValue
                         searchFocused = false
                     }
                 } label: {
                     Text(filter.rawValue)
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: AgentDesign.minimumTouchTarget)
-                        .agentControlSurface(radius: 12, tint: AgentPalette.cyan, selected: activeFilterType == filter)
+                        .font(NovaType.caption)
+                        .foregroundStyle(activeFilterType == filter ? AgentPalette.ink : AgentPalette.secondaryText)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: AgentDesign.minimumTouchTarget - 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(activeFilterType == filter ? AgentPalette.cyan.opacity(0.16) : AgentPalette.controlFill.opacity(0.4))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(
+                                    activeFilterType == filter ? AgentPalette.cyan.opacity(0.42) : AgentPalette.controlBorder.opacity(0.5),
+                                    lineWidth: 0.8
+                                )
+                        )
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Show \(filter.rawValue.lowercased()) runs")

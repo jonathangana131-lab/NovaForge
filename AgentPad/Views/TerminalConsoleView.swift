@@ -242,67 +242,58 @@ struct TerminalConsoleView: View {
     }
     
     private var header: some View {
-        VStack(spacing: 8) {
-            HStack {
-                HeaderView(title: "Terminal", subtitle: "Active: \(runtime.workspace.workspaceName)", symbol: "terminal", tint: AgentPalette.lilac)
-                Spacer()
-                
-                Button {
-                    let impact = UIImpactFeedbackGenerator(style: .light)
-                    impact.impactOccurred()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        isSearchExpanded.toggle()
+        VStack(spacing: 10) {
+            NovaScreenHeader(
+                kicker: "Scoped Proof Surface",
+                title: "Terminal",
+                subtitle: terminalHeaderStatusLine,
+                symbol: "terminal",
+                tint: AgentPalette.lilac,
+                isActive: isExecuting,
+                showsGlyph: false
+            ) {
+                HStack(spacing: 8) {
+                    terminalHeaderButton(
+                        symbol: "magnifyingglass",
+                        tint: AgentPalette.lilac,
+                        selected: isSearchExpanded,
+                        label: isSearchExpanded ? "Hide terminal search" : "Show terminal search",
+                        identifier: "terminalSearchToggle"
+                    ) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            isSearchExpanded.toggle()
+                        }
                     }
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13, weight: .bold))
-                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                }
-                .buttonStyle(.plain)
-                .agentControlSurface(radius: 10, tint: AgentPalette.lilac, selected: isSearchExpanded)
-                .contentShape(Rectangle())
-                .accessibilityLabel(isSearchExpanded ? "Hide terminal search" : "Show terminal search")
-                .accessibilityIdentifier("terminalSearchToggle")
-                
-                Button(action: clearConsole) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 13, weight: .bold))
-                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                }
-                .buttonStyle(.plain)
-                .agentControlSurface(radius: 12, tint: AgentPalette.rose, selected: true)
-                .contentShape(Rectangle())
-                .accessibilityLabel("Clear terminal console")
-                .accessibilityIdentifier("terminalClearConsoleButton")
 
-                if let close {
-                    Button {
-                        close()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                    terminalHeaderButton(
+                        symbol: "trash",
+                        tint: AgentPalette.rose,
+                        selected: false,
+                        label: "Clear terminal console",
+                        identifier: "terminalClearConsoleButton",
+                        action: clearConsole
+                    )
+
+                    if let close {
+                        terminalHeaderButton(
+                            symbol: "xmark",
+                            tint: AgentPalette.secondaryText,
+                            selected: false,
+                            label: "Close terminal",
+                            identifier: "terminalCloseButton",
+                            action: close
+                        )
                     }
-                    .buttonStyle(.plain)
-                    .agentControlSurface(radius: 12, tint: AgentPalette.secondaryText.opacity(0.65), selected: true)
-                    .contentShape(Rectangle())
-                    .accessibilityLabel("Close terminal")
-                    .accessibilityIdentifier("terminalCloseButton")
                 }
             }
 
             commandDeckOverview
-            terminalSessionOverview
 
             if runtime.shouldShowWorkspaceStatusStrip {
                 WorkspaceStatusStrip(runtime: runtime, openChat: openChat)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            MissionOSStatusStrip(contract: missionContract, surfaceName: "Terminal")
-                .equatable()
-                .transition(.move(edge: .top).combined(with: .opacity))
-            
             if isSearchExpanded {
                 HStack(spacing: 12) {
                     TextField("Filter console log lines...", text: $searchQuery)
@@ -368,30 +359,50 @@ struct TerminalConsoleView: View {
         .accessibilityIdentifier("terminalCommandDeck")
     }
 
-    private var terminalSessionOverview: some View {
-        HStack(spacing: 8) {
-            TerminalConsoleMetric(
-                value: "\(consoleLines.count)",
-                label: "Records",
-                symbol: "terminal.fill",
-                tint: AgentPalette.cyan
-            )
-            TerminalConsoleMetric(
-                value: "\(filteredConsoleLines.count)",
-                label: "Visible",
-                symbol: "line.3.horizontal.decrease.circle.fill",
-                tint: AgentPalette.lilac
-            )
-            TerminalConsoleMetric(
-                value: "\(commandHistory.count)",
-                label: "History",
-                symbol: "clock.arrow.circlepath",
-                tint: AgentPalette.green
-            )
+    private var terminalHeaderStatusLine: String {
+        let workspaceName = runtime.workspace.workspaceName
+        if consoleLines.isEmpty {
+            return "\(workspaceName) · scoped to the workspace"
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(consoleLines.count) terminal records, \(filteredConsoleLines.count) visible, \(commandHistory.count) history commands")
-        .accessibilityIdentifier("terminalSessionOverview")
+        var parts = ["\(workspaceName)", "\(consoleLines.count) record\(consoleLines.count == 1 ? "" : "s")"]
+        if !debouncedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append("\(filteredConsoleLines.count) match\(filteredConsoleLines.count == 1 ? "" : "es")")
+        }
+        if commandHistory.count > 0 {
+            parts.append("\(commandHistory.count) in history")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func terminalHeaderButton(
+        symbol: String,
+        tint: Color,
+        selected: Bool,
+        label: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            NovaHaptics.tick()
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(selected ? AgentPalette.ink : tint)
+                .frame(width: 40, height: 40)
+                .background(
+                    Circle()
+                        .fill(tint.opacity(selected ? 0.26 : 0.10))
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(tint.opacity(selected ? 0.5 : 0.24), lineWidth: 0.9)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
     }
 
     private func terminalPresetButton(_ suggestion: TerminalCommandSuggestion) -> some View {
@@ -586,29 +597,98 @@ struct TerminalConsoleView: View {
         }
     }
 
+    /// The console-boot moment: a mono session block rendered like real
+    /// terminal output, with a live prompt and blinking cursor waiting
+    /// for the first command.
     private var terminalEmptyState: some View {
-        AgentInlineStateView(
-            title: "No terminal output yet",
-            detail: "Pick a preset above or type a safe command below. Terminal is a scoped proof surface, not the main workspace.",
-            symbol: "text.line.first.and.arrowtriangle.forward",
-            tint: AgentPalette.cyan
-        )
-        .padding(16)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(AgentPalette.terminalPrompt.opacity(index == 0 ? 0.85 : 0.28))
+                        .frame(width: 7, height: 7)
+                }
+                Spacer(minLength: 8)
+                Text("tty · \(runtime.workspace.workspaceName)")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(AgentPalette.terminalOutput.opacity(0.75))
+            }
+            .padding(.bottom, 14)
+
+            Group {
+                Text("NOVAFORGE PROOF SHELL")
+                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(AgentPalette.terminalPrompt)
+                    .tracking(2.2)
+                Text("session scoped to the active workspace — nothing outside it can be touched")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(AgentPalette.terminalOutput)
+                    .padding(.top, 3)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                terminalBootHint(command: "ls", note: "list workspace root")
+                terminalBootHint(command: "find . -name \"*.md\"", note: "locate files by pattern")
+                terminalBootHint(command: "wc -l README.md", note: "capture countable proof")
+            }
+            .padding(.top, 16)
+
+            HStack(spacing: 8) {
+                Text("$")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(AgentPalette.terminalPrompt)
+                TerminalBlinkingCursor()
+            }
+            .padding(.top, 18)
+        }
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .agentSurface(radius: 20, tint: AgentPalette.cyan.opacity(0.08))
+        .background(
+            AgentPalette.terminalBackground.opacity(0.94),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(AgentPalette.terminalPrompt.opacity(0.22), lineWidth: 0.8)
+        )
+        .overlay(NovaCornerTicks(tint: AgentPalette.terminalPrompt.opacity(0.4), length: 8, thickness: 1.2, inset: 6))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Terminal is empty. Pick a preset above or type a safe command below. Terminal is a scoped proof surface.")
         .accessibilityIdentifier("terminalEmptyState")
     }
 
+    private func terminalBootHint(command: String, note: String) -> some View {
+        Button {
+            NovaHaptics.tick()
+            inputCommand = command
+            commandFocused = true
+        } label: {
+            HStack(spacing: 9) {
+                Text("›")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(AgentPalette.terminalPrompt.opacity(0.6))
+                Text(command)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(AgentPalette.terminalCommand)
+                Text("· \(note)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(AgentPalette.terminalOutput.opacity(0.7))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Use command \(command). \(note)")
+    }
+
     private var terminalSearchEmptyState: some View {
-        AgentInlineStateView(
+        NovaOrbitalEmptyState(
+            symbol: "magnifyingglass",
             title: "No output matches",
             detail: "Clear the console filter or search for a command, path, warning, or proof line.",
-            symbol: "magnifyingglass.circle",
             tint: AgentPalette.lilac
         )
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .agentSurface(radius: 20, tint: AgentPalette.lilac.opacity(0.08))
         .accessibilityIdentifier("terminalSearchEmptyState")
     }
     
@@ -1132,36 +1212,23 @@ struct TerminalConsoleView: View {
     }
 }
 
-private struct TerminalConsoleMetric: View {
-    let value: String
-    let label: String
-    let symbol: String
-    let tint: Color
+/// Classic block cursor idling on the empty prompt line.
+private struct TerminalBlinkingCursor: View {
+    @State private var visible = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .black))
-                .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
-                .agentControlSurface(radius: 8, tint: tint.opacity(0.12), selected: true)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label)
-                    .font(.system(size: 7.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.tertiaryText)
-                    .textCase(.uppercase)
-                Text(value)
-                    .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.ink)
-                    .lineLimit(1)
+        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+            .fill(AgentPalette.terminalPrompt)
+            .frame(width: 9, height: 17)
+            .opacity(visible ? 0.95 : 0.12)
+            .onAppear {
+                guard AgentPerformance.allowsDecorativeMotion, !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) {
+                    visible = false
+                }
             }
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-        .padding(.horizontal, 9)
-        .agentRowSurface(radius: 13, tint: tint.opacity(0.06))
+            .accessibilityHidden(true)
     }
 }
 

@@ -12,20 +12,14 @@ import UIKit
 
 extension FilesView {
     var projectMemoryWorkbench: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "rectangle.stack.badge.person.crop.fill")
-                    .font(.system(size: 14, weight: .black))
-                    .foregroundStyle(AgentPalette.green)
-                    .frame(width: 34, height: 34)
-                    .agentControlSurface(radius: 12, tint: AgentPalette.green.opacity(0.12), selected: true)
-
-                VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Project Memory")
-                        .font(.system(size: 14, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.title)
                         .foregroundStyle(AgentPalette.ink)
                     Text(projectMemorySubtitle)
-                        .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.caption)
                         .foregroundStyle(AgentPalette.secondaryText)
                         .lineLimit(2)
                 }
@@ -34,9 +28,8 @@ extension FilesView {
 
                 if memoryIsStale {
                     Label("Stale", systemImage: "clock.badge.exclamationmark")
-                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.warning)
-                        .padding(.horizontal, 8)
+                        .novaLabel(AgentPalette.warning)
+                        .padding(.horizontal, 9)
                         .frame(height: 24)
                         .agentControlSurface(radius: 8, tint: AgentPalette.warning.opacity(0.12), selected: true)
                 }
@@ -90,12 +83,13 @@ extension FilesView {
     }
 
     var memoryMetricsRow: some View {
-        HStack(spacing: 8) {
-            FileMetricPill(value: "\(changedFileCount)", label: "Changes", symbol: "doc.badge.gearshape.fill", tint: AgentPalette.cyan)
-            FileMetricPill(value: "\(artifactCount)", label: "Artifacts", symbol: "shippingbox.fill", tint: AgentPalette.green)
-            FileMetricPill(value: "\(verificationCount)", label: "Proof", symbol: "checkmark.seal.fill", tint: AgentPalette.lilac)
-            FileMetricPill(value: "\(riskCount)", label: "Risk", symbol: "exclamationmark.triangle.fill", tint: riskCount > 0 ? AgentPalette.warning : AgentPalette.secondaryText)
-        }
+        NovaTelemetryStrip(items: [
+            NovaTelemetryItem("Changes", "\(changedFileCount)", tint: AgentPalette.cyan),
+            NovaTelemetryItem("Artifacts", "\(artifactCount)", tint: AgentPalette.green),
+            NovaTelemetryItem("Proof", "\(verificationCount)", tint: AgentPalette.lilac),
+            NovaTelemetryItem("Risk", "\(riskCount)", tint: AgentPalette.warning)
+        ], compact: true)
+        .padding(.vertical, 2)
     }
 
     var workbenchLensBar: some View {
@@ -543,11 +537,4 @@ extension FilesView {
             .agentControlSurface(radius: 8, tint: tint.opacity(0.10), selected: true)
     }
 
-    var fileStats: some View {
-        HStack(spacing: 10) {
-            MenuStatChip(title: "Folders", value: "\(cachedStats.folderCount)", symbol: "folder.fill", tint: AgentPalette.cyan)
-            MenuStatChip(title: "Files", value: "\(cachedStats.fileCount)", symbol: "doc.fill", tint: AgentPalette.lilac)
-            MenuStatChip(title: "Size", value: cachedStats.totalBytesText, symbol: "internaldrive.fill", tint: AgentPalette.storageAccent)
-        }
-    }
 }
