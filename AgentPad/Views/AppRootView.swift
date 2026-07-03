@@ -970,6 +970,13 @@ struct AppRootView: View {
             content()
                 .zIndex(1)
 
+            if tab != .chat {
+                DockGutterScrim()
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .ignoresSafeArea(edges: .bottom)
+                    .zIndex(1.5)
+            }
+
             tabWorldMotionOverlay(for: tab)
                 .zIndex(2)
         }

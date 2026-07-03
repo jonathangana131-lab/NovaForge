@@ -660,7 +660,7 @@ struct ChatView: View {
                 refreshDurableRunSnapshot()
             }
             .onAppear {
-                #if DEBUG
+                #if DEBUG || targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--keyboard-multiline-draft-demo") {
                     prompt = "First line of a preserved draft\nSecond line stays in the composer"
                     forceScrollToBottom = true
@@ -1850,10 +1850,21 @@ private struct ChatHeaderBackground: View {
 
 private struct ChatDockBackground: View {
     var body: some View {
-        Color.clear
-            .ignoresSafeArea(edges: .bottom)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        // The transcript scrolls beneath the composer; without a backdrop its
+        // raw text bleeds through the glass at full contrast and keeps going
+        // into the dock gutter. Dissolve it into the theme canvas instead.
+        LinearGradient(
+            stops: [
+                .init(color: AgentPalette.pearl.opacity(0), location: 0),
+                .init(color: AgentPalette.pearl.opacity(0.70), location: 0.28),
+                .init(color: AgentPalette.pearl.opacity(0.96), location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .ignoresSafeArea(edges: .bottom)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
