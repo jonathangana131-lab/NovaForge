@@ -729,11 +729,11 @@ private struct ArtifactPreviewStudio: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            // Without an explicit expansion the identity column settles at its
-            // ideal width and the title row starves down to "proje…".
+            // maxWidth alone still splits surplus 50/50 with a trailing
+            // Spacer (equal HStack flexibility); priority makes the identity
+            // column claim it first, so no Spacer needed.
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: 0)
+            .layoutPriority(1)
 
             headerButton(symbol: "square.and.arrow.up", label: "Share Artifact", action: share)
                 .accessibilityIdentifier("artifactShareButton")

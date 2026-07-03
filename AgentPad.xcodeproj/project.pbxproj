@@ -82,6 +82,10 @@
 		AB1000000000000000000012 /* ProjectDashboard+Overview.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000012 /* ProjectDashboard+Overview.swift */; };
 		AB1000000000000000000013 /* ProjectDashboard+Sections.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000013 /* ProjectDashboard+Sections.swift */; };
 		AB1000000000000000000014 /* ProjectDashboard+Ledger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000014 /* ProjectDashboard+Ledger.swift */; };
+		AB1000000000000000000015 /* FilesView+Memory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000015 /* FilesView+Memory.swift */; };
+		AB1000000000000000000016 /* FilesView+Browser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000016 /* FilesView+Browser.swift */; };
+		AB1000000000000000000017 /* FilesView+Search.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000017 /* FilesView+Search.swift */; };
+		AB1000000000000000000018 /* RunCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000018 /* RunCards.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -158,10 +162,14 @@
 		AB0000000000000000000008 /* ProjectSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectSummary.swift; sourceTree = "<group>"; };
 		AB0000000000000000000009 /* ProjectNaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNaming.swift; sourceTree = "<group>"; };
 		AB0000000000000000000010 /* CodeHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeHighlighter.swift; sourceTree = "<group>"; };
-		AB0000000000000000000011 /* ProjectDashboard+CommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDashboard+CommandCenter.swift; sourceTree = "<group>"; };
-		AB0000000000000000000012 /* ProjectDashboard+Overview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDashboard+Overview.swift; sourceTree = "<group>"; };
-		AB0000000000000000000013 /* ProjectDashboard+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDashboard+Sections.swift; sourceTree = "<group>"; };
-		AB0000000000000000000014 /* ProjectDashboard+Ledger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDashboard+Ledger.swift; sourceTree = "<group>"; };
+		AB0000000000000000000011 /* ProjectDashboard+CommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProjectDashboard+CommandCenter.swift"; sourceTree = "<group>"; };
+		AB0000000000000000000012 /* ProjectDashboard+Overview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProjectDashboard+Overview.swift"; sourceTree = "<group>"; };
+		AB0000000000000000000013 /* ProjectDashboard+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProjectDashboard+Sections.swift"; sourceTree = "<group>"; };
+		AB0000000000000000000014 /* ProjectDashboard+Ledger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProjectDashboard+Ledger.swift"; sourceTree = "<group>"; };
+		AB0000000000000000000015 /* FilesView+Memory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FilesView+Memory.swift"; sourceTree = "<group>"; };
+		AB0000000000000000000016 /* FilesView+Browser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FilesView+Browser.swift"; sourceTree = "<group>"; };
+		AB0000000000000000000017 /* FilesView+Search.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FilesView+Search.swift"; sourceTree = "<group>"; };
+		AB0000000000000000000018 /* RunCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCards.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -298,6 +306,10 @@
 				AB0000000000000000000012 /* ProjectDashboard+Overview.swift */,
 				AB0000000000000000000013 /* ProjectDashboard+Sections.swift */,
 				AB0000000000000000000014 /* ProjectDashboard+Ledger.swift */,
+				AB0000000000000000000015 /* FilesView+Memory.swift */,
+				AB0000000000000000000016 /* FilesView+Browser.swift */,
+				AB0000000000000000000017 /* FilesView+Search.swift */,
+				AB0000000000000000000018 /* RunCards.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -516,6 +528,10 @@
 				AB1000000000000000000012 /* ProjectDashboard+Overview.swift in Sources */,
 				AB1000000000000000000013 /* ProjectDashboard+Sections.swift in Sources */,
 				AB1000000000000000000014 /* ProjectDashboard+Ledger.swift in Sources */,
+				AB1000000000000000000015 /* FilesView+Memory.swift in Sources */,
+				AB1000000000000000000016 /* FilesView+Browser.swift in Sources */,
+				AB1000000000000000000017 /* FilesView+Search.swift in Sources */,
+				AB1000000000000000000018 /* RunCards.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

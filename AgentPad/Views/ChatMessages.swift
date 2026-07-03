@@ -832,6 +832,7 @@ struct CodeBlockView: View {
                         .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.tertiaryText)
                         .lineLimit(1)
+                        .fixedSize()
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
