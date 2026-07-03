@@ -31,7 +31,8 @@ final class RunActivityController {
         )
         lastStatusLine = statusLine
         if let activity {
-            Task { await activity.update(ActivityContent(state: state, staleDate: nil)) }
+            nonisolated(unsafe) let live = activity
+            Task { await live.update(ActivityContent(state: state, staleDate: nil)) }
             return
         }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
@@ -51,7 +52,8 @@ final class RunActivityController {
             isWorking: true,
             startedAt: previous.startedAt
         )
-        Task { await activity.update(ActivityContent(state: state, staleDate: nil)) }
+        nonisolated(unsafe) let live = activity
+        Task { await live.update(ActivityContent(state: state, staleDate: nil)) }
     }
 
     func runEnded(statusLine: String, success: Bool) {
@@ -65,8 +67,9 @@ final class RunActivityController {
             isWorking: false,
             startedAt: previous.startedAt
         )
+        nonisolated(unsafe) let live = activity
         Task {
-            await activity.end(
+            await live.end(
                 ActivityContent(state: state, staleDate: nil),
                 dismissalPolicy: .after(Date().addingTimeInterval(6))
             )
