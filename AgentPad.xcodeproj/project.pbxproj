@@ -90,6 +90,14 @@
 		AB2000000000000000000019 /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000019 /* DiffEngine.swift */; };
 		AB1000000000000000000020 /* DiffReviewSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000020 /* DiffReviewSection.swift */; };
 		AB1000000000000000000021 /* RunReplaySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000021 /* RunReplaySheet.swift */; };
+		AB1000000000000000000022 /* ModelManagerPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000022 /* ModelManagerPanels.swift */; };
+		AC0000000000000000000101 /* NovaForgeWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000001 /* NovaForgeWidgetBundle.swift */; };
+		AC0000000000000000000102 /* ProjectStatusWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000002 /* ProjectStatusWidget.swift */; };
+		AC0000000000000000000103 /* RunActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000003 /* RunActivityWidget.swift */; };
+		AC0000000000000000000104 /* NovaForgeSharedActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000004 /* NovaForgeSharedActivity.swift */; };
+		AC0000000000000000000105 /* NovaForgeSharedActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000004 /* NovaForgeSharedActivity.swift */; };
+		AC0000000000000000000106 /* NovaForgeWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000006 /* NovaForgeWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AB1000000000000000000023 /* RunActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000023 /* RunActivityController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,7 +115,28 @@
 			remoteGlobalIDString = AA0000000000000000000601;
 			remoteInfo = AgentPad;
 		};
+		AC0000000000000000000401 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000501 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AC0000000000000000000301;
+			remoteInfo = NovaForgeWidgets;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AC0000000000000000000204 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				AC0000000000000000000106 /* NovaForgeWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000000 /* AgentTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTheme.swift; sourceTree = "<group>"; };
@@ -177,6 +206,14 @@
 		AB0000000000000000000019 /* DiffEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffEngine.swift; sourceTree = "<group>"; };
 		AB0000000000000000000020 /* DiffReviewSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffReviewSection.swift; sourceTree = "<group>"; };
 		AB0000000000000000000021 /* RunReplaySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunReplaySheet.swift; sourceTree = "<group>"; };
+		AB0000000000000000000022 /* ModelManagerPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManagerPanels.swift; sourceTree = "<group>"; };
+		AC0000000000000000000001 /* NovaForgeWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaForgeWidgetBundle.swift; sourceTree = "<group>"; };
+		AC0000000000000000000002 /* ProjectStatusWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStatusWidget.swift; sourceTree = "<group>"; };
+		AC0000000000000000000003 /* RunActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunActivityWidget.swift; sourceTree = "<group>"; };
+		AC0000000000000000000004 /* NovaForgeSharedActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaForgeSharedActivity.swift; sourceTree = "<group>"; };
+		AC0000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AC0000000000000000000006 /* NovaForgeWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NovaForgeWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0000000000000000000023 /* RunActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunActivityController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -202,6 +239,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AC0000000000000000000202 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -211,6 +255,7 @@
 				AA0000000000000000000902 /* AgentPad */,
 				AA0000000000000000000920 /* AgentPadTests */,
 				AA0000000000000000000930 /* AgentPadUITests */,
+				AC0000000000000000000501 /* NovaForgeWidgets */,
 				AA0000000000000000000940 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -271,6 +316,7 @@
 				AA0000000000000000000045 /* LocalModelRuntime.swift */,
 				AA0000000000000000000046 /* LocalAgentPlanner.swift */,
 				AA0000000000000000000019 /* ProviderMessageSanitizer.swift */,
+				AB0000000000000000000023 /* RunActivityController.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -320,6 +366,7 @@
 				AB0000000000000000000018 /* RunCards.swift */,
 				AB0000000000000000000020 /* DiffReviewSection.swift */,
 				AB0000000000000000000021 /* RunReplaySheet.swift */,
+				AB0000000000000000000022 /* ModelManagerPanels.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -354,8 +401,21 @@
 				AA0000000000000000000701 /* NovaForge.app */,
 				AA0000000000000000000702 /* AgentPadTests.xctest */,
 				AA0000000000000000000703 /* AgentPadUITests.xctest */,
+				AC0000000000000000000006 /* NovaForgeWidgets.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		AC0000000000000000000501 /* NovaForgeWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				AC0000000000000000000001 /* NovaForgeWidgetBundle.swift */,
+				AC0000000000000000000002 /* ProjectStatusWidget.swift */,
+				AC0000000000000000000003 /* RunActivityWidget.swift */,
+				AC0000000000000000000004 /* NovaForgeSharedActivity.swift */,
+				AC0000000000000000000005 /* Info.plist */,
+			);
+			path = NovaForgeWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -368,10 +428,12 @@
 				AA0000000000000000001101 /* Sources */,
 				AA0000000000000000000801 /* Frameworks */,
 				AA0000000000000000001201 /* Resources */,
+				AC0000000000000000000204 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				AC0000000000000000000402 /* PBXTargetDependency */,
 			);
 			name = AgentPad;
 			packageProductDependencies = (
@@ -417,6 +479,23 @@
 			productReference = AA0000000000000000000703 /* AgentPadUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		AC0000000000000000000301 /* NovaForgeWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AC0000000000000000000302 /* Build configuration list for PBXNativeTarget "NovaForgeWidgets" */;
+			buildPhases = (
+				AC0000000000000000000201 /* Sources */,
+				AC0000000000000000000202 /* Frameworks */,
+				AC0000000000000000000203 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaForgeWidgets;
+			productName = NovaForgeWidgets;
+			productReference = AC0000000000000000000006 /* NovaForgeWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -457,6 +536,7 @@
 			projectRoot = "";
 			targets = (
 				AA0000000000000000000601 /* AgentPad */,
+				AC0000000000000000000301 /* NovaForgeWidgets */,
 				AA0000000000000000000602 /* AgentPadTests */,
 				AA0000000000000000000603 /* AgentPadUITests */,
 			);
@@ -480,6 +560,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AA0000000000000000001203 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AC0000000000000000000203 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -534,6 +621,7 @@
 				AB1000000000000000000008 /* ProjectSummary.swift in Sources */,
 				AB1000000000000000000009 /* ProjectNaming.swift in Sources */,
 				AB1000000000000000000010 /* CodeHighlighter.swift in Sources */,
+				AC0000000000000000000105 /* NovaForgeSharedActivity.swift in Sources */,
 				AB1000000000000000000011 /* ProjectDashboard+CommandCenter.swift in Sources */,
 				AB1000000000000000000012 /* ProjectDashboard+Overview.swift in Sources */,
 				AB1000000000000000000013 /* ProjectDashboard+Sections.swift in Sources */,
@@ -545,6 +633,8 @@
 				AB1000000000000000000019 /* DiffEngine.swift in Sources */,
 				AB1000000000000000000020 /* DiffReviewSection.swift in Sources */,
 				AB1000000000000000000021 /* RunReplaySheet.swift in Sources */,
+				AB1000000000000000000022 /* ModelManagerPanels.swift in Sources */,
+				AB1000000000000000000023 /* RunActivityController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -591,6 +681,17 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AC0000000000000000000201 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AC0000000000000000000101 /* NovaForgeWidgetBundle.swift in Sources */,
+				AC0000000000000000000102 /* ProjectStatusWidget.swift in Sources */,
+				AC0000000000000000000103 /* RunActivityWidget.swift in Sources */,
+				AC0000000000000000000104 /* NovaForgeSharedActivity.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -603,6 +704,11 @@
 			isa = PBXTargetDependency;
 			target = AA0000000000000000000601 /* AgentPad */;
 			targetProxy = AA0000000000000000000402 /* PBXContainerItemProxy */;
+		};
+		AC0000000000000000000402 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AC0000000000000000000301 /* NovaForgeWidgets */;
+			targetProxy = AC0000000000000000000401 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -860,6 +966,58 @@
 			};
 			name = Release;
 		};
+		AC0000000000000000000303 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 93MYZUV85K;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NovaForgeWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.joey.NovaForge.Widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.2;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AC0000000000000000000304 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 93MYZUV85K;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NovaForgeWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.joey.NovaForge.Widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.2;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -895,6 +1053,15 @@
 			buildConfigurations = (
 				AA0000000000000000001331 /* Debug */,
 				AA0000000000000000001332 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AC0000000000000000000302 /* Build configuration list for PBXNativeTarget "NovaForgeWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000303 /* Debug */,
+				AC0000000000000000000304 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

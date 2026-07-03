@@ -163,10 +163,31 @@ fileprivate struct LiveStreamFrame: Equatable {
 }
 
 @MainActor
+private final class LocalBenchmarkProbe {
+    var firstBatchAt: Date?
+    var characters = 0
+}
+
+@MainActor
 @Observable
 final class AgentRuntime {
     var runState: AgentRunState = .idle
-    var isWorking = false
+    var isWorking = false {
+        didSet {
+            guard oldValue != isWorking else { return }
+            if isWorking {
+                RunActivityController.shared.runStarted(
+                    projectName: workspace.workspaceName,
+                    statusLine: activityTitle == "Ready" ? "Agent run started" : activityTitle
+                )
+            } else {
+                RunActivityController.shared.runEnded(
+                    statusLine: lastError ?? activityTitle,
+                    success: lastError == nil && !wasInterrupted
+                )
+            }
+        }
+    }
     @ObservationIgnored var liveStream = LiveStreamBuffer()
     var pendingTool: ToolRequest?
     var lastError: String?
@@ -441,6 +462,53 @@ final class AgentRuntime {
         } else {
             try keychain.save(value.trimmingCharacters(in: .whitespacesAndNewlines), account: provider.apiKeyAccount)
         }
+    }
+
+    /// Runs a short fixed-prompt generation against the selected local model
+    /// and measures wall-clock throughput. Generation length is bounded by
+    /// the variant's own maxNewTokens cap, so runs are quick and comparable.
+    func runLocalModelBenchmark(settings: AgentSettings) async -> Result<LocalModelBenchmarkResult, Error> {
+        let variant = LocalModelCatalog.variant(for: settings.modelID) ?? LocalModelCatalog.defaultVariant
+        guard localModels.isDownloaded else {
+            return .failure(LocalModelRuntimeError.modelNotDownloaded(variant.displayName))
+        }
+
+        let probe = LocalBenchmarkProbe()
+        let started = Date()
+
+        let prompt = ProviderMessageInput(
+            id: UUID(),
+            role: .user,
+            content: "Write a two-line poem about forging stars. Reply with only the poem.",
+            createdAt: started,
+            toolCallID: nil,
+            toolCalls: []
+        )
+
+        do {
+            _ = try await localModelClient.streamingResponse(
+                messages: [prompt],
+                model: variant.id,
+                temperature: 0.3,
+                customSystemPrompt: "You are a concise poet.",
+                workspaceSummary: "",
+                onContentBatch: { chunk in
+                    if probe.firstBatchAt == nil { probe.firstBatchAt = Date() }
+                    probe.characters += chunk.count
+                }
+            )
+        } catch {
+            return .failure(error)
+        }
+
+        let finished = Date()
+        let first = probe.firstBatchAt ?? finished
+        return .success(LocalModelBenchmarkResult(
+            modelName: variant.shortName,
+            timeToFirstToken: first.timeIntervalSince(started),
+            totalDuration: finished.timeIntervalSince(started),
+            generatedCharacters: probe.characters
+        ))
     }
 
     func testAPIKey(settings: AgentSettings) async -> Result<Void, Error> {
@@ -2326,6 +2394,18 @@ final class AgentRuntime {
         if activityDetail != detail {
             activityDetail = detail
         }
+        if isWorking {
+            RunActivityController.shared.runProgressed(
+                phase: pendingTool != nil ? "Approve" : "Build",
+                statusLine: title
+            )
+        }
+        RunActivityController.shared.syncWidgetSnapshot(
+            projectName: workspace.workspaceName,
+            statusHeadline: title,
+            journeyPhase: isWorking ? "Build" : "Plan",
+            proofCount: 0
+        )
     }
 
     private func updateActiveTool(name: String?, detail: String = "") {
