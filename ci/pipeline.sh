@@ -104,44 +104,88 @@ ls -la "$APP_PATH"
 xcrun simctl install "$UDID" "$APP_PATH"
 
 # ---------------------------------------------------------------------------
-echo "==> Screenshot tour"
+echo "==> Screenshot tour (full surface census)"
 # Let SpringBoard settle so first-boot system banners (Apple Intelligence
 # onboarding etc.) clear before we start photographing.
 sleep 15
 mkdir -p captures
+# shot <name> [WAIT=n] [launch args...] — every stateful capture passes
+# --reset-ui so fixtures from earlier shots never contaminate later ones.
 shot() {
   NAME="$1"; shift
+  WAIT=9
+  if [[ "${1:-}" == WAIT=* ]]; then WAIT="${1#WAIT=}"; shift; fi
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
   sleep 1
   xcrun simctl launch "$UDID" "$BUNDLE" "$@"
-  sleep 9
+  sleep "$WAIT"
   xcrun simctl io "$UDID" screenshot "captures/$NAME.png"
   echo "captured $NAME"
 }
-shot "01-first-launch"
+
+# --- Core tabs, clean state ------------------------------------------------
+shot "01-first-run" --reset-ui --first-run-local-model-missing
 shot "02-project" --open-project
 shot "03-files" --open-files
-shot "04-chat" --open-chat
+shot "04-chat-welcome" --open-chat --settings-local-model-ready
 shot "05-runs" --open-runs
 shot "06-settings" --open-settings
-shot "07-matrix-project" --open-project --theme=matrix
-shot "08-matrix-chat" --open-chat --theme=matrix
-shot "09-matrix-settings" --open-settings --theme=matrix
-shot "10-whitegold-project" --open-project --theme=whitegold
-shot "11-arctic-project" --open-project --theme=arctic
-shot "12-ember-project" --open-project --theme=ember
+shot "07-terminal" --open-terminal
+
+# --- Chat depth: streaming, tools, code, failure, approval, keyboard --------
+shot "08-chat-stream" --reset-ui --open-chat --stress-streaming
+shot "09-chat-tools" --reset-ui --open-chat --running-tool-call-demo
+shot "10-chat-code" --reset-ui --open-chat --code-block-demo
+shot "11-chat-failed" --reset-ui --open-chat --failed-tool-call-demo
+shot "12-chat-approval" --reset-ui --open-chat --pending-approval-demo
+shot "13-chat-keyboard" WAIT=11 --reset-ui --open-chat --keyboard-focus-demo
+
+# --- Project journey states -------------------------------------------------
+shot "14-project-running" --reset-ui --open-project --project-running-demo
+shot "15-project-blocked" --reset-ui --open-project --project-blocked-demo
+shot "16-project-waiting" --reset-ui --open-project --project-waiting-demo
+shot "17-project-proof" --reset-ui --open-project --project-proof-demo
+shot "18-project-countdown" --reset-ui --open-project --auto-continue-countdown-demo
+
+# --- Runs / terminal / artifact depth ----------------------------------------
+shot "19-runs-approval" --reset-ui --open-runs --pending-approval-demo
+shot "20-runs-populated" --reset-ui --open-runs --project-proof-demo
+shot "21-terminal-live" --reset-ui --open-terminal --terminal-live-record-demo
+shot "22-artifact-preview" WAIT=14 --reset-ui --open-files --project-proof-demo --workbench-open-artifact-preview
+
+# --- Files / settings depth ---------------------------------------------------
+shot "23-files-stress" --reset-ui --open-files --stress-files
+shot "24-settings-model-ready" --reset-ui --open-settings --settings-local-model-ready
+shot "25-settings-model-partial" --reset-ui --open-settings --settings-local-model-partial
+
+# --- Theme deep pass (populated where it matters) ----------------------------
+shot "26-matrix-project" --reset-ui --open-project --theme=matrix --project-proof-demo
+shot "27-matrix-chat" --reset-ui --open-chat --theme=matrix --stress-streaming
+shot "28-matrix-settings" --reset-ui --open-settings --theme=matrix
+shot "29-whitegold-project" --reset-ui --open-project --theme=whitegold --project-proof-demo
+shot "30-whitegold-chat" --reset-ui --open-chat --theme=whitegold --stress-streaming
+shot "31-arctic-project" --reset-ui --open-project --theme=arctic --project-proof-demo
+shot "32-arctic-files" --reset-ui --open-files --theme=arctic
+shot "33-ember-project" --reset-ui --open-project --theme=ember --project-proof-demo
+shot "34-ember-runs" --reset-ui --open-runs --theme=ember --project-proof-demo
 
 # ---------------------------------------------------------------------------
-echo "==> Recording matrix rain video (10s)"
-xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
-xcrun simctl launch "$UDID" "$BUNDLE" --open-project --theme=matrix
-sleep 6
-xcrun simctl io "$UDID" recordVideo --codec h264 --force captures/matrix-rain.mp4 &
-REC_PID=$!
-sleep 10
-kill -INT "$REC_PID"
-sleep 3
-wait "$REC_PID" || true
+record_clip() {
+  NAME="$1"; SETTLE="$2"; DURATION="$3"; shift 3
+  echo "==> Recording $NAME (${DURATION}s)"
+  xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
+  sleep 1
+  xcrun simctl launch "$UDID" "$BUNDLE" "$@"
+  sleep "$SETTLE"
+  xcrun simctl io "$UDID" recordVideo --codec h264 --force "captures/$NAME.mp4" &
+  REC_PID=$!
+  sleep "$DURATION"
+  kill -INT "$REC_PID"
+  sleep 3
+  wait "$REC_PID" || true
+}
+record_clip "matrix-rain" 6 10 --reset-ui --open-project --theme=matrix
+record_clip "chat-stream" 4 8 --reset-ui --open-chat --stress-streaming
 ls -la captures/
 
 echo "==> Pipeline complete"
