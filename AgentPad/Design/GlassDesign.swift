@@ -7,7 +7,13 @@ struct AgentPalette {
     nonisolated(unsafe) private static var cachedPalette = AgentTheme.current.palette
 
     static func refreshThemeCache(_ theme: AgentTheme? = nil) {
-        cachedPalette = (theme ?? AgentTheme.current).palette
+        // Keep AgentTheme.current's cache in lockstep: nil clears it so the
+        // next read re-resolves from UserDefaults, then we pin the resolved
+        // value for the hot paths.
+        AgentTheme.refreshCurrentCache(theme)
+        let resolvedTheme = theme ?? AgentTheme.current
+        AgentTheme.refreshCurrentCache(resolvedTheme)
+        cachedPalette = resolvedTheme.palette
     }
 
     private static var theme: AgentThemePalette {
@@ -110,9 +116,26 @@ enum AgentPerformance {
         var startedAt: TimeInterval
     }
 
+    // Launch arguments never change during the process lifetime, so every
+    // argument-derived flag is computed exactly once. The old computed
+    // properties bridged ProcessInfo.arguments (an NSArray -> [String]
+    // conversion) on every access — and these are read from surface modifiers
+    // on every body evaluation, thousands of times per second while scrolling.
+    private static let hasPerformanceLaunchArgument = ProcessInfo.processInfo.arguments.contains(launchArgument)
+
+    /// UserDefaults-backed portion is cached; SettingsView / AppRootView call
+    /// `invalidatePerformanceModeCache()` when the toggle changes.
+    nonisolated(unsafe) private static var cachedPerformanceMode: Bool?
+
     static var isPerformanceMode: Bool {
-        ProcessInfo.processInfo.arguments.contains(launchArgument) ||
-            UserDefaults.standard.bool(forKey: storageKey)
+        if let cachedPerformanceMode { return cachedPerformanceMode }
+        let value = hasPerformanceLaunchArgument || UserDefaults.standard.bool(forKey: storageKey)
+        cachedPerformanceMode = value
+        return value
+    }
+
+    static func invalidatePerformanceModeCache() {
+        cachedPerformanceMode = nil
     }
 
     static var allowsDecorativeMotion: Bool {
@@ -123,23 +146,19 @@ enum AgentPerformance {
         isPerformanceMode
     }
 
-    static var shouldProfileFrameRate: Bool {
+    static let shouldProfileFrameRate: Bool =
         ProcessInfo.processInfo.arguments.contains(frameRateLaunchArgument)
-    }
 
-    static var shouldProfileBodyEvaluations: Bool {
+    static let shouldProfileBodyEvaluations: Bool =
         ProcessInfo.processInfo.arguments.contains(bodyEvaluationLaunchArgument)
-    }
 
     #if DEBUG
-    static var shouldProfileViewChanges: Bool {
+    static let shouldProfileViewChanges: Bool =
         ProcessInfo.processInfo.arguments.contains("--profile-view-changes")
-    }
     #endif
 
-    static var shouldTraceDetailedEvents: Bool {
+    static let shouldTraceDetailedEvents: Bool =
         ProcessInfo.processInfo.arguments.contains("--profile-events")
-    }
 
     enum FrameSurface: Equatable {
         case projectIdle
@@ -396,16 +415,16 @@ enum AgentDesign {
 }
 
 enum AgentPlatformCompatibility {
-    static var isIOS27OrNewer: Bool {
+    // Both values are process-lifetime constants — computed once instead of
+    // re-bridging ProcessInfo state on every surface-modifier evaluation.
+    static let isIOS27OrNewer: Bool =
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
-    }
 
-    static var usesConservativeRendering: Bool {
-        // Keep native Liquid Glass available even in performance mode. Profiling
-        // showed the native effect can be cheaper than layered fallback fills on
-        // simulator, while still matching the intended premium app character.
+    // Keep native Liquid Glass available even in performance mode. Profiling
+    // showed the native effect can be cheaper than layered fallback fills on
+    // simulator, while still matching the intended premium app character.
+    static let usesConservativeRendering: Bool =
         ProcessInfo.processInfo.arguments.contains("--disable-liquid-glass")
-    }
 }
 
 struct AgentBackground: View {
@@ -419,11 +438,13 @@ struct AgentBackground: View {
         let conservativeRendering = AgentPlatformCompatibility.usesConservativeRendering
         let theme = AgentTheme.resolved(from: selectedThemeRawValue)
         let palette = theme.palette
-        let allowsMotion = isAnimated &&
-            AgentPerformance.allowsDecorativeMotion &&
-            !reduceMotion &&
-            !conservativeRendering &&
-            !reduceTransparency
+        // Matrix rain is now cheap enough (pre-rendered glyph atlas) to keep
+        // raining in performance mode — it drops to a reduced-density layer
+        // instead of freezing. Reduce Motion (accessibility) always wins.
+        let isMatrixTheme = palette.backgroundEffect == .matrixRain
+        let baseMotion = isAnimated && !reduceMotion && !conservativeRendering
+        let allowsMotion = baseMotion &&
+            (isMatrixTheme || (AgentPerformance.allowsDecorativeMotion && !reduceTransparency))
         ZStack {
             LinearGradient(
                 colors: [
@@ -437,10 +458,18 @@ struct AgentBackground: View {
             )
             .ignoresSafeArea()
 
-            AgentThemeBackdrop(theme: theme, allowsMotion: allowsMotion)
+            AgentThemeBackdrop(
+                theme: theme,
+                allowsMotion: allowsMotion,
+                reducedDetail: AgentPerformance.prefersReducedVisualEffects
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .opacity(conservativeRendering ? 0 : 1)
-                .id("agent-backdrop-\(theme.rawValue)-\(allowsMotion)")
+                // Identity is keyed by theme only. Including allowsMotion here
+                // used to force a full Canvas/TimelineView teardown+rebuild on
+                // every tab switch and scene-phase change — a large, invisible
+                // hitch. Animation state now transitions in place.
+                .id("agent-backdrop-\(theme.rawValue)")
                 .ignoresSafeArea()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -451,6 +480,7 @@ struct AgentBackground: View {
 struct AgentThemeBackdrop: View {
     let theme: AgentTheme
     let allowsMotion: Bool
+    var reducedDetail: Bool = false
 
     private var palette: AgentThemePalette { theme.palette }
 
@@ -458,7 +488,7 @@ struct AgentThemeBackdrop: View {
         ZStack {
             switch palette.backgroundEffect {
             case .matrixRain:
-                MatrixRainBackdrop(palette: palette, animated: allowsMotion)
+                MatrixRainBackdrop(palette: palette, animated: allowsMotion, reducedDetail: reducedDetail)
             case .midnightDepth:
                 AmbientThemeBackdrop(effect: .midnightDepth, palette: palette, animated: allowsMotion)
             case .whiteGoldVeil:
@@ -478,10 +508,11 @@ struct AgentThemeBackdrop: View {
 struct MatrixRainBackdrop: View {
     let palette: AgentThemePalette
     let animated: Bool
+    var reducedDetail: Bool = false
 
     var body: some View {
         if animated {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            TimelineView(.animation(minimumInterval: reducedDetail ? 1.0 / 20.0 : 1.0 / 24.0)) { timeline in
                 rainFrame(time: timeline.date.timeIntervalSinceReferenceDate)
             }
         } else {
@@ -490,18 +521,115 @@ struct MatrixRainBackdrop: View {
     }
 
     private func rainFrame(time: TimeInterval) -> some View {
-        Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
+        // Glyph bitmaps are rendered once per (layer, palette) and blitted
+        // every frame. The previous implementation laid out ~230 live `Text`
+        // glyphs per frame at 30fps — text shaping was the single most
+        // expensive recurring cost on the render loop. Cached image draws are
+        // an order of magnitude cheaper and keep the rain affordable enough
+        // to run everywhere, including sheets and performance mode.
+        let nearSprites = MatrixRainGlyphAtlas.shared.sprites(for: .near, palette: palette)
+        let distantSprites = MatrixRainGlyphAtlas.shared.sprites(for: .distant, palette: palette)
+        let reducedSprites = MatrixRainGlyphAtlas.shared.sprites(for: .staticReduced, palette: palette)
+        return Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
             drawMatrixDepth(in: &context, size: size)
             if animated {
-                drawMatrixColumns(in: &context, size: size, time: time, layer: .distant)
-                drawMatrixColumns(in: &context, size: size, time: time, layer: .near)
+                if !reducedDetail {
+                    drawMatrixColumns(in: &context, size: size, time: time, layer: .distant, sprites: distantSprites)
+                }
+                drawMatrixColumns(in: &context, size: size, time: time, layer: .near, sprites: nearSprites)
             } else {
-                drawMatrixColumns(in: &context, size: size, time: time, layer: .staticReduced)
+                drawMatrixColumns(in: &context, size: size, time: time, layer: .staticReduced, sprites: reducedSprites)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .compositingGroup()
         .opacity(animated ? 0.58 : 0.24)
+    }
+}
+
+/// Pre-renders the matrix glyph set into bitmap sprites, once per
+/// (layer, palette) combination. Rendering happens on the main actor (view
+/// body) and the resulting `Image` values are captured by the Canvas closure.
+@MainActor
+final class MatrixRainGlyphAtlas {
+    static let shared = MatrixRainGlyphAtlas()
+
+    struct LayerSprites {
+        let head: [Image]
+        let tail: [Image]
+        let glow: [Image]
+    }
+
+    enum LayerKind: String {
+        case distant
+        case near
+        case staticReduced
+
+        fileprivate var layer: MatrixRainLayer {
+            switch self {
+            case .distant: .distant
+            case .near: .near
+            case .staticReduced: .staticReduced
+            }
+        }
+    }
+
+    private var cache: [String: LayerSprites] = [:]
+
+    func sprites(for kind: LayerKind, palette: AgentThemePalette) -> LayerSprites {
+        let key = "\(kind.rawValue)-\(palette.backgroundEffect.rawValue)"
+        if let cached = cache[key] { return cached }
+        let layer = kind.layer
+        let sprites = LayerSprites(
+            head: renderGlyphs(fontSize: layer.headFontSize, weight: .bold, color: UIColor(palette.textPrimary)),
+            tail: renderGlyphs(fontSize: layer.tailFontSize, weight: .medium, color: UIColor(palette.primaryAccent)),
+            glow: layer.glowRadius > 0
+                ? renderGlyphs(
+                    fontSize: layer.headFontSize + layer.glowRadius,
+                    weight: .bold,
+                    color: UIColor(palette.primaryAccent),
+                    blur: 1.5
+                )
+                : []
+        )
+        cache[key] = sprites
+        return sprites
+    }
+
+    private func renderGlyphs(
+        fontSize: CGFloat,
+        weight: UIFont.Weight,
+        color: UIColor,
+        blur: CGFloat = 0
+    ) -> [Image] {
+        let font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: weight)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color
+        ]
+        let probe = ("W" as NSString).size(withAttributes: attributes)
+        let padding: CGFloat = blur > 0 ? 4 : 1
+        let spriteSize = CGSize(
+            width: ceil(probe.width) + padding * 2,
+            height: ceil(probe.height) + padding * 2
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 2
+        let renderer = UIGraphicsImageRenderer(size: spriteSize, format: format)
+        return MatrixRainSeed.glyphs.map { glyph in
+            let image = renderer.image { rendererContext in
+                if blur > 0 {
+                    rendererContext.cgContext.setShadow(
+                        offset: .zero,
+                        blur: blur,
+                        color: color.withAlphaComponent(0.85).cgColor
+                    )
+                }
+                (glyph as NSString).draw(at: CGPoint(x: padding, y: padding), withAttributes: attributes)
+            }
+            return Image(uiImage: image).renderingMode(.original)
+        }
     }
 }
 
@@ -577,13 +705,16 @@ private extension MatrixRainBackdrop {
         in context: inout GraphicsContext,
         size: CGSize,
         time: TimeInterval,
-        layer: MatrixRainLayer
+        layer: MatrixRainLayer,
+        sprites: MatrixRainGlyphAtlas.LayerSprites
     ) {
         let columnWidth = layer.columnWidth
         let rowHeight = layer.rowHeight
         let columns = max(1, Int(size.width / columnWidth) + 4)
         let rows = max(1, Int(size.height / rowHeight) + 12)
         let heightPadding = rowHeight * 3
+        let glyphCount = MatrixRainSeed.glyphs.count
+        let previousOpacity = context.opacity
 
         for column in 0..<columns {
             let seed = MatrixRainSeed.columns[column % MatrixRainSeed.columns.count]
@@ -602,32 +733,27 @@ private extension MatrixRainBackdrop {
                 let y = CGFloat(wrappedRow) * rowHeight - heightPadding
                 guard y > -rowHeight, y < size.height + rowHeight else { continue }
 
-                let glyph = MatrixRainSeed.glyphs[(column * 17 + wrappedRow * 7 + tail * 3) % MatrixRainSeed.glyphs.count]
+                let glyphIndex = (column * 17 + wrappedRow * 7 + tail * 3) % glyphCount
                 let tailFade = max(0.0, 1.0 - Double(tail) / Double(max(1, tailLength)))
                 let shimmer = 0.78 + 0.22 * sin(time * (1.2 + seed.speed * 0.012) + Double(column) * 0.71 + Double(tail))
                 let baseAlpha = min(0.98, (0.12 + 0.86 * tailFade * shimmer) * palette.backgroundMotionOpacity * layer.alphaScale)
                 let isHead = tail == 0
-                let text = Text(glyph)
-                    .font(.system(
-                        size: isHead ? layer.headFontSize : layer.tailFontSize,
-                        weight: isHead ? .bold : .medium,
-                        design: .monospaced
-                    ))
-                    .foregroundStyle(isHead
-                        ? palette.textPrimary.opacity(min(0.96, baseAlpha + 0.24 * layer.alphaScale))
-                        : palette.primaryAccent.opacity(baseAlpha)
-                    )
 
-                if isHead && layer.glowRadius > 0 && column.isMultiple(of: 2) {
-                    let glowText = Text(glyph)
-                        .font(.system(size: layer.headFontSize + layer.glowRadius, weight: .bold, design: .monospaced))
-                        .foregroundStyle(palette.primaryAccent.opacity(baseAlpha * 0.62 + 0.08))
-                    context.draw(glowText, at: CGPoint(x: x - 1.5, y: y - 1.5), anchor: .topLeading)
+                if isHead {
+                    if !sprites.glow.isEmpty && column.isMultiple(of: 2) {
+                        context.opacity = baseAlpha * 0.62 + 0.08
+                        context.draw(sprites.glow[glyphIndex], at: CGPoint(x: x - 1.5, y: y - 1.5), anchor: .topLeading)
+                    }
+                    context.opacity = min(0.96, baseAlpha + 0.24 * layer.alphaScale)
+                    context.draw(sprites.head[glyphIndex], at: CGPoint(x: x, y: y), anchor: .topLeading)
+                } else {
+                    context.opacity = baseAlpha
+                    context.draw(sprites.tail[glyphIndex], at: CGPoint(x: x, y: y), anchor: .topLeading)
                 }
-
-                context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
             }
         }
+
+        context.opacity = previousOpacity
     }
 }
 

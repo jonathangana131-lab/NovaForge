@@ -605,6 +605,9 @@ struct SettingsView: View {
                 .frame(minHeight: AgentDesign.minimumTouchTarget, alignment: .center)
                 .agentRowSurface(radius: 14, tint: AgentPalette.green, selected: performanceModeEnabled)
                 .accessibilityIdentifier("settingsPerformanceModeToggle")
+                .onChange(of: performanceModeEnabled) { _, _ in
+                    AgentPerformance.invalidatePerformanceModeCache()
+                }
                 #endif
             }
         }

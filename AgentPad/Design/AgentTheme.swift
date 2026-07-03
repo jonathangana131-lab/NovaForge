@@ -14,9 +14,24 @@ enum AgentTheme: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Cached resolved theme. `current` is read inside hot view-body paths
+    /// (glass surface modifiers evaluate it on every body evaluation), so it
+    /// must not hit UserDefaults each call. The cache is refreshed by
+    /// `AgentPalette.refreshThemeCache(_:)`, which is already invoked at every
+    /// theme mutation point (app init, settings picker, root onChange).
+    nonisolated(unsafe) private static var cachedCurrent: AgentTheme?
+
     static var current: AgentTheme {
+        if let cachedCurrent { return cachedCurrent }
         let stored = UserDefaults.standard.string(forKey: storageKey) ?? AgentTheme.defaultTheme.rawValue
-        return resolved(from: stored)
+        let resolvedTheme = resolved(from: stored)
+        cachedCurrent = resolvedTheme
+        return resolvedTheme
+    }
+
+    /// Pass nil to force the next `current` read to re-resolve from UserDefaults.
+    static func refreshCurrentCache(_ theme: AgentTheme?) {
+        cachedCurrent = theme
     }
 
     static func resolved(from rawValue: String?) -> AgentTheme {
