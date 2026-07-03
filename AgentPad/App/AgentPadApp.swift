@@ -506,7 +506,7 @@ struct NovaForgeMainApp: App {
         let callJSON = (try? JSONEncoder().encode([call])).flatMap { String(data: $0, encoding: .utf8) }
         let assistant = ChatMessage(
             role: .assistant,
-            content: "I'll read that file and keep the activity quiet while it runs.",
+            content: "I'll read that file and keep the activity visible while it runs.",
             toolCallsJSON: callJSON,
             conversation: conversation
         )

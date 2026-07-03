@@ -1400,6 +1400,36 @@ struct BottomDockContentShield: View {
     }
 }
 
+/// The app's signature haptic vocabulary. One place, so every surface
+/// speaks the same physical language: runs thump when they start, purr on
+/// success, buzz on failure, and approvals knock twice.
+@MainActor
+enum NovaHaptics {
+    static func runStarted() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred(intensity: 0.9)
+    }
+
+    static func runSucceeded() {
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    static func runFailed() {
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+    }
+
+    static func approvalNeeded() {
+        let generator = UIImpactFeedbackGenerator(style: .rigid)
+        generator.impactOccurred(intensity: 1.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            generator.impactOccurred(intensity: 0.6)
+        }
+    }
+
+    static func tick() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.7)
+    }
+}
+
 enum BottomDockMetrics {
     static let shieldHeight: CGFloat = 126
     static let scrollClearance: CGFloat = 176

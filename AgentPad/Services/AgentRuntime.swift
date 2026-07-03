@@ -176,20 +176,29 @@ final class AgentRuntime {
         didSet {
             guard oldValue != isWorking else { return }
             if isWorking {
+                NovaHaptics.runStarted()
                 RunActivityController.shared.runStarted(
                     projectName: workspace.workspaceName,
                     statusLine: activityTitle == "Ready" ? "Agent run started" : activityTitle
                 )
             } else {
+                let succeeded = lastError == nil && !wasInterrupted
+                if succeeded { NovaHaptics.runSucceeded() } else { NovaHaptics.runFailed() }
                 RunActivityController.shared.runEnded(
                     statusLine: lastError ?? activityTitle,
-                    success: lastError == nil && !wasInterrupted
+                    success: succeeded
                 )
             }
         }
     }
     @ObservationIgnored var liveStream = LiveStreamBuffer()
-    var pendingTool: ToolRequest?
+    var pendingTool: ToolRequest? {
+        didSet {
+            if pendingTool != nil, oldValue == nil {
+                NovaHaptics.approvalNeeded()
+            }
+        }
+    }
     var lastError: String?
     var lastFailedPrompt: String?
     var activityTitle = "Ready"

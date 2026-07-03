@@ -749,12 +749,9 @@ struct CodeBlockView: View {
                             expanded.toggle()
                         }
                     } label: {
-                        ZStack {
-                            Color.clear
-                            HStack(spacing: 4) {
-                                Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                                Text(expanded ? "Collapse" : "Preview")
-                            }
+                        HStack(spacing: 4) {
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            Text(expanded ? "Collapse" : "Preview")
                         }
                         .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: AgentDesign.minimumTouchTarget)
                         .contentShape(Rectangle())
@@ -774,12 +771,9 @@ struct CodeBlockView: View {
                         withAnimation { copied = false }
                     }
                 } label: {
-                    ZStack {
-                        Color.clear
-                        HStack(spacing: 4) {
-                            Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                            Text(copied ? "Copied" : "Copy")
-                        }
+                    HStack(spacing: 4) {
+                        Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                        Text(copied ? "Copied" : "Copy")
                     }
                     .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: AgentDesign.minimumTouchTarget)
                     .contentShape(Rectangle())
@@ -794,12 +788,9 @@ struct CodeBlockView: View {
                 Button {
                     showingSaveAlert = true
                 } label: {
-                    ZStack {
-                        Color.clear
-                        HStack(spacing: 4) {
-                            Image(systemName: "square.and.arrow.down")
-                            Text("Save")
-                        }
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.down")
+                        Text("Save")
                     }
                     .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: AgentDesign.minimumTouchTarget)
                     .contentShape(Rectangle())
