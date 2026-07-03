@@ -591,7 +591,7 @@ private struct ArtifactPreviewStudio: View {
                 )
                 .ignoresSafeArea()
             } else {
-                AgentBackground(isAnimated: false)
+                AgentBackground()
             }
         }
     }

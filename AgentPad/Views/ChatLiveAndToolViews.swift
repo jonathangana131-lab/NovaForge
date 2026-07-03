@@ -183,10 +183,16 @@ private struct ToolActivityCompletionLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(tint)
-                .frame(width: 16, height: 16)
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(tint.opacity(0.12))
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(tint.opacity(0.24), lineWidth: 0.5)
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(tint)
+            }
+            .frame(width: 22, height: 22)
 
             Text(summary)
                 .font(.system(size: 11.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
@@ -243,23 +249,39 @@ private struct ToolActivityRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 statusIcon
-                    .frame(width: 16, height: 16)
+                    .frame(width: 22, height: 22)
 
-                Text(activityText)
-                    .font(.system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(call.isError ? AgentPalette.rose : AgentPalette.secondaryText)
+                if call.isComplete || call.isError {
+                    Text(activityText)
+                        .font(.system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(call.isError ? AgentPalette.rose : AgentPalette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    // Running rows shimmer softly — a live signal without a
+                    // layout-shifting progress element.
+                    LiveShimmerText(
+                        text: activityText,
+                        baseColor: AgentPalette.secondaryText,
+                        highlightColor: AgentPalette.ink,
+                        font: .system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign)
+                    )
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                }
 
                 Spacer(minLength: 4)
 
                 if let statusLabelText {
                     Text(statusLabelText)
-                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(statusTint)
                         .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .frame(height: 16)
+                        .background(statusTint.opacity(0.12), in: Capsule())
+                        .overlay(Capsule().strokeBorder(statusTint.opacity(0.22), lineWidth: 0.5))
                 }
 
                 if let artifact = call.artifact {
@@ -319,18 +341,25 @@ private struct ToolActivityRow: View {
 
     @ViewBuilder
     private var statusIcon: some View {
-        if call.isComplete || call.isError {
-            Image(systemName: statusIconName)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(statusTint)
-        } else if isWaitingForApprovalCandidate {
-            Image(systemName: "checkmark.shield.fill")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(statusTint)
-        } else {
-            ProgressView()
-                .tint(statusTint)
-                .scaleEffect(0.66)
+        ZStack {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(statusTint.opacity(call.isError ? 0.16 : 0.11))
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(statusTint.opacity(0.24), lineWidth: 0.5)
+
+            if call.isComplete || call.isError {
+                Image(systemName: statusIconName)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(statusTint)
+            } else if isWaitingForApprovalCandidate {
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(statusTint)
+            } else {
+                ProgressView()
+                    .tint(statusTint)
+                    .scaleEffect(0.58)
+            }
         }
     }
 
@@ -484,17 +513,109 @@ private struct ToolActivityRow: View {
 struct LiveResponseView: View {
     let isWorking: Bool
     @ObservedObject var stream: LiveStreamBuffer
+    let runtime: AgentRuntime
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Live Response Body")
         Group {
             if isWorking {
-                if stream.isEmpty {
-                    ThinkingView()
-                } else {
-                    StreamingBubble(stream: stream)
+                VStack(alignment: .leading, spacing: 10) {
+                    // Reads runtime.activeToolName in its own tiny body, so
+                    // tool changes re-render just this chip — never the chat.
+                    NovaLiveActivityPulse(runtime: runtime)
+
+                    if stream.isEmpty {
+                        ThinkingView()
+                    } else {
+                        StreamingBubble(stream: stream)
+                    }
                 }
             }
+        }
+    }
+}
+
+/// Compact live-activity chip shown while the agent is using tools.
+/// Observation is scoped: only this view re-renders when the active tool
+/// changes.
+private struct NovaLiveActivityPulse: View {
+    let runtime: AgentRuntime
+
+    var body: some View {
+        if let toolName = runtime.activeToolName {
+            HStack {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(AgentPalette.primaryAccent)
+
+                    LiveShimmerText(
+                        text: plainToolName(toolName),
+                        baseColor: AgentPalette.secondaryText,
+                        highlightColor: AgentPalette.ink,
+                        font: .system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign)
+                    )
+                    .lineLimit(1)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: 300, alignment: .leading)
+                .agentControlSurface(radius: 14, tint: AgentPalette.primaryAccent, selected: false)
+
+                Spacer(minLength: 44)
+            }
+            .padding(.horizontal, 18)
+            .transition(.opacity)
+            .accessibilityLabel("Running \(plainToolName(toolName))")
+            .accessibilityIdentifier("liveToolPulse")
+        }
+    }
+}
+
+/// Text with a soft highlight that sweeps across it — the "thinking shimmer".
+/// Implemented as a phase-animated gradient mask over a brighter copy of the
+/// text; a single tiny view, active only during live phases.
+struct LiveShimmerText: View {
+    let text: String
+    let baseColor: Color
+    let highlightColor: Color
+    let font: Font
+
+    var body: some View {
+        let base = Text(text)
+            .font(font)
+            .foregroundStyle(baseColor)
+
+        if AgentPerformance.allowsDecorativeMotion {
+            base
+                .overlay {
+                    Text(text)
+                        .font(font)
+                        .foregroundStyle(highlightColor)
+                        .mask {
+                            GeometryReader { proxy in
+                                let width = max(proxy.size.width, 1)
+                                Rectangle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [.clear, .white, .clear],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .frame(width: width * 0.6)
+                                    .phaseAnimator([0.0, 1.0]) { content, phase in
+                                        content.offset(x: -width * 0.6 + phase * (width + width * 0.6))
+                                    } animation: { _ in
+                                        .easeInOut(duration: 1.4)
+                                    }
+                            }
+                        }
+                }
+        } else {
+            base
         }
     }
 }
@@ -504,35 +625,37 @@ private struct StreamingBubble: View {
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Streaming Bubble Body")
-        let performanceMode = AgentPerformance.prefersReducedVisualEffects
         HStack {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(stream.displayText)
-                    .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                    .lineSpacing(5)
-                    .foregroundStyle(AgentPalette.ink)
-                    .lineLimit(performanceMode ? 8 : 12)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 10) {
+                // Full text, no clipping, no tail window. The transcript is
+                // bottom-anchored at the layout level, so growth stays pinned
+                // smoothly. The cursor is concatenated so it always rides the
+                // exact end of the streamed text; it advances with each flush
+                // (~110ms), so no extra animation clock is needed.
+                (
+                    Text(stream.displayText)
+                        .foregroundStyle(AgentPalette.ink)
+                    + Text(" \u{258D}")
+                        .foregroundStyle(AgentPalette.primaryAccent.opacity(0.85))
+                )
+                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                .lineSpacing(5)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 7) {
                     StatusDots(tint: AgentPalette.primaryAccent, animated: false)
-                    Text(stream.isShowingTail ? "Showing latest" : "Responding")
+                    Text("Responding")
                         .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.tertiaryText)
                         .lineLimit(1)
                         .accessibilityIdentifier("liveStreamingStatusText")
                     Spacer(minLength: 0)
-                    Text("\(stream.characterCount) chars")
-                        .font(.system(size: 9, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.tertiaryText)
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .frame(maxHeight: performanceMode ? 230 : 300, alignment: .bottomLeading)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
             .assistantResponseSurface(tint: AgentPalette.primaryAccent)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("liveStreamingReadableContent")
@@ -548,25 +671,19 @@ private struct StreamingBubble: View {
 
 }
 
-private extension View {
-    @ViewBuilder
-    func streamingResponseSurface(performanceMode: Bool) -> some View {
-        if performanceMode {
-            agentSurface(radius: 24, tint: AgentPalette.primaryAccent.opacity(0.08))
-        } else {
-            agentGlass(radius: 24, tint: AgentPalette.primaryAccent.opacity(0.12))
-        }
-    }
-}
-
 private struct ThinkingView: View {
     var body: some View {
         HStack {
             HStack(spacing: 9) {
-                StatusDots(tint: AgentPalette.primaryAccent, animated: true)
-                Text("Responding")
-                    .font(.system(size: 14, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.secondaryText)
+                ThinkingOrb(tint: AgentPalette.primaryAccent)
+
+                LiveShimmerText(
+                    text: "Thinking",
+                    baseColor: AgentPalette.secondaryText,
+                    highlightColor: AgentPalette.ink,
+                    font: .system(size: 14, weight: .semibold, design: AgentPalette.interfaceFontDesign)
+                )
+
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
@@ -576,7 +693,38 @@ private struct ThinkingView: View {
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
-        .accessibilityLabel("Assistant is responding")
+        .accessibilityLabel("Assistant is thinking")
+    }
+}
+
+/// Soft breathing orb used for the thinking state — a warmer, more alive
+/// signal than a spinner.
+private struct ThinkingOrb: View {
+    let tint: Color
+
+    var body: some View {
+        let orb = ZStack {
+            Circle()
+                .fill(tint.opacity(0.24))
+                .frame(width: 16, height: 16)
+                .blur(radius: 3)
+            Circle()
+                .fill(tint.opacity(0.9))
+                .frame(width: 8, height: 8)
+        }
+
+        if AgentPerformance.allowsDecorativeMotion {
+            orb
+                .phaseAnimator([0.82, 1.12, 0.82]) { content, phase in
+                    content
+                        .scaleEffect(phase)
+                        .opacity(0.65 + (phase - 0.82) * 1.1)
+                } animation: { _ in
+                    .easeInOut(duration: 0.85)
+                }
+        } else {
+            orb
+        }
     }
 }
 

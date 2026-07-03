@@ -1,6 +1,37 @@
 import SwiftData
 import SwiftUI
 
+/// Which tab is currently selected, delivered via the environment so that
+/// tiny leaf views (tab backdrops) can react to tab switches WITHOUT the
+/// whole TabView being re-keyed. Environment changes bypass the Equatable
+/// render-key gates and invalidate only the views that actually read them.
+private struct NovaActiveTabKey: EnvironmentKey {
+    static let defaultValue: AppTab = .project
+}
+
+extension EnvironmentValues {
+    fileprivate var novaActiveTab: AppTab {
+        get { self[NovaActiveTabKey.self] }
+        set { self[NovaActiveTabKey.self] = newValue }
+    }
+}
+
+/// Per-tab ambient backdrop that animates only while its tab is selected and
+/// the scene is active. Reads the active tab from the environment, so a tab
+/// switch re-renders just these two lightweight views — not the tab surfaces.
+private struct TabActivatedBackground: View {
+    let tab: AppTab
+    @Environment(\.novaActiveTab) private var activeTab
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        AgentBackground(
+            isWorking: false,
+            isAnimated: scenePhase == .active && activeTab == tab
+        )
+    }
+}
+
 enum AppTab: String, CaseIterable, Identifiable {
     case project
     case files
@@ -162,17 +193,25 @@ struct AppRootView: View {
     }
 
     var body: some View {
+        // No AnyView here: wrapping the root in AnyView erased SwiftUI's
+        // structural identity for the entire tree, degrading diffing on every
+        // root state change. Profiling side effects live in a helper instead.
+        let _ = Self.recordRootBodyProfiling()
+        rootContentWithLifecycle
+    }
+
+    private static func recordRootBodyProfiling() {
         #if DEBUG
         if AgentPerformance.shouldProfileViewChanges {
-            let _ = Self._printChanges()
+            Self._printChanges()
         }
         #endif
-        let _ = AgentPerformance.bodyEvaluation("App Root Body")
-        return AnyView(rootContentWithLifecycle)
+        _ = AgentPerformance.bodyEvaluation("App Root Body")
     }
 
     private var rootContentWithLifecycle: some View {
         rootContent
+        .environment(\.novaActiveTab, selectedTab)
         .task {
             runRootLaunchTasks()
         }
@@ -219,6 +258,9 @@ struct AppRootView: View {
             }
             AgentPalette.refreshThemeCache(theme)
             AgentThemeUIKit.apply(theme)
+        }
+        .onChange(of: performanceModeEnabled, initial: true) { _, _ in
+            AgentPerformance.invalidatePerformanceModeCache()
         }
         .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
         .alert(
@@ -919,10 +961,7 @@ struct AppRootView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         ZStack {
-            AgentBackground(
-                isWorking: false,
-                isAnimated: scenePhase == .active && selectedTab == tab
-            )
+            TabActivatedBackground(tab: tab)
             .id("tab-\(tab.rawValue)-\(selectedThemeRawValue)-\(performanceModeEnabled)")
             .ignoresSafeArea()
             .compositingGroup()
@@ -3618,7 +3657,12 @@ struct AppRootView: View {
 }
 
 private struct AppTabsRenderKey: Equatable {
-    let selectedTab: AppTab
+    /// Only populated while frame profiling is active (launch argument), where
+    /// per-tab profiling visibility must react to tab switches. In normal use
+    /// this stays nil, so switching tabs does NOT re-key the whole TabView —
+    /// the active-tab-dependent backdrops react through the environment
+    /// instead (see `TabActivatedBackground`).
+    let profilingSelectedTab: AppTab?
     let projectID: UUID
     let projectName: String
     let workspaceName: String
@@ -3648,7 +3692,7 @@ private struct AppTabsRenderKey: Equatable {
         themeRawValue: String,
         performanceModeEnabled: Bool
     ) {
-        self.selectedTab = selectedTab
+        self.profilingSelectedTab = AgentPerformance.shouldProfileFrameRate ? selectedTab : nil
         self.projectID = project.id
         self.projectName = project.name
         self.workspaceName = project.workspaceName

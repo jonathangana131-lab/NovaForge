@@ -995,7 +995,7 @@ struct ApprovalSheet: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            AgentBackground(isAnimated: false)
+            AgentBackground()
             VStack(alignment: .leading, spacing: 16) {
                 HeaderView(title: "Approval Needed", subtitle: plainToolName(request.name), symbol: "checkmark.shield", tint: AgentPalette.cyan)
 

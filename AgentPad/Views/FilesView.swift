@@ -492,7 +492,7 @@ struct FilesView: View {
 
         var body: some View {
             ZStack {
-                AgentBackground(isAnimated: false)
+                AgentBackground()
 
                 VStack(alignment: .leading, spacing: 14) {
                     HeaderView(
@@ -558,7 +558,7 @@ struct FilesView: View {
 
         var body: some View {
             ZStack {
-                AgentBackground(isAnimated: false)
+                AgentBackground()
 
                 VStack(alignment: .leading, spacing: 14) {
                     HeaderView(
@@ -2970,7 +2970,7 @@ struct FilesView: View {
     
     private var searchSheet: some View {
         ZStack {
-            AgentBackground(isAnimated: false)
+            AgentBackground()
             VStack(alignment: .leading, spacing: 18) {
                 HeaderView(title: "Workspace Finder", subtitle: "Full-text search in \(runtime.workspace.workspaceName)", symbol: "doc.text.magnifyingglass")
                 
@@ -3515,7 +3515,7 @@ struct CreateFileSheet: View {
     
     var body: some View {
         ZStack {
-            AgentBackground(isAnimated: false)
+            AgentBackground()
             VStack(alignment: .leading, spacing: 16) {
                 HeaderView(
                     title: isDirectory ? "New Folder" : "New File",
