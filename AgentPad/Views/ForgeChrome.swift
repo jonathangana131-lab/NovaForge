@@ -419,19 +419,17 @@ struct ForgeMissionStrip: View {
     let pauseAutoContinue: () -> Void
     let openDossier: () -> Void
 
-    /// Scoped chats always surface live mission state; general chats only
-    /// interrupt for things that demand attention (approvals, countdowns,
-    /// active work) — never for stale leftovers.
+    /// The strip surfaces whenever the project runtime has meaningful
+    /// state (working, approval, error, paused, fresh changes, countdown).
+    /// `WorkspaceStatusSnapshot.isVisible` already encodes "meaningful" —
+    /// an idle runtime renders nothing. On general-scoped chats the detail
+    /// line carries the project name so the state is attributable.
     static func isVisible(
         scopedProject: Project?,
         status: WorkspaceStatusSnapshot,
         autoContinue: ProjectAutoContinueViewState
     ) -> Bool {
-        if autoContinue.isCountingDown { return true }
-        if scopedProject != nil {
-            return status.isVisible
-        }
-        return status.isVisible && (status.blocksCommand || status.tone == .approval)
+        autoContinue.isCountingDown || status.isVisible
     }
 
     private var tint: Color {

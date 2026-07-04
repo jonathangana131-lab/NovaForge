@@ -11,63 +11,76 @@ import SwiftUI
 import UIKit
 
 extension FilesView {
-    var projectMemoryWorkbench: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Project Memory")
-                        .font(NovaType.title)
-                        .foregroundStyle(AgentPalette.ink)
-                    Text(projectMemorySubtitle)
-                        .font(NovaType.caption)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(2)
+    /// Grouped workspace evidence, rendered directly on the background
+    /// below the browser. The old "Project Memory" mega-card (title +
+    /// four-stat telemetry + always-open inspector) is gone: the browser
+    /// is the surface, evidence supports it, and the inspector opens as a
+    /// sheet only when a row is tapped.
+    @ViewBuilder
+    var evidenceSection: some View {
+        if !projectMemoryItems.isEmpty {
+            VStack(alignment: .leading, spacing: 13) {
+                NovaSectionMark(
+                    title: "Evidence",
+                    detail: memoryIsStale ? "Stale" : projectMemorySubtitle,
+                    tint: memoryIsStale ? AgentPalette.warning : AgentPalette.green
+                )
+
+                if projectMemoryItems.count >= 6 {
+                    workbenchLensBar
                 }
 
-                Spacer(minLength: 0)
-
-                if memoryIsStale {
-                    Label("Stale", systemImage: "clock.badge.exclamationmark")
-                        .novaLabel(AgentPalette.warning)
-                        .padding(.horizontal, 9)
-                        .frame(height: 24)
-                        .agentControlSurface(radius: 8, tint: AgentPalette.warning.opacity(0.12), selected: true)
+                if filteredProjectMemoryItems.isEmpty {
+                    AgentInlineStateView(
+                        title: "No \(selectedWorkbenchLens.title.lowercased()) evidence",
+                        detail: "Switch filters or create new proof from Chat.",
+                        symbol: selectedWorkbenchLens.symbol,
+                        tint: selectedWorkbenchLens.tint
+                    )
+                } else {
+                    memorySectionsList
                 }
             }
-
-            memoryMetricsRow
-            workbenchLensBar
-
-            if projectMemoryItems.isEmpty {
-                AgentInlineStateView(
-                    title: "No project memory yet",
-                    detail: "Artifacts, screenshots, verification proof, and changed files will appear here as work lands.",
-                    symbol: "tray",
-                    tint: AgentPalette.secondaryText
-                )
-            } else if filteredProjectMemoryItems.isEmpty {
-                AgentInlineStateView(
-                    title: "No \(selectedWorkbenchLens.title.lowercased()) evidence",
-                    detail: "Switch filters or create new proof from Chat.",
-                    symbol: selectedWorkbenchLens.symbol,
-                    tint: selectedWorkbenchLens.tint
-                )
-            } else {
-                if let selectedMemoryItem {
-                    memoryInspector(for: selectedMemoryItem)
-                }
-
-                if !artifactGalleryItems.isEmpty {
-                    artifactGallery
-                }
-
-                memorySectionsList
-            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("filesProjectMemoryWorkbench")
         }
-        .padding(14)
-        .agentSurface(radius: 22, tint: AgentPalette.green.opacity(0.06))
+    }
+
+    /// What the agent made, as a compact horizontal shelf above the
+    /// browser — the most valuable outputs get the first glance.
+    var artifactShelf: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            NovaSectionMark(
+                title: "Artifacts",
+                detail: "\(artifactGalleryItems.count)",
+                tint: AgentPalette.green
+            )
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(artifactGalleryItems) { item in
+                        projectMemoryGalleryCard(item)
+                            .frame(width: 150)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("filesProjectMemoryWorkbench")
+        .accessibilityIdentifier("filesArtifactShelf")
+    }
+
+    /// The full spec sheet for one evidence item, presented modally.
+    func memoryInspectorSheet(for item: ProjectMemoryItem) -> some View {
+        ScrollView {
+            memoryInspector(for: item)
+                .padding(.horizontal, 14)
+                .padding(.top, 18)
+                .padding(.bottom, 24)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .presentationBackground(.thinMaterial)
     }
 
     var projectMemorySubtitle: String {
@@ -80,16 +93,6 @@ extension FilesView {
         if verificationCount > 0 { parts.append("\(verificationCount) proof item\(verificationCount == 1 ? "" : "s")") }
         if riskCount > 0 { parts.append("\(riskCount) needs review") }
         return parts.isEmpty ? "\(projectMemoryItems.count) workspace item\(projectMemoryItems.count == 1 ? "" : "s")" : parts.joined(separator: " · ")
-    }
-
-    var memoryMetricsRow: some View {
-        NovaTelemetryStrip(items: [
-            NovaTelemetryItem("Changes", "\(changedFileCount)", tint: AgentPalette.cyan),
-            NovaTelemetryItem("Artifacts", "\(artifactCount)", tint: AgentPalette.green),
-            NovaTelemetryItem("Proof", "\(verificationCount)", tint: AgentPalette.lilac),
-            NovaTelemetryItem("Risk", "\(riskCount)", tint: AgentPalette.warning)
-        ], compact: true)
-        .padding(.vertical, 2)
     }
 
     var workbenchLensBar: some View {
@@ -308,32 +311,6 @@ extension FilesView {
                 .agentControlSurface(radius: 11, tint: tint.opacity(0.10), selected: true)
         }
         .buttonStyle(.plain)
-    }
-
-    var artifactGallery: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                Image(systemName: "shippingbox.fill")
-                    .font(.system(size: 10, weight: .black))
-                    .foregroundStyle(AgentPalette.green)
-                Text("Artifact Gallery")
-                    .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.ink)
-                Spacer(minLength: 0)
-                Text("\(artifactGalleryItems.count)")
-                    .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.tertiaryText)
-            }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 180), spacing: 8)], spacing: 8) {
-                ForEach(artifactGalleryItems) { item in
-                    projectMemoryGalleryCard(item)
-                }
-            }
-        }
-        .padding(10)
-        .background(AgentPalette.surfaceAlt.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .accessibilityIdentifier("filesArtifactGallery")
     }
 
     func projectMemoryGalleryCard(_ item: ProjectMemoryItem) -> some View {

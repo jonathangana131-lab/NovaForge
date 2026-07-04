@@ -88,10 +88,6 @@ struct FilesView: View {
     let tabBarClearance: CGFloat = BottomDockMetrics.scrollClearance
     let searchResultLimit = 200
 
-    var missionContract: MissionOSContract {
-        ProjectMissionSummarizer.summarize(project: project, context: modelContext).missionContract
-    }
-
     var artifactIterationPrompt: String {
         ProjectMissionSummarizer.summarize(project: project, context: modelContext).workflowSpine.iterationPrompt
     }
@@ -621,11 +617,8 @@ struct FilesView: View {
     }
 
     var selectedMemoryItem: ProjectMemoryItem? {
-        if !selectedMemoryItemID.isEmpty,
-           let selected = projectMemoryItems.first(where: { $0.id == selectedMemoryItemID }) {
-            return selected
-        }
-        return filteredProjectMemoryItems.first
+        guard !selectedMemoryItemID.isEmpty else { return nil }
+        return projectMemoryItems.first(where: { $0.id == selectedMemoryItemID })
     }
 
     var projectMemorySections: [ProjectMemorySection] {
@@ -639,11 +632,11 @@ struct FilesView: View {
     }
 
     var artifactGalleryItems: [ProjectMemoryItem] {
-        filteredProjectMemoryItems
+        projectMemoryItems
             .filter { item in
                 item.group == .artifacts || item.group == .screenshots || item.isGenerated || item.isVerification
             }
-            .prefix(8)
+            .prefix(12)
             .map { $0 }
     }
 
@@ -957,9 +950,13 @@ struct FilesView: View {
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 14) {
-                        projectMemoryWorkbench
-                            .padding(.horizontal)
-                            .padding(.top, 2)
+                        // What the agent made leads; the browser is the
+                        // surface; grouped evidence trails for deep review.
+                        if !artifactGalleryItems.isEmpty {
+                            artifactShelf
+                                .padding(.horizontal)
+                                .padding(.top, 2)
+                        }
 
                         if let fileLoadError {
                             FilesLoadErrorState(
@@ -985,6 +982,9 @@ struct FilesView: View {
                                 listLayout
                             }
                         }
+
+                        evidenceSection
+                            .padding(.horizontal)
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -1105,6 +1105,18 @@ struct FilesView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(
+            isPresented: Binding(
+                get: { selectedMemoryItem != nil },
+                set: { if !$0 { selectedMemoryItemID = "" } }
+            )
+        ) {
+            if let selectedMemoryItem {
+                memoryInspectorSheet(for: selectedMemoryItem)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
         .sheet(item: $relatedContextDraft) { draft in
             FileRelatedContextSheet(draft: draft)
                 .presentationDetents([.medium])
@@ -1214,25 +1226,14 @@ struct FilesView: View {
     /// file telemetry in the status line, and one quiet mission readout.
     /// Replaces the old banner + explorer card + stat-chip stack.
     var filesScreenHeader: some View {
-        let contract = missionContract
-        return VStack(spacing: 0) {
-            NovaScreenHeader(
-                kicker: "Workspace // \(runtime.workspace.workspaceName)",
-                title: "Files",
-                subtitle: filesHeaderStatusLine,
-                symbol: "folder.fill",
-                tint: AgentPalette.cyan,
-                isActive: runtime.isWorking
-            )
-
-            NovaMissionMicroStrip(
-                phaseName: contract.phase.displayName,
-                directive: contract.operatorDirective.isEmpty ? contract.proofRequirement : contract.operatorDirective,
-                readiness: contract.readinessScore,
-                tint: AgentPalette.cyan
-            )
-            .padding(.top, 10)
-        }
+        NovaScreenHeader(
+            kicker: "\(project.name) // \(runtime.workspace.workspaceName)",
+            title: "Workspace",
+            subtitle: filesHeaderStatusLine,
+            symbol: "folder.fill",
+            tint: AgentPalette.cyan,
+            isActive: runtime.isWorking
+        )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("filesProjectOverview")
     }

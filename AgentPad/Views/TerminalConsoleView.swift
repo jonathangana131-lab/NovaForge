@@ -489,7 +489,13 @@ struct TerminalConsoleView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         if consoleLines.isEmpty {
+                            // Fill the console viewport so an empty tty
+                            // reads as a terminal, not a card floating over
+                            // half a screen of dead space.
                             terminalEmptyState
+                                .containerRelativeFrame(.vertical) { length, _ in
+                                    max(320, length * 0.86)
+                                }
                         } else if filteredConsoleLines.isEmpty {
                             terminalSearchEmptyState
                         } else {
@@ -619,7 +625,7 @@ struct TerminalConsoleView: View {
             .padding(.top, 18)
         }
         .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             AgentPalette.terminalBackground.opacity(0.94),
             in: RoundedRectangle(cornerRadius: 18, style: .continuous)

@@ -25,7 +25,6 @@ struct RunsView: View {
     @State var cachedStats = RunStats()
     @State var cachedFilteredRuns: [RunRowData] = []
     @State var cachedMatchingRunCount = 0
-    @State var cachedSparklineDurations: [Double] = []
     @State var runDeleteError: String?
     @FocusState var searchFocused: Bool
 
@@ -40,8 +39,8 @@ struct RunsView: View {
         FilterType(rawValue: restoredFilterTypeRawValue) ?? .all
     }
 
-    var missionContract: MissionOSContract {
-        ProjectMissionSummarizer.summarize(project: project, context: modelContext).missionContract
+    var liveStatus: WorkspaceStatusSnapshot {
+        WorkspaceStatusSnapshot(runtime: runtime)
     }
 
     var artifactIterationPrompt: String {
@@ -602,11 +601,6 @@ struct RunsView: View {
             }
         }
         self.cachedStats = stats
-        self.cachedSparklineDurations = projectRuns.prefix(10).map { run in
-            guard let completedAt = run.completedAt else { return 0 }
-            return completedAt.timeIntervalSince(run.createdAt) * 1000.0
-        }
-
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let matching = projectRuns.filter { matches($0, query: query) }
         let filtered: [ToolRun]
@@ -702,15 +696,30 @@ struct RunsView: View {
                         runsScreenHeader
                             .padding(.bottom, 2)
 
-                        if runtime.shouldShowWorkspaceStatusStrip {
-                            WorkspaceStatusStrip(runtime: runtime, openChat: openChat)
-                                .transition(.move(edge: .top).combined(with: .opacity))
+                        // Live mission state, same component as Forge — one
+                        // vocabulary for "the agent is doing something".
+                        // Only rendered when there is something to act on.
+                        if ForgeMissionStrip.isVisible(
+                            scopedProject: project,
+                            status: liveStatus,
+                            autoContinue: .disabled
+                        ) {
+                            ForgeMissionStrip(
+                                project: project,
+                                scopedProject: project,
+                                status: liveStatus,
+                                autoContinue: .disabled,
+                                approve: approvePendingTool,
+                                reject: rejectPendingTool,
+                                stop: { runtime.stopGenerating(context: modelContext) },
+                                pauseAutoContinue: {},
+                                openDossier: openProject
+                            )
+                            .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        runsCommandFocusPanel
-
                         if cachedStats.total > 0 {
-                            auditDashboard
+                            historyToolbar
                         }
 
                         if cachedFilteredRuns.isEmpty {
@@ -718,7 +727,17 @@ struct RunsView: View {
                                 symbol: emptyRunsSymbol,
                                 title: emptyRunsTitle,
                                 detail: emptyRunsDetail,
-                                tint: emptyRunsTint
+                                tint: emptyRunsTint,
+                                actions: cachedStats.total == 0 ? [
+                                    NovaOrbitalEmptyState.Action(
+                                        title: "Ask NovaForge",
+                                        symbol: "bubble.left.and.bubble.right.fill",
+                                        tint: AgentPalette.cyan,
+                                        accessibilityIdentifier: "historyEmptyAskButton"
+                                    ) {
+                                        openChat()
+                                    }
+                                ] : []
                             )
                             .padding(.top, -6)
                         } else {
@@ -899,26 +918,14 @@ struct RunsView: View {
     }
 
     var runsScreenHeader: some View {
-        let contract = missionContract
-        return VStack(spacing: 0) {
-            NovaScreenHeader(
-                kicker: "Proof Engine // \(project.name)",
-                title: "Runs",
-                subtitle: runsHeaderStatusLine,
-                symbol: "waveform.path.ecg",
-                tint: AgentPalette.lilac,
-                isActive: runtime.isWorking
-            )
-
-            NovaMissionMicroStrip(
-                phaseName: contract.phase.displayName,
-                directive: contract.operatorDirective.isEmpty ? contract.proofRequirement : contract.operatorDirective,
-                readiness: contract.readinessScore,
-                tint: AgentPalette.lilac,
-                onTap: openProject
-            )
-            .padding(.top, 10)
-        }
+        NovaScreenHeader(
+            kicker: "History // \(project.name)",
+            title: "History",
+            subtitle: runsHeaderStatusLine,
+            symbol: "waveform.path.ecg",
+            tint: AgentPalette.lilac,
+            isActive: runtime.isWorking
+        )
     }
 
     var runsHeaderStatusLine: String {
@@ -930,174 +937,32 @@ struct RunsView: View {
         return parts.joined(separator: " · ")
     }
 
-    var runsCommandFocusPanel: some View {
-        let tint = runsFocusTint
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text("Run Command")
-                            .novaKickerText(AgentPalette.tertiaryText)
-                        Text(runsFocusBadge)
-                            .novaLabel(tint)
-                            .padding(.horizontal, 8)
-                            .frame(height: 19)
-                            .background(tint.opacity(0.12), in: Capsule(style: .continuous))
-                    }
-
-                    Text(runsFocusTitle)
-                        .font(NovaType.display)
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.72)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("runsFocusTitle")
-
-                    Text(runsFocusDetail)
-                        .font(NovaType.body)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("runsFocusDetail")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-
-                NovaReticleGlyph(symbol: runsFocusSymbol, tint: tint, size: 54, isActive: runtime.isWorking)
-            }
-
-            NovaTelemetryStrip(items: [
-                NovaTelemetryItem("Approvals", "\(cachedStats.pending)", tint: AgentPalette.cyan),
-                NovaTelemetryItem("Issues", "\(cachedStats.failures)", tint: AgentPalette.rose),
-                NovaTelemetryItem("Proof", "\(cachedStats.completed)", tint: AgentPalette.green)
-            ])
-
-            runsFocusActions
-        }
-        .padding(16)
-        .agentSurface(radius: 24, tint: tint.opacity(0.10))
-        .overlay(NovaCornerTicks(tint: tint.opacity(0.38), length: 9, thickness: 1.3, inset: 8))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("runsCommandFocusPanel")
+    /// Search and filters appear only once the log is big enough to need
+    /// them — a five-run history doesn't need a five-stat audit dashboard.
+    private var needsLogTools: Bool {
+        cachedStats.total >= 6 || !debouncedSearchText.isEmpty || activeFilterType != .all
     }
 
-    @ViewBuilder
-    var runsFocusActions: some View {
-        if runtime.pendingTool != nil {
-            HStack(spacing: 8) {
-                runsFocusButton(title: "Approve", symbol: "checkmark.shield.fill", tint: AgentPalette.green, action: approvePendingTool)
-                runsFocusButton(title: "Reject", symbol: "xmark.shield.fill", tint: AgentPalette.rose, action: rejectPendingTool)
-            }
-            .accessibilityIdentifier("runsApprovalActions")
-        } else if runtime.wasInterrupted || runtime.lastError != nil {
-            HStack(spacing: 8) {
-                runsFocusButton(title: runtime.wasInterrupted ? "Resume" : "Recover", symbol: "arrow.clockwise", tint: runsFocusTint, action: openProject)
-                runsFocusButton(title: "Chat", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan, action: openChat)
-            }
-        } else if runtime.isWorking {
-            HStack(spacing: 8) {
-                runsFocusButton(title: "ProjectOS", symbol: "scope", tint: AgentPalette.green, action: openProject)
-                runsFocusButton(title: "Chat", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan, action: openChat)
-            }
-        } else {
-            HStack(spacing: 8) {
-                runsFocusButton(title: "ProjectOS", symbol: "scope", tint: AgentPalette.lilac, action: openProject)
-                runsFocusButton(title: "Chat", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan, action: openChat)
-            }
-        }
-    }
-
-    func runsFocusButton(title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button {
-            NovaHaptics.tick()
-            action()
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .bold))
-                Text(title)
-                    .font(NovaType.headline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            }
-            .foregroundStyle(tint)
-            .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .background(Capsule(style: .continuous).fill(tint.opacity(0.13)))
-        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.30), lineWidth: 0.8))
-    }
-
-    var runsFocusTitle: String {
-        if let pendingTool = runtime.pendingTool {
-            return "\(pendingTool.name) is waiting for approval"
-        }
-        if runtime.wasInterrupted { return "Paused run can be resumed" }
-        if runtime.lastError != nil { return "Recovery is available" }
-        if runtime.isWorking { return runtime.activeToolName.map { "Running \($0)" } ?? runtime.activityTitle }
-        if cachedStats.failures > 0 { return "Review failed evidence before continuing" }
-        if cachedStats.pending > 0 { return "Saved approvals need review" }
-        if cachedStats.completed > 0 { return "Proof trail is ready" }
-        return "Ready to capture the first run"
-    }
-
-    var runsFocusDetail: String {
-        if runtime.pendingTool != nil || runtime.wasInterrupted || runtime.lastError != nil || runtime.isWorking {
-            return runtime.activityDetail
-        }
-        if cachedStats.failures > 0 {
-            return "\(cachedStats.failures) failed or rejected run\(cachedStats.failures == 1 ? "" : "s") remain in the audit trail with output and recovery context."
-        }
-        if cachedStats.pending > 0 {
-            return "\(cachedStats.pending) approval request\(cachedStats.pending == 1 ? "" : "s") are logged. Open ProjectOS or Chat to continue safely."
-        }
-        if cachedStats.completed > 0 {
-            return "\(cachedStats.completed) completed run\(cachedStats.completed == 1 ? "" : "s") with arguments, output, proof, and linked terminal records when available."
-        }
-        return "Tool calls, approvals, terminal proof, and changed artifacts will appear here as NovaForge works."
-    }
-
-    var runsFocusBadge: String {
-        if runtime.pendingTool != nil { return "Approval" }
-        if runtime.wasInterrupted { return "Resume" }
-        if runtime.lastError != nil { return "Recover" }
-        if runtime.isWorking { return "Live" }
-        if cachedStats.failures > 0 { return "Issues" }
-        if cachedStats.completed > 0 { return "Proof" }
-        return "Idle"
-    }
-
-    var runsFocusSymbol: String {
-        if runtime.pendingTool != nil { return "checkmark.shield.fill" }
-        if runtime.wasInterrupted { return "pause.circle.fill" }
-        if runtime.lastError != nil || cachedStats.failures > 0 { return "exclamationmark.triangle.fill" }
-        if runtime.isWorking { return "waveform" }
-        if cachedStats.completed > 0 { return "checkmark.seal.fill" }
-        return "waveform.path.ecg"
-    }
-
-    var runsFocusTint: Color {
-        if runtime.pendingTool != nil { return AgentPalette.cyan }
-        if runtime.wasInterrupted { return AgentPalette.lilac }
-        if runtime.lastError != nil || cachedStats.failures > 0 { return AgentPalette.rose }
-        if runtime.isWorking || cachedStats.completed > 0 { return AgentPalette.green }
-        return AgentPalette.lilac
-    }
-
-    var auditDashboard: some View {
+    var historyToolbar: some View {
         VStack(alignment: .leading, spacing: 13) {
-            NovaSectionMark(title: "Run Audit", detail: auditSectionDetail, tint: AgentPalette.lilac)
+            NovaSectionMark(title: "Run Log", detail: auditSectionDetail, tint: AgentPalette.lilac)
 
-            NovaTelemetryStrip(items: [
-                NovaTelemetryItem("Done", cachedStats.successRateText, tint: AgentPalette.green, isEmphasized: cachedStats.completed > 0),
-                NovaTelemetryItem("Avg", cachedStats.averageDurationText, tint: AgentPalette.lilac, isEmphasized: cachedStats.completed > 0),
-                NovaTelemetryItem("Logged", "\(cachedStats.total)", tint: AgentPalette.cyan),
-                NovaTelemetryItem("Writes", "\(cachedStats.mutations)", tint: AgentPalette.storageAccent),
-                NovaTelemetryItem("Pending", "\(cachedStats.pending)", tint: AgentPalette.warning)
-            ], compact: true)
+            if needsLogTools {
+                searchField
 
-            HStack(spacing: 9) {
+                HStack {
+                    filterSelector
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.top, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("historyToolbar")
+    }
+
+    var searchField: some View {
+        HStack(spacing: 9) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(AgentPalette.secondaryText)
@@ -1135,15 +1000,6 @@ struct RunsView: View {
             .frame(minHeight: AgentDesign.minimumTouchTarget + 2)
             .background(Capsule(style: .continuous).fill(AgentPalette.controlFill.opacity(0.55)))
             .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.lilac.opacity(searchFocused ? 0.42 : 0.16), lineWidth: 0.8))
-
-            HStack {
-                filterSelector
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(.top, 4)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("runsAuditDashboard")
     }
 
     var auditSectionDetail: String {
