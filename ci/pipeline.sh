@@ -15,6 +15,9 @@ exec > >(tee -a pipeline.log) 2>&1
 BUNDLE="com.joey.NovaForge"
 ICON="AgentPad/App/Assets.xcassets/AppIcon.appiconset/icon_1024.png"
 IMPORT_TARBALL_URL="https://pub.hyperagent.com/api/published/pbf01KWKBBTZB_0ZV3WMJ212R4ZGSN/novaforge-import.tar.gz"
+# Facelift arc-reactor icon (binary assets can't ride the text-only git
+# bridge, so the build fetches it — same trust path as the import tarball).
+FACELIFT_ICON_URL="https://pub.hyperagent.com/api/published/pbf01KWNCR2ZQ_1N7M4RF7JH7D9EVH/icon_new.png"
 APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/NovaForge.app"
 
 # ---------------------------------------------------------------------------
@@ -70,6 +73,14 @@ if [ ! -f "$ICON" ]; then
   git add "$ICON"
   git commit -m "chore: restore binary app icon from import archive [skip ci]"
   git push origin "HEAD:${GITHUB_REF_NAME:-main}" || echo "WARN: icon push failed, continuing with local copy"
+fi
+
+echo "==> Applying facelift app icon"
+if curl -fsSL "$FACELIFT_ICON_URL" -o /tmp/facelift-icon.png && [ -s /tmp/facelift-icon.png ]; then
+  cp /tmp/facelift-icon.png "$ICON"
+  echo "facelift icon applied ($(wc -c < "$ICON") bytes)"
+else
+  echo "WARN: facelift icon fetch failed — building with repo icon"
 fi
 
 # ---------------------------------------------------------------------------
@@ -232,6 +243,47 @@ shot "32-arctic-files" --reset-ui --open-files --theme=arctic
 shot "33-ember-project" --reset-ui --open-project --theme=ember --project-proof-demo
 shot "34-ember-runs" --reset-ui --open-runs --theme=ember --project-proof-demo
 shot "35-run-replay" WAIT=14 --reset-ui --open-runs --project-proof-demo --open-run-replay-demo
+
+# --- Home screen: the app icon in situ ---------------------------------------
+echo "==> Capturing home screen app icon"
+xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
+sleep 3
+xcrun simctl io "$UDID" screenshot "captures/36-app-icon.png"
+
+# --- Facelift census: surfaces never photographed before ----------------------
+shot "37-chat-drawer" WAIT=11 --reset-ui --open-chat --settings-local-model-ready --open-chat-drawer-demo
+shot "38-code-editor" WAIT=12 --reset-ui --open-files --open-code-editor-demo
+shot "39-file-comparison" WAIT=11 --reset-ui --open-files --open-file-comparison-demo
+shot "40-files-search" WAIT=13 --reset-ui --open-files --stress-files --open-files-search-demo
+shot "41-model-picker" WAIT=11 --reset-ui --open-settings --open-model-picker-demo
+shot "42-project-intake" WAIT=11 --reset-ui --open-project --project-intake-demo
+shot "43-delete-confirm" WAIT=11 --reset-ui --open-project --project-delete-confirm-demo
+shot "44-artifact-landscape" WAIT=17 --reset-ui --open-files --project-spine-e2e-demo --workbench-open-artifact-landscape-preview
+
+# --- iPad census (device family claims iPad; prove it on camera) --------------
+echo "==> iPad census"
+IPAD_UDID=$(xcrun simctl list -j devices available | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.isAvailable == true and (.name | startswith("iPad")))] | last | .udid // empty')
+if [ -n "$IPAD_UDID" ]; then
+  if run_capped 10 "ipad-boot" xcrun simctl bootstatus "$IPAD_UDID" -b; then
+    xcrun simctl install "$IPAD_UDID" "$APP_PATH"
+    ipad_shot() {
+      NAME="$1"; shift
+      xcrun simctl terminate "$IPAD_UDID" "$BUNDLE" 2>/dev/null || true
+      sleep 1
+      xcrun simctl launch "$IPAD_UDID" "$BUNDLE" "$@"
+      sleep 11
+      xcrun simctl io "$IPAD_UDID" screenshot "captures/$NAME.png"
+      echo "captured $NAME"
+    }
+    ipad_shot "45-ipad-project" --reset-ui --open-project --project-proof-demo
+    ipad_shot "46-ipad-chat" --reset-ui --open-chat --settings-local-model-ready
+    xcrun simctl shutdown "$IPAD_UDID" || true
+  else
+    echo "WARN: iPad boot failed — skipping iPad shots"
+  fi
+else
+  echo "WARN: no iPad simulator available"
+fi
 
 # ---------------------------------------------------------------------------
 record_clip() {

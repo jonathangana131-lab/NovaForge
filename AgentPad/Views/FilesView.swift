@@ -77,6 +77,7 @@ struct FilesView: View {
     @State var pendingDeleteItem: FileItem?
     @State var didSeedFileStress = false
     @State var didOpenDebugArtifactPreview = false
+    @State var didOpenFilesSurfaceDemo = false
     @FocusState var searchFocused: Bool
     
     var settings: AgentSettings? { settingsList.first }
@@ -1058,6 +1059,7 @@ struct FilesView: View {
             reload()
             reloadWorkspaces()
             openDebugArtifactPreviewIfRequested()
+            openFilesSurfaceDemosIfRequested()
         }
         .onChange(of: project.id) { _, _ in
             selectedMemoryItemID = ""
@@ -1457,6 +1459,64 @@ struct FilesView: View {
                 try? await Task.sleep(for: .milliseconds(250))
             }
             previewArtifact = WorkspaceArtifact(path: artifactPath)
+        }
+        #endif
+    }
+
+    /// CI tour fixtures for the Files surfaces that have never been
+    /// photographed: the code editor, the comparison sheet, and search.
+    /// Copies the --workbench-open-artifact-preview pattern.
+    func openFilesSurfaceDemosIfRequested() {
+        #if DEBUG || targetEnvironment(simulator)
+        let arguments = ProcessInfo.processInfo.arguments
+        guard !didOpenFilesSurfaceDemo else { return }
+
+        if arguments.contains("--open-code-editor-demo") {
+            didOpenFilesSurfaceDemo = true
+            Task { @MainActor in
+                for _ in 0..<14 {
+                    if let row = items.first(where: { !$0.item.isDirectory }) {
+                        editingTarget = FileEditTarget(item: row.item)
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
+            }
+            return
+        }
+
+        if arguments.contains("--open-file-comparison-demo") {
+            didOpenFilesSurfaceDemo = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(600))
+                comparisonDraft = FileComparisonDraft(
+                    title: "README.md → docs/README.md",
+                    sourcePath: "README.md",
+                    destinationPath: "docs/README.md",
+                    summary: "Moved during workspace reorganization · 6 lines changed",
+                    diffText: """
+                    - # NovaForge workspace
+                    + # NovaForge
+                    +
+                    + On-device agent workspace. Evidence, proof receipts,
+                    + and generated artifacts land in this tree.
+                      Files created by runs appear under their run id.
+                    """
+                )
+            }
+            return
+        }
+
+        if arguments.contains("--open-files-search-demo") {
+            didOpenFilesSurfaceDemo = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(700))
+                searchQuery = "proof"
+                showingSearch = true
+                try? await Task.sleep(for: .milliseconds(500))
+                runSearch()
+            }
+            return
         }
         #endif
     }

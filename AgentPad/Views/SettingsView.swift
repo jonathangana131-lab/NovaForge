@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var providerModelTask: Task<Void, Never>?
     @State private var connectionTestTask: Task<Void, Never>?
     @State private var showingModelPicker = false
+    @State private var didPresentModelPickerDemo = false
     @State private var providerModels: [String] = []
     @State private var loadingProviderModels = false
     @State private var providerModelError: String? = nil
@@ -47,16 +48,15 @@ struct SettingsView: View {
                 // predictable than the old segmented dashboard. Everything is
                 // reachable by normal scrolling, while advanced sheets still use
                 // native NavigationStack/List pickers.
-                GlassGroup(spacing: 14) {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                GlassGroup(spacing: 16) {
+                    LazyVStack(alignment: .leading, spacing: 16) {
                         SettingsHero(
+                            projectName: project.name,
                             providerName: settings.provider.displayName,
                             modelName: modelDisplayName(settings.modelID),
                             tint: AgentPalette.primaryAccent
                         )
                         .accessibilityIdentifier("settingsHero")
-
-                        SettingsProjectContextStrip(project: project)
 
                         overviewSection
                         settingsQuickRail
@@ -216,26 +216,17 @@ struct SettingsView: View {
     }
 
     private var settingsQuickRail: some View {
-        HStack(spacing: 8) {
-            SettingsStatusTile(
-                title: "Credential",
-                value: credentialStatusText,
-                symbol: settings.provider == .local ? "iphone.gen3" : "key.fill",
-                tint: credentialStatusTint
-            )
-            SettingsStatusTile(
-                title: "Writes",
-                value: settings.autoApproveWrites ? "Auto" : "Ask",
-                symbol: settings.autoApproveWrites ? "bolt.badge.checkmark" : "hand.raised.fill",
-                tint: settings.autoApproveWrites ? AgentPalette.lilac : AgentPalette.cyan
-            )
-            SettingsStatusTile(
-                title: "Temp",
-                value: String(format: "%.1f", draftTemperature),
-                symbol: "thermometer.medium",
-                tint: settings.provider.tint
-            )
-        }
+        NovaTelemetryStrip(items: [
+            NovaTelemetryItem("Credential", credentialStatusText, tint: credentialStatusTint, isEmphasized: true),
+            NovaTelemetryItem(
+                "Writes",
+                settings.autoApproveWrites ? "Auto" : "Ask",
+                tint: settings.autoApproveWrites ? AgentPalette.lilac : AgentPalette.cyan,
+                isEmphasized: true
+            ),
+            NovaTelemetryItem("Temp", String(format: "%.1f", draftTemperature), tint: settings.provider.tint, isEmphasized: true)
+        ], compact: true)
+        .padding(.horizontal, 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Credential \(credentialStatusText), writes \(settings.autoApproveWrites ? "automatic" : "ask before writes"), temperature \(String(format: "%.1f", draftTemperature))")
         .accessibilityIdentifier("settingsQuickRail")
@@ -815,6 +806,16 @@ struct SettingsView: View {
         if let variant = LocalModelCatalog.variant(for: settings.modelID) {
             runtime.localModels.select(variant)
         }
+
+        #if DEBUG || targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--open-model-picker-demo"), !didPresentModelPickerDemo {
+            didPresentModelPickerDemo = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(700))
+                showingModelPicker = true
+            }
+        }
+        #endif
     }
 
     private func modelDisplayName(_ model: String) -> String {

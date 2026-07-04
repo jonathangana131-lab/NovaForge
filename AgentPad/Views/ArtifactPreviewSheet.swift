@@ -618,9 +618,6 @@ private struct ArtifactPreviewStudio: View {
                         previewHintBar
                             .padding(.horizontal, 16)
 
-                        controlDeck
-                            .padding(.horizontal, 16)
-
                         previewStage
                             .padding(.horizontal, 16)
                             .padding(.bottom, 14)
@@ -698,40 +695,31 @@ private struct ArtifactPreviewStudio: View {
         .ignoresSafeArea()
     }
 
+    private var artifactTint: Color {
+        artifact.isWebPage || artifact.isSwiftGameArtifact ? AgentPalette.green : AgentPalette.lilac
+    }
+
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: artifact.isWebPage || artifact.isSwiftGameArtifact ? artifact.handoffSymbol : artifact.symbol)
-                .font(.system(size: 18, weight: .black))
-                .foregroundStyle(artifact.isWebPage || artifact.isSwiftGameArtifact ? AgentPalette.green : AgentPalette.lilac)
-                .frame(width: 42, height: 42)
-                .agentControlSurface(radius: 16, tint: artifact.isWebPage || artifact.isSwiftGameArtifact ? AgentPalette.green.opacity(0.16) : AgentPalette.lilac, selected: true)
-
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
-                    Text(artifact.title)
-                        .font(.system(size: isFullScreen ? 18 : 16, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(isFullScreen ? .white : AgentPalette.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-                        .layoutPriority(1)
-                    Text(statusText)
-                        .fixedSize()
-                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(artifact.isWebPage || artifact.isSwiftGameArtifact ? AgentPalette.green : AgentPalette.cyan)
-                        .padding(.horizontal, 8)
-                        .frame(height: 22)
-                        .agentControlSurface(radius: 8, tint: (artifact.isWebPage || artifact.isSwiftGameArtifact ? AgentPalette.green : AgentPalette.cyan).opacity(0.12), selected: true)
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(artifactTint)
+                        .frame(width: 3, height: 10)
+                    Text("Artifact Bay // \(statusText)")
+                        .novaKickerText(isFullScreen ? .white.opacity(0.6) : AgentPalette.tertiaryText)
                 }
-
-                Text(artifact.path)
-                    .font(.system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                Text(artifact.title)
+                    .font(NovaType.title)
+                    .foregroundStyle(isFullScreen ? .white : AgentPalette.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text("\(artifact.path) · \(fileKindText)\(fileSizeText.isEmpty ? "" : " · \(fileSizeText)")")
+                    .font(NovaType.caption)
                     .foregroundStyle(isFullScreen ? .white.opacity(0.62) : AgentPalette.secondaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            // maxWidth alone still splits surplus 50/50 with a trailing
-            // Spacer (equal HStack flexibility); priority makes the identity
-            // column claim it first, so no Spacer needed.
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
 
@@ -743,61 +731,44 @@ private struct ArtifactPreviewStudio: View {
                     .accessibilityIdentifier("artifactFullScreenButton")
             }
 
-            headerButton(symbol: isFullScreen ? "xmark.circle.fill" : "xmark", label: isFullScreen ? "Exit Full Screen" : "Close Preview", action: close)
+            headerButton(symbol: "xmark", label: isFullScreen ? "Exit Full Screen" : "Close Preview", action: close)
                 .accessibilityIdentifier(isFullScreen ? "artifactExitFullScreenButton" : "artifactCloseButton")
         }
     }
 
     private func headerButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let tint: Color = isFullScreen ? .white : AgentPalette.secondaryText
+        return Button {
+            NovaHaptics.tick()
             action()
         } label: {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .black))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(isFullScreen ? .white : AgentPalette.ink)
-                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(tint.opacity(0.10)))
+                .overlay(Circle().strokeBorder(tint.opacity(0.26), lineWidth: 0.9))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-        .contentShape(Rectangle())
-        .agentControlSurface(radius: 14, tint: isFullScreen ? Color.white.opacity(0.14) : AgentPalette.primaryAccent.opacity(0.10), selected: true)
         .accessibilityLabel(label)
     }
 
-    private var controlDeck: some View {
-        VStack(spacing: 10) {
-            ArtifactMetadataStrip(
-                fileKindText: fileKindText,
-                fileSizeText: fileSizeText,
-                isFullScreen: isFullScreen
-            )
-        }
-        .padding(10)
-        .agentSurface(radius: 18, tint: isFullScreen ? Color.white.opacity(0.04) : AgentPalette.primaryAccent.opacity(0.05))
-    }
-
     private var previewHintBar: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 10) {
             Image(systemName: artifact.isWebPage || artifact.isSwiftGameArtifact ? "rotate.right.fill" : "doc.text.magnifyingglass")
-                .font(.system(size: 11, weight: .black))
-                .foregroundStyle(artifact.isWebPage || artifact.isSwiftGameArtifact ? AgentPalette.green : AgentPalette.cyan)
-                .frame(width: 28, height: 28)
-                .agentControlSurface(
-                    radius: 11,
-                    tint: (artifact.isWebPage || artifact.isSwiftGameArtifact ? AgentPalette.green : AgentPalette.cyan).opacity(0.10),
-                    selected: true
-                )
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(artifactTint)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(previewHintTitle)
-                    .font(.system(size: 11.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.headline)
                     .foregroundStyle(AgentPalette.ink)
                 Text(previewHintDetail)
-                    .font(.system(size: 9.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.caption)
                     .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.82)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
 
             Spacer(minLength: 0)
@@ -807,14 +778,14 @@ private struct ArtifactPreviewStudio: View {
                     reload()
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .black))
-                        .foregroundStyle(AgentPalette.ink)
-                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                        .agentControlSurface(radius: 12, tint: AgentPalette.green.opacity(0.10), selected: true)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(artifactTint)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(artifactTint.opacity(0.10)))
+                        .overlay(Circle().strokeBorder(artifactTint.opacity(0.26), lineWidth: 0.9))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                .contentShape(Rectangle())
                 .accessibilityLabel("Reload Artifact")
                 .accessibilityIdentifier("artifactReloadButton")
             }
@@ -827,22 +798,28 @@ private struct ArtifactPreviewStudio: View {
                         openChat()
                     }
                 } label: {
-                    Label("Iterate", systemImage: "sparkles")
-                        .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.ink)
-                        .padding(.horizontal, 10)
-                        .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: AgentDesign.minimumTouchTarget)
-                        .agentControlSurface(radius: 12, tint: AgentPalette.cyan.opacity(0.10), selected: true)
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Iterate")
+                            .font(NovaType.headline)
+                    }
+                    .foregroundStyle(AgentPalette.cyan)
+                    .padding(.horizontal, 15)
+                    .frame(minHeight: 38)
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .frame(minHeight: AgentDesign.minimumTouchTarget)
-                .contentShape(Rectangle())
+                .background(Capsule(style: .continuous).fill(AgentPalette.cyan.opacity(0.13)))
+                .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.cyan.opacity(0.32), lineWidth: 0.9))
                 .accessibilityLabel("Iterate in Chat")
                 .accessibilityIdentifier("artifactIterateInChatButton")
             }
         }
-        .padding(10)
-        .agentSurface(radius: 18, tint: AgentPalette.primaryAccent.opacity(0.04))
+        .padding(.horizontal, 13)
+        .padding(.vertical, 9)
+        .background(Capsule(style: .continuous).fill(artifactTint.opacity(0.07)))
+        .overlay(Capsule(style: .continuous).strokeBorder(artifactTint.opacity(0.22), lineWidth: 0.8))
     }
 
     private var previewStage: some View {

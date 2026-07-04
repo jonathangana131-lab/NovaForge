@@ -91,18 +91,14 @@ struct RunReplaySheet: View {
     // MARK: - Sections
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "memories")
-                .font(.system(size: 16, weight: .black))
-                .foregroundStyle(AgentPalette.cyan)
-                .frame(width: 38, height: 38)
-                .agentControlSurface(radius: 13, tint: AgentPalette.cyan.opacity(0.14), selected: true)
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                NovaKicker(text: "Flight Recorder", tint: AgentPalette.cyan)
                 Text("Run Replay")
-                    .font(.system(size: 16, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.display)
                     .foregroundStyle(AgentPalette.ink)
                 Text(target.name)
-                    .font(.system(size: 11, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.caption)
                     .foregroundStyle(AgentPalette.secondaryText)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -114,9 +110,12 @@ struct RunReplaySheet: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .black))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(AgentPalette.secondaryText)
-                    .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(AgentPalette.controlFill.opacity(0.5)))
+                    .overlay(Circle().strokeBorder(AgentPalette.controlBorder.opacity(0.7), lineWidth: 0.9))
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close replay")
@@ -124,7 +123,7 @@ struct RunReplaySheet: View {
     }
 
     private var scrubber: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             HStack(spacing: 12) {
                 Button {
                     if playheadIndex >= tape.count - 1, !isPlaying {
@@ -134,45 +133,76 @@ struct RunReplaySheet: View {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 } label: {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 15, weight: .black))
-                        .foregroundStyle(AgentPalette.ink)
+                        .font(.system(size: 15, weight: .heavy))
+                        .foregroundStyle(AgentPalette.pearl)
                         .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                        .agentControlSurface(radius: 14, tint: AgentPalette.cyan.opacity(0.16), selected: true)
+                        .background(Circle().fill(AgentPalette.cyan))
+                        .shadow(
+                            color: AgentPerformance.prefersReducedVisualEffects ? .clear : AgentPalette.cyan.opacity(0.4),
+                            radius: 9, x: 0, y: 2
+                        )
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(isPlaying ? "Pause replay" : "Play replay")
                 .accessibilityIdentifier("replayPlayButton")
 
-                Slider(
-                    value: $playhead,
-                    in: 0...Double(max(tape.count - 1, 1)),
-                    step: 1
-                ) { editing in
-                    if editing { isPlaying = false }
-                }
-                .tint(AgentPalette.cyan)
-                .accessibilityLabel("Replay position")
+                VStack(spacing: 3) {
+                    Slider(
+                        value: $playhead,
+                        in: 0...Double(max(tape.count - 1, 1)),
+                        step: 1
+                    ) { editing in
+                        if editing { isPlaying = false }
+                    }
+                    .tint(AgentPalette.cyan)
+                    .accessibilityLabel("Replay position")
 
-                Text("\(playheadIndex + 1)/\(tape.count)")
-                    .font(.system(size: 11, weight: .black, design: .monospaced))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .fixedSize()
+                    // event tick marks under the transport track
+                    GeometryReader { proxy in
+                        let count = max(tape.count - 1, 1)
+                        ForEach(0..<tape.count, id: \.self) { index in
+                            Rectangle()
+                                .fill(index <= playheadIndex ? AgentPalette.cyan.opacity(0.9) : AgentPalette.quaternaryText.opacity(0.5))
+                                .frame(width: 1.4, height: index <= playheadIndex ? 7 : 5)
+                                .position(
+                                    x: proxy.size.width * CGFloat(index) / CGFloat(count),
+                                    y: 4
+                                )
+                        }
+                    }
+                    .frame(height: 9)
+                    .accessibilityHidden(true)
+                }
+
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("\(playheadIndex + 1)/\(tape.count)")
+                        .font(NovaType.readoutSmall)
+                        .foregroundStyle(AgentPalette.cyan)
+                        .contentTransition(.numericText())
+                    Text("Frame")
+                        .novaLabel(AgentPalette.quaternaryText)
+                }
+                .fixedSize()
             }
-            .padding(10)
-            .agentSurface(radius: 16, tint: AgentPalette.cyan.opacity(0.06))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .agentSurface(radius: 20, tint: AgentPalette.cyan.opacity(0.06))
+            .overlay(NovaCornerTicks(tint: AgentPalette.cyan.opacity(0.35), length: 8, thickness: 1.2, inset: 6))
         }
     }
 
     private var frameList: some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 6) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(tape.enumerated()), id: \.element.id) { index, frame in
                         frameRow(frame, index: index)
                             .id(frame.id)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.top, 8)
+                .padding(.horizontal, 2)
             }
             .onChange(of: playheadIndex) {
                 guard playheadIndex < tape.count else { return }
@@ -183,59 +213,80 @@ struct RunReplaySheet: View {
         }
     }
 
+    /// Timeline node row: a continuous rail with event nodes that light up
+    /// as the playhead passes them. The current frame gets a soft halo
+    /// instead of a boxed row.
     private func frameRow(_ frame: ReplayFrame, index: Int) -> some View {
         let isCurrent = index == playheadIndex
         let isPast = index < playheadIndex
-        return HStack(alignment: .top, spacing: 9) {
+        let isLit = isCurrent || isPast
+        return HStack(alignment: .top, spacing: 10) {
             Text(frame.offsetText)
-                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                .foregroundStyle(AgentPalette.tertiaryText)
-                .frame(width: 48, alignment: .trailing)
-                .padding(.top, 3)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(isLit ? AgentPalette.tertiaryText : AgentPalette.quaternaryText)
+                .frame(width: 50, alignment: .trailing)
+                .padding(.top, 4)
 
-            Image(systemName: frame.symbol)
-                .font(.system(size: 11, weight: .black))
-                .foregroundStyle(isCurrent || isPast ? frame.tint : AgentPalette.quaternaryText)
-                .frame(width: 24, height: 24)
-                .agentControlSurface(radius: 8, tint: frame.tint.opacity(isCurrent ? 0.18 : 0.07), selected: isCurrent)
+            VStack(spacing: 0) {
+                ZStack {
+                    if isCurrent {
+                        Circle()
+                            .fill(frame.tint.opacity(0.18))
+                            .frame(width: 22, height: 22)
+                    }
+                    Circle()
+                        .strokeBorder(isLit ? frame.tint : AgentPalette.quaternaryText.opacity(0.5), lineWidth: 1.4)
+                        .frame(width: 11, height: 11)
+                    if isLit {
+                        Circle()
+                            .fill(frame.tint)
+                            .frame(width: 5, height: 5)
+                    }
+                }
+                .frame(width: 22, height: 22)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(frame.title)
-                    .font(.system(size: 12, weight: isCurrent ? .black : .bold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(isCurrent || isPast ? AgentPalette.ink : AgentPalette.tertiaryText)
+                if index < tape.count - 1 {
+                    Rectangle()
+                        .fill(isPast ? frame.tint.opacity(0.45) : AgentPalette.divider.opacity(0.5))
+                        .frame(width: 1.2)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: frame.symbol)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(isLit ? frame.tint : AgentPalette.quaternaryText)
+                    Text(frame.title)
+                        .font(isCurrent ? NovaType.headline : NovaType.body)
+                        .foregroundStyle(isLit ? AgentPalette.ink : AgentPalette.tertiaryText)
+                }
                 if !frame.detail.isEmpty {
                     Text(frame.detail)
-                        .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(isCurrent || isPast ? AgentPalette.secondaryText : AgentPalette.quaternaryText)
+                        .font(NovaType.caption)
+                        .foregroundStyle(isLit ? AgentPalette.secondaryText : AgentPalette.quaternaryText)
                         .lineLimit(isCurrent ? 3 : 1)
                         .truncationMode(.tail)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 14)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .agentRowSurface(radius: 14, tint: frame.tint, selected: isCurrent)
-        .opacity(isCurrent || isPast ? 1 : 0.55)
+        .fixedSize(horizontal: false, vertical: true)
+        .opacity(isLit ? 1 : 0.6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(frame.offsetText): \(frame.title). \(frame.detail)")
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "memories")
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(AgentPalette.tertiaryText)
-            Text("Nothing to replay")
-                .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.ink)
-            Text("This run didn't record replayable events.")
-                .font(.system(size: 11, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.secondaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 34)
-        .agentSurface(radius: 18, tint: AgentPalette.cyan.opacity(0.05))
+        NovaOrbitalEmptyState(
+            symbol: "memories",
+            title: "Nothing to replay",
+            detail: "This run didn't record replayable events.",
+            tint: AgentPalette.cyan
+        )
     }
 
     // MARK: - Tape

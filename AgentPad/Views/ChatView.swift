@@ -686,6 +686,14 @@ struct ChatView: View {
                 if ProcessInfo.processInfo.arguments.contains("--keyboard-focus-demo") {
                     composerFocused = true
                 }
+                if ProcessInfo.processInfo.arguments.contains("--open-chat-drawer-demo") {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(700))
+                        withAnimation(.smooth(duration: 0.22)) {
+                            showingChatDrawer = true
+                        }
+                    }
+                }
                 #endif
                 applyProjectResumeDraftIfNeeded(focusComposer: projectResumeDraftRevision > 0)
                 restorePersistedDraftIfAvailable()

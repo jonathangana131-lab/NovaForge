@@ -8,41 +8,44 @@
 import SwiftUI
 
 struct SettingsHero: View {
+    let projectName: String
     let providerName: String
     let modelName: String
     let tint: Color
 
     var body: some View {
-        HeaderView(
+        NovaScreenHeader(
+            kicker: "Control Plane // \(projectName)",
             title: "Settings",
-            subtitle: "\(providerName) - \(modelName)",
+            subtitle: "\(providerName) · \(modelName)",
             symbol: "gearshape.fill",
             tint: tint
         )
     }
 }
 
+/// Flat settings band: tracked section mark + quiet subtitle, controls
+/// sitting directly on the background. The old version wrapped every
+/// section in an identical card, which flattened the whole screen into
+/// card soup.
 struct SettingsSection<Content: View>: View {
     let title: String
     let subtitle: String
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(AgentPalette.ink)
+        VStack(alignment: .leading, spacing: 11) {
+            VStack(alignment: .leading, spacing: 3) {
+                NovaSectionMark(title: title)
                 Text(subtitle)
-                    .font(.caption.weight(.semibold))
+                    .font(NovaType.caption)
                     .foregroundStyle(AgentPalette.tertiaryText)
                     .lineLimit(2)
             }
 
             content
         }
-        .padding(14)
-        .agentSurface(radius: 20)
+        .padding(.top, 6)
     }
 }
 
@@ -56,91 +59,80 @@ struct SettingsNativeOverview: View {
     let theme: String
     let tint: Color
 
+    private var isReady: Bool { status == "Ready to run" }
+    private var statusTint: Color { isReady ? AgentPalette.green : AgentPalette.warning }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: status == "Ready to run" ? "checkmark.seal.fill" : "key.fill")
-                    .font(.system(size: 15, weight: .black))
-                    .foregroundStyle(status == "Ready to run" ? AgentPalette.green : AgentPalette.storageAccent)
-                    .frame(width: 34, height: 34)
-                    .background((status == "Ready to run" ? AgentPalette.green : AgentPalette.storageAccent).opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(statusTint)
+                            .frame(width: 6, height: 6)
+                            .shadow(color: AgentPerformance.prefersReducedVisualEffects ? .clear : statusTint.opacity(0.8), radius: 4)
+                        Text(isReady ? "Systems Go" : "Action Needed")
+                            .novaLabel(statusTint)
+                    }
 
-                VStack(alignment: .leading, spacing: 2) {
                     Text(status)
-                        .font(.system(size: 15, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.display)
                         .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.78)
+
                     Text(detail)
-                        .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.body)
                         .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
 
-            VStack(alignment: .leading, spacing: 7) {
-                readinessInfoRow(
-                    title: "Provider & model",
-                    value: "\(provider) · \(model)",
-                    symbol: "network",
-                    accessibilityIdentifier: "settingsReadyProviderModelRow"
+                NovaReticleGlyph(
+                    symbol: isReady ? "checkmark.seal.fill" : "key.fill",
+                    tint: statusTint,
+                    size: 50
                 )
-
-                HStack(spacing: 8) {
-                    readinessPill(writes, symbol: "checkmark.shield")
-                    readinessPill(theme, symbol: "paintpalette")
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .agentSurface(radius: 18, tint: tint.opacity(0.06))
-    }
-
-    private func readinessInfoRow(
-        title: String,
-        value: String,
-        symbol: String,
-        accessibilityIdentifier: String
-    ) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .black))
-                .foregroundStyle(tint)
-                .frame(width: 26, height: 26)
-                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title.uppercased())
-                    .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.tertiaryText)
-                    .tracking(0.4)
-                Text(value)
-                    .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.ink)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .minimumScaleFactor(0.82)
             }
 
-            Spacer(minLength: 0)
+            HStack(alignment: .top, spacing: 0) {
+                overviewSpecColumn(title: "Route", value: provider, tint: tint)
+                specDivider
+                overviewSpecColumn(title: "Model", value: model, tint: tint)
+                specDivider
+                overviewSpecColumn(title: "World", value: theme, tint: AgentPalette.lilac)
+            }
+            .accessibilityIdentifier("settingsReadyProviderModelRow")
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-        .agentControlSurface(radius: 12, tint: tint.opacity(0.07), selected: false)
-        .accessibilityIdentifier(accessibilityIdentifier)
+        .padding(16)
+        .agentSurface(radius: 24, tint: statusTint.opacity(0.07))
+        .overlay(NovaCornerTicks(tint: statusTint.opacity(0.35), length: 9, thickness: 1.3, inset: 8))
     }
 
-    private func readinessPill(_ title: String, symbol: String) -> some View {
-        Label(title, systemImage: symbol)
-            .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-            .foregroundStyle(AgentPalette.secondaryText)
-            .labelStyle(.titleAndIcon)
-            .lineLimit(1)
-            .minimumScaleFactor(0.78)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: 30)
-            .agentControlSurface(radius: 10, tint: tint.opacity(0.07), selected: false)
+    private var specDivider: some View {
+        Rectangle()
+            .fill(AgentPalette.divider.opacity(0.5))
+            .frame(width: 1, height: 28)
+            .padding(.horizontal, 11)
+    }
+
+    private func overviewSpecColumn(title: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .novaLabel(tint)
+                .minimumScaleFactor(0.7)
+            Text(value)
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(value)")
     }
 }
 
@@ -213,31 +205,51 @@ struct SettingsProviderRow: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
+        Button {
+            NovaHaptics.lensChanged()
+            action()
+        } label: {
+            HStack(spacing: 8) {
                 Image(systemName: provider.symbol)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(provider.tint)
-                    .frame(width: 28, height: 28)
-                    .agentSurface(radius: 9, tint: provider.tint.opacity(0.10))
+                    .frame(width: 18)
 
                 Text(provider.displayName)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(AgentPalette.ink)
+                    .font(NovaType.headline)
+                    .foregroundStyle(selected ? AgentPalette.ink : AgentPalette.secondaryText)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.78)
+                    .minimumScaleFactor(0.74)
 
                 Spacer(minLength: 0)
 
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(selected ? provider.tint : AgentPalette.quaternaryText)
+                ZStack {
+                    Circle()
+                        .strokeBorder(selected ? provider.tint : AgentPalette.quaternaryText.opacity(0.6), lineWidth: 1.3)
+                        .frame(width: 16, height: 16)
+                    if selected {
+                        Circle()
+                            .fill(provider.tint)
+                            .frame(width: 8, height: 8)
+                    }
+                }
             }
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 13)
             .frame(height: 48)
-            .agentSurface(radius: 14, tint: selected ? provider.tint.opacity(0.10) : nil)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .background(
+            Capsule(style: .continuous)
+                .fill(selected ? provider.tint.opacity(0.13) : AgentPalette.controlFill.opacity(0.38))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(
+                    selected ? provider.tint.opacity(0.44) : AgentPalette.controlBorder.opacity(0.5),
+                    lineWidth: 0.9
+                )
+        )
     }
 }
 
@@ -987,58 +999,91 @@ struct SettingsThemeRow: View {
     private var palette: AgentThemePalette { theme.palette }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
+        Button {
+            NovaHaptics.lensChanged()
+            action()
+        } label: {
+            HStack(spacing: 12) {
                 themePreview
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(theme.title)
-                        .font(.subheadline.weight(.bold))
+                        .font(NovaType.headline)
                         .foregroundStyle(AgentPalette.ink)
                     Text(theme.subtitle)
-                        .font(.caption.weight(.semibold))
+                        .font(NovaType.caption)
                         .foregroundStyle(AgentPalette.tertiaryText)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 8)
 
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(selected ? palette.cyan : AgentPalette.quaternaryText)
+                ZStack {
+                    Circle()
+                        .strokeBorder(selected ? palette.primaryAccent : AgentPalette.quaternaryText.opacity(0.6), lineWidth: 1.3)
+                        .frame(width: 17, height: 17)
+                    if selected {
+                        Circle()
+                            .fill(palette.primaryAccent)
+                            .frame(width: 9, height: 9)
+                    }
+                }
             }
             .padding(10)
-            .frame(minHeight: 58)
-            .agentSurface(radius: 14, tint: selected ? palette.cyan.opacity(0.12) : nil)
+            .frame(minHeight: 68)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(selected ? palette.primaryAccent.opacity(0.09) : AgentPalette.controlFill.opacity(0.30))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    selected ? palette.primaryAccent.opacity(0.42) : AgentPalette.controlBorder.opacity(0.45),
+                    lineWidth: 0.9
+                )
+        )
         .accessibilityIdentifier("settingsThemeRow-\(theme.rawValue)")
     }
 
+    /// A miniature of the world itself: its canvas gradient, its accent
+    /// light, and its own display face saying "Aa".
     private var themePreview: some View {
-        ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [palette.backgroundA, palette.backgroundB, palette.backgroundC],
+                        colors: [palette.backgroundB, palette.backgroundA, palette.backgroundC.opacity(0.8)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(palette.border, lineWidth: 0.8)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(palette.glassStroke, lineWidth: 0.8)
                 )
 
-            HStack(spacing: 3) {
-                Circle().fill(palette.primaryAccent)
-                Circle().fill(palette.cyan)
-                Circle().fill(palette.lilac)
+            Text("Aa")
+                .font(.system(size: 19, weight: .heavy, design: palette.typography.displayDesign))
+                .foregroundStyle(palette.textPrimary)
+
+            VStack {
+                Spacer()
+                HStack(spacing: 3) {
+                    Capsule().fill(palette.primaryAccent).frame(width: 12, height: 3)
+                    Circle().fill(palette.secondaryAccent).frame(width: 3, height: 3)
+                    Circle().fill(palette.semanticSuccess).frame(width: 3, height: 3)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 7)
+                .padding(.bottom, 6)
             }
-            .frame(height: 9)
-            .padding(5)
         }
-        .frame(width: 42, height: 34)
+        .frame(width: 62, height: 48)
+        .accessibilityHidden(true)
     }
 }
 

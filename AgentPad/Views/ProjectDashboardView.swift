@@ -717,14 +717,29 @@ struct ProjectDashboardView: View {
     }
 
     func presentProjectIntakeDemoIfNeeded() {
-        guard ProcessInfo.processInfo.arguments.contains("--project-intake-demo"),
-              !didPresentProjectIntakeDemo else {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--project-intake-demo"), !didPresentProjectIntakeDemo {
+            didPresentProjectIntakeDemo = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                showsProjectIntakeSheet = true
+            }
             return
         }
-        didPresentProjectIntakeDemo = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            showsProjectIntakeSheet = true
+        if arguments.contains("--project-edit-demo"), !didPresentProjectIntakeDemo {
+            didPresentProjectIntakeDemo = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                showsProjectEditSheet = true
+            }
+            return
+        }
+        if arguments.contains("--project-delete-confirm-demo"), !didPresentProjectIntakeDemo {
+            didPresentProjectIntakeDemo = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(700))
+                confirmingProjectDelete = true
+            }
         }
     }
 
