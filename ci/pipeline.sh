@@ -73,16 +73,67 @@ if [ ! -f "$ICON" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-echo "==> Building NovaForge (Release, iPhone simulator)"
+# Watchdog: runs 30/31 sat in_progress for 36-45+ min against a 15-24 min
+# historical envelope, with no captures and no logs (the EXIT trap only fires
+# if the job ends cleanly — a 90-min runner timeout may SIGKILL past it).
+# Every potentially-unbounded step now runs under a hard cap so a wedge
+# becomes a failed-but-diagnosable run: build.log / pipeline.log always
+# publish, and heartbeats show where time actually went.
+run_capped() {
+  # run_capped <minutes> <label> <cmd...>  — kills the command tree if the
+  # cap elapses; returns the command's status (124 on timeout).
+  local CAP_MIN="$1"; shift
+  local LABEL="$1"; shift
+  "$@" &
+  local CMD_PID=$!
+  (
+    local waited=0
+    while kill -0 "$CMD_PID" 2>/dev/null && [ "$waited" -lt $((CAP_MIN * 60)) ]; do
+      sleep 30
+      waited=$((waited + 30))
+      echo "HEARTBEAT ${LABEL}: ${waited}s elapsed (cap $((CAP_MIN * 60))s) — $(tail -1 build.log 2>/dev/null | cut -c1-160)"
+    done
+    if kill -0 "$CMD_PID" 2>/dev/null; then
+      echo "WATCHDOG: ${LABEL} exceeded ${CAP_MIN}m — killing"
+      pkill -TERM -P "$CMD_PID" 2>/dev/null || true
+      kill -TERM "$CMD_PID" 2>/dev/null || true
+      sleep 5
+      pkill -KILL -P "$CMD_PID" 2>/dev/null || true
+      kill -KILL "$CMD_PID" 2>/dev/null || true
+    fi
+  ) &
+  local WATCH_PID=$!
+  local STATUS=0
+  wait "$CMD_PID" || STATUS=$?
+  kill "$WATCH_PID" 2>/dev/null || true
+  wait "$WATCH_PID" 2>/dev/null || true
+  echo "${LABEL} finished with status ${STATUS}"
+  return "$STATUS"
+}
+
+build_once() {
+  xcodebuild \
+    -project AgentPad.xcodeproj \
+    -scheme AgentPad \
+    -configuration Release \
+    -destination "generic/platform=iOS Simulator" \
+    -derivedDataPath DerivedData \
+    CODE_SIGNING_ALLOWED=NO \
+    OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -warn-long-function-bodies=15000 -Xfrontend -warn-long-expression-type-checking=15000' \
+    build > build.log 2>&1
+}
+
+echo "==> Building NovaForge (Release, iPhone simulator; 30m cap)"
 set -o pipefail
-xcodebuild \
-  -project AgentPad.xcodeproj \
-  -scheme AgentPad \
-  -configuration Release \
-  -destination "generic/platform=iOS Simulator" \
-  -derivedDataPath DerivedData \
-  CODE_SIGNING_ALLOWED=NO \
-  build 2>&1 | tee build.log | tail -40
+if ! run_capped 30 "xcodebuild" build_once; then
+  echo "BUILD FAILED OR TIMED OUT — slowest type-checks:"
+  grep -E "warning: (expression|function|instance method|getter) took" build.log | head -30 || true
+  tail -60 build.log || true
+  exit 65
+fi
+tail -30 build.log
+echo "==> Slow type-check report (anything over 15s):"
+grep -E "warning: (expression|function) took" build.log | head -20 || echo "none over threshold"
 
 # ---------------------------------------------------------------------------
 echo "==> Selecting a simulator"
@@ -96,7 +147,10 @@ if [ -z "$UDID" ]; then
   UDID=$(xcrun simctl create "NovaCI" "$DEVICE_TYPE")
 fi
 xcrun simctl list devices | grep -i "$UDID" || true
-xcrun simctl bootstatus "$UDID" -b
+run_capped 10 "simulator-boot" xcrun simctl bootstatus "$UDID" -b || {
+  echo "SIMULATOR BOOT TIMED OUT"
+  exit 66
+}
 echo "simulator ready: $UDID"
 
 echo "==> Installing app"
