@@ -24,6 +24,7 @@ struct RunsView: View {
 
     @State var cachedStats = RunStats()
     @State var cachedFilteredRuns: [RunRowData] = []
+    @State var cachedRunSections: [RunDaySection] = []
     @State var cachedMatchingRunCount = 0
     @State var runDeleteError: String?
     @FocusState var searchFocused: Bool
@@ -617,6 +618,7 @@ struct RunsView: View {
             RunRowData(run: run, terminalRecord: linkedTerminalRecords[run.id.uuidString])
         }
         self.cachedMatchingRunCount = filtered.count
+        self.cachedRunSections = Self.daySections(from: cachedFilteredRuns)
         AgentPerformance.value("Runs Project Rows", Double(projectRuns.count))
         AgentPerformance.value("Runs Filtered Rows", Double(filtered.count))
     }
@@ -741,38 +743,8 @@ struct RunsView: View {
                             )
                             .padding(.top, -6)
                         } else {
-                            ForEach(cachedFilteredRuns) { row in
-                                RunCard(
-                                    row: row,
-                                    expanded: expansionBinding(for: row),
-                                    hasLivePendingApproval: runtime.pendingTool != nil,
-                                    deleteRun: { deleteRun(id: row.id) },
-                                    openArtifact: { artifact in
-                                        preview(artifact)
-                                    },
-                                    openTerminalRecord: { id, command, query in
-                                        openTerminalRecord(id, command, query)
-                                    },
-                                    openProject: openProject,
-                                    approvePendingTool: approvePendingTool,
-                                    rejectPendingTool: rejectPendingTool,
-                                    dismissSearch: {
-                                        searchFocused = false
-                                    },
-                                    revealCard: { anchor in
-                                        revealRun(row.id, anchor: anchor, proxy: scrollProxy)
-                                    },
-                                    openReplay: {
-                                        replayTarget = RunReplayTarget(
-                                            id: row.id,
-                                            name: row.displayName,
-                                            status: row.status,
-                                            windowStart: row.createdAt,
-                                            windowEnd: row.createdAt.addingTimeInterval(max(1, row.durationMs / 1_000) + 1)
-                                        )
-                                    }
-                                )
-                                .id(row.id)
+                            ForEach(cachedRunSections) { section in
+                                runDaySection(section, scrollProxy: scrollProxy)
                             }
                             if hasOffscreenRuns {
                                 Text(runs.count >= Self.fetchedRunLimit ? "Showing newest \(Self.visibleRunLimit) rows from a \(Self.fetchedRunLimit)-run fetched window." : "Older matching run rows are kept offscreen for smooth scrolling.")
@@ -859,6 +831,54 @@ struct RunsView: View {
         } message: {
             Text(runDeleteError ?? "NovaForge could not save that run log change.")
         }
+    }
+
+    @ViewBuilder
+    func runDaySection(_ section: RunDaySection, scrollProxy: ScrollViewProxy) -> some View {
+        NovaSectionMark(
+            title: section.title,
+            detail: "\(section.rows.count)",
+            tint: AgentPalette.lilac
+        )
+        .padding(.top, 2)
+
+        ForEach(section.rows) { row in
+            runCard(for: row, scrollProxy: scrollProxy)
+                .id(row.id)
+        }
+    }
+
+    func runCard(for row: RunRowData, scrollProxy: ScrollViewProxy) -> some View {
+        RunCard(
+            row: row,
+            expanded: expansionBinding(for: row),
+            hasLivePendingApproval: runtime.pendingTool != nil,
+            deleteRun: { deleteRun(id: row.id) },
+            openArtifact: { artifact in
+                preview(artifact)
+            },
+            openTerminalRecord: { id, command, query in
+                openTerminalRecord(id, command, query)
+            },
+            openProject: openProject,
+            approvePendingTool: approvePendingTool,
+            rejectPendingTool: rejectPendingTool,
+            dismissSearch: {
+                searchFocused = false
+            },
+            revealCard: { anchor in
+                revealRun(row.id, anchor: anchor, proxy: scrollProxy)
+            },
+            openReplay: {
+                replayTarget = RunReplayTarget(
+                    id: row.id,
+                    name: row.displayName,
+                    status: row.status,
+                    windowStart: row.createdAt,
+                    windowEnd: row.createdAt.addingTimeInterval(max(1, row.durationMs / 1_000) + 1)
+                )
+            }
+        )
     }
 
     func deleteRun(id: UUID) {
@@ -1043,4 +1063,55 @@ struct RunsView: View {
         }
     }
 
+}
+
+
+extension RunsView {
+    /// One calendar day of run receipts. Day marks give the log narrative
+    /// structure ("what happened today vs. Tuesday") without any dashboard
+    /// chrome — the receipts stay the content.
+    struct RunDaySection: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let rows: [RunRowData]
+    }
+
+    static func daySections(from rows: [RunRowData]) -> [RunDaySection] {
+        guard !rows.isEmpty else { return [] }
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, MMM d"
+        var sections: [RunDaySection] = []
+        var currentDay: Date?
+        var currentRows: [RunRowData] = []
+
+        func flush() {
+            guard let day = currentDay, !currentRows.isEmpty else { return }
+            let title: String
+            if calendar.isDateInToday(day) {
+                title = "Today"
+            } else if calendar.isDateInYesterday(day) {
+                title = "Yesterday"
+            } else {
+                title = formatter.string(from: day)
+            }
+            sections.append(RunDaySection(
+                id: ISO8601DateFormatter().string(from: day),
+                title: title,
+                rows: currentRows
+            ))
+        }
+
+        for row in rows {
+            let day = calendar.startOfDay(for: row.createdAt)
+            if day != currentDay {
+                flush()
+                currentDay = day
+                currentRows = []
+            }
+            currentRows.append(row)
+        }
+        flush()
+        return sections
+    }
 }

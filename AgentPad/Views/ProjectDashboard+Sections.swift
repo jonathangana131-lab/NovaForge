@@ -468,7 +468,7 @@ extension ProjectDashboardView {
             ProjectMetricCard(
                 id: "runs",
                 value: "\(summary.toolRunCount)",
-                label: "Runs",
+                label: "History",
                 detail: latestRunDetail,
                 symbol: "wrench.and.screwdriver.fill",
                 tint: AgentPalette.lilac
@@ -702,7 +702,7 @@ extension ProjectDashboardView {
         HStack(spacing: 8) {
             commandSurfaceLink(title: "Chat", symbol: "sparkles", tab: .chat, tint: AgentPalette.cyan)
             commandSurfaceLink(title: "Files", symbol: "folder.fill", tab: .files, tint: AgentPalette.storageAccent)
-            commandSurfaceLink(title: "Runs", symbol: "waveform.path.ecg", tab: .runs, tint: AgentPalette.lilac)
+            commandSurfaceLink(title: "History", symbol: "waveform.path.ecg", tab: .runs, tint: AgentPalette.lilac)
         }
     }
 

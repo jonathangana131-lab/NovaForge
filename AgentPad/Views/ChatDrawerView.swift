@@ -55,7 +55,10 @@ struct ChatDrawerOverlay: View {
     }
 
     private var drawerSummaryText: String {
-        "All chats · \(conversations.count) session\(conversations.count == 1 ? "" : "s") · \(visibleRows.count) shown"
+        let total = conversations.count
+        let base = "\(total) chat\(total == 1 ? "" : "s")"
+        guard visibleRows.count != total else { return base }
+        return "\(base) · \(visibleRows.count) shown"
     }
 
     private func rebuildRows() {
@@ -476,7 +479,7 @@ private struct ChatDrawerRow: View {
                                 .truncationMode(.middle)
                                 .minimumScaleFactor(0.82)
                             Spacer(minLength: 0)
-                            Text(row.relativeDate)
+                            Text(row.messageCount > 0 ? "\(row.relativeDate) · \(row.messageCount)" : row.relativeDate)
                                 .font(.system(size: 9, weight: .bold, design: AgentPalette.interfaceFontDesign))
                                 .foregroundStyle(AgentPalette.tertiaryText)
                                 .lineLimit(1)
@@ -484,14 +487,11 @@ private struct ChatDrawerRow: View {
                                 .layoutPriority(1)
                         }
                         Text(row.preview)
-                            .font(.system(size: 13, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                            .font(.system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                             .foregroundStyle(AgentPalette.secondaryText)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .minimumScaleFactor(0.82)
-                        Text("\(row.messageCount) message\(row.messageCount == 1 ? "" : "s")")
-                            .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(isSelected ? activeColor : AgentPalette.tertiaryText)
                     }
                     .layoutPriority(1)
                 }
@@ -526,7 +526,7 @@ private struct ChatDrawerRow: View {
             .accessibilityIdentifier("chatDrawerRowActions-\(row.id.uuidString)")
         }
         .padding(.horizontal, 10)
-        .frame(height: 64)
+        .frame(height: 56)
         .agentRowSurface(radius: 14, tint: isSelected ? activeColor : AgentPalette.cyan, selected: isSelected)
         .contextMenu {
             Button(action: renameAction) {

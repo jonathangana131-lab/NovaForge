@@ -109,15 +109,6 @@ extension ProjectDashboardView {
 
             projectOSExecutionStateLadder
             projectOSExecutionActionRow
-
-            HStack(alignment: .top, spacing: 0) {
-                projectOSExecutionSpecColumn(title: "Evidence", value: projectOSEvidenceSummaryText, tint: AgentPalette.green)
-                Rectangle()
-                    .fill(AgentPalette.divider.opacity(0.5))
-                    .frame(width: 1, height: 30)
-                    .padding(.horizontal, 12)
-                projectOSExecutionSpecColumn(title: "Logs", value: projectOSLogSummaryText, tint: AgentPalette.cyan)
-            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectOSExecutionStatePanel")
@@ -184,14 +175,14 @@ extension ProjectDashboardView {
                 projectOSIntentSmallButton(title: "Reject", symbol: "xmark.shield.fill", tint: AgentPalette.rose) {
                     rejectPendingTool()
                 }
-                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
                     openTab(.runs)
                 }
             }
             .accessibilityIdentifier("projectOSApprovalActions")
         case .running, .planning:
             HStack(spacing: 8) {
-                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
                     openTab(.runs)
                 }
                 projectOSIntentSmallButton(title: "Timeline", symbol: "timeline.selection", tint: AgentPalette.cyan) {
@@ -203,7 +194,7 @@ extension ProjectDashboardView {
                 projectOSIntentSmallButton(title: "Timeline", symbol: "timeline.selection", tint: AgentPalette.cyan) {
                     selectedDetailScope = .timeline
                 }
-                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
                     openTab(.runs)
                 }
             }
@@ -212,7 +203,7 @@ extension ProjectDashboardView {
                 projectOSIntentSmallButton(title: "Proof", symbol: "checkmark.seal.fill", tint: AgentPalette.green) {
                     selectedDetailScope = .evidence
                 }
-                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
                     openTab(.runs)
                 }
             }
@@ -221,7 +212,7 @@ extension ProjectDashboardView {
                 projectOSIntentSmallButton(title: "Plan", symbol: "list.bullet.clipboard.fill", tint: AgentPalette.cyan) {
                     selectedDetailScope = .plan
                 }
-                projectOSIntentSmallButton(title: "Runs", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
                     openTab(.runs)
                 }
             }

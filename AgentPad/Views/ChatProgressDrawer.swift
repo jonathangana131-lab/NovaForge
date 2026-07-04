@@ -519,7 +519,7 @@ struct AgentProgressDrawer: View {
             ProgressActionButton(title: "Files", symbol: "folder.fill", tint: AgentPalette.cyan, identifier: "progressFilesButton") {
                 openWorkspaceSurface(.files)
             }
-            ProgressActionButton(title: "Runs", symbol: "list.bullet.rectangle.portrait.fill", tint: AgentPalette.cyan, identifier: "progressRunsButton") {
+            ProgressActionButton(title: "History", symbol: "list.bullet.rectangle.portrait.fill", tint: AgentPalette.cyan, identifier: "progressRunsButton") {
                 openWorkspaceSurface(.runs)
             }
         }
@@ -707,7 +707,7 @@ struct ProofContextCard: View {
                     }
                 }
 
-                ProgressActionButton(title: "Runs", symbol: "list.bullet.rectangle.portrait.fill", tint: AgentPalette.lilac, identifier: "progressProofRunsButton", action: openRuns)
+                ProgressActionButton(title: "History", symbol: "list.bullet.rectangle.portrait.fill", tint: AgentPalette.lilac, identifier: "progressProofRunsButton", action: openRuns)
             }
 
             if !evidenceTrail.isEmpty {
