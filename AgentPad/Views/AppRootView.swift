@@ -6,7 +6,7 @@ import SwiftUI
 /// whole TabView being re-keyed. Environment changes bypass the Equatable
 /// render-key gates and invalidate only the views that actually read them.
 private struct NovaActiveTabKey: EnvironmentKey {
-    static let defaultValue: AppTab = .project
+    static let defaultValue: AppTab = .forge
 }
 
 extension EnvironmentValues {
@@ -32,35 +32,61 @@ private struct TabActivatedBackground: View {
     }
 }
 
+/// The four-tab architecture. NovaForge's loop — tell the agent, watch it
+/// work, approve the risky step, see the result — used to be fractured
+/// across five tabs that each re-explained the others. Now:
+/// - Forge: the loop itself (chat + live mission + approvals in one place)
+/// - Workspace: everything the agent made (files, artifacts, terminal)
+/// - History: the auditable run trail
+/// - Control: providers, models, autonomy, appearance
+/// Projects are a context you're IN (scope pill on Forge), not a place you
+/// go. The legacy five-tab vocabulary still routes via static aliases so
+/// intents, fixtures, and older call sites keep working.
 enum AppTab: String, CaseIterable, Identifiable {
-    case project
-    case files
-    case chat
-    case runs
-    case settings
-    case terminal
+    case forge
+    case workspace
+    case history
+    case control
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .project: "Project"
-        case .files: "Files"
-        case .chat: "Chat"
-        case .runs: "Runs"
-        case .settings: "Settings"
-        case .terminal: "Terminal"
+        case .forge: "Forge"
+        case .workspace: "Workspace"
+        case .history: "History"
+        case .control: "Control"
         }
     }
 
     var symbol: String {
         switch self {
-        case .project: "target"
-        case .files: "folder.fill"
-        case .chat: "sparkles"
-        case .runs: "waveform.path.ecg"
-        case .settings: "gearshape.fill"
-        case .terminal: "terminal.fill"
+        case .forge: "sparkles"
+        case .workspace: "folder.fill"
+        case .history: "waveform.path.ecg"
+        case .control: "slider.horizontal.3"
+        }
+    }
+
+    // MARK: Legacy routing aliases (old five-tab vocabulary)
+
+    static var project: AppTab { .forge }
+    static var chat: AppTab { .forge }
+    static var files: AppTab { .workspace }
+    static var runs: AppTab { .history }
+    static var settings: AppTab { .control }
+    static var terminal: AppTab { .workspace }
+
+    /// Resolves both vocabularies ("chat" → .forge, "history" → .history)
+    /// so Siri intents and notification handoffs from either era work.
+    static func resolve(_ rawValue: String) -> AppTab? {
+        if let tab = AppTab(rawValue: rawValue) { return tab }
+        switch rawValue {
+        case "project", "chat": return .forge
+        case "files", "terminal": return .workspace
+        case "runs": return .history
+        case "settings": return .control
+        default: return nil
         }
     }
 }
@@ -68,12 +94,10 @@ enum AppTab: String, CaseIterable, Identifiable {
 private extension AppTab {
     var performanceIndex: Double {
         switch self {
-        case .project: 0
-        case .files: 1
-        case .chat: 2
-        case .runs: 3
-        case .settings: 4
-        case .terminal: 5
+        case .forge: 0
+        case .workspace: 1
+        case .history: 2
+        case .control: 3
         }
     }
 }
@@ -88,6 +112,7 @@ struct AppRootView: View {
     @Query private var conversations: [Conversation]
     @Query private var settingsList: [AgentSettings]
     @State private var selectedTab = Self.initialDebugLaunchTab()
+    @State private var showingMissionDossier = false
     @State private var runtime = AgentRuntime()
     @State private var projectRuntime = AgentRuntime()
     @State private var selectedConversationID: UUID?
@@ -218,12 +243,12 @@ struct AppRootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.openTab)) { note in
             guard let raw = note.userInfo?[NovaForgeIntentSignal.tabKey] as? String,
-                  let tab = AppTab(rawValue: raw) else { return }
+                  let tab = AppTab.resolve(raw) else { return }
             selectedTab = tab
         }
         .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.askPrompt)) { _ in
-            // ChatView owns the composer prefill; the root just lands on chat.
-            selectedTab = .chat
+            // ChatView owns the composer prefill; the root just lands on Forge.
+            selectedTab = .forge
         }
         .onChange(of: settings?.activeWorkspaceName, initial: true) { _, newValue in
             repairActiveWorkspaceNameChange(newValue)
@@ -273,6 +298,9 @@ struct AppRootView: View {
             AgentPerformance.invalidatePerformanceModeCache()
         }
         .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
+        .fullScreenCover(isPresented: $showingMissionDossier) {
+            missionDossierCover
+        }
         .alert(
             "NovaForge Save Failed",
             isPresented: Binding(
@@ -773,12 +801,13 @@ struct AppRootView: View {
         let chatConversation = forceProjectChat
             ? conversation
             : (conversation.project == nil ? conversation : (preferredGeneralConversation() ?? conversation))
-        let projectRuntimeStatus = selectedTab == .project
+        // The mission strip lives on Forge, so project runtime status is
+        // computed while Forge is front (and while the dossier is open).
+        let projectRuntimeStatus = selectedTab == .forge || showingMissionDossier
             ? WorkspaceStatusSnapshot(runtime: projectRuntime)
             : .hidden
         let projectAutoContinueState = autoContinueViewState(for: activeProject, settings: settings)
-        let projectProfilingVisible = AgentPerformance.shouldProfileFrameRate && selectedTab == .project
-        let chatProfilingVisible = AgentPerformance.shouldProfileFrameRate && selectedTab == .chat
+        let chatProfilingVisible = AgentPerformance.shouldProfileFrameRate && selectedTab == .forge
         let appTabsRenderKey = AppTabsRenderKey(
             project: activeProject,
             conversation: chatConversation,
@@ -790,22 +819,14 @@ struct AppRootView: View {
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
         )
-        let projectTabRenderKey = ProjectDashboardTabKey(
-            project: activeProject,
-            projects: projects,
-            conversations: conversations,
-            runtimeStatus: projectRuntimeStatus,
-            autoContinueState: projectAutoContinueState,
-            isVisibleForFrameProfiling: projectProfilingVisible,
-            themeRawValue: selectedThemeRawValue,
-            performanceModeEnabled: performanceModeEnabled
-        )
         let chatTabRenderKey = ChatTabKey(
             project: activeProject,
             conversation: chatConversation,
             conversations: conversations,
             settings: settings,
             projectResumeDraftRevision: rootPromptRevision,
+            missionStatus: projectRuntimeStatus,
+            missionAutoContinue: projectAutoContinueState,
             isVisibleForFrameProfiling: chatProfilingVisible,
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
@@ -833,16 +854,16 @@ struct AppRootView: View {
         StableTabSurface(key: appTabsRenderKey) {
             let _ = AgentPerformance.bodyEvaluation("App Tabs Body")
             TabView(selection: $selectedTab) {
-                projectTab(
-                    key: projectTabRenderKey,
+                forgeTab(
+                    key: chatTabRenderKey,
                     project: activeProject,
-                    conversation: conversation,
+                    conversation: chatConversation,
+                    missionConversation: conversation,
                     settings: settings,
                     runtimeStatus: projectRuntimeStatus,
                     autoContinueState: projectAutoContinueState
                 )
                 filesTab(key: filesTabRenderKey, project: activeProject)
-                chatTab(key: chatTabRenderKey, project: activeProject, conversation: chatConversation, settings: settings)
                 runsTab(key: runsTabRenderKey, project: activeProject, conversation: conversation, settings: settings)
                 settingsTab(key: settingsTabRenderKey, project: activeProject, settings: settings)
             }
@@ -851,80 +872,19 @@ struct AppRootView: View {
         .equatable()
     }
 
-    private func projectTab(
-        key: ProjectDashboardTabKey,
+    /// Forge: the loop surface. Chat, the live mission strip, and inline
+    /// approvals in one place. The full project dossier presents modally.
+    private func forgeTab(
+        key: ChatTabKey,
         project: Project,
         conversation: Conversation,
+        missionConversation: Conversation,
         settings: AgentSettings,
         runtimeStatus: WorkspaceStatusSnapshot,
         autoContinueState: ProjectAutoContinueViewState
     ) -> some View {
         StableTabSurface(key: key) {
-            tabWorldSurface(for: .project) {
-                ProjectDashboardView(
-                    project: project,
-                    projects: projects,
-                    runtimeStatus: runtimeStatus,
-                    autoContinueState: autoContinueState,
-                    conversations: conversations,
-                    openTab: openTab,
-                    stopWorkspaceRun: {
-                        projectRuntime.stopGenerating(context: modelContext)
-                    },
-                    approvePendingTool: {
-                        projectRuntime.approvePendingTool(conversation: conversation, settings: settings, context: modelContext, project: project)
-                    },
-                    rejectPendingTool: {
-                        projectRuntime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: project)
-                    },
-                    setAutoContinueEnabled: setAutoContinueEnabled,
-                    pauseAutoContinue: pauseAutoContinue,
-                    cancelAutoContinue: cancelAutoContinue,
-                    createProject: createProject,
-                    selectProject: { project in
-                        _ = selectProject(project)
-                    },
-                    updateProject: updateProject,
-                    deleteProject: deleteProject,
-                    runProjectCommand: runProjectCommand,
-                    draftProjectCommand: draftProjectCommand,
-                    openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
-                    isVisibleForFrameProfiling: key.isVisibleForFrameProfiling
-                )
-            }
-        }
-        .equatable()
-        .onAppear { completeTabSwitch(to: .project) }
-        .tabItem { Label(AppTab.project.title, systemImage: AppTab.project.symbol) }
-        .tag(AppTab.project)
-    }
-
-    private func filesTab(key: FilesTabKey, project: Project) -> some View {
-        StableTabSurface(key: key) {
-            tabWorldSurface(for: .files) {
-                FilesView(
-                    runtime: runtime,
-                    project: project,
-                    openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen
-                ) {
-                    openTab(.chat)
-                }
-            }
-        }
-        .equatable()
-        .onAppear { completeTabSwitch(to: .files) }
-        .tabItem { Label(AppTab.files.title, systemImage: AppTab.files.symbol) }
-        .tag(AppTab.files)
-    }
-
-    private func chatTab(
-        key: ChatTabKey,
-        project: Project,
-        conversation: Conversation,
-        settings: AgentSettings
-    ) -> some View {
-        StableTabSurface(key: key) {
-            tabWorldSurface(for: .chat) {
+            tabWorldSurface(for: .forge) {
                 ChatView(
                     runtime: runtime,
                     project: project,
@@ -941,27 +901,56 @@ struct AppRootView: View {
                     projectResumeDraftRevision: rootPromptRevision,
                     openWorkspaceSurface: openTab,
                     openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
-                    isVisibleForFrameProfiling: key.isVisibleForFrameProfiling
+                    isVisibleForFrameProfiling: key.isVisibleForFrameProfiling,
+                    missionStatus: runtimeStatus,
+                    missionAutoContinue: autoContinueState,
+                    approveMissionTool: {
+                        projectRuntime.approvePendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: project)
+                    },
+                    rejectMissionTool: {
+                        projectRuntime.rejectPendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: project)
+                    },
+                    stopMissionRun: {
+                        projectRuntime.stopGenerating(context: modelContext)
+                    },
+                    pauseMissionAutoContinue: pauseAutoContinue,
+                    openMissionDossier: presentMissionDossier
                 )
             }
         }
         .equatable()
-        .onAppear { completeTabSwitch(to: .chat) }
-        .tabItem { Label(AppTab.chat.title, systemImage: AppTab.chat.symbol) }
-        .tag(AppTab.chat)
+        .onAppear { completeTabSwitch(to: .forge) }
+        .tabItem { Label(AppTab.forge.title, systemImage: AppTab.forge.symbol) }
+        .tag(AppTab.forge)
+    }
+
+    private func filesTab(key: FilesTabKey, project: Project) -> some View {
+        StableTabSurface(key: key) {
+            tabWorldSurface(for: .workspace) {
+                FilesView(
+                    runtime: runtime,
+                    project: project,
+                    openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen
+                ) {
+                    openTab(.forge)
+                }
+            }
+        }
+        .equatable()
+        .onAppear { completeTabSwitch(to: .workspace) }
+        .tabItem { Label(AppTab.workspace.title, systemImage: AppTab.workspace.symbol) }
+        .tag(AppTab.workspace)
     }
 
     private func runsTab(key: RunsTabKey, project: Project, conversation: Conversation, settings: AgentSettings) -> some View {
         StableTabSurface(key: key) {
-            tabWorldSurface(for: .runs) {
+            tabWorldSurface(for: .history) {
                 RunsView(
                     runtime: projectRuntime,
                     project: project,
                     openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
                     openTerminalRecord: openTerminalRecord,
-                    openProject: {
-                        openTab(.project)
-                    },
+                    openProject: presentMissionDossier,
                     approvePendingTool: {
                         projectRuntime.approvePendingTool(conversation: conversation, settings: settings, context: modelContext, project: project)
                     },
@@ -969,26 +958,26 @@ struct AppRootView: View {
                         projectRuntime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: project)
                     }
                 ) {
-                    openTab(.chat)
+                    openTab(.forge)
                 }
             }
         }
         .equatable()
-        .onAppear { completeTabSwitch(to: .runs) }
-        .tabItem { Label(AppTab.runs.title, systemImage: AppTab.runs.symbol) }
-        .tag(AppTab.runs)
+        .onAppear { completeTabSwitch(to: .history) }
+        .tabItem { Label(AppTab.history.title, systemImage: AppTab.history.symbol) }
+        .tag(AppTab.history)
     }
 
     private func settingsTab(key: SettingsTabKey, project: Project, settings: AgentSettings) -> some View {
         StableTabSurface(key: key) {
-            tabWorldSurface(for: .settings) {
+            tabWorldSurface(for: .control) {
                 SettingsView(runtime: runtime, project: project, settings: settings)
             }
         }
         .equatable()
-        .onAppear { completeTabSwitch(to: .settings) }
-        .tabItem { Label(AppTab.settings.title, systemImage: AppTab.settings.symbol) }
-        .tag(AppTab.settings)
+        .onAppear { completeTabSwitch(to: .control) }
+        .tabItem { Label(AppTab.control.title, systemImage: AppTab.control.symbol) }
+        .tag(AppTab.control)
     }
 
     private func tabWorldSurface<Content: View>(
@@ -1005,7 +994,7 @@ struct AppRootView: View {
             content()
                 .zIndex(1)
 
-            if tab != .chat {
+            if tab != .forge {
                 DockGutterScrim()
                     .frame(maxHeight: .infinity, alignment: .bottom)
                     .ignoresSafeArea(edges: .bottom)
@@ -1029,6 +1018,55 @@ struct AppRootView: View {
     private func openTerminalRecord(id: UUID, command: String, query: String) {
         terminalFocus = TerminalConsoleFocusRequest(id: id, command: command, query: query)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func presentMissionDossier() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showingMissionDossier = true
+    }
+
+    /// The project deep dive (plan, ledger, proof, project switching) as a
+    /// modal dossier. Ambient mission state lives on Forge's mission strip;
+    /// this cover is the on-demand full view that used to occupy a tab.
+    @ViewBuilder
+    private var missionDossierCover: some View {
+        if let conversation = selectedConversation, let settings, let activeProject {
+            MissionDossierCover(close: { showingMissionDossier = false }) {
+                ProjectDashboardView(
+                    project: activeProject,
+                    projects: projects,
+                    runtimeStatus: WorkspaceStatusSnapshot(runtime: projectRuntime),
+                    autoContinueState: autoContinueViewState(for: activeProject, settings: settings),
+                    conversations: conversations,
+                    openTab: { tab in
+                        showingMissionDossier = false
+                        openTab(tab)
+                    },
+                    stopWorkspaceRun: {
+                        projectRuntime.stopGenerating(context: modelContext)
+                    },
+                    approvePendingTool: {
+                        projectRuntime.approvePendingTool(conversation: conversation, settings: settings, context: modelContext, project: activeProject)
+                    },
+                    rejectPendingTool: {
+                        projectRuntime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: activeProject)
+                    },
+                    setAutoContinueEnabled: setAutoContinueEnabled,
+                    pauseAutoContinue: pauseAutoContinue,
+                    cancelAutoContinue: cancelAutoContinue,
+                    createProject: createProject,
+                    selectProject: { project in
+                        _ = selectProject(project)
+                    },
+                    updateProject: updateProject,
+                    deleteProject: deleteProject,
+                    runProjectCommand: runProjectCommand,
+                    draftProjectCommand: draftProjectCommand,
+                    openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
+                    isVisibleForFrameProfiling: false
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -2218,7 +2256,7 @@ struct AppRootView: View {
 
     private func openTab(_ tab: AppTab) {
         AgentPerformance.event("Tab Switch Requested")
-        selectedTab = tab == .terminal ? .runs : tab
+        selectedTab = tab
     }
 
     private func scheduleAutoTabSwitchProfileIfNeeded() {
@@ -2228,7 +2266,7 @@ struct AppRootView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(1_600))
             guard !Task.isCancelled else { return }
-            let sequence: [AppTab] = [.project, .files, .chat, .runs, .settings, .project, .files, .chat]
+            let sequence: [AppTab] = [.forge, .workspace, .history, .control, .forge, .workspace, .history, .forge]
             for tab in sequence {
                 guard !Task.isCancelled else { return }
                 openTab(tab)
@@ -3636,35 +3674,43 @@ struct AppRootView: View {
     private func applyDebugLaunchTabArgument() {
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--open-project") {
-            selectedTab = .project
+            selectedTab = .forge
         } else if arguments.contains("--open-files") {
-            selectedTab = .files
+            selectedTab = .workspace
         } else if arguments.contains("--open-terminal") {
-            selectedTab = .runs
+            selectedTab = .history
         } else if arguments.contains("--open-runs") {
-            selectedTab = .runs
+            selectedTab = .history
         } else if arguments.contains("--open-settings") {
-            selectedTab = .settings
+            selectedTab = .control
         } else if arguments.contains("--open-chat") {
-            selectedTab = .chat
+            selectedTab = .forge
+        }
+        // Sheets that used to hang off the Project tab now live on the
+        // mission dossier cover — mount it so their demo flags can fire.
+        if !showingMissionDossier,
+           arguments.contains("--project-intake-demo") ||
+           arguments.contains("--project-delete-confirm-demo") ||
+           arguments.contains("--open-mission-dossier-demo") {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(900))
+                showingMissionDossier = true
+            }
         }
     }
 
     private static func initialDebugLaunchTab() -> AppTab {
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--open-files") {
-            return .files
+            return .workspace
         }
         if arguments.contains("--open-terminal") || arguments.contains("--open-runs") {
-            return .runs
+            return .history
         }
         if arguments.contains("--open-settings") {
-            return .settings
+            return .control
         }
-        if arguments.contains("--open-chat") {
-            return .chat
-        }
-        return .chat
+        return .forge
     }
     #endif
 
@@ -3672,18 +3718,15 @@ struct AppRootView: View {
     private static func initialDebugLaunchTab() -> AppTab {
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--open-files") {
-            return .files
+            return .workspace
         }
         if arguments.contains("--open-terminal") || arguments.contains("--open-runs") {
-            return .runs
+            return .history
         }
         if arguments.contains("--open-settings") {
-            return .settings
+            return .control
         }
-        if arguments.contains("--open-chat") {
-            return .chat
-        }
-        return .chat
+        return .forge
     }
     #endif
 
@@ -3774,34 +3817,6 @@ private struct AutoContinueRuntimeSignature: Equatable {
     }
 }
 
-private struct ProjectListSignature: Equatable {
-    let count: Int
-    let newestUpdatedAt: Date?
-    let newestActivityAt: Date?
-    let fingerprint: Int
-
-    init(projects: [Project], limit: Int = 20) {
-        var hasher = Hasher()
-        var counted = 0
-        var newestUpdatedAt: Date?
-        var newestActivityAt: Date?
-
-        for project in projects.prefix(limit) {
-            counted += 1
-            hasher.combine(project.id)
-            hasher.combine(project.updatedAt)
-            hasher.combine(project.lastActivityAt)
-            newestUpdatedAt = max(newestUpdatedAt ?? project.updatedAt, project.updatedAt)
-            newestActivityAt = max(newestActivityAt ?? project.lastActivityAt, project.lastActivityAt)
-        }
-
-        self.count = counted
-        self.newestUpdatedAt = newestUpdatedAt
-        self.newestActivityAt = newestActivityAt
-        self.fingerprint = hasher.finalize()
-    }
-}
-
 private struct ConversationListSignature: Equatable {
     let count: Int
     let totalMessageCount: Int
@@ -3831,45 +3846,6 @@ private struct ConversationListSignature: Equatable {
     }
 }
 
-private struct ProjectDashboardTabKey: Equatable {
-    let projectID: UUID
-    let projectName: String
-    let workspaceName: String
-    let projectUpdatedAt: Date
-    let projectLastActivityAt: Date
-    let projectsSignature: ProjectListSignature
-    let conversationsSignature: ConversationListSignature
-    let runtimeStatus: WorkspaceStatusSnapshot
-    let autoContinueState: ProjectAutoContinueViewState
-    let isVisibleForFrameProfiling: Bool
-    let themeRawValue: String
-    let performanceModeEnabled: Bool
-
-    init(
-        project: Project,
-        projects: [Project],
-        conversations: [Conversation],
-        runtimeStatus: WorkspaceStatusSnapshot,
-        autoContinueState: ProjectAutoContinueViewState,
-        isVisibleForFrameProfiling: Bool,
-        themeRawValue: String,
-        performanceModeEnabled: Bool
-    ) {
-        self.projectID = project.id
-        self.projectName = project.name
-        self.workspaceName = project.workspaceName
-        self.projectUpdatedAt = project.updatedAt
-        self.projectLastActivityAt = project.lastActivityAt
-        self.projectsSignature = ProjectListSignature(projects: projects)
-        self.conversationsSignature = ConversationListSignature(conversations: conversations, projectID: project.id)
-        self.runtimeStatus = runtimeStatus
-        self.autoContinueState = autoContinueState
-        self.isVisibleForFrameProfiling = isVisibleForFrameProfiling
-        self.themeRawValue = themeRawValue
-        self.performanceModeEnabled = performanceModeEnabled
-    }
-}
-
 private struct ChatTabKey: Equatable {
     let projectID: UUID
     let projectName: String
@@ -3885,6 +3861,8 @@ private struct ChatTabKey: Equatable {
     let providerRawValue: String
     let modelID: String
     let projectResumeDraftRevision: Int
+    let missionStatus: WorkspaceStatusSnapshot
+    let missionAutoContinue: ProjectAutoContinueViewState
     let isVisibleForFrameProfiling: Bool
     let themeRawValue: String
     let performanceModeEnabled: Bool
@@ -3895,6 +3873,8 @@ private struct ChatTabKey: Equatable {
         conversations: [Conversation],
         settings: AgentSettings,
         projectResumeDraftRevision: Int,
+        missionStatus: WorkspaceStatusSnapshot,
+        missionAutoContinue: ProjectAutoContinueViewState,
         isVisibleForFrameProfiling: Bool,
         themeRawValue: String,
         performanceModeEnabled: Bool
@@ -3913,6 +3893,8 @@ private struct ChatTabKey: Equatable {
         self.providerRawValue = settings.provider.id
         self.modelID = settings.modelID
         self.projectResumeDraftRevision = projectResumeDraftRevision
+        self.missionStatus = missionStatus
+        self.missionAutoContinue = missionAutoContinue
         self.isVisibleForFrameProfiling = isVisibleForFrameProfiling
         self.themeRawValue = themeRawValue
         self.performanceModeEnabled = performanceModeEnabled

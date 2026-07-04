@@ -99,6 +99,7 @@
 		AC0000000000000000000106 /* NovaForgeWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000006 /* NovaForgeWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AB1000000000000000000023 /* RunActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000023 /* RunActivityController.swift */; };
 		AB1000000000000000000024 /* NovaFacelift.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000024 /* NovaFacelift.swift */; };
+		AB1000000000000000000025 /* ForgeChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000025 /* ForgeChrome.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -216,6 +217,7 @@
 		AC0000000000000000000006 /* NovaForgeWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NovaForgeWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB0000000000000000000023 /* RunActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunActivityController.swift; sourceTree = "<group>"; };
 		AB0000000000000000000024 /* NovaFacelift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaFacelift.swift; sourceTree = "<group>"; };
+		AB0000000000000000000025 /* ForgeChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeChrome.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -370,6 +372,7 @@
 				AB0000000000000000000020 /* DiffReviewSection.swift */,
 				AB0000000000000000000021 /* RunReplaySheet.swift */,
 				AB0000000000000000000022 /* ModelManagerPanels.swift */,
+							AB0000000000000000000025 /* ForgeChrome.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -639,6 +642,7 @@
 				AB1000000000000000000022 /* ModelManagerPanels.swift in Sources */,
 				AB1000000000000000000023 /* RunActivityController.swift in Sources */,
 							AB1000000000000000000024 /* NovaFacelift.swift in Sources */,
+							AB1000000000000000000025 /* ForgeChrome.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

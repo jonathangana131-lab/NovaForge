@@ -19,6 +19,16 @@ struct ChatView: View {
     let openWorkspaceSurface: (AppTab) -> Void
     let openArtifactLandscapeFullScreen: (WorkspaceArtifact) -> Void
     var isVisibleForFrameProfiling: Bool = true
+    /// Live project-mission inputs for the Forge mission strip. The strip
+    /// mirrors the active project's runtime so the tell → watch → approve
+    /// loop stays on this one surface.
+    var missionStatus: WorkspaceStatusSnapshot = .hidden
+    var missionAutoContinue: ProjectAutoContinueViewState = .disabled
+    var approveMissionTool: () -> Void = {}
+    var rejectMissionTool: () -> Void = {}
+    var stopMissionRun: () -> Void = {}
+    var pauseMissionAutoContinue: () -> Void = {}
+    var openMissionDossier: () -> Void = {}
     @State private var prompt = ""
     @State private var selectedArtifact: WorkspaceArtifact?
     @State private var showingChatDrawer = false
@@ -470,32 +480,53 @@ struct ChatView: View {
             ChatTranscriptBackdrop()
 
             VStack(spacing: 0) {
-                ChatHeaderView(
-                    runtime: runtime,
-                    project: project,
-                    projects: projects,
-                    scopedProject: scopedProject,
-                    conversation: conversation,
-                    settings: settings,
-                    artifacts: cachedArtifacts,
-                    durableSnapshot: cachedDurableRunSnapshot,
-                    workflowSpine: cachedWorkflowSpine,
-                    ownsActiveRunState: ownsActiveRunState,
-                    hasForeignActiveRun: hasForeignActiveRun,
-                    foreignActiveTitle: activeElsewhereTitle,
-                    newChat: newChat,
-                    changeScope: { selectedProject in
-                        setConversationProjectScope(conversation, selectedProject)
-                    },
-                    openWorkspaceSurface: openWorkspaceSurface,
-                    openArtifact: previewArtifact,
-                    openChatDrawer: {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        withAnimation(shouldAnimateDecorative ? .smooth(duration: 0.22) : nil) {
-                            showingChatDrawer = true
+                VStack(spacing: 9) {
+                    ForgeHeader(
+                        runtime: runtime,
+                        project: project,
+                        projects: projects,
+                        scopedProject: scopedProject,
+                        conversation: conversation,
+                        settings: settings,
+                        artifacts: cachedArtifacts,
+                        durableSnapshot: cachedDurableRunSnapshot,
+                        workflowSpine: cachedWorkflowSpine,
+                        ownsActiveRunState: ownsActiveRunState,
+                        hasForeignActiveRun: hasForeignActiveRun,
+                        foreignActiveTitle: activeElsewhereTitle,
+                        newChat: newChat,
+                        changeScope: { selectedProject in
+                            setConversationProjectScope(conversation, selectedProject)
+                        },
+                        openWorkspaceSurface: openWorkspaceSurface,
+                        openArtifact: previewArtifact,
+                        openChatDrawer: {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(shouldAnimateDecorative ? .smooth(duration: 0.22) : nil) {
+                                showingChatDrawer = true
+                            }
                         }
+                    )
+
+                    if ForgeMissionStrip.isVisible(
+                        scopedProject: scopedProject,
+                        status: missionStatus,
+                        autoContinue: missionAutoContinue
+                    ) {
+                        ForgeMissionStrip(
+                            project: project,
+                            scopedProject: scopedProject,
+                            status: missionStatus,
+                            autoContinue: missionAutoContinue,
+                            approve: approveMissionTool,
+                            reject: rejectMissionTool,
+                            stop: stopMissionRun,
+                            pauseAutoContinue: pauseMissionAutoContinue,
+                            openDossier: openMissionDossier
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                )
+                }
                 .padding(.horizontal)
                 .padding(.top, headerTopPadding(for: topSafeArea))
                 .padding(.bottom, 12)

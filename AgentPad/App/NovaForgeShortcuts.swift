@@ -23,16 +23,24 @@ enum NovaForgeIntentSignal {
 // MARK: - Tab vocabulary
 
 enum NovaForgeTab: String, AppEnum {
+    // The four-tab architecture. Legacy five-tab raw values stay decodable
+    // so previously saved shortcuts keep working — AppRootView's resolver
+    // routes both vocabularies onto the new tabs.
+    case forge, workspace, history, control
     case project, files, chat, runs, settings
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "NovaForge Tab")
 
     static let caseDisplayRepresentations: [NovaForgeTab: DisplayRepresentation] = [
-        .project: DisplayRepresentation(title: "Project", image: .init(systemName: "scope")),
-        .files: DisplayRepresentation(title: "Files", image: .init(systemName: "folder.fill")),
-        .chat: DisplayRepresentation(title: "Chat", image: .init(systemName: "sparkles")),
-        .runs: DisplayRepresentation(title: "Runs", image: .init(systemName: "waveform.path.ecg")),
-        .settings: DisplayRepresentation(title: "Settings", image: .init(systemName: "gearshape.fill"))
+        .forge: DisplayRepresentation(title: "Forge", image: .init(systemName: "sparkles")),
+        .workspace: DisplayRepresentation(title: "Workspace", image: .init(systemName: "folder.fill")),
+        .history: DisplayRepresentation(title: "History", image: .init(systemName: "waveform.path.ecg")),
+        .control: DisplayRepresentation(title: "Control", image: .init(systemName: "slider.horizontal.3")),
+        .project: DisplayRepresentation(title: "Project (opens Forge)", image: .init(systemName: "scope")),
+        .files: DisplayRepresentation(title: "Files (opens Workspace)", image: .init(systemName: "folder.fill")),
+        .chat: DisplayRepresentation(title: "Chat (opens Forge)", image: .init(systemName: "sparkles")),
+        .runs: DisplayRepresentation(title: "Runs (opens History)", image: .init(systemName: "waveform.path.ecg")),
+        .settings: DisplayRepresentation(title: "Settings (opens Control)", image: .init(systemName: "gearshape.fill"))
     ]
 }
 
@@ -48,7 +56,7 @@ struct OpenNovaForgeIntent: AppIntent {
         NotificationCenter.default.post(
             name: NovaForgeIntentSignal.openTab,
             object: nil,
-            userInfo: [NovaForgeIntentSignal.tabKey: NovaForgeTab.chat.rawValue]
+            userInfo: [NovaForgeIntentSignal.tabKey: NovaForgeTab.forge.rawValue]
         )
         return .result()
     }
@@ -59,7 +67,7 @@ struct OpenNovaForgeTabIntent: AppIntent {
     static let description = IntentDescription("Jump straight to a NovaForge workspace tab.")
     static let openAppWhenRun = true
 
-    @Parameter(title: "Tab", default: .project)
+    @Parameter(title: "Tab", default: .forge)
     var tab: NovaForgeTab
 
     static var parameterSummary: some ParameterSummary {
