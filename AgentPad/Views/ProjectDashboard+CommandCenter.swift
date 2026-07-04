@@ -37,26 +37,16 @@ extension ProjectDashboardView {
                 .layoutPriority(1)
 
                 if projectOSProgressFraction > 0 || runtimeStatus.isWorking {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text("\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1))")
-                            .font(NovaType.readout)
-                            .foregroundStyle(tint)
-                            .contentTransition(.numericText())
-                        Text("Steps")
-                            .novaLabel(AgentPalette.tertiaryText)
-                    }
+                    NovaReactorGauge(
+                        fraction: projectOSProgressFraction,
+                        value: "\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1))",
+                        label: "Steps",
+                        tint: tint,
+                        size: 78,
+                        isLive: runtimeStatus.isWorking
+                    )
                     .accessibilityIdentifier("projectOSProgressCount")
                 }
-            }
-
-            if projectOSProgressFraction > 0 || runtimeStatus.isWorking {
-                ProgressView(value: projectOSProgressFraction, total: 1)
-                    .progressViewStyle(.linear)
-                    .tint(tint)
-                    .frame(height: 4)
-                    .clipShape(Capsule(style: .continuous))
-                    .accessibilityLabel("ProjectOS progress")
-                    .accessibilityValue("\(Int((projectOSProgressFraction * 100).rounded())) percent")
             }
 
             Rectangle()

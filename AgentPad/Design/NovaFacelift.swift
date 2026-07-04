@@ -470,6 +470,84 @@ struct NovaOrbitalEmptyState: View {
     }
 }
 
+// MARK: - Reactor gauge
+
+/// The arc-reactor progress instrument: a fine tick ring, a glowing
+/// progress arc, and instrument numerals in the core. Replaces linear
+/// progress bars on hero surfaces — the same mark as the app icon.
+struct NovaReactorGauge: View {
+    let fraction: Double
+    let value: String
+    let label: String
+    var tint: Color = AgentPalette.accent
+    var size: CGFloat = 76
+    var isLive: Bool = false
+
+    private var clamped: Double { min(1, max(0, fraction)) }
+
+    var body: some View {
+        ZStack {
+            // fine tick ring
+            ForEach(0..<36, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(
+                        Double(index) / 36.0 <= clamped && clamped > 0
+                            ? tint.opacity(0.55)
+                            : AgentPalette.quaternaryText.opacity(0.35)
+                    )
+                    .frame(width: 1.4, height: index % 9 == 0 ? 6 : 3.5)
+                    .offset(y: -size / 2 + 3)
+                    .rotationEffect(.degrees(Double(index) * 10))
+            }
+
+            // track + progress arc
+            Circle()
+                .stroke(tint.opacity(0.14), lineWidth: 4.5)
+                .padding(size * 0.14)
+            Circle()
+                .trim(from: 0, to: max(0.02, clamped))
+                .stroke(
+                    AngularGradient(
+                        colors: [tint.opacity(0.35), tint],
+                        center: .center,
+                        startAngle: .degrees(0),
+                        endAngle: .degrees(360 * clamped)
+                    ),
+                    style: StrokeStyle(lineWidth: 4.5, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .padding(size * 0.14)
+                .shadow(
+                    color: AgentPerformance.prefersReducedVisualEffects || !isLive ? .clear : tint.opacity(0.55),
+                    radius: 5
+                )
+
+            // core numerals
+            VStack(spacing: 0) {
+                Text(value)
+                    .font(.system(size: size * 0.21, weight: .heavy, design: AgentPalette.interfaceFontDesign))
+                    .monospacedDigit()
+                    .foregroundStyle(tint)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text(label)
+                    .font(.system(size: size * 0.095, weight: .heavy, design: AgentPalette.interfaceFontDesign))
+                    .tracking(1.0)
+                    .textCase(.uppercase)
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, size * 0.2)
+        }
+        .frame(width: size, height: size)
+        .animation(.smooth(duration: 0.5), value: clamped)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value)")
+        .accessibilityValue("\(Int((clamped * 100).rounded())) percent")
+    }
+}
+
 // MARK: - Capsule button
 
 struct NovaCapsuleButton: View {
