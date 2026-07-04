@@ -208,6 +208,21 @@ struct ChatView: View {
         false
     }
 
+    /// First run on the local brain: the empty chat IS the setup moment —
+    /// reactor gauge, one download action — not a clipped chip pointing at
+    /// Settings. Extracted so the transcript ViewBuilder stays type-checkable.
+    @ViewBuilder
+    private var chatEmptyStateContent: some View {
+        if settings.provider == .local, needsLocalPowerUp {
+            FirstRunPowerUp(localModels: runtime.localModels)
+        } else {
+            CleanChatEmptyState { starterPrompt in
+                prompt = starterPrompt
+                composerFocused = true
+            }
+        }
+    }
+
     /// The local brain still needs installing (or resuming/repairing).
     /// `.checking` deliberately reads as ready so launch doesn't flash the
     /// power-up hero for users who already installed the model.
@@ -561,23 +576,9 @@ struct ChatView: View {
                                     }
 
                                     if cachedMessages.isEmpty && !hasForeignActiveRun && !(ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil)) {
-                                        // First run on the local brain: the
-                                        // empty chat IS the setup moment —
-                                        // reactor gauge, one download action —
-                                        // not a clipped chip pointing at
-                                        // Settings.
-                                        if settings.provider == .local, needsLocalPowerUp {
-                                            FirstRunPowerUp(localModels: runtime.localModels)
-                                                .padding(.horizontal)
-                                                .transition(.opacity)
-                                        } else {
-                                            CleanChatEmptyState { starterPrompt in
-                                                prompt = starterPrompt
-                                                composerFocused = true
-                                            }
+                                        chatEmptyStateContent
                                             .padding(.horizontal)
                                             .transition(.opacity)
-                                        }
                                     }
 
                                     if hasForeignActiveRun {

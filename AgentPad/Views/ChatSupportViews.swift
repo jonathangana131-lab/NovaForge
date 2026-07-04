@@ -552,7 +552,7 @@ struct StatusDot: View {
 /// filling as the model downloads — instead of burying setup in a clipped
 /// header chip and a composer hint.
 struct FirstRunPowerUp: View {
-    var localModels: LocalModelRuntime
+    var localModels: LocalModelManager
 
     private var variant: LocalModelVariant { localModels.selectedVariant }
 
