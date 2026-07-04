@@ -45,15 +45,37 @@ BUILD_FIRST=1 scripts/codex-sim-tour.sh
 Useful launch arguments already supported by the smoke/tour scripts:
 
 - `--reset-ui`
-- `--open-chat`
-- `--open-project`
-- `--open-files`
-- `--open-runs`
-- `--open-terminal`
-- `--open-settings`
+- `--open-chat` (lands on Forge)
+- `--open-project` (lands on Forge; mission state on the strip)
+- `--open-files` (lands on Workspace)
+- `--open-runs` (lands on History)
+- `--open-terminal` (debug terminal surface)
+- `--open-settings` (lands on Control)
 - `--first-run-local-model-missing`
 - `--settings-local-model-ready`
 - `--pending-approval-demo`
+
+## Four-Tab Architecture (structural redesign, July 2026)
+
+- Tabs: **Forge** (chat + live mission strip + inline approvals — the loop),
+  **Workspace** (files, artifact shelf, terminal), **History** (run
+  receipts), **Control** (settings).
+- Projects are a context, not a tab: the scope pill in the Forge header
+  switches projects; the full project dashboard presents as the modal
+  "mission dossier" (`MissionDossierCover` in `ForgeChrome.swift`,
+  presented from `AppRootView.missionDossierCover`).
+- `AppTab` keeps legacy static aliases (`.chat`, `.project`, `.files`,
+  `.runs`, `.settings`, `.terminal`) and `AppTab.resolve(_:)` so old launch
+  args, Siri intents, and fixtures keep routing.
+- Forge chrome lives in `AgentPad/Views/ForgeChrome.swift`: `ForgeHeader`
+  (single-deck, never clips, one prioritized `ForgeSignal` chip),
+  `ForgeMissionStrip` (Approve/Reject/Stop/countdown inline; also reused on
+  History), `MissionDossierCover`.
+- `ChatHeaderStrip.swift` is a tombstone — do not resurrect the chip train.
+- De-theater rules that keep these surfaces honest: content starts within
+  the first quarter of the screen; one fact stated once per screen; search
+  and filters appear only when collections are big enough to need them
+  (History gates at 6+ runs, Files evidence lenses at 6+ items).
 
 ## Working Rules
 

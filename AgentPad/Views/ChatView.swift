@@ -208,6 +208,16 @@ struct ChatView: View {
         false
     }
 
+    /// The local brain still needs installing (or resuming/repairing).
+    /// `.checking` deliberately reads as ready so launch doesn't flash the
+    /// power-up hero for users who already installed the model.
+    private var needsLocalPowerUp: Bool {
+        switch runtime.localModels.status {
+        case .missing, .partial, .downloading, .failed, .incompatible: return true
+        case .checking, .ready: return false
+        }
+    }
+
     private var shouldShowProjectStatusBoard: Bool {
         false
     }
@@ -551,12 +561,23 @@ struct ChatView: View {
                                     }
 
                                     if cachedMessages.isEmpty && !hasForeignActiveRun && !(ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil)) {
-                                        CleanChatEmptyState { starterPrompt in
-                                            prompt = starterPrompt
-                                            composerFocused = true
+                                        // First run on the local brain: the
+                                        // empty chat IS the setup moment —
+                                        // reactor gauge, one download action —
+                                        // not a clipped chip pointing at
+                                        // Settings.
+                                        if settings.provider == .local, needsLocalPowerUp {
+                                            FirstRunPowerUp(localModels: runtime.localModels)
+                                                .padding(.horizontal)
+                                                .transition(.opacity)
+                                        } else {
+                                            CleanChatEmptyState { starterPrompt in
+                                                prompt = starterPrompt
+                                                composerFocused = true
+                                            }
+                                            .padding(.horizontal)
+                                            .transition(.opacity)
                                         }
-                                        .padding(.horizontal)
-                                        .transition(.opacity)
                                     }
 
                                     if hasForeignActiveRun {

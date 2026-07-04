@@ -546,3 +546,134 @@ struct StatusDot: View {
         .agentControlSurface(radius: 8, tint: tint.opacity(0.10), selected: true)
     }
 }
+
+/// First-run as a moment: when the local brain isn't on the device yet,
+/// the empty chat becomes the power-up sequence — the arc-reactor gauge
+/// filling as the model downloads — instead of burying setup in a clipped
+/// header chip and a composer hint.
+struct FirstRunPowerUp: View {
+    var localModels: LocalModelRuntime
+
+    private var variant: LocalModelVariant { localModels.selectedVariant }
+
+    private var isBusy: Bool {
+        if case .downloading = localModels.status { return true }
+        if case .checking = localModels.status { return true }
+        return false
+    }
+
+    private var fraction: Double {
+        switch localModels.status {
+        case .ready: return 1
+        case .downloading, .partial: return localModels.progress.fraction
+        default: return 0
+        }
+    }
+
+    private var gaugeValue: String {
+        switch localModels.status {
+        case .downloading, .partial:
+            return "\(Int((localModels.progress.fraction * 100).rounded()))%"
+        case .ready:
+            return "100%"
+        default:
+            return "PWR"
+        }
+    }
+
+    private var headline: String {
+        switch localModels.status {
+        case .downloading: return "Powering up"
+        case .partial: return "Power-up paused"
+        case .failed: return "Power-up failed"
+        case .incompatible: return "Needs a smaller core"
+        default: return "Power up NovaForge"
+        }
+    }
+
+    private var detail: String {
+        switch localModels.status {
+        case .downloading:
+            return "\(variant.shortName) is landing on this device. You can keep exploring — it installs in the background."
+        case .partial:
+            return "Resume to finish installing \(variant.shortName). Progress is saved."
+        case .failed(let message):
+            return message
+        case .incompatible(let message):
+            return message
+        default:
+            return "One download and everything — chat, builds, proof — runs entirely on this device. No account, no cloud."
+        }
+    }
+
+    private var actionTitle: String {
+        switch localModels.status {
+        case .downloading: return "Downloading…"
+        case .partial: return "Resume download"
+        case .failed: return "Try again"
+        default: return "Download \(variant.expectedSizeLabel)"
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            NovaReactorGauge(
+                fraction: fraction,
+                value: gaugeValue,
+                label: variant.shortName,
+                tint: AgentPalette.cyan,
+                size: 118,
+                isLive: isBusy
+            )
+
+            VStack(spacing: 7) {
+                Text("On-Device Intelligence")
+                    .novaKickerText(AgentPalette.tertiaryText)
+                Text(headline)
+                    .font(NovaType.display)
+                    .foregroundStyle(AgentPalette.ink)
+                    .contentTransition(.opacity)
+                Text(detail)
+                    .font(NovaType.body)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .frame(maxWidth: 300)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 9) {
+                if case .incompatible = localModels.status {
+                    EmptyView()
+                } else {
+                    NovaCapsuleButton(
+                        title: actionTitle,
+                        symbol: isBusy ? "waveform" : "bolt.fill",
+                        tint: AgentPalette.cyan,
+                        accessibilityIdentifier: "firstRunPowerUpButton"
+                    ) {
+                        guard !isBusy else { return }
+                        localModels.downloadSelected()
+                    }
+                    .disabled(isBusy)
+                    .opacity(isBusy ? 0.65 : 1)
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "lock.shield.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(AgentPalette.quaternaryText)
+                    Text("\(variant.expectedSizeLabel) · \(variant.executionLabel) · stays on this iPhone")
+                        .font(NovaType.caption)
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                }
+            }
+        }
+        .padding(.top, 40)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .animation(.smooth(duration: 0.4), value: fraction)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("firstRunPowerUp")
+    }
+}
