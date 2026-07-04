@@ -42,6 +42,7 @@ struct ForgeHeader: View {
     let foreignActiveTitle: String
     let newChat: () -> Void
     let changeScope: (Project?) -> Void
+    let createProject: () -> Void
     let openWorkspaceSurface: (AppTab) -> Void
     let openArtifact: (WorkspaceArtifact) -> Void
     let openChatDrawer: () -> Void
@@ -175,6 +176,12 @@ struct ForgeHeader: View {
                     } label: {
                         Label(candidate.name, systemImage: scopedProject?.id == candidate.id ? "checkmark.circle.fill" : "shippingbox.fill")
                     }
+                }
+
+                Button {
+                    createProject()
+                } label: {
+                    Label("New Project", systemImage: "plus.circle.fill")
                 }
             }
         } label: {

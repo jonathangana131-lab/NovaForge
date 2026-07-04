@@ -29,6 +29,7 @@ struct ChatView: View {
     var stopMissionRun: () -> Void = {}
     var pauseMissionAutoContinue: () -> Void = {}
     var openMissionDossier: () -> Void = {}
+    var createProject: () -> Void = {}
     @State private var prompt = ""
     @State private var selectedArtifact: WorkspaceArtifact?
     @State private var showingChatDrawer = false
@@ -498,6 +499,7 @@ struct ChatView: View {
                         changeScope: { selectedProject in
                             setConversationProjectScope(conversation, selectedProject)
                         },
+                        createProject: createProject,
                         openWorkspaceSurface: openWorkspaceSurface,
                         openArtifact: previewArtifact,
                         openChatDrawer: {

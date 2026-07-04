@@ -1148,6 +1148,8 @@ struct ProjectPrimarySurfaceKey: Equatable {
 private struct ProjectIntakeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ProjectIntakeDraft.empty
+    @State private var showingDetails = false
+    @FocusState private var briefFocused: Bool
     let create: (ProjectIntakeDraft) -> Void
 
     private var canCreate: Bool {
@@ -1157,97 +1159,116 @@ private struct ProjectIntakeSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("New Project")
                             .font(.system(size: 24, weight: .black, design: AgentPalette.interfaceFontDesign))
                             .foregroundStyle(AgentPalette.ink)
-                        Text("Tell NovaForge what you are making so it can name the project, set the mission, and choose real next tasks before the first run.")
+                        Text("One sentence is enough. NovaForge names the project, writes the mission, and picks the first tasks.")
                             .font(.system(size: 12.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                             .foregroundStyle(AgentPalette.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    intakeField(
-                        title: "What are you making?",
-                        placeholder: "Example: a cozy farming roguelite, a chess puzzle app, a rhythm platformer",
+                    // The brief IS the intake. Everything else is inferred,
+                    // and the optional details below only refine it.
+                    TextField(
+                        "A cozy farming roguelite for iPhone. A chess puzzle app. A rhythm platformer with neon style…",
                         text: $draft.projectKind,
-                        symbol: "gamecontroller.fill",
-                        identifier: "projectIntakeProjectKindField"
+                        axis: .vertical
                     )
+                    .font(.system(size: 15, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.ink)
+                    .textInputAutocapitalization(.sentences)
+                    .lineLimit(4...8)
+                    .padding(14)
+                    .frame(minHeight: 108, alignment: .topLeading)
+                    .agentControlSurface(radius: 16, tint: AgentPalette.cyan.opacity(0.10), selected: briefFocused)
+                    .focused($briefFocused)
+                    .accessibilityIdentifier("projectIntakeProjectKindField")
 
-                    intakeField(
-                        title: "Working title",
-                        placeholder: "Optional, NovaForge can decide",
-                        text: $draft.workingTitle,
-                        symbol: "textformat",
-                        identifier: "projectIntakeWorkingTitleField"
-                    )
-
-                    intakeField(
-                        title: "Platform",
-                        placeholder: "iPhone, iPad, web, Steam, controller-first, portrait mobile",
-                        text: $draft.platform,
-                        symbol: "iphone",
-                        identifier: "projectIntakePlatformField"
-                    )
-
-                    intakeField(
-                        title: "Style",
-                        placeholder: "Premium glass, pixel art, brutalist, cozy, editorial, arcade neon",
-                        text: $draft.style,
-                        symbol: "paintpalette.fill",
-                        identifier: "projectIntakeStyleField"
-                    )
-
-                    intakeField(
-                        title: "Goal",
-                        placeholder: "Prototype the first playable loop, ship a client demo, validate onboarding",
-                        text: $draft.goal,
-                        symbol: "target",
-                        identifier: "projectIntakeGoalField"
-                    )
-
-                    intakeField(
-                        title: "Starting priorities",
-                        placeholder: "Core loop, first screen, saved data, performance, onboarding",
-                        text: $draft.startingPriorities,
-                        symbol: "list.bullet.clipboard.fill",
-                        identifier: "projectIntakePrioritiesField"
-                    )
-
-                    intakeField(
-                        title: "Player or user experience",
-                        placeholder: "Fast, eerie, relaxing, competitive, kid-friendly, premium, difficult",
-                        text: $draft.playerExperience,
-                        symbol: "sparkles",
-                        identifier: "projectIntakeExperienceField"
-                    )
-
-                    intakeField(
-                        title: "Constraints",
-                        placeholder: "Use SwiftUI, no backend, pixel art, local-only, 60 FPS, one-week prototype",
-                        text: $draft.constraints,
-                        symbol: "slider.horizontal.3",
-                        identifier: "projectIntakeConstraintsField"
-                    )
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("NovaForge will start with", systemImage: "checklist")
-                            .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.ink)
-                        VStack(alignment: .leading, spacing: 6) {
-                            previewRow("Mission", draft.isEmpty ? "A focused build-and-proof project." : draft.missionText)
-                            previewRow("Next step", draft.firstNextStep)
-                            previewRow("Chosen tasks", draft.initialTaskPreview)
+                    if canCreate {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("NovaForge will start with", systemImage: "checklist")
+                                .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(AgentPalette.ink)
+                            VStack(alignment: .leading, spacing: 6) {
+                                previewRow("Mission", draft.missionText)
+                                previewRow("Next step", draft.firstNextStep)
+                                previewRow("Chosen tasks", draft.initialTaskPreview)
+                            }
                         }
+                        .padding(12)
+                        .agentSurface(radius: 18, tint: AgentPalette.green.opacity(0.08))
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
-                    .padding(12)
-                    .agentSurface(radius: 18, tint: AgentPalette.green.opacity(0.08))
+
+                    DisclosureGroup(isExpanded: $showingDetails) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            intakeField(
+                                title: "Working title",
+                                placeholder: "Optional, NovaForge can decide",
+                                text: $draft.workingTitle,
+                                symbol: "textformat",
+                                identifier: "projectIntakeWorkingTitleField"
+                            )
+                            intakeField(
+                                title: "Platform",
+                                placeholder: "iPhone, iPad, web, Steam, controller-first",
+                                text: $draft.platform,
+                                symbol: "iphone",
+                                identifier: "projectIntakePlatformField"
+                            )
+                            intakeField(
+                                title: "Style",
+                                placeholder: "Premium glass, pixel art, cozy, arcade neon",
+                                text: $draft.style,
+                                symbol: "paintpalette.fill",
+                                identifier: "projectIntakeStyleField"
+                            )
+                            intakeField(
+                                title: "Goal",
+                                placeholder: "Prototype the first playable loop, ship a demo",
+                                text: $draft.goal,
+                                symbol: "target",
+                                identifier: "projectIntakeGoalField"
+                            )
+                            intakeField(
+                                title: "Starting priorities",
+                                placeholder: "Core loop, first screen, saved data",
+                                text: $draft.startingPriorities,
+                                symbol: "list.bullet.clipboard.fill",
+                                identifier: "projectIntakePrioritiesField"
+                            )
+                            intakeField(
+                                title: "Experience",
+                                placeholder: "Fast, eerie, relaxing, competitive, premium",
+                                text: $draft.playerExperience,
+                                symbol: "sparkles",
+                                identifier: "projectIntakeExperienceField"
+                            )
+                            intakeField(
+                                title: "Constraints",
+                                placeholder: "SwiftUI, no backend, local-only, 60 FPS",
+                                text: $draft.constraints,
+                                symbol: "slider.horizontal.3",
+                                identifier: "projectIntakeConstraintsField"
+                            )
+                        }
+                        .padding(.top, 10)
+                    } label: {
+                        Label("Refine the brief (optional)", systemImage: "slider.horizontal.2.square")
+                            .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
+                            .foregroundStyle(AgentPalette.secondaryText)
+                    }
+                    .tint(AgentPalette.secondaryText)
+                    .accessibilityIdentifier("projectIntakeDetailsDisclosure")
                 }
                 .padding(18)
+                .animation(.smooth(duration: 0.25), value: canCreate)
             }
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .background(AgentBackground().ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1261,6 +1282,10 @@ private struct ProjectIntakeSheet: View {
                     }
                     .disabled(!canCreate)
                 }
+            }
+            .task {
+                try? await Task.sleep(for: .milliseconds(450))
+                briefFocused = true
             }
         }
         .accessibilityIdentifier("projectIntakeSheet")

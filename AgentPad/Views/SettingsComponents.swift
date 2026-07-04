@@ -11,14 +11,18 @@ struct SettingsHero: View {
     let projectName: String
     let providerName: String
     let modelName: String
+    /// One readiness statement, folded into the header — replaces the old
+    /// SYSTEMS GO hero card and quick rail that restated provider/model a
+    /// second and third time below the title.
+    let readiness: String
     let tint: Color
 
     var body: some View {
         NovaScreenHeader(
-            kicker: "Control Plane // \(projectName)",
-            title: "Settings",
-            subtitle: "\(providerName) · \(modelName)",
-            symbol: "gearshape.fill",
+            kicker: "Control // \(projectName)",
+            title: "Control",
+            subtitle: "\(providerName) · \(modelName) · \(readiness)",
+            symbol: "slider.horizontal.3",
             tint: tint
         )
     }
@@ -49,92 +53,6 @@ struct SettingsSection<Content: View>: View {
     }
 }
 
-
-struct SettingsNativeOverview: View {
-    let status: String
-    let detail: String
-    let provider: String
-    let model: String
-    let writes: String
-    let theme: String
-    let tint: Color
-
-    private var isReady: Bool { status == "Ready to run" }
-    private var statusTint: Color { isReady ? AgentPalette.green : AgentPalette.warning }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(statusTint)
-                            .frame(width: 6, height: 6)
-                            .shadow(color: AgentPerformance.prefersReducedVisualEffects ? .clear : statusTint.opacity(0.8), radius: 4)
-                        Text(isReady ? "Systems Go" : "Action Needed")
-                            .novaLabel(statusTint)
-                    }
-
-                    Text(status)
-                        .font(NovaType.display)
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.78)
-
-                    Text(detail)
-                        .font(NovaType.body)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-
-                NovaReticleGlyph(
-                    symbol: isReady ? "checkmark.seal.fill" : "key.fill",
-                    tint: statusTint,
-                    size: 50
-                )
-            }
-
-            HStack(alignment: .top, spacing: 0) {
-                overviewSpecColumn(title: "Route", value: provider, tint: tint)
-                specDivider
-                overviewSpecColumn(title: "Model", value: model, tint: tint)
-                specDivider
-                overviewSpecColumn(title: "World", value: theme, tint: AgentPalette.lilac)
-            }
-            .accessibilityIdentifier("settingsReadyProviderModelRow")
-        }
-        .padding(16)
-        .agentSurface(radius: 24, tint: statusTint.opacity(0.07))
-        .overlay(NovaCornerTicks(tint: statusTint.opacity(0.35), length: 9, thickness: 1.3, inset: 8))
-    }
-
-    private var specDivider: some View {
-        Rectangle()
-            .fill(AgentPalette.divider.opacity(0.5))
-            .frame(width: 1, height: 28)
-            .padding(.horizontal, 11)
-    }
-
-    private func overviewSpecColumn(title: String, value: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .novaLabel(tint)
-                .minimumScaleFactor(0.7)
-            Text(value)
-                .font(NovaType.caption)
-                .foregroundStyle(AgentPalette.ink)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .minimumScaleFactor(0.72)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title): \(value)")
-    }
-}
 
 struct SettingsMetric: View {
     let title: String

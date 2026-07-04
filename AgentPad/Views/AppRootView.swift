@@ -914,7 +914,8 @@ struct AppRootView: View {
                         projectRuntime.stopGenerating(context: modelContext)
                     },
                     pauseMissionAutoContinue: { pauseAutoContinue(project) },
-                    openMissionDossier: presentMissionDossier
+                    openMissionDossier: presentMissionDossier,
+                    createProject: { createProject() }
                 )
             }
         }

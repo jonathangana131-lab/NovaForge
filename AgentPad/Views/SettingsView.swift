@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var providerModelTask: Task<Void, Never>?
     @State private var connectionTestTask: Task<Void, Never>?
     @State private var showingModelPicker = false
+    @State private var showingCustomModelField = false
     @State private var didPresentModelPickerDemo = false
     @State private var providerModels: [String] = []
     @State private var loadingProviderModels = false
@@ -54,12 +55,11 @@ struct SettingsView: View {
                             projectName: project.name,
                             providerName: settings.provider.displayName,
                             modelName: modelDisplayName(settings.modelID),
+                            readiness: settingsReadinessTitle,
                             tint: AgentPalette.primaryAccent
                         )
                         .accessibilityIdentifier("settingsHero")
 
-                        overviewSection
-                        settingsQuickRail
                         providerSection
                         modelSection
                         presetSection
@@ -202,36 +202,6 @@ struct SettingsView: View {
     }
 
 
-    private var overviewSection: some View {
-        SettingsNativeOverview(
-            status: settingsReadinessTitle,
-            detail: settingsReadinessDetail,
-            provider: settings.provider.displayName,
-            model: modelDisplayName(settings.modelID),
-            writes: settings.autoApproveWrites ? "Auto writes" : "Ask before writes",
-            theme: selectedTheme.title,
-            tint: AgentPalette.primaryAccent
-        )
-        .accessibilityIdentifier("settingsReadyToRunCard")
-    }
-
-    private var settingsQuickRail: some View {
-        NovaTelemetryStrip(items: [
-            NovaTelemetryItem("Credential", credentialStatusText, tint: credentialStatusTint, isEmphasized: true),
-            NovaTelemetryItem(
-                "Writes",
-                settings.autoApproveWrites ? "Auto" : "Ask",
-                tint: settings.autoApproveWrites ? AgentPalette.lilac : AgentPalette.cyan,
-                isEmphasized: true
-            ),
-            NovaTelemetryItem("Temp", String(format: "%.1f", draftTemperature), tint: settings.provider.tint, isEmphasized: true)
-        ], compact: true)
-        .padding(.horizontal, 2)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Credential \(credentialStatusText), writes \(settings.autoApproveWrites ? "automatic" : "ask before writes"), temperature \(String(format: "%.1f", draftTemperature))")
-        .accessibilityIdentifier("settingsQuickRail")
-    }
-
     private var credentialStatusText: String {
         if settings.provider == .local { return "Local" }
         return apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Needed" : "Saved"
@@ -306,21 +276,30 @@ struct SettingsView: View {
                     }
                 }
 
-                HStack(alignment: .bottom, spacing: 8) {
-                    SettingsTextField(
-                        title: "Paste exact model id",
-                        text: $customModel,
-                        symbol: "cpu"
-                    )
-                    .onSubmit {
-                        selectModel(customModel.trimmingCharacters(in: .whitespacesAndNewlines))
-                    }
+                DisclosureGroup(isExpanded: $showingCustomModelField) {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        SettingsTextField(
+                            title: "Paste exact model id",
+                            text: $customModel,
+                            symbol: "cpu"
+                        )
+                        .onSubmit {
+                            selectModel(customModel.trimmingCharacters(in: .whitespacesAndNewlines))
+                        }
 
-                    SettingsActionButton(title: "Apply", symbol: "checkmark", tint: settings.provider.tint, prominent: false) {
-                        selectModel(customModel.trimmingCharacters(in: .whitespacesAndNewlines))
+                        SettingsActionButton(title: "Apply", symbol: "checkmark", tint: settings.provider.tint, prominent: false) {
+                            selectModel(customModel.trimmingCharacters(in: .whitespacesAndNewlines))
+                        }
+                        .disabled(customModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .disabled(customModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.top, 8)
+                } label: {
+                    Text("Custom model id")
+                        .font(NovaType.caption)
+                        .foregroundStyle(AgentPalette.secondaryText)
                 }
+                .tint(AgentPalette.secondaryText)
+                .accessibilityIdentifier("settingsCustomModelDisclosure")
 
                 if let providerModelError {
                     Label(providerModelError, systemImage: "exclamationmark.triangle")
