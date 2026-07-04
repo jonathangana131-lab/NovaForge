@@ -1382,19 +1382,42 @@ private struct ProjectEditSheet: View {
     }
 }
 
+/// The one solid-fill control in the app: the project's ignition switch.
+/// Filled accent capsule with a soft accent bloom — everything else on the
+/// dashboard is line-drawn glass, so this button owns the light.
 struct ProjectRunButtonStyle: ButtonStyle {
     let tint: Color
     let isDisabled: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(isDisabled ? tint : AgentPalette.ink)
-            .agentGlass(radius: 14, interactive: !isDisabled, tint: tint.opacity(isDisabled ? 0.22 : 0.16))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(tint.opacity(configuration.isPressed ? 0.42 : isDisabled ? 0.28 : 0.18), lineWidth: configuration.isPressed ? 1.0 : 0.65)
+            .foregroundStyle(isDisabled ? AgentPalette.secondaryText : AgentPalette.pearl)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: isDisabled
+                                ? [AgentPalette.controlFill, AgentPalette.controlFill]
+                                : [tint, tint.opacity(0.82)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
             )
-            .scaleEffect(configuration.isPressed ? 0.975 : 1)
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        isDisabled ? AgentPalette.controlBorder.opacity(0.6) : tint.opacity(configuration.isPressed ? 0.9 : 0.45),
+                        lineWidth: 0.9
+                    )
+            )
+            .shadow(
+                color: isDisabled || AgentPerformance.prefersReducedVisualEffects ? .clear : tint.opacity(configuration.isPressed ? 0.20 : 0.38),
+                radius: configuration.isPressed ? 6 : 12,
+                x: 0,
+                y: 3
+            )
+            .scaleEffect(configuration.isPressed ? 0.965 : 1)
             .animation(.spring(response: 0.18, dampingFraction: 0.72), value: configuration.isPressed)
     }
 }

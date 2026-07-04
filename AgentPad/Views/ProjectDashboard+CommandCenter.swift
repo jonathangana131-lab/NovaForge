@@ -12,56 +12,40 @@ import SwiftUI
 extension ProjectDashboardView {
     var projectOSControlCenter: some View {
         let tint = projectOSTint
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: projectOSStatusSymbol)
-                    .font(.system(size: 16, weight: .black))
-                    .foregroundStyle(tint)
-                    .frame(width: 38, height: 38)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 7) {
-                        Text("Command Center")
-                            .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(tint)
-                            .textCase(.uppercase)
-                            .kerning(1.1)
+        return VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        NovaKicker(text: "Command Center", tint: tint)
                         Text(adaptiveIntent.mode.displayName)
-                            .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(tint)
-                            .padding(.horizontal, 7)
+                            .novaLabel(tint)
+                            .padding(.horizontal, 8)
                             .frame(height: 19)
                             .background(tint.opacity(0.10), in: Capsule(style: .continuous))
                             .accessibilityIdentifier("projectOSIntentMode")
                     }
 
-                    Text(project.name)
-                        .font(.system(size: 12, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .accessibilityIdentifier("projectOSActiveProject")
-
                     Text(projectOSMissionText)
-                        .font(.system(size: 17.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.display)
                         .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.78)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("projectOSMission")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
 
                 if projectOSProgressFraction > 0 || runtimeStatus.isWorking {
-                    Text("\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1))")
-                        .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .monospacedDigit()
-                        .foregroundStyle(tint)
-                        .padding(.horizontal, 8)
-                        .frame(height: 26)
-                        .background(tint.opacity(0.10), in: Capsule(style: .continuous))
-                        .accessibilityIdentifier("projectOSProgressCount")
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1))")
+                            .font(NovaType.readout)
+                            .foregroundStyle(tint)
+                            .contentTransition(.numericText())
+                        Text("Steps")
+                            .novaLabel(AgentPalette.tertiaryText)
+                    }
+                    .accessibilityIdentifier("projectOSProgressCount")
                 }
             }
 
@@ -69,20 +53,25 @@ extension ProjectDashboardView {
                 ProgressView(value: projectOSProgressFraction, total: 1)
                     .progressViewStyle(.linear)
                     .tint(tint)
-                    .frame(height: 7)
+                    .frame(height: 4)
                     .clipShape(Capsule(style: .continuous))
                     .accessibilityLabel("ProjectOS progress")
                     .accessibilityValue("\(Int((projectOSProgressFraction * 100).rounded())) percent")
             }
 
+            Rectangle()
+                .fill(AgentPalette.divider.opacity(0.45))
+                .frame(height: 0.7)
+
             projectOSExecutionStatePanel
         }
-        .padding(14)
+        .padding(16)
         .agentGlass(radius: 24, interactive: false, tint: tint.opacity(0.13))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(tint.opacity(0.20), lineWidth: 0.7)
         )
+        .overlay(NovaCornerTicks(tint: tint.opacity(0.38), length: 9, thickness: 1.3, inset: 8))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectOSControlCenter")
     }
@@ -90,62 +79,74 @@ extension ProjectDashboardView {
     var projectOSExecutionStatePanel: some View {
         let state = dashboardExecutionState
         let tint = dashboardExecutionTint(state)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: state.symbolName)
-                    .font(.system(size: 13, weight: .black))
-                    .foregroundStyle(tint)
-                    .frame(width: 32, height: 32)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
-                        Text("Execution State")
-                            .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.tertiaryText)
-                            .textCase(.uppercase)
+                        Circle()
+                            .fill(tint)
+                            .frame(width: 6, height: 6)
+                            .shadow(color: AgentPerformance.prefersReducedVisualEffects ? .clear : tint.opacity(0.8), radius: 4)
                         Text(state.shortTitle)
-                            .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(tint)
-                            .padding(.horizontal, 7)
-                            .frame(height: 19)
-                            .background(tint.opacity(0.10), in: Capsule(style: .continuous))
+                            .novaLabel(tint)
                             .accessibilityIdentifier("projectOSExecutionStatePill")
                     }
 
                     Text(state.headline)
-                        .font(.system(size: 14.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.title)
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(2)
                         .minimumScaleFactor(0.82)
                         .accessibilityIdentifier("projectOSExecutionStateHeadline")
 
                     Text(projectOSExecutionStateDetail)
-                        .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.body)
                         .foregroundStyle(AgentPalette.secondaryText)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("projectOSExecutionStateDetail")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+
+                NovaReticleGlyph(
+                    symbol: state.symbolName,
+                    tint: tint,
+                    size: 46,
+                    isActive: runtimeStatus.isWorking
+                )
             }
 
             projectOSExecutionStateLadder
             projectOSExecutionActionRow
 
-            HStack(spacing: 7) {
-                projectOSExecutionMetric(title: "Evidence", value: projectOSEvidenceSummaryText, symbol: "checkmark.seal.fill", tint: AgentPalette.green)
-                projectOSExecutionMetric(title: "Logs", value: projectOSLogSummaryText, symbol: "doc.text.magnifyingglass", tint: AgentPalette.cyan)
+            HStack(alignment: .top, spacing: 0) {
+                projectOSExecutionSpecColumn(title: "Evidence", value: projectOSEvidenceSummaryText, tint: AgentPalette.green)
+                Rectangle()
+                    .fill(AgentPalette.divider.opacity(0.5))
+                    .frame(width: 1, height: 30)
+                    .padding(.horizontal, 12)
+                projectOSExecutionSpecColumn(title: "Logs", value: projectOSLogSummaryText, tint: AgentPalette.cyan)
             }
         }
-        .padding(11)
-        .background(tint.opacity(0.075), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 17, style: .continuous)
-                .strokeBorder(tint.opacity(0.18), lineWidth: 0.55)
-        )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectOSExecutionStatePanel")
+    }
+
+    func projectOSExecutionSpecColumn(title: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .novaLabel(tint)
+            Text(value)
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(value)")
     }
 
     var projectOSExecutionStateLadder: some View {
@@ -736,14 +737,8 @@ extension ProjectDashboardView {
     }
 
     var projectOSMissionCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Mission", systemImage: "scope")
-                .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.ink)
-            Text(projectOSMissionText)
-                .font(.system(size: 11.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 9) {
+            NovaSectionMark(title: "Next Move", tint: commandTint(for: recommendedCommandIntent))
             projectOSSignalRow(
                 title: "Next Recommended Action",
                 value: projectOSNextStepText,
@@ -752,8 +747,6 @@ extension ProjectDashboardView {
                 identifier: "next-action"
             )
         }
-        .padding(11)
-        .background(AgentPalette.row.opacity(0.52), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectOSMissionPanel")
     }

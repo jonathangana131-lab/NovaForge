@@ -12,26 +12,31 @@ import SwiftUI
 
 extension ProjectDashboardView {
     var projectPinnedCommandCenter: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: statusSymbol)
-                    .font(.system(size: 14, weight: .black))
-                    .foregroundStyle(statusTint)
-                    .frame(width: 34, height: 34)
-                    .background(statusTint.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .center, spacing: 11) {
+                NovaReticleGlyph(
+                    symbol: statusSymbol,
+                    tint: statusTint,
+                    size: 40,
+                    isActive: runtimeStatus.isWorking
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project.name)
-                        .font(.system(size: 15.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.title)
                         .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.78)
-                        .truncationMode(.tail)
-                    Text("\(project.workspaceName) · \(summary.statusText)")
-                        .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.secondaryText)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .minimumScaleFactor(0.72)
+                        .truncationMode(.tail)
+                    HStack(spacing: 6) {
+                        Text(pinnedRunEyebrow)
+                            .novaLabel(pinnedRunTint)
+                        Text("· \(summary.statusText)")
+                            .font(NovaType.caption)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
                 .layoutPriority(1)
 
@@ -42,12 +47,14 @@ extension ProjectDashboardView {
                     showsProjectSwitcherSheet = true
                 } label: {
                     Image(systemName: "rectangle.stack.fill")
-                        .font(.system(size: 14, weight: .black))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(AgentPalette.cyan)
-                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(AgentPalette.cyan.opacity(0.10)))
+                        .overlay(Circle().strokeBorder(AgentPalette.cyan.opacity(0.24), lineWidth: 0.9))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .agentControlSurface(radius: 13, tint: AgentPalette.cyan.opacity(0.10), selected: false)
                 .accessibilityLabel("Open projects")
                 .accessibilityIdentifier("projectPinnedSwitcherButton")
 
@@ -64,37 +71,40 @@ extension ProjectDashboardView {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .black))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(AgentPalette.secondaryText)
-                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(AgentPalette.controlFill.opacity(0.5)))
+                        .overlay(Circle().strokeBorder(AgentPalette.controlBorder.opacity(0.7), lineWidth: 0.9))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .agentControlSurface(radius: 13, tint: AgentPalette.lilac.opacity(0.08), selected: false)
                 .accessibilityLabel("Project actions")
                 .accessibilityIdentifier("projectPinnedActionsMenu")
             }
 
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pinnedRunEyebrow)
-                        .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(pinnedRunTint)
-                        .textCase(.uppercase)
-                    Text(pinnedRunDetail)
-                        .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("projectPinnedRunReason")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .center, spacing: 12) {
+                Text(pinnedRunDetail)
+                    .font(NovaType.body)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
+                    .accessibilityIdentifier("projectPinnedRunReason")
 
                 Button {
                     handlePinnedRunButton()
                 } label: {
-                    Label(pinnedRunButtonTitle, systemImage: pinnedRunButtonSymbol)
-                        .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .frame(minWidth: 104, minHeight: AgentDesign.minimumTouchTarget)
+                    HStack(spacing: 7) {
+                        Image(systemName: pinnedRunButtonSymbol)
+                            .font(.system(size: 12, weight: .heavy))
+                        Text(pinnedRunButtonTitle)
+                            .font(NovaType.headline)
+                    }
+                    .frame(minWidth: 96, minHeight: AgentDesign.minimumTouchTarget)
+                    .padding(.horizontal, 6)
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(ProjectRunButtonStyle(tint: pinnedRunTint, isDisabled: pinnedRunButtonDisabled))
                 .disabled(pinnedRunButtonDisabled)
@@ -102,11 +112,12 @@ extension ProjectDashboardView {
                 .accessibilityIdentifier("projectPinnedRunButton")
             }
         }
-        .padding(12)
-        .agentGlass(radius: 22, interactive: false, tint: pinnedRunTint.opacity(0.12))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .agentGlass(radius: 24, interactive: false, tint: pinnedRunTint.opacity(0.10))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(pinnedRunTint.opacity(0.18), lineWidth: 0.65)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(pinnedRunTint.opacity(0.20), lineWidth: 0.65)
         )
         .accessibilityIdentifier("projectPinnedCommandCenter")
     }

@@ -12,13 +12,40 @@ import SwiftUI
 extension ProjectDashboardView {
 
     var projectDetailScopePicker: some View {
-        Picker("Project detail scope", selection: $selectedDetailScope) {
+        HStack(spacing: 6) {
             ForEach(ProjectDetailScope.allCases) { scope in
-                Label(scope.title, systemImage: scope.symbol)
-                    .tag(scope)
+                let isSelected = selectedDetailScope == scope
+                Button {
+                    NovaHaptics.lensChanged()
+                    withAnimation(.smooth(duration: 0.22)) {
+                        selectedDetailScope = scope
+                    }
+                } label: {
+                    Text(scope.title)
+                        .font(NovaType.caption)
+                        .foregroundStyle(isSelected ? AgentPalette.ink : AgentPalette.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(isSelected ? projectOSTint.opacity(0.16) : Color.clear)
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(
+                                    isSelected ? projectOSTint.opacity(0.42) : AgentPalette.controlBorder.opacity(0.4),
+                                    lineWidth: 0.8
+                                )
+                        )
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Show \(scope.title)")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .pickerStyle(.segmented)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectDetailScopePicker")
     }
 
