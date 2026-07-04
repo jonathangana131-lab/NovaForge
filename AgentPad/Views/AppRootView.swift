@@ -649,6 +649,13 @@ struct AppRootView: View {
             installProjectWaitingFixture(for: activeProject, conversation: conversation)
             preserveGeneralChatSelection()
             try? modelContext.save()
+            // Late conversation-selection bootstrap can steal the tab back to
+            // chat after this fixture runs (run 34, shot 19). Re-assert after
+            // the launch dust settles — the CI screenshot fires at +9s.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(2_500))
+                selectedTab = .runs
+            }
         }
         if hasDebugLaunchFlag("--project-proof-demo", in: arguments),
            let activeProject,

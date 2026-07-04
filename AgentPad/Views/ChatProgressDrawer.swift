@@ -52,13 +52,13 @@ struct ChatContextBar: View {
                 HStack(spacing: 10) {
                     contextIcon
 
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(title)
-                            .font(.system(size: 12, weight: .heavy, design: AgentPalette.interfaceFontDesign))
+                            .font(NovaType.headline)
                             .foregroundStyle(AgentPalette.ink)
                             .lineLimit(1)
                         Text(subtitle)
-                            .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                            .font(NovaType.caption)
                             .foregroundStyle(AgentPalette.secondaryText)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -68,11 +68,13 @@ struct ChatContextBar: View {
                     statusPill
 
                     Image(systemName: "chevron.up")
-                        .font(.system(size: 13, weight: .black))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(tint)
                         .rotationEffect(.degrees(expanded ? 180 : 0))
-                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                        .agentControlSurface(radius: 15, tint: tint.opacity(0.14), selected: true)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(tint.opacity(0.10)))
+                        .overlay(Circle().strokeBorder(tint.opacity(0.26), lineWidth: 0.9))
+                        .contentShape(Circle())
                 }
                 .padding(.leading, 2)
                 .frame(minHeight: AgentDesign.minimumTouchTarget)
@@ -124,13 +126,21 @@ struct ChatContextBar: View {
     }
 
     private var statusPill: some View {
-        Text(statusPillText)
-            .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-            .foregroundStyle(tint)
-            .textCase(.uppercase)
-            .padding(.horizontal, 8)
-            .frame(height: 24)
-            .agentControlSurface(radius: 9, tint: tint.opacity(0.12), selected: true)
+        HStack(spacing: 5) {
+            Circle()
+                .fill(tint)
+                .frame(width: 5.5, height: 5.5)
+                .shadow(
+                    color: runtime.isWorking && !AgentPerformance.prefersReducedVisualEffects ? tint.opacity(0.85) : .clear,
+                    radius: 4
+                )
+            Text(statusPillText)
+                .novaLabel(tint)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(Capsule(style: .continuous).fill(tint.opacity(0.11)))
+        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.28), lineWidth: 0.8))
     }
 
     private var title: String {

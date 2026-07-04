@@ -584,7 +584,7 @@ struct ChatMemoryChipButton: View {
             }
             .padding(.horizontal, 12)
             .frame(minHeight: 32)
-            .frame(maxWidth: 230)
+            .frame(maxWidth: 264)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

@@ -1175,9 +1175,10 @@ struct ApprovalSheet: View {
     }
 
     private var approvalFieldList: some View {
+        // Risk lives in the tinted band above — repeating it here read as
+        // filler in the run-34 capture.
         VStack(spacing: 7) {
             approvalField(title: "Tool", value: plainToolName(request.name), symbol: "wrench.and.screwdriver.fill", tint: AgentPalette.cyan)
-            approvalField(title: "Risk", value: riskSummary, symbol: request.isMutating ? "exclamationmark.triangle.fill" : "checkmark.shield.fill", tint: request.isMutating ? AgentPalette.rose : AgentPalette.green)
             approvalField(title: "Affected", value: affectedSummary, symbol: "scope", tint: AgentPalette.lilac)
             approvalField(title: "Reason", value: reasonSummary, symbol: "text.bubble.fill", tint: AgentPalette.cyan)
         }
