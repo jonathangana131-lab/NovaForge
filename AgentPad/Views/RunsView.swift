@@ -708,7 +708,10 @@ struct RunsView: View {
                         }
 
                         runsCommandFocusPanel
-                        auditDashboard
+
+                        if cachedStats.total > 0 {
+                            auditDashboard
+                        }
 
                         if cachedFilteredRuns.isEmpty {
                             NovaOrbitalEmptyState(

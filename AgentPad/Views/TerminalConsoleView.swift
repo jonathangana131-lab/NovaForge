@@ -321,41 +321,30 @@ struct TerminalConsoleView: View {
     }
 
     private var commandDeckOverview: some View {
-        HStack(spacing: 10) {
-            Label("Commands", systemImage: "command.square.fill")
-                .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.lilac)
-                .labelStyle(.iconOnly)
-                .frame(width: 34, height: 44)
-                .background(AgentPalette.lilac.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                Text("\(TerminalCommandCatalog.supportedCommands.count) CMDS")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .tracking(1.0)
+                    .foregroundStyle(AgentPalette.lilac.opacity(0.85))
+                    .padding(.trailing, 3)
+                    .accessibilityLabel("\(TerminalCommandCatalog.supportedCommands.count) scoped commands")
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(TerminalCommandCatalog.presetCommands, id: \.command) { suggestion in
-                        terminalPresetButton(suggestion)
-                    }
-                    Divider()
-                        .frame(height: 26)
-                        .overlay(AgentPalette.border.opacity(0.7))
-                    ForEach(TerminalCommandCatalog.quickCheckCommands, id: \.command) { suggestion in
-                        terminalQuickCheckButton(suggestion)
-                    }
+                ForEach(TerminalCommandCatalog.presetCommands, id: \.command) { suggestion in
+                    terminalPresetButton(suggestion)
                 }
-                .padding(.vertical, 1)
+                Rectangle()
+                    .fill(AgentPalette.divider.opacity(0.6))
+                    .frame(width: 1, height: 20)
+                    .padding(.horizontal, 3)
+                ForEach(TerminalCommandCatalog.quickCheckCommands, id: \.command) { suggestion in
+                    terminalQuickCheckButton(suggestion)
+                }
             }
+            .padding(.vertical, 2)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("terminalQuickChecks")
-
-            Text("\(TerminalCommandCatalog.supportedCommands.count)")
-                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.lilac)
-                .frame(width: 26, height: 24)
-                .agentControlSurface(radius: 9, tint: AgentPalette.lilac.opacity(0.12), selected: true)
-                .accessibilityLabel("\(TerminalCommandCatalog.supportedCommands.count) scoped commands")
         }
-        .padding(.horizontal, 10)
-        .frame(minHeight: 56)
-        .agentSurface(radius: 18, tint: AgentPalette.lilac.opacity(0.07))
-        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminalCommandDeck")
     }
 
@@ -406,50 +395,38 @@ struct TerminalConsoleView: View {
     }
 
     private func terminalPresetButton(_ suggestion: TerminalCommandSuggestion) -> some View {
-        Button {
-            inputCommand = suggestion.command
-            commandFocused = true
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: suggestion.symbol)
-                    .font(.system(size: 10, weight: .bold))
-                Text(suggestion.label)
-                    .font(.system(size: 11, weight: .black, design: .monospaced))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(AgentPalette.ink)
-            .padding(.horizontal, 10)
-            .frame(minWidth: 72)
-            .frame(height: terminalCommandButtonHeight)
-            .agentControlSurface(radius: 11, tint: AgentPalette.cyan.opacity(0.12), selected: true)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Use terminal preset \(suggestion.command). \(suggestion.detail)")
-        .accessibilityIdentifier("terminalPreset-\(suggestion.command.replacingOccurrences(of: " ", with: "-"))")
+        terminalDeckChip(suggestion, tint: AgentPalette.cyan, kind: "preset")
     }
 
     private func terminalQuickCheckButton(_ suggestion: TerminalCommandSuggestion) -> some View {
+        terminalDeckChip(suggestion, tint: AgentPalette.lilac, kind: "quick check")
+    }
+
+    /// Mono command capsule — prompt glyph + command text, terminal-native.
+    private func terminalDeckChip(_ suggestion: TerminalCommandSuggestion, tint: Color, kind: String) -> some View {
         Button {
+            NovaHaptics.tick()
             inputCommand = suggestion.command
             commandFocused = true
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: suggestion.symbol)
-                    .font(.system(size: 9, weight: .heavy))
+                Text("$")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(tint.opacity(0.85))
                 Text(suggestion.label)
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(AgentPalette.ink)
                     .lineLimit(1)
             }
-            .foregroundStyle(AgentPalette.ink)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .frame(height: terminalCommandButtonHeight)
-            .agentControlSurface(radius: 11, tint: AgentPalette.lilac.opacity(0.12), selected: true)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Use terminal quick check \(suggestion.command). \(suggestion.detail)")
-        .accessibilityIdentifier("terminalQuickCheck-\(suggestion.command.replacingOccurrences(of: " ", with: "-"))")
+        .background(Capsule(style: .continuous).fill(tint.opacity(0.09)))
+        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.24), lineWidth: 0.8))
+        .accessibilityLabel("Use terminal \(kind) \(suggestion.command). \(suggestion.detail)")
+        .accessibilityIdentifier("terminal\(kind == "preset" ? "Preset" : "QuickCheck")-\(suggestion.command.replacingOccurrences(of: " ", with: "-"))")
     }
 
     private func outputActionRow(for line: TerminalOutputLine, isExpanded: Bool) -> some View {

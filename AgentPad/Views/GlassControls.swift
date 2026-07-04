@@ -301,24 +301,20 @@ struct IconGlassButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            ZStack {
-                Color.clear
-                Image(systemName: symbol)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(tint ?? AgentPalette.ink)
-            }
-            .frame(width: AgentDesign.controlHeight, height: AgentDesign.controlHeight)
-            .contentShape(Rectangle())
+        let accent = tint ?? AgentPalette.secondaryText
+        Button {
+            NovaHaptics.tick()
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(tint ?? AgentPalette.ink)
+                .frame(width: AgentDesign.controlHeight, height: AgentDesign.controlHeight)
+                .background(Circle().fill(accent.opacity(tint == nil ? 0.07 : 0.12)))
+                .overlay(Circle().strokeBorder(accent.opacity(tint == nil ? 0.22 : 0.30), lineWidth: 0.9))
+                .contentShape(Circle())
         }
-        .buttonStyle(
-            AgentLiquidGlassButtonStyle(
-                radius: AgentDesign.controlRadius,
-                tint: tint,
-                selected: tint != nil,
-                level: .control
-            )
-        )
+        .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier ?? accessibilityLabel)
     }
@@ -937,19 +933,27 @@ struct WorkspaceStatusStrip: View {
     var body: some View {
         let tint = snapshot.tint
         HStack(spacing: 10) {
-            Image(systemName: snapshot.symbol)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(tint)
-                .frame(width: 30, height: 30)
-                .agentLiquidSurface(radius: 10, tint: tint, selected: true, level: .control)
+            ZStack {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 7, height: 7)
+                if snapshot.isWorking && AgentPerformance.allowsDecorativeMotion {
+                    Circle()
+                        .stroke(tint.opacity(0.5), lineWidth: 1.4)
+                        .frame(width: 15, height: 15)
+                }
+            }
+            .frame(width: 18, height: 18)
+            .shadow(color: AgentPerformance.prefersReducedVisualEffects ? .clear : tint.opacity(0.7), radius: 4)
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(snapshot.title)
-                    .font(.system(size: 11, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.headline)
                     .foregroundStyle(AgentPalette.ink)
                     .lineLimit(1)
                 Text(snapshot.detail)
-                    .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.caption)
                     .foregroundStyle(AgentPalette.secondaryText)
                     .lineLimit(1)
             }
@@ -957,11 +961,11 @@ struct WorkspaceStatusStrip: View {
 
             if let changedText = snapshot.changedText {
                 Text(changedText)
-                    .font(.system(size: 9, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.green)
-                    .padding(.horizontal, 8)
-                    .frame(height: 26)
-                    .agentLiquidSurface(radius: 9, tint: AgentPalette.green, selected: true, level: .control)
+                    .novaLabel(AgentPalette.green)
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(Capsule(style: .continuous).fill(AgentPalette.green.opacity(0.12)))
+                    .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.green.opacity(0.30), lineWidth: 0.8))
             }
 
             if snapshot.isWorking {
@@ -974,12 +978,14 @@ struct WorkspaceStatusStrip: View {
                     }
                 } label: {
                     Image(systemName: "pause.fill")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(AgentPalette.rose)
-                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(AgentPalette.rose.opacity(0.12)))
+                        .overlay(Circle().strokeBorder(AgentPalette.rose.opacity(0.32), lineWidth: 0.9))
+                        .contentShape(Circle())
                 }
-                .buttonStyle(AgentLiquidGlassButtonStyle(radius: 10, tint: AgentPalette.rose, selected: true, level: .control))
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
                 .accessibilityLabel("Pause run")
                 .accessibilityIdentifier("workspaceStatusPauseButton")
             }
@@ -991,15 +997,19 @@ struct WorkspaceStatusStrip: View {
                 Image(systemName: destinationSymbol)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(tint)
-                    .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(tint.opacity(0.10)))
+                    .overlay(Circle().strokeBorder(tint.opacity(0.28), lineWidth: 0.9))
+                    .contentShape(Circle())
             }
-            .buttonStyle(AgentLiquidGlassButtonStyle(radius: 10, tint: tint, selected: true, level: .control))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
             .accessibilityLabel(destinationAccessibilityLabel)
             .accessibilityIdentifier(destinationAccessibilityLabel == "Open chat" ? "workspaceStatusOpenChatButton" : "workspaceStatusOpenDestinationButton")
         }
-        .padding(10)
-        .agentLiquidSurface(radius: 18, tint: tint, selected: true, level: .card)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 8)
+        .background(Capsule(style: .continuous).fill(tint.opacity(0.09)))
+        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.26), lineWidth: 0.8))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspaceStatusStrip")
     }

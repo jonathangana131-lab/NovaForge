@@ -286,7 +286,12 @@ struct NovaTelemetryStrip: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                     Text(item.label)
-                        .novaLabel(item.isEmphasized ? AgentPalette.tertiaryText : AgentPalette.quaternaryText)
+                        .font(NovaType.label)
+                        .tracking(compact ? 0.7 : 1.1)
+                        .textCase(.uppercase)
+                        .foregroundStyle(item.isEmphasized ? AgentPalette.tertiaryText : AgentPalette.quaternaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
                 }
                 .frame(maxWidth: .infinity, alignment: alignment == .center ? .center : .leading)
             }

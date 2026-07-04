@@ -226,30 +226,30 @@ extension FilesView {
         }
     }
 
+    /// Spec-sheet line: accent tick + label + value. The deboxed replacement
+    /// for the old icon-tile metadata cells.
     func memoryMetadataCell(title: String, value: String, symbol: String, tint: Color) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .black))
-                .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
-                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            RoundedRectangle(cornerRadius: 1, style: .continuous)
+                .fill(tint.opacity(0.75))
+                .frame(width: 2.5, height: 9)
+                .offset(y: -0.5)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 7.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.tertiaryText)
-                    .textCase(.uppercase)
-                Text(value)
-                    .font(.system(size: 9.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            Text(title)
+                .novaLabel(AgentPalette.tertiaryText)
+                .layoutPriority(1)
+
+            Text(value)
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
             Spacer(minLength: 0)
         }
-        .padding(8)
-        .background(AgentPalette.surfaceAlt.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(value)")
     }
 
     func memoryQuickActions(for item: ProjectMemoryItem) -> some View {

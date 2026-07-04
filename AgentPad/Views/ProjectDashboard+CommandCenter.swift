@@ -28,8 +28,8 @@ extension ProjectDashboardView {
                     Text(projectOSMissionText)
                         .font(NovaType.display)
                         .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.78)
+                        .lineLimit(4)
+                        .minimumScaleFactor(0.72)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("projectOSMission")
                 }

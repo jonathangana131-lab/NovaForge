@@ -19,27 +19,63 @@ struct CleanChatEmptyState: View {
         ("doc.text.magnifyingglass", "Explore my files", "Summarize what is in my workspace right now")
     ]
 
+    @State private var spin = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var allowsMotion: Bool {
+        AgentPerformance.allowsDecorativeMotion && !reduceMotion
+    }
+
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 22) {
             ZStack {
                 Circle()
-                    .fill(AgentPalette.primaryAccent.opacity(0.14))
-                    .frame(width: 74, height: 74)
-                    .blur(radius: 14)
+                    .fill(AgentPalette.primaryAccent.opacity(0.13))
+                    .frame(width: 84, height: 84)
+                    .blur(radius: 18)
                 Circle()
-                    .fill(AgentPalette.primaryAccent.opacity(0.10))
-                    .frame(width: 58, height: 58)
+                    .stroke(AgentPalette.primaryAccent.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [1, 6.5]))
+                    .frame(width: 126, height: 126)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(
+                        allowsMotion ? .linear(duration: 52).repeatForever(autoreverses: false) : nil,
+                        value: spin
+                    )
+                Circle()
+                    .strokeBorder(AgentPalette.primaryAccent.opacity(0.20), lineWidth: 1)
+                    .frame(width: 92, height: 92)
+                Circle()
+                    .trim(from: 0.58, to: 0.84)
+                    .stroke(
+                        AngularGradient(
+                            colors: [AgentPalette.primaryAccent.opacity(0), AgentPalette.primaryAccent.opacity(0.85)],
+                            center: .center,
+                            startAngle: .degrees(209),
+                            endAngle: .degrees(302)
+                        ),
+                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
+                    )
+                    .frame(width: 92, height: 92)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(
+                        allowsMotion ? .linear(duration: 8).repeatForever(autoreverses: false) : nil,
+                        value: spin
+                    )
                 Image(systemName: "sparkles")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(.system(size: 27, weight: .semibold))
                     .foregroundStyle(AgentPalette.primaryAccent)
             }
+            .onAppear { spin = true }
+            .accessibilityHidden(true)
 
-            VStack(spacing: 6) {
+            VStack(spacing: 7) {
+                Text("On-Device Intelligence")
+                    .novaKickerText(AgentPalette.tertiaryText)
                 Text("Ready when you are")
-                    .font(.system(size: 19, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.display)
                     .foregroundStyle(AgentPalette.ink)
-                Text("Your on-device agent. Ask anything,\nor hand it a mission.")
-                    .font(.system(size: 12.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                Text("Ask anything, or hand NovaForge a mission.\nEverything runs on this device.")
+                    .font(NovaType.body)
                     .foregroundStyle(AgentPalette.secondaryText)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
@@ -48,35 +84,35 @@ struct CleanChatEmptyState: View {
             VStack(spacing: 8) {
                 ForEach(Self.starters, id: \.title) { starter in
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        NovaHaptics.tick()
                         apply(starter.prompt)
                     } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 11) {
                             Image(systemName: starter.symbol)
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(AgentPalette.primaryAccent)
-                                .frame(width: 24, height: 24)
-                                .background(AgentPalette.primaryAccent.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .frame(width: 20)
                             Text(starter.title)
-                                .font(.system(size: 13, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                                .font(NovaType.headline)
                                 .foregroundStyle(AgentPalette.ink)
                             Spacer(minLength: 0)
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10, weight: .black))
-                                .foregroundStyle(AgentPalette.tertiaryText)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(AgentPalette.quaternaryText)
                         }
-                        .padding(.horizontal, 13)
-                        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
-                        .contentShape(Rectangle())
+                        .padding(.horizontal, 17)
+                        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget + 2)
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .agentRowSurface(radius: 15, tint: AgentPalette.primaryAccent)
+                    .background(Capsule(style: .continuous).fill(AgentPalette.controlFill.opacity(0.5)))
+                    .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.primaryAccent.opacity(0.22), lineWidth: 0.8))
                     .accessibilityLabel(starter.title)
                 }
             }
-            .frame(maxWidth: 340)
+            .frame(maxWidth: 330)
         }
-        .padding(.top, 46)
+        .padding(.top, 40)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityElement(children: .contain)

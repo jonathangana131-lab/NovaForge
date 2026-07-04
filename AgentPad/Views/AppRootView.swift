@@ -123,6 +123,7 @@ struct AppRootView: View {
     @State private var didInjectProjectResumeFixture = false
     @State private var didInjectAutoContinueCountdownFixture = false
     @State private var didInjectProjectSpineE2EFixture = false
+    @State private var didInjectRunsApprovalFixture = false
     @State private var debugLaunchTaskRetryCount = 0
     #endif
     @AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue
@@ -634,6 +635,21 @@ struct AppRootView: View {
             preserveGeneralChatSelection()
             try? modelContext.save()
         }
+        // Deterministic Runs-tab approval capture. The generic
+        // --pending-approval-demo forces selectedTab = .chat (its sheet is a
+        // chat surface), which raced --open-runs in the CI tour. This flag
+        // installs the same durable saved-approval evidence but keeps the
+        // Runs tab in front.
+        if hasDebugLaunchFlag("--runs-approval-demo", in: arguments),
+           let activeProject,
+           !didInjectRunsApprovalFixture {
+            didInjectRunsApprovalFixture = true
+            selectedTab = .runs
+            let conversation = projectConversation(for: activeProject, now: Date())
+            installProjectWaitingFixture(for: activeProject, conversation: conversation)
+            preserveGeneralChatSelection()
+            try? modelContext.save()
+        }
         if hasDebugLaunchFlag("--project-proof-demo", in: arguments),
            let activeProject,
            !didInjectProjectProofFixture {
@@ -715,6 +731,9 @@ struct AppRootView: View {
             return true
         }
         if hasDebugLaunchFlag("--project-resume-demo", in: arguments), !didInjectProjectResumeFixture {
+            return true
+        }
+        if hasDebugLaunchFlag("--runs-approval-demo", in: arguments), !didInjectRunsApprovalFixture {
             return true
         }
         if hasDebugLaunchFlag("--project-proof-demo", in: arguments), !didInjectProjectProofFixture {

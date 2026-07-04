@@ -209,7 +209,9 @@ shot "17-project-proof" --reset-ui --open-project --project-proof-demo
 shot "18-project-countdown" --reset-ui --open-project --auto-continue-countdown-demo
 
 # --- Runs / terminal / artifact depth ----------------------------------------
-shot "19-runs-approval" --reset-ui --open-runs --pending-approval-demo
+# --runs-approval-demo keeps the Runs tab in front (the generic
+# --pending-approval-demo forces the chat tab and raced --open-runs).
+shot "19-runs-approval" --reset-ui --open-runs --runs-approval-demo
 shot "20-runs-populated" --reset-ui --open-runs --project-proof-demo
 shot "21-terminal-live" --reset-ui --open-terminal --terminal-live-record-demo
 shot "22-artifact-preview" WAIT=14 --reset-ui --open-files --project-proof-demo --workbench-open-artifact-preview

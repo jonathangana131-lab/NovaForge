@@ -26,7 +26,7 @@ extension ProjectDashboardView {
                         .font(NovaType.title)
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                        .minimumScaleFactor(0.58)
                         .truncationMode(.tail)
                     HStack(spacing: 6) {
                         Text(pinnedRunEyebrow)

@@ -727,19 +727,22 @@ struct CodeBlockView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(language?.uppercased() ?? "CODE")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                    Text("\(lineCount) \(lineCount == 1 ? "line" : "lines")")
-                        .font(.system(size: 9, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.tertiaryText)
+            HStack(spacing: 8) {
+                HStack(spacing: 4.5) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Circle()
+                            .fill(AgentPalette.codeCursor.opacity(index == 0 ? 0.75 : 0.25))
+                            .frame(width: 6, height: 6)
+                    }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .agentGlass(radius: 8, tint: AgentPalette.codeCursor.opacity(0.08))
-                
+                .accessibilityHidden(true)
+
+                Text("\(language?.uppercased() ?? "CODE") · \(lineCount) \(lineCount == 1 ? "LINE" : "LINES")")
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .tracking(1.1)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(1)
+
                 Spacer()
 
                 if isLargeBlock {
@@ -834,9 +837,21 @@ struct CodeBlockView: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(AgentPalette.codeText)
                     .padding(12)
+                    .padding(.trailing, 14)
                     .textSelection(.enabled)
             }
             .background(AgentPalette.codeBackground.opacity(0.92))
+            .overlay(alignment: .trailing) {
+                // Dissolve horizontally-scrolled code instead of razor-cutting
+                // glyphs mid-word at the card edge.
+                LinearGradient(
+                    colors: [AgentPalette.codeBackground.opacity(0), AgentPalette.codeBackground.opacity(0.95)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 26)
+                .allowsHitTesting(false)
+            }
         }
         .agentGlass(radius: 16, tint: AgentPalette.codeCursor.opacity(0.05))
         .alert("Save Code Block", isPresented: $showingSaveAlert) {
@@ -988,30 +1003,67 @@ struct ApprovalSheet: View {
     @State private var reviewDiff: FileDiff?
     @State private var reviewPath: String?
 
+    private var gateTint: Color {
+        request.isMutating ? AgentPalette.warning : AgentPalette.green
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             AgentBackground()
-            VStack(alignment: .leading, spacing: 16) {
-                HeaderView(title: "Approval Needed", subtitle: plainToolName(request.name), symbol: "checkmark.shield", tint: AgentPalette.cyan)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        NovaKicker(text: "Security Gate", tint: gateTint)
+                        Text("Approval needed")
+                            .font(NovaType.hero)
+                            .foregroundStyle(AgentPalette.ink)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                        Text("\(plainToolName(request.name)) · \(argumentSummary)")
+                            .font(NovaType.caption)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
+
+                    NovaReticleGlyph(
+                        symbol: request.isMutating ? "exclamationmark.shield.fill" : "checkmark.shield.fill",
+                        tint: gateTint,
+                        size: 54,
+                        isActive: true
+                    )
+                }
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .top, spacing: 10) {
                             Image(systemName: request.isMutating ? "pencil.and.outline" : "eye.fill")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(request.isMutating ? AgentPalette.cyan : AgentPalette.cyan)
-                                .frame(width: 34, height: 34)
-                                .agentControlSurface(radius: 11, tint: request.isMutating ? AgentPalette.cyan : AgentPalette.cyan, selected: true)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(request.isMutating ? "This tool can change files or run commands." : "This tool will inspect the workspace.")
-                                    .font(.subheadline.weight(.bold))
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(gateTint)
+                                .padding(.top, 1)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(request.isMutating ? "This tool can change files or run commands" : "Read-only workspace inspection")
+                                    .font(NovaType.headline)
                                     .foregroundStyle(AgentPalette.ink)
-                                Text(argumentSummary)
-                                    .font(.caption)
+                                Text(riskSummary)
+                                    .font(NovaType.caption)
                                     .foregroundStyle(AgentPalette.secondaryText)
-                                    .lineLimit(2)
-                                    .truncationMode(.middle)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .background(gateTint.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(gateTint.opacity(0.32), lineWidth: 0.8)
+                        )
+                        .overlay(alignment: .leading) {
+                            UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16)
+                                .fill(gateTint.opacity(0.85))
+                                .frame(width: 3)
                         }
 
                         approvalFieldList
@@ -1029,13 +1081,13 @@ struct ApprovalSheet: View {
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 10, weight: .bold))
                                     .rotationEffect(.degrees(showingArguments ? 90 : 0))
-                                Text(showingArguments ? "Hide arguments" : "Show arguments")
-                                    .font(.caption.weight(.bold))
+                                Text(showingArguments ? "Hide raw arguments" : "Show raw arguments")
+                                    .font(NovaType.caption)
                                 Spacer()
                             }
-                            .foregroundStyle(AgentPalette.ink)
-                            .padding(10)
-                            .agentSurface(radius: 12, tint: AgentPalette.cyan.opacity(0.08))
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 
@@ -1054,44 +1106,49 @@ struct ApprovalSheet: View {
                                 .transition(.opacity)
                         }
                     }
-                    .padding(12)
-                    .agentSurface(radius: 18, tint: AgentPalette.cyan.opacity(0.10))
+                    .padding(14)
+                    .agentSurface(radius: 20, tint: gateTint.opacity(0.06))
+                    .overlay(NovaCornerTicks(tint: gateTint.opacity(0.38), length: 8, thickness: 1.2, inset: 7))
                 }
                 .scrollBounceBehavior(.basedOnSize)
 
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     Button(role: .destructive) {
                         reject()
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     } label: {
                         Label("Reject", systemImage: "xmark")
-                            .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
+                            .font(NovaType.headline)
                             .foregroundStyle(AgentPalette.rose)
                             .frame(maxWidth: .infinity)
-                            .frame(height: AgentDesign.minimumTouchTarget)
-                            .contentShape(Rectangle())
-                            .agentControlSurface(radius: 14, tint: AgentPalette.rose.opacity(0.14), selected: true)
+                            .frame(height: AgentDesign.minimumTouchTarget + 4)
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .background(Capsule(style: .continuous).fill(AgentPalette.rose.opacity(0.10)))
+                    .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.rose.opacity(0.36), lineWidth: 0.9))
 
                     Button {
                         approve()
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        NovaHaptics.runSucceeded()
                     } label: {
                         Label("Approve", systemImage: "checkmark")
-                            .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.ink)
+                            .font(NovaType.headline)
                             .frame(maxWidth: .infinity)
-                            .frame(height: AgentDesign.minimumTouchTarget)
-                            .contentShape(Rectangle())
-                            .agentGlass(radius: 14, interactive: true, tint: AgentPalette.green.opacity(0.18))
+                            .frame(height: AgentDesign.minimumTouchTarget + 4)
+                            .padding(.horizontal, 4)
+                            .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ProjectRunButtonStyle(tint: AgentPalette.green, isDisabled: false))
+                    .frame(maxWidth: .infinity)
                 }
             }
             .padding(.top, 24)
             .padding(.horizontal)
             .padding(.bottom)
+        }
+        .onAppear {
+            NovaHaptics.approvalNeeded()
         }
         .task(id: request.id) {
             computeReviewDiff()

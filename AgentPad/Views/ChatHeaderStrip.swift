@@ -79,7 +79,7 @@ struct ChatHeaderView: View {
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Header Body")
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             headerRow
 
             ChatMemoryStrip(
@@ -98,26 +98,21 @@ struct ChatHeaderView: View {
                 openArtifact: openArtifact
             )
         }
-        .padding(8)
-        .agentSurface(radius: 18, tint: chatChromeTint.opacity(0.04))
     }
 
     private var headerRow: some View {
-        HStack(spacing: 10) {
-            Button(action: openChatDrawer) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: AgentDesign.controlHeight, height: AgentDesign.controlHeight)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open chats")
-            .agentControlSurface(radius: AgentDesign.controlRadius, tint: chatChromeTint, selected: true)
-            .minimumTapTarget()
+        HStack(spacing: 11) {
+            chatChromeButton(
+                symbol: "bubble.left.and.bubble.right",
+                tint: chatChromeTint,
+                label: "Open chats",
+                action: openChatDrawer
+            )
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text(sessionTitle)
-                        .font(.system(size: 16, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.title)
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -127,17 +122,6 @@ struct ChatHeaderView: View {
                 }
 
                 HStack(spacing: 6) {
-                    Text(scopeModeLabel)
-                        .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(scopeModeTint)
-                        .textCase(.uppercase)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .padding(.horizontal, 7)
-                        .frame(height: 20)
-                        .agentControlSurface(radius: 8, tint: scopeModeTint.opacity(0.10), selected: scopedProject != nil)
-                        .accessibilityIdentifier("chatScopeModePill")
-
                     Menu {
                         Button {
                             changeScope(nil)
@@ -155,42 +139,50 @@ struct ChatHeaderView: View {
                             }
                         }
                     } label: {
-                        Label(projectTitle, systemImage: scopeSymbol)
-                            .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(scopedProject == nil ? AgentPalette.secondaryText : AgentPalette.cyan)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .layoutPriority(1)
+                        HStack(spacing: 5) {
+                            Text(scopeModeLabel)
+                                .novaLabel(scopeModeTint)
+                                .accessibilityIdentifier("chatScopeModePill")
+                            Text(projectTitle)
+                                .font(NovaType.caption)
+                                .foregroundStyle(scopedProject == nil ? AgentPalette.secondaryText : AgentPalette.cyan)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(AgentPalette.quaternaryText)
+                        }
+                        .layoutPriority(1)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("chatProjectScopeMenu")
 
-                    Text("•")
+                    Text("·")
                         .foregroundStyle(AgentPalette.quaternaryText)
 
                     Label(settings.provider.shortName, systemImage: settings.provider.symbol)
-                        .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.caption)
                         .foregroundStyle(settings.provider.tint)
                         .lineLimit(1)
                         .fixedSize()
                         .layoutPriority(2)
 
                     if conversation.messageCount > 0 {
-                        Text("•")
+                        Text("·")
                             .foregroundStyle(AgentPalette.quaternaryText)
 
                         Text(messageCountText)
-                            .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.secondaryText)
+                            .font(NovaType.caption)
+                            .foregroundStyle(AgentPalette.tertiaryText)
                             .lineLimit(1)
                     }
 
                     if hasForeignActiveRun {
-                        Text("•")
+                        Text("·")
                             .foregroundStyle(AgentPalette.quaternaryText)
 
                         Text("Running in \(foreignActiveTitle)")
-                            .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                            .font(NovaType.caption)
                             .foregroundStyle(AgentPalette.cyan)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -200,16 +192,27 @@ struct ChatHeaderView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(action: newChat) {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: AgentDesign.controlHeight, height: AgentDesign.controlHeight)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("New chat")
-            .agentControlSurface(radius: AgentDesign.controlRadius, tint: AgentPalette.lilac, selected: true)
-            .minimumTapTarget()
+            chatChromeButton(
+                symbol: "square.and.pencil",
+                tint: AgentPalette.lilac,
+                label: "New chat",
+                action: newChat
+            )
         }
+    }
+
+    private func chatChromeButton(symbol: String, tint: Color, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 42, height: 42)
+                .background(Circle().fill(tint.opacity(0.10)))
+                .overlay(Circle().strokeBorder(tint.opacity(0.26), lineWidth: 0.9))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private var messageCountText: String {
@@ -559,42 +562,40 @@ struct ChatMemoryChipButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
                 Image(systemName: chip.symbol)
-                    .font(.system(size: 10, weight: .black))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(chip.tone.tint)
-                    .frame(width: 22, height: 22)
-                    .agentControlSurface(radius: 8, tint: chip.tone.tint.opacity(0.12), selected: chip.isProminent)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(chip.title)
-                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(chip.tone.tint)
-                        .textCase(.uppercase)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Text(chip.detail)
-                        .font(.system(size: 10.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .minimumScaleFactor(0.72)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(chip.title)
+                    .novaLabel(chip.tone.tint)
+
+                Text(chip.detail)
+                    .font(NovaType.caption)
+                    .foregroundStyle(chip.isProminent ? AgentPalette.ink : AgentPalette.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
                 if chip.destination != .none {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .black))
-                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(AgentPalette.quaternaryText)
                 }
             }
-            .padding(.leading, 7)
-            .padding(.trailing, 8)
-            .frame(width: chip.isProminent ? 172 : 150, height: 42)
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .agentControlSurface(radius: 14, tint: chip.tone.tint.opacity(chip.isProminent ? 0.13 : 0.08), selected: chip.isProminent)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 32)
+            .frame(maxWidth: 230)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .background(
+            Capsule(style: .continuous)
+                .fill(chip.tone.tint.opacity(chip.isProminent ? 0.13 : 0.06))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(chip.tone.tint.opacity(chip.isProminent ? 0.40 : 0.18), lineWidth: 0.8)
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(chip.title): \(chip.detail)")
         .accessibilityIdentifier("chatContextChip-\(chip.id)")

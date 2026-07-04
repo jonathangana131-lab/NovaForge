@@ -70,19 +70,21 @@ extension FilesView {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "square.grid.2x2.fill")
-                        .font(.caption)
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(AgentPalette.cyan)
                     Text(runtime.workspace.workspaceName)
-                        .font(.caption.weight(.bold))
+                        .font(NovaType.caption)
                         .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.caption)
-                        .foregroundStyle(AgentPalette.secondaryText)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(AgentPalette.quaternaryText)
                 }
                 .foregroundStyle(AgentPalette.ink)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 14)
                 .frame(minHeight: AgentDesign.minimumTouchTarget)
-                .agentControlSurface(radius: 14, tint: AgentPalette.cyan)
+                .background(Capsule(style: .continuous).fill(AgentPalette.cyan.opacity(0.10)))
+                .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.cyan.opacity(0.26), lineWidth: 0.9))
+                .contentShape(Capsule())
             }
             .accessibilityLabel("Switch workspace, \(runtime.workspace.workspaceName)")
             .accessibilityIdentifier("filesWorkspaceMenu")
