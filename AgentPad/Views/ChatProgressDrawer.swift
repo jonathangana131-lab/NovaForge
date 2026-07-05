@@ -586,40 +586,48 @@ struct AgentProgressDrawer: View {
 struct PendingApprovalInlineCard: View {
     let request: ToolRequest
 
+    private var safety: ApprovalSafetySummary {
+        ApprovalSafetySummary(request: request)
+    }
+
+    private var tint: Color {
+        request.isMutating ? AgentPalette.warning : AgentPalette.green
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: request.isMutating ? "pencil.and.outline" : "eye.fill")
+            Image(systemName: safety.badgeSymbol)
                 .font(.system(size: 14, weight: .black))
-                .foregroundStyle(AgentPalette.cyan)
+                .foregroundStyle(tint)
                 .frame(width: 36, height: 36)
-                .agentControlSurface(radius: 13, tint: AgentPalette.cyan.opacity(0.14), selected: true)
+                .agentControlSurface(radius: 13, tint: tint.opacity(0.14), selected: true)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(plainToolName(request.name))
+                    Text(safety.actionName)
                         .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
-                    Text(request.isMutating ? "changes files" : "read only")
+                    Text(safety.riskLabel)
                         .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(request.isMutating ? AgentPalette.cyan : AgentPalette.green)
+                        .foregroundStyle(tint)
                         .textCase(.uppercase)
                         .padding(.horizontal, 7)
                         .frame(height: 20)
                         .agentControlSurface(
                             radius: 7,
-                            tint: (request.isMutating ? AgentPalette.cyan : AgentPalette.green).opacity(0.10),
+                            tint: tint.opacity(0.10),
                             selected: true
                         )
                 }
 
-                Text(argumentSummary)
+                Text(safety.shortAffectedSummary)
                     .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.secondaryText)
                     .lineLimit(2)
                     .truncationMode(.middle)
 
-                Text("Open the approval sheet to approve or reject; the run is paused.")
+                Text(request.isMutating ? "Paused before changing anything. Reject keeps the workspace as-is." : "Paused for your decision before this read continues.")
                     .font(.system(size: 9, weight: .bold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.tertiaryText)
                     .lineLimit(2)
@@ -630,13 +638,13 @@ struct PendingApprovalInlineCard: View {
         .padding(11)
         .background(
             LinearGradient(
-                colors: [AgentPalette.surface, AgentPalette.cyan.opacity(0.10), AgentPalette.lilac.opacity(0.05)],
+                colors: [AgentPalette.surface, tint.opacity(0.10), AgentPalette.lilac.opacity(0.05)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
             in: RoundedRectangle(cornerRadius: 16, style: .continuous)
         )
-        .agentRowSurface(radius: 16, tint: AgentPalette.cyan.opacity(0.08), selected: true)
+        .agentRowSurface(radius: 16, tint: tint.opacity(0.08), selected: true)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("pendingApprovalInlineCard")
     }

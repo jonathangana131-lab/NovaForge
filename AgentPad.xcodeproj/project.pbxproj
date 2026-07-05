@@ -78,6 +78,7 @@
 		AB2000000000000000000008 /* ProjectSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000008 /* ProjectSummary.swift */; };
 		AB2000000000000000000009 /* ProjectNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000009 /* ProjectNaming.swift */; };
 		AB1000000000000000000010 /* CodeHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000010 /* CodeHighlighter.swift */; };
+		AB2000000000000000000010 /* CodeHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000010 /* CodeHighlighter.swift */; };
 		AB1000000000000000000011 /* ProjectDashboard+CommandCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000011 /* ProjectDashboard+CommandCenter.swift */; };
 		AB1000000000000000000012 /* ProjectDashboard+Overview.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000012 /* ProjectDashboard+Overview.swift */; };
 		AB1000000000000000000013 /* ProjectDashboard+Sections.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000013 /* ProjectDashboard+Sections.swift */; };
@@ -98,6 +99,8 @@
 		AC0000000000000000000105 /* NovaForgeSharedActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000004 /* NovaForgeSharedActivity.swift */; };
 		AC0000000000000000000106 /* NovaForgeWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000006 /* NovaForgeWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AB1000000000000000000023 /* RunActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000023 /* RunActivityController.swift */; };
+		AB2000000000000000000023 /* RunActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000023 /* RunActivityController.swift */; };
+		AC2000000000000000000105 /* NovaForgeSharedActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000004 /* NovaForgeSharedActivity.swift */; };
 		AB1000000000000000000024 /* NovaFacelift.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000024 /* NovaFacelift.swift */; };
 		AB1000000000000000000025 /* ForgeChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000025 /* ForgeChrome.swift */; };
 /* End PBXBuildFile section */
@@ -668,6 +671,8 @@
 				AA0000000000000000000216 /* LocalAgentPlanner.swift in Sources */,
 				AA0000000000000000000217 /* AgentRuntimeLifecycleTests.swift in Sources */,
 				AA0000000000000000000218 /* AgentRuntime.swift in Sources */,
+				AB2000000000000000000023 /* RunActivityController.swift in Sources */,
+				AC2000000000000000000105 /* NovaForgeSharedActivity.swift in Sources */,
 				AA0000000000000000000219 /* KeychainStore.swift in Sources */,
 				AA0000000000000000000220 /* OpenAIClient.swift in Sources */,
 				AA0000000000000000000221 /* LocalModelRuntime.swift in Sources */,
@@ -678,6 +683,7 @@
 				AB2000000000000000000008 /* ProjectSummary.swift in Sources */,
 				AB2000000000000000000009 /* ProjectNaming.swift in Sources */,
 				AB2000000000000000000019 /* DiffEngine.swift in Sources */,
+				AB2000000000000000000010 /* CodeHighlighter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

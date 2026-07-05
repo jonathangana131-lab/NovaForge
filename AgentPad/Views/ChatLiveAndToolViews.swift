@@ -500,20 +500,25 @@ private struct ToolActivityRow: View {
 
 struct LiveResponseView: View {
     let isWorking: Bool
+    let isHandoffActive: Bool
     @ObservedObject var stream: LiveStreamBuffer
     let runtime: AgentRuntime
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Live Response Body")
         Group {
-            if isWorking {
+            if isWorking || isHandoffActive {
                 VStack(alignment: .leading, spacing: 10) {
                     // Reads runtime.activeToolName in its own tiny body, so
                     // tool changes re-render just this chip — never the chat.
-                    NovaLiveActivityPulse(runtime: runtime)
+                    if isWorking {
+                        NovaLiveActivityPulse(runtime: runtime)
+                    }
 
                     if stream.isEmpty {
-                        ThinkingView()
+                        if isWorking {
+                            ThinkingView()
+                        }
                     } else {
                         StreamingBubble(stream: stream)
                     }
@@ -614,26 +619,20 @@ private struct StreamingBubble: View {
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Streaming Bubble Body")
         HStack {
-            VStack(alignment: .leading, spacing: 10) {
-                // Full text, no clipping, no tail window. The transcript is
-                // bottom-anchored at the layout level, so growth stays pinned
-                // smoothly. The cursor is concatenated so it always rides the
-                // exact end of the streamed text; it advances with each flush
-                // (~110ms), so no extra animation clock is needed.
-                (
-                    Text(stream.displayText)
-                        .foregroundStyle(AgentPalette.ink)
-                    + Text(" \u{258D}")
-                        .foregroundStyle(AgentPalette.primaryAccent.opacity(0.85))
-                )
-                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                .lineSpacing(5)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 11) {
+                Text(stream.displayText)
+                    .foregroundStyle(AgentPalette.ink)
+                    .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                    .lineSpacing(5)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 7) {
-                    StatusDots(tint: AgentPalette.primaryAccent, animated: false)
-                    Text("Responding")
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(AgentPalette.primaryAccent.opacity(0.82))
+                        .frame(width: 5, height: 5)
+                        .accessibilityHidden(true)
+                    Text("Live response")
                         .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.tertiaryText)
                         .lineLimit(1)
@@ -644,7 +643,7 @@ private struct StreamingBubble: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .assistantResponseSurface(tint: AgentPalette.primaryAccent)
+            .chatMessageSurface(radius: 20, tint: AgentPalette.primaryAccent, emphasis: .live)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("liveStreamingReadableContent")
             Spacer(minLength: 44)
@@ -663,21 +662,22 @@ private struct ThinkingView: View {
     var body: some View {
         HStack {
             HStack(spacing: 9) {
-                ThinkingOrb(tint: AgentPalette.primaryAccent)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(AgentPalette.primaryAccent)
+                    .frame(width: 22, height: 22)
+                    .agentControlSurface(radius: 8, tint: AgentPalette.primaryAccent.opacity(0.10), selected: true)
 
-                LiveShimmerText(
-                    text: "Thinking",
-                    baseColor: AgentPalette.secondaryText,
-                    highlightColor: AgentPalette.ink,
-                    font: .system(size: 14, weight: .semibold, design: AgentPalette.interfaceFontDesign)
-                )
+                Text("Preparing response")
+                    .font(.system(size: 14, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
 
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-            .assistantResponseSurface(tint: AgentPalette.primaryAccent)
+            .chatMessageSurface(radius: 20, tint: AgentPalette.primaryAccent, emphasis: .live)
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)

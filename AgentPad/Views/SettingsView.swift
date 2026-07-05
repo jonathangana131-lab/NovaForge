@@ -53,12 +53,27 @@ struct SettingsView: View {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         SettingsHero(
                             projectName: project.name,
-                            providerName: settings.provider.displayName,
-                            modelName: modelDisplayName(settings.modelID),
-                            readiness: settingsReadinessTitle,
+                            subtitle: "Command deck // theme studio",
                             tint: AgentPalette.primaryAccent
                         )
                         .accessibilityIdentifier("settingsHero")
+
+                        SettingsCommandDeck(
+                            readinessTitle: settingsReadinessTitle,
+                            readinessDetail: settingsReadinessDetail,
+                            readinessSymbol: settingsReadinessSymbol,
+                            readinessTint: settingsReadinessTint,
+                            providerName: settings.provider.displayName,
+                            providerSymbol: settings.provider.symbol,
+                            providerTint: settings.provider.tint,
+                            modelName: modelDisplayName(settings.modelID),
+                            modelDetail: modelReadinessDetail,
+                            safetyTitle: safetyModeTitle,
+                            safetyDetail: safetyModeDetail,
+                            safetyTint: safetyModeTint,
+                            theme: selectedTheme
+                        )
+                        .accessibilityIdentifier("settingsCommandDeck")
 
                         providerSection
                         modelSection
@@ -76,6 +91,7 @@ struct SettingsView: View {
                         }
 
                         behaviorSection
+                        diagnosticsSection
                         appearanceSection
                     }
                 }
@@ -92,6 +108,7 @@ struct SettingsView: View {
 
             SettingsSaveToast(isVisible: showSavedToast)
         }
+        .accessibilityIdentifier("settingsRoot")
         .onAppear(perform: prepare)
         .onDisappear {
             flushPendingSettingsSave()
@@ -213,18 +230,122 @@ struct SettingsView: View {
     }
 
     private var settingsReadinessTitle: String {
-        if settings.provider == .local { return "Ready to run" }
+        if settings.provider == .local {
+            switch runtime.localModels.status {
+            case .ready:
+                return "Ready to run"
+            case .downloading:
+                return "Downloading model"
+            case .partial:
+                return "Resume local download"
+            case .missing:
+                return "Download local model"
+            case .checking:
+                return "Checking local model"
+            case .incompatible, .failed:
+                return "Local model needs attention"
+            }
+        }
+        if settings.provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Endpoint required"
+        }
         return apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "API key required" : "Ready to run"
     }
 
     private var settingsReadinessDetail: String {
         if settings.provider == .local {
-            return "Local model selected · no API key required"
+            return localModelStatusDetail
+        }
+        if settings.provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Add a chat completions URL before custom provider runs."
         }
         if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "Save a \(settings.provider.displayName) key before live hosted runs"
         }
         return "\(settings.provider.displayName) key saved · \(settings.autoApproveWrites ? "auto writes" : "asks before writes")"
+    }
+
+    private var settingsReadinessSymbol: String {
+        if settings.provider == .local {
+            switch runtime.localModels.status {
+            case .ready:
+                return "checkmark.seal.fill"
+            case .downloading:
+                return "arrow.down.circle.fill"
+            case .partial:
+                return "pause.circle.fill"
+            case .missing:
+                return "icloud.and.arrow.down"
+            case .checking:
+                return "hourglass"
+            case .incompatible, .failed:
+                return "exclamationmark.triangle.fill"
+            }
+        }
+        if settingsReadinessTitle == "Ready to run" {
+            return "checkmark.seal.fill"
+        }
+        return "key.fill"
+    }
+
+    private var settingsReadinessTint: Color {
+        if settings.provider == .local {
+            switch runtime.localModels.status {
+            case .ready:
+                return AgentPalette.green
+            case .downloading, .partial, .checking:
+                return AgentPalette.lilac
+            case .missing:
+                return AgentPalette.cyan
+            case .incompatible, .failed:
+                return AgentPalette.rose
+            }
+        }
+        return settingsReadinessTitle == "Ready to run" ? AgentPalette.green : AgentPalette.warning
+    }
+
+    private var safetyModeTitle: String {
+        settings.autoApproveWrites ? "Auto-approve writes" : "Review first"
+    }
+
+    private var safetyModeDetail: String {
+        settings.autoApproveWrites
+            ? "Mutating sandbox tools can run without another prompt."
+            : "Writes, commands, and deletes pause for approval."
+    }
+
+    private var safetyModeTint: Color {
+        settings.autoApproveWrites ? AgentPalette.warning : AgentPalette.green
+    }
+
+    private var modelReadinessDetail: String {
+        if let variant = LocalModelCatalog.variant(for: settings.modelID) {
+            return "\(variant.quantization) · \(variant.expectedSizeLabel) · \(runtime.localModels.status.title)"
+        }
+        if settings.provider == .custom {
+            return settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Custom endpoint not set"
+                : "Custom endpoint configured"
+        }
+        return "\(settings.provider.displayName) hosted model ID"
+    }
+
+    private var localModelStatusDetail: String {
+        let variant = runtime.localModels.selectedVariant
+        switch runtime.localModels.status {
+        case .ready:
+            return "\(variant.shortName) is installed and runs on-device."
+        case .downloading:
+            return "\(variant.shortName) is downloading. Keep NovaForge in the foreground."
+        case .partial:
+            return "\(variant.shortName) has a partial download ready to resume."
+        case .missing:
+            return "Download \(variant.expectedSizeLabel) for \(variant.shortName) before Local can answer."
+        case .checking:
+            return "Checking \(variant.shortName) storage and compatibility."
+        case .incompatible(let message), .failed(let message):
+            return message
+        }
     }
 
     private var showsCodexTerminalDemo: Bool {
@@ -247,7 +368,9 @@ struct SettingsView: View {
                 ForEach(AIProvider.allCases) { provider in
                     SettingsProviderRow(
                         provider: provider,
-                        selected: settings.provider == provider
+                        selected: settings.provider == provider,
+                        status: providerReadiness(for: provider).title,
+                        statusTint: providerReadiness(for: provider).tint
                     ) {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         persistSettingsChange {
@@ -263,6 +386,14 @@ struct SettingsView: View {
     private var modelSection: some View {
         SettingsSection(title: "Model", subtitle: "Browse every model for the selected provider") {
             VStack(alignment: .leading, spacing: 10) {
+                SettingsModelReadinessPanel(
+                    title: modelDisplayName(settings.modelID),
+                    detail: modelReadinessDetail,
+                    symbol: settings.provider == .local ? "cpu.fill" : settings.provider.symbol,
+                    tint: settingsReadinessTint,
+                    stats: modelReadinessStats
+                )
+
                 SettingsModelPickerButton(
                     provider: settings.provider,
                     model: modelDisplayName(settings.modelID),
@@ -513,9 +644,8 @@ struct SettingsView: View {
     private var behaviorSection: some View {
         SettingsSection(title: "Behavior", subtitle: "Tune autonomy and response style") {
             VStack(alignment: .leading, spacing: 13) {
-                Toggle(isOn: autoApproveWritesBinding) {
-                    Label("Auto-approve sandbox writes", systemImage: "bolt.badge.checkmark")
-                        .font(.subheadline.weight(.semibold))
+                SettingsSafetyModePicker(autoApproveWrites: settings.autoApproveWrites) { newValue in
+                    autoApproveWritesBinding.wrappedValue = newValue
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
@@ -550,19 +680,33 @@ struct SettingsView: View {
         }
     }
 
+    private var diagnosticsSection: some View {
+        SettingsSection(title: "Diagnostics", subtitle: "Current health without log noise") {
+            SettingsDiagnosticsPanel(items: diagnosticsItems)
+        }
+    }
+
     private var appearanceSection: some View {
         SettingsSection(title: "Theme Worlds", subtitle: "Complete visual modes for every NovaForge surface") {
             VStack(spacing: 8) {
-                ForEach(AgentTheme.allCases) { theme in
-                    SettingsThemeRow(
-                        theme: theme,
-                        selected: selectedTheme == theme
-                    ) {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        selectedThemeRawValue = theme.rawValue
-                        AgentPalette.refreshThemeCache(theme)
-                        AgentThemeUIKit.apply(theme)
-                        triggerSaveNotice()
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 8),
+                        GridItem(.flexible(), spacing: 8)
+                    ],
+                    spacing: 8
+                ) {
+                    ForEach(AgentTheme.allCases) { theme in
+                        SettingsThemeStudioCard(
+                            theme: theme,
+                            selected: selectedTheme == theme
+                        ) {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            selectedThemeRawValue = theme.rawValue
+                            AgentPalette.refreshThemeCache(theme)
+                            AgentThemeUIKit.apply(theme)
+                            triggerSaveNotice()
+                        }
                     }
                 }
 
@@ -734,6 +878,77 @@ struct SettingsView: View {
 
     private var selectedTheme: AgentTheme {
         AgentTheme.resolved(from: selectedThemeRawValue)
+    }
+
+    private var modelReadinessStats: [SettingsMiniStat] {
+        if let variant = LocalModelCatalog.variant(for: settings.modelID) {
+            return [
+                SettingsMiniStat(label: "Context", value: "\(variant.contextTokens)"),
+                SettingsMiniStat(label: "Size", value: variant.expectedSizeLabel),
+                SettingsMiniStat(label: "Engine", value: variant.executionLabel)
+            ]
+        }
+
+        let modelSource = providerModels.contains(settings.modelID) ? "Live list" : "Manual ID"
+        return [
+            SettingsMiniStat(label: "Provider", value: settings.provider.shortName),
+            SettingsMiniStat(label: "Source", value: modelSource),
+            SettingsMiniStat(label: "Safety", value: settings.autoApproveWrites ? "Auto" : "Review")
+        ]
+    }
+
+    private var diagnosticsItems: [SettingsDiagnosticItem] {
+        [
+            SettingsDiagnosticItem(
+                id: "provider",
+                title: "Provider route",
+                value: settings.provider.displayName,
+                detail: settingsReadinessDetail,
+                symbol: settings.provider.symbol,
+                tint: settings.provider.tint
+            ),
+            SettingsDiagnosticItem(
+                id: "model",
+                title: "Model state",
+                value: settings.provider == .local ? runtime.localModels.status.title : "Selected",
+                detail: settings.provider == .local ? localModelStatusDetail : modelReadinessDetail,
+                symbol: "cpu.fill",
+                tint: settings.provider == .local ? settingsReadinessTint : AgentPalette.secondaryAccent
+            ),
+            SettingsDiagnosticItem(
+                id: "safety",
+                title: "Approval gate",
+                value: safetyModeTitle,
+                detail: safetyModeDetail,
+                symbol: settings.autoApproveWrites ? "bolt.badge.checkmark.fill" : "checkmark.shield.fill",
+                tint: safetyModeTint
+            )
+        ]
+    }
+
+    private func providerReadiness(for provider: AIProvider) -> (title: String, tint: Color) {
+        if provider == .local {
+            switch runtime.localModels.status {
+            case .ready:
+                return ("Ready", AgentPalette.green)
+            case .downloading:
+                return ("Downloading", AgentPalette.lilac)
+            case .partial:
+                return ("Resume", AgentPalette.lilac)
+            case .missing:
+                return ("Download", AgentPalette.cyan)
+            case .checking:
+                return ("Checking", AgentPalette.lilac)
+            case .incompatible, .failed:
+                return ("Attention", AgentPalette.rose)
+            }
+        }
+
+        let hasKey = !runtime.apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ("URL needed", AgentPalette.warning)
+        }
+        return hasKey ? ("Key saved", AgentPalette.green) : ("Needs key", AgentPalette.warning)
     }
 
     private var keyPlaceholder: String {

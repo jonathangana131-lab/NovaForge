@@ -67,6 +67,16 @@ struct TerminalOutputLine: Identifiable, Hashable, Sendable {
     var hiddenOutputLineCount: Int {
         max(outputLineCount - detailOutputLines.count, 0)
     }
+
+    var durationText: String {
+        String(format: "%.0fms", durationMs)
+    }
+
+    var relativeTimestampText: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: timestamp, relativeTo: Date())
+    }
 }
 
 extension TerminalOutputLine: TerminalConsoleSearchableLineRepresenting {}
@@ -289,6 +299,8 @@ struct TerminalConsoleView: View {
 
             commandDeckOverview
 
+            terminalProofSummaryStrip
+
             if runtime.shouldShowWorkspaceStatusStrip {
                 WorkspaceStatusStrip(runtime: runtime, openChat: openChat)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -363,6 +375,61 @@ struct TerminalConsoleView: View {
         return parts.joined(separator: " · ")
     }
 
+    private var terminalProofSummaryStrip: some View {
+        HStack(spacing: 9) {
+            terminalProofMetric(
+                value: "\(consoleLines.count)",
+                label: "Receipts",
+                symbol: "terminal.fill",
+                tint: AgentPalette.lilac
+            )
+            terminalProofMetric(
+                value: "\(consoleLines.filter { $0.isError }.count)",
+                label: "Failures",
+                symbol: "xmark.octagon.fill",
+                tint: consoleLines.contains(where: \.isError) ? AgentPalette.rose : AgentPalette.green
+            )
+            terminalProofMetric(
+                value: latestTerminalDurationText,
+                label: "Latest",
+                symbol: "timer",
+                tint: AgentPalette.cyan
+            )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .agentSurface(radius: 16, tint: AgentPalette.lilac.opacity(0.08))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("terminalProofSummary")
+    }
+
+    private var latestTerminalDurationText: String {
+        guard let latest = consoleLines.last else { return "--" }
+        return latest.durationText
+    }
+
+    private func terminalProofMetric(value: String, label: String, symbol: String, tint: Color) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(tint)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(label)
+                    .font(.system(size: 7.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .textCase(.uppercase)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func terminalHeaderButton(
         symbol: String,
         tint: Color,
@@ -431,12 +498,12 @@ struct TerminalConsoleView: View {
 
     private func outputActionRow(for line: TerminalOutputLine, isExpanded: Bool) -> some View {
         HStack(spacing: 8) {
-            Text("\(line.outputLineCount) line\(line.outputLineCount == 1 ? "" : "s")")
-                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+            Label("\(line.outputLineCount) line\(line.outputLineCount == 1 ? "" : "s")", systemImage: "text.alignleft")
+                .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
                 .foregroundStyle(AgentPalette.cyan)
                 .lineLimit(1)
                 .padding(.horizontal, 8)
-                .frame(height: AgentDesign.minimumTouchTarget)
+                .frame(height: 30)
                 .agentControlSurface(radius: 9, tint: AgentPalette.cyan.opacity(0.10), selected: true)
 
             if line.hasHiddenDetails {
@@ -452,7 +519,7 @@ struct TerminalConsoleView: View {
                     .minimumScaleFactor(0.82)
                     .foregroundStyle(AgentPalette.ink)
                     .padding(.horizontal, 9)
-                    .frame(height: AgentDesign.minimumTouchTarget)
+                    .frame(height: 30)
                     .agentControlSurface(radius: 9, tint: AgentPalette.lilac.opacity(0.18), selected: true)
                 }
                 .buttonStyle(.plain)
@@ -473,14 +540,69 @@ struct TerminalConsoleView: View {
                 .lineLimit(1)
                 .foregroundStyle(AgentPalette.ink)
                 .padding(.horizontal, 9)
-                .frame(height: AgentDesign.minimumTouchTarget)
+                .frame(height: 30)
                 .agentControlSurface(radius: 9, tint: AgentPalette.cyan.opacity(0.18), selected: true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(copiedOutputLineID == line.id ? "Terminal output copied" : "Copy terminal output")
             .accessibilityIdentifier("terminalCopyOutput")
         }
-        .padding(.top, 4)
+    }
+
+    private func terminalRecordHeader(for line: TerminalOutputLine, isFocused: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: line.isError ? "xmark.octagon.fill" : "checkmark.seal.fill")
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(line.isError ? AgentPalette.rose : AgentPalette.green)
+                .frame(width: 34, height: 34)
+                .agentControlSurface(
+                    radius: 11,
+                    tint: (line.isError ? AgentPalette.rose : AgentPalette.green).opacity(0.12),
+                    selected: true
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("Command proof")
+                        .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(line.isError ? AgentPalette.rose : AgentPalette.cyan)
+                        .textCase(.uppercase)
+                        .tracking(0.8)
+                    if isFocused {
+                        StatusChip(text: "FOCUS", symbol: "link", tint: AgentPalette.lilac)
+                            .accessibilityLabel("Focused terminal proof")
+                            .accessibilityIdentifier("terminalFocusedRecord")
+                    }
+                }
+
+                Text("$ \(line.command)")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(AgentPalette.cyan)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+
+                HStack(spacing: 7) {
+                    terminalMetaPill(line.isError ? "Failed" : "Completed", symbol: line.isError ? "xmark.circle.fill" : "checkmark.circle.fill", tint: line.isError ? AgentPalette.rose : AgentPalette.green)
+                    terminalMetaPill(line.durationText, symbol: "timer", tint: AgentPalette.lilac)
+                    terminalMetaPill(line.relativeTimestampText, symbol: "clock.fill", tint: AgentPalette.secondaryText)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Terminal command \(line.command), \(line.isError ? "failed" : "completed"), \(line.outputLineCount) output lines")
+    }
+
+    private func terminalMetaPill(_ text: String, symbol: String, tint: Color) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 6)
+            .frame(height: 20)
+            .agentControlSurface(radius: 7, tint: tint.opacity(0.09), selected: true)
     }
     
     private var consoleDisplay: some View {
@@ -502,29 +624,8 @@ struct TerminalConsoleView: View {
                             ForEach(filteredConsoleLines) { line in
                                 let isExpanded = expandedLineIDs.contains(line.id)
                                 let isFocused = focusedLineID == line.id
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        Text("$ \(line.command)")
-                                            .font(.system(.caption, design: .monospaced, weight: .bold))
-                                            .foregroundStyle(AgentPalette.cyan)
-
-                                        Spacer()
-
-                                        HStack(spacing: 8) {
-                                            if isFocused {
-                                                StatusChip(text: "PROOF", symbol: "link", tint: AgentPalette.lilac)
-                                                    .accessibilityLabel("Focused terminal proof")
-                                                    .accessibilityIdentifier("terminalFocusedRecord")
-                                            }
-
-                                            Text(String(format: "%.0fms", line.durationMs))
-                                                .font(.system(size: 8, design: .monospaced))
-                                                .foregroundStyle(AgentPalette.secondaryText)
-
-                                            StatusChip(text: line.isError ? "FAIL" : "OK", symbol: line.isError ? "xmark.circle.fill" : "checkmark.circle.fill", tint: line.isError ? AgentPalette.rose : AgentPalette.green)
-                                        }
-                                    }
-                                    
+                                VStack(alignment: .leading, spacing: 8) {
+                                    terminalRecordHeader(for: line, isFocused: isFocused)
                                     outputActionRow(for: line, isExpanded: isExpanded)
 
                                     ConsoleLogLineView(
@@ -538,9 +639,8 @@ struct TerminalConsoleView: View {
                                         .background(AgentPalette.terminalBackground.opacity(0.92), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .stroke(AgentPalette.cyan.opacity(0.22), lineWidth: 0.8)
+                                                .stroke((line.isError ? AgentPalette.rose : AgentPalette.cyan).opacity(0.24), lineWidth: 0.8)
                                         )
-                                        .padding(.top, 2)
                                 }
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1229,20 +1329,18 @@ struct ConsoleLogLineView: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(renderedLines.enumerated()), id: \.offset) { _, logLine in
-                if logLine.localizedCaseInsensitiveContains("error") || logLine.localizedCaseInsensitiveContains("failed") {
-                    Text(logLine)
-                        .font(.system(size: fontSize, weight: .bold, design: .monospaced))
-                        .foregroundStyle(AgentPalette.terminalError)
-                } else if logLine.localizedCaseInsensitiveContains("warning") {
-                    Text(logLine)
-                        .font(.system(size: fontSize, weight: .medium, design: .monospaced))
-                        .foregroundStyle(AgentPalette.terminalWarning)
-                } else {
-                    Text(logLine)
-                        .font(.system(size: fontSize, design: .monospaced))
-                        .foregroundStyle(AgentPalette.terminalOutput)
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(renderedLines.enumerated()), id: \.offset) { index, logLine in
+                HStack(alignment: .top, spacing: 8) {
+                    Text(String(format: "%02d", index + 1))
+                        .font(.system(size: max(8, fontSize - 2), weight: .bold, design: .monospaced))
+                        .foregroundStyle(AgentPalette.terminalOutput.opacity(0.38))
+                        .frame(width: 24, alignment: .trailing)
+
+                    Text(logLine.isEmpty ? " " : logLine)
+                        .font(.system(size: fontSize, weight: outputWeight(for: logLine), design: .monospaced))
+                        .foregroundStyle(outputColor(for: logLine))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -1253,6 +1351,26 @@ struct ConsoleLogLineView: View {
                     .padding(.top, 6)
             }
         }
+    }
+
+    private func outputWeight(for line: String) -> Font.Weight {
+        if line.localizedCaseInsensitiveContains("error") || line.localizedCaseInsensitiveContains("failed") {
+            return .bold
+        }
+        if line.localizedCaseInsensitiveContains("warning") {
+            return .medium
+        }
+        return .regular
+    }
+
+    private func outputColor(for line: String) -> Color {
+        if line.localizedCaseInsensitiveContains("error") || line.localizedCaseInsensitiveContains("failed") {
+            return AgentPalette.terminalError
+        }
+        if line.localizedCaseInsensitiveContains("warning") {
+            return AgentPalette.terminalWarning
+        }
+        return AgentPalette.terminalOutput
     }
 
     private var summaryText: String {

@@ -724,8 +724,8 @@ struct StreamingResponseDecoder {
                 pendingContent += text
 
                 let elapsed = lastDelivery.duration(to: .now)
-                let shouldDeliver = elapsed >= .milliseconds(150)
-                    || pendingContent.count >= 760
+                let shouldDeliver = elapsed >= .milliseconds(90)
+                    || pendingContent.count >= 420
                 if shouldDeliver {
                     await onContentBatch(pendingContent)
                     pendingContent.removeAll(keepingCapacity: true)

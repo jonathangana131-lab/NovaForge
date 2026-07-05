@@ -15,6 +15,32 @@ struct RunReplayTarget: Identifiable, Equatable {
     let status: ToolRunStatus
     let windowStart: Date
     let windowEnd: Date
+    let requestSummary: String
+    let outcomeSummary: String
+    let proofSummary: String
+    let durationText: String
+
+    init(
+        id: UUID,
+        name: String,
+        status: ToolRunStatus,
+        windowStart: Date,
+        windowEnd: Date,
+        requestSummary: String = "",
+        outcomeSummary: String = "",
+        proofSummary: String = "",
+        durationText: String = ""
+    ) {
+        self.id = id
+        self.name = name
+        self.status = status
+        self.windowStart = windowStart
+        self.windowEnd = windowEnd
+        self.requestSummary = requestSummary
+        self.outcomeSummary = outcomeSummary
+        self.proofSummary = proofSummary
+        self.durationText = durationText
+    }
 }
 
 struct RunReplaySheet: View {
@@ -49,6 +75,7 @@ struct RunReplaySheet: View {
             AgentBackground()
             VStack(alignment: .leading, spacing: 14) {
                 header
+                receiptSummary
 
                 if tape.isEmpty {
                     emptyState
@@ -120,6 +147,67 @@ struct RunReplaySheet: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Close replay")
         }
+    }
+
+    private var receiptSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                RunStatusBadge(status: target.status, tint: target.status.tint)
+                if !target.durationText.isEmpty {
+                    Label(target.durationText, systemImage: "timer")
+                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                        .background(AgentPalette.controlFill.opacity(0.40), in: Capsule(style: .continuous))
+                }
+                Spacer(minLength: 0)
+            }
+
+            if !target.requestSummary.isEmpty {
+                replayFact("Asked", target.requestSummary, symbol: "text.bubble.fill", tint: AgentPalette.cyan)
+            }
+            if !target.outcomeSummary.isEmpty {
+                replayFact("Outcome", target.outcomeSummary, symbol: target.status.symbol, tint: target.status.tint)
+            }
+            if !target.proofSummary.isEmpty {
+                replayFact("Proof", target.proofSummary, symbol: "checkmark.seal.fill", tint: AgentPalette.green)
+            }
+        }
+        .padding(11)
+        .background(target.status.tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 17, style: .continuous)
+                .strokeBorder(target.status.tint.opacity(0.18), lineWidth: 0.7)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("runReplayReceiptSummary")
+    }
+
+    private func replayFact(_ label: String, _ value: String, symbol: String, tint: Color) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .black))
+                .foregroundStyle(tint)
+                .frame(width: 20, height: 20)
+                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.system(size: 7.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .textCase(.uppercase)
+                Text(value)
+                    .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.82)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(value)")
     }
 
     private var scrubber: some View {

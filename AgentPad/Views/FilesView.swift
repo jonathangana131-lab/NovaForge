@@ -665,6 +665,37 @@ struct FilesView: View {
         projectMemoryItems.filter { $0.risk == .elevated || $0.risk == .high }.count
     }
 
+    var recentTerminalRecords: [TerminalCommandRecord] {
+        project.terminalCommands
+            .sorted {
+                if $0.completedAt != $1.completedAt { return $0.completedAt > $1.completedAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            .prefix(3)
+            .map { $0 }
+    }
+
+    var terminalProofCount: Int {
+        project.terminalCommands.count
+    }
+
+    var failedTerminalProofCount: Int {
+        project.terminalCommands.filter { $0.status == .failed }.count
+    }
+
+    var primaryWorkbenchItem: ProjectMemoryItem? {
+        artifactGalleryItems.first ??
+            projectMemoryItems.first(where: { $0.group == .changed }) ??
+            projectMemoryItems.first
+    }
+
+    var recentChangeItems: [ProjectMemoryItem] {
+        projectMemoryItems
+            .filter { $0.group == .changed }
+            .prefix(3)
+            .map { $0 }
+    }
+
     func memoryItem(for row: FileRowData) -> ProjectMemoryItem {
         let item = row.item
         let path = item.relativePath
@@ -950,13 +981,9 @@ struct FilesView: View {
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 14) {
-                        // What the agent made leads; the browser is the
-                        // surface; grouped evidence trails for deep review.
-                        if !artifactGalleryItems.isEmpty {
-                            artifactShelf
-                                .padding(.horizontal)
-                                .padding(.top, 2)
-                        }
+                        evidenceWorkbenchOverview
+                            .padding(.horizontal)
+                            .padding(.top, 2)
 
                         if let fileLoadError {
                             FilesLoadErrorState(
@@ -976,6 +1003,9 @@ struct FilesView: View {
                                 openChat: openChat
                             )
                         } else {
+                            fileBrowserSectionHeader
+                                .padding(.horizontal)
+
                             if isGridLayout {
                                 gridLayout
                             } else {

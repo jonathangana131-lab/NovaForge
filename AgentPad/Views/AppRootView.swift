@@ -179,10 +179,14 @@ struct AppRootView: View {
             return optimisticSelectedConversation
         }
         #if DEBUG || targetEnvironment(simulator)
-        if shouldPreferDebugSeededConversation,
-           let persistedID = UUID(uuidString: persistedSelectedConversationID),
-           let seeded = conversations.first(where: { $0.id == persistedID }) {
-            return seeded
+        if shouldPreferDebugSeededConversation {
+            if let persistedID = UUID(uuidString: persistedSelectedConversationID),
+               let seeded = conversations.first(where: { $0.id == persistedID }) {
+                return seeded
+            }
+            if let seeded = debugSeededConversation(from: conversations) {
+                return seeded
+            }
         }
         #endif
         return LaunchConversationSelection.preferredConversation(
@@ -195,11 +199,38 @@ struct AppRootView: View {
     #if DEBUG || targetEnvironment(simulator)
     private var shouldPreferDebugSeededConversation: Bool {
         let arguments = ProcessInfo.processInfo.arguments
-        return arguments.contains("--stress-chat") ||
-            arguments.contains("--stress-tool-batch") ||
-            arguments.contains("--running-tool-call-demo") ||
-            arguments.contains("--failed-tool-call-demo") ||
-            arguments.contains("--code-block-demo")
+        return hasDebugLaunchFlag("--stress-chat", in: arguments) ||
+            hasDebugLaunchFlag("--stress-tool-batch", in: arguments) ||
+            hasDebugLaunchFlag("--running-tool-call-demo", in: arguments) ||
+            hasDebugLaunchFlag("--failed-tool-call-demo", in: arguments) ||
+            hasDebugLaunchFlag("--code-block-demo", in: arguments)
+    }
+
+    private func debugSeededConversation(from conversations: [Conversation]) -> Conversation? {
+        let arguments = ProcessInfo.processInfo.arguments
+        let titleNeedle: String?
+        if hasDebugLaunchFlag("--stress-chat", in: arguments) {
+            titleNeedle = "NovaForge Stress"
+        } else if hasDebugLaunchFlag("--stress-tool-batch", in: arguments) {
+            titleNeedle = "batched tool calls"
+        } else if hasDebugLaunchFlag("--running-tool-call-demo", in: arguments) {
+            titleNeedle = "running tool"
+        } else if hasDebugLaunchFlag("--failed-tool-call-demo", in: arguments) {
+            titleNeedle = "failed"
+        } else if hasDebugLaunchFlag("--code-block-demo", in: arguments) {
+            titleNeedle = "code"
+        } else {
+            titleNeedle = nil
+        }
+
+        guard let titleNeedle else { return nil }
+        return conversations
+            .filter { $0.title.localizedCaseInsensitiveContains(titleNeedle) }
+            .sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            .first
     }
     #endif
 
@@ -404,6 +435,10 @@ struct AppRootView: View {
     }
 
     private func runDebugLaunchTasks(arguments: [String]) {
+        if hasDebugLaunchFlag("--stress-chat", in: arguments),
+           let conversation = selectedConversation {
+            seedLongStressConversationIfNeeded(conversation)
+        }
         if arguments.contains("--simulate-network-failure"),
            runtime.lastError == nil,
            !didInjectNetworkFailureFixture {
@@ -428,6 +463,7 @@ struct AppRootView: View {
             settings.modelID = LocalModelCatalog.defaultVariant.id
             settings.updatedAt = Date()
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
+            runtime.localModels.debugOverrideStatusForUITest(.missing)
             try? modelContext.save()
         }
         if arguments.contains("--settings-local-model-ready"),
@@ -438,6 +474,13 @@ struct AppRootView: View {
             settings.updatedAt = Date()
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
             runtime.localModels.debugOverrideStatusForUITest(.ready)
+            try? modelContext.save()
+        }
+        if arguments.contains("--settings-auto-approve"),
+           let settings {
+            selectedTab = .settings
+            settings.autoApproveWrites = true
+            settings.updatedAt = Date()
             try? modelContext.save()
         }
         if arguments.contains("--settings-local-model-partial"),
@@ -746,6 +789,10 @@ struct AppRootView: View {
     }
 
     private func hasPendingDebugLaunchFixture(_ arguments: [String]) -> Bool {
+        if hasDebugLaunchFlag("--stress-chat", in: arguments),
+           selectedConversation?.title.localizedCaseInsensitiveContains("NovaForge Stress") != true {
+            return true
+        }
         if hasDebugLaunchFlag("--pending-approval-demo", in: arguments),
            !hasDebugLaunchFlag("--open-project", in: arguments),
            !didInjectPendingApprovalFixture {
@@ -795,10 +842,12 @@ struct AppRootView: View {
     ) -> some View {
         #if DEBUG || targetEnvironment(simulator)
         let forceProjectChat = hasDebugLaunchFlag("--open-project-chat", in: ProcessInfo.processInfo.arguments)
+        let forceDebugSeededChat = shouldPreferDebugSeededConversation
         #else
         let forceProjectChat = false
+        let forceDebugSeededChat = false
         #endif
-        let chatConversation = forceProjectChat
+        let chatConversation = forceProjectChat || forceDebugSeededChat
             ? conversation
             : (conversation.project == nil ? conversation : (preferredGeneralConversation() ?? conversation))
         // The mission strip lives on Forge, so project runtime status is
@@ -3671,6 +3720,89 @@ struct AppRootView: View {
         }
         conversation.appendMessages(messages, updateTimestamp: Date())
     }
+
+    private func seedLongStressConversationIfNeeded(_ conversation: Conversation) {
+        let marker = "NovaForge Stress — 200 messages / 66 tools"
+        let existingStressMessages = conversation.messages.filter { message in
+            message.content.hasPrefix("Stress message ") ||
+                message.content.hasPrefix("I'll inspect that file.") ||
+                message.content.hasPrefix("Read Sources/File") ||
+                message.content == Self.longStressCompletionText ||
+                message.content == Self.longStressFinalCheckpointText
+        }
+        guard conversation.title != marker || existingStressMessages.count < 200 else { return }
+
+        conversation.title = marker
+        if let activeProject {
+            conversation.project = activeProject
+        }
+
+        let seededExchangeCount = min(Self.longStressExchangeCount, existingStressMessages.count / 3)
+        if seededExchangeCount < Self.longStressExchangeCount {
+            for index in (seededExchangeCount + 1)...Self.longStressExchangeCount {
+                appendLongStressExchange(index, to: conversation)
+            }
+        }
+
+        if !conversation.messages.contains(where: { $0.content == Self.longStressCompletionText }) {
+            let completion = ChatMessage(
+                role: .assistant,
+                content: Self.longStressCompletionText,
+                conversation: conversation
+            )
+            conversation.appendMessage(completion)
+            modelContext.insert(completion)
+        }
+        if !conversation.messages.contains(where: { $0.content == Self.longStressFinalCheckpointText }) {
+            let checkpoint = ChatMessage(
+                role: .assistant,
+                content: Self.longStressFinalCheckpointText,
+                conversation: conversation
+            )
+            conversation.appendMessage(checkpoint)
+            modelContext.insert(checkpoint)
+        }
+
+        conversation.refreshMessageMetadata(updateTimestamp: Date())
+        optimisticSelectedConversation = conversation
+        selectedConversationID = conversation.id
+        persistedSelectedConversationID = conversation.id.uuidString
+        try? modelContext.save()
+    }
+
+    private func appendLongStressExchange(_ index: Int, to conversation: Conversation) {
+        let user = ChatMessage(
+            role: .user,
+            content: "Stress message \(index): inspect Sources/File\(index).swift and summarize it.",
+            conversation: conversation
+        )
+        let call = APIToolCall(
+            id: "stress-call-\(index)",
+            type: "function",
+            function: APIFunctionCall(name: "read_file", arguments: "{\"path\":\"Sources/File\(index).swift\"}")
+        )
+        let callJSON = (try? JSONEncoder().encode([call])).flatMap { String(data: $0, encoding: .utf8) }
+        let assistant = ChatMessage(
+            role: .assistant,
+            content: "I'll inspect that file.",
+            toolCallsJSON: callJSON,
+            conversation: conversation
+        )
+        let tool = ChatMessage(
+            role: .tool,
+            content: "Read Sources/File\(index).swift\n" + String(repeating: "fixture output ", count: 42),
+            toolCallID: call.id,
+            conversation: conversation
+        )
+        conversation.appendMessages([user, assistant, tool])
+        modelContext.insert(user)
+        modelContext.insert(assistant)
+        modelContext.insert(tool)
+    }
+
+    private static let longStressExchangeCount = 66
+    private static let longStressCompletionText = "Stress navigation fixture ready: 66 file reads completed, drawer rows and tab switching are ready to verify."
+    private static let longStressFinalCheckpointText = "Stress window checkpoint: this conversation intentionally contains 200 messages so long-history rendering, jump-to-latest, and tab transitions can be verified."
 
     private func applyDebugLaunchTabArgument() {
         let arguments = ProcessInfo.processInfo.arguments

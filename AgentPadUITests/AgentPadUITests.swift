@@ -69,6 +69,23 @@ final class AgentPadUITests: XCTestCase {
         capture("80-first-run-local-missing-blocked", app: app)
     }
 
+    func testReadyFirstMissionStarterPrefillsComposer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--settings-local-model-ready", "--open-chat"]
+        app.launch()
+
+        let starter = app.buttons["firstMissionStarter-prototype"]
+        XCTAssertTrue(starter.waitForExistence(timeout: 8), "Ready first-run chat should expose starter missions.")
+        starter.tap()
+
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        let value = (composer.value as? String) ?? composer.label
+        XCTAssertTrue(value.contains("Build a small polished prototype"), "Starter should prefill the composer with the chosen mission prompt.")
+        XCTAssertTrue(app.buttons["sendMessageButton"].isEnabled, "A ready starter prompt should be sendable.")
+        capture("goal-ready-first-mission-starter-prefilled", app: app)
+    }
+
     func testLaunchRestoresCompletedSelectedChatButNotInterruptedDraft() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
@@ -457,7 +474,7 @@ final class AgentPadUITests: XCTestCase {
         capture("26-chat-drawer-filtered", app: app)
         app.buttons["chatDrawerClose"].tap()
 
-        for tab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+        for tab in ["Workspace", "History", "Control", "Forge"] {
             let button = app.tabBars.buttons[tab]
             XCTAssertTrue(button.waitForExistence(timeout: 5))
             let tabBarBefore = app.tabBars.firstMatch.frame
@@ -466,28 +483,22 @@ final class AgentPadUITests: XCTestCase {
             XCTAssertLessThan(abs(app.tabBars.firstMatch.frame.midY - tabBarBefore.midY), 8, "Tab bar should not jump while switching to \(tab).")
 
             switch tab {
-            case "Project":
-                XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
-                XCTAssertFalse(app.otherElements["missionOSPanel"].exists)
-                XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists)
-                XCTAssertFalse(app.otherElements["projectSwitcherPanel"].exists, "Project switcher should stay out of the main scroll surface.")
-                capture("04-project-tab", app: app)
-            case "Files":
-                XCTAssertTrue(app.staticTexts["README.md"].waitForExistence(timeout: 5))
-                capture("05-files-tab", app: app)
-            case "Runs":
-                XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
-                XCTAssertTrue(app.staticTexts["Run Audit"].waitForExistence(timeout: 5))
+            case "Workspace":
+                XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
+                capture("05-workspace-tab", app: app)
+            case "History":
+                XCTAssertTrue(app.otherElements["historyVaultSummaryPanel"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.staticTexts["History"].waitForExistence(timeout: 5))
                 let shownSummary = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'shown'")).firstMatch
                 XCTAssertTrue(shownSummary.waitForExistence(timeout: 5))
-                capture("07-runs-stress-history", app: app)
-            case "Settings":
-                XCTAssertTrue(app.staticTexts["Settings"].waitForExistence(timeout: 5))
-                capture("08-settings-tab", app: app)
-            case "Chat":
+                capture("07-history-stress-runs", app: app)
+            case "Control":
+                XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 5))
+                capture("08-control-tab", app: app)
+            case "Forge":
                 XCTAssertTrue(chatComposerInput(in: app).waitForExistence(timeout: 5))
-                XCTAssertTrue(title.label.contains("Stress"), "Returning to Chat should preserve the selected stress conversation.")
-                capture("09-chat-return", app: app)
+                XCTAssertTrue(title.label.contains("Stress"), "Returning to Forge should preserve the selected stress conversation.")
+                capture("09-forge-return", app: app)
             default:
                 break
             }
@@ -1195,11 +1206,11 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Approval Needed"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Review this action"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["approval-demo.html"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["approvalHumanReadableFields"].waitForExistence(timeout: 5), "Approval sheets should summarize tool, risk, affected target, and reason before raw arguments.")
-        XCTAssertTrue(app.buttons["Reject"].waitForExistence(timeout: 5), "Approval sheet should use the user-facing Reject action.")
+        XCTAssertTrue(app.buttons["Reject Change"].waitForExistence(timeout: 5), "Approval sheet should use a specific user-facing Reject action.")
         let approvalRowText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Waiting approval to edit approval-demo.html")).firstMatch
         XCTAssertTrue(approvalRowText.waitForExistence(timeout: 5), "Approval tool calls should appear as compact inline activity, not only as a modal prompt.")
         XCTAssertTrue(app.staticTexts["Approval"].waitForExistence(timeout: 5), "The approval strip should expose a small plain-language status label.")
@@ -1209,8 +1220,8 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Tool Center"].exists, "Approval state should not revive the old large debug panel.")
         capture("51-pending-approval-sheet", app: app)
 
-        app.buttons["Approve"].tap()
-        XCTAssertFalse(app.staticTexts["Approval Needed"].waitForExistence(timeout: 2), "Approval sheet should dismiss immediately after approve.")
+        app.buttons["Approve Change"].tap()
+        XCTAssertFalse(app.staticTexts["Review this action"].waitForExistence(timeout: 2), "Approval sheet should dismiss immediately after approve.")
         XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 10), "Approved local tool run should complete instead of leaving pending approval stuck.")
         XCTAssertFalse(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 1), "Pending approval label should clear after approve.")
 
@@ -1227,7 +1238,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["1 shown"].waitForExistence(timeout: 5), "Approved write should leave one searchable durable run proof.")
         XCTAssertTrue(app.staticTexts["Wrote file"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "approval-demo.html")).firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Done"].waitForExistence(timeout: 5), "Approved write run should finish as durable completed proof.")
+        XCTAssertTrue(app.staticTexts["Completed"].waitForExistence(timeout: 5), "Approved write run should finish as durable completed proof.")
 
         let approvedRun = app.buttons["runHistoryCard"].firstMatch
         XCTAssertTrue(approvedRun.waitForExistence(timeout: 5))
@@ -1524,7 +1535,7 @@ final class AgentPadUITests: XCTestCase {
             .containing(NSPredicate(format: "label CONTAINS %@", "I need approval before writing"))
             .firstMatch
         XCTAssertTrue(assistantApproval.waitForExistence(timeout: 8), "Matrix chat should keep assistant bubbles readable over the rain backdrop.")
-        XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 5), "Approval controls should stay readable and tappable in Matrix mode.")
+        XCTAssertTrue(app.buttons["Approve Change"].waitForExistence(timeout: 5), "Approval controls should stay readable and tappable in Matrix mode.")
         capture("goal-matrix-chat-readable", app: app)
 
         app.terminate()

@@ -7,9 +7,7 @@ struct ToolRequest: Identifiable, Hashable, Sendable {
 
     var isMutating: Bool {
         if name == "run_command" {
-            return Self.commandName(arguments["command"] ?? "").map { command in
-                ["mkdir", "touch", "rm", "mv", "cp"].contains(command)
-            } ?? false
+            return TerminalCommandDraft(arguments["command"] ?? "").isMutating
         }
         return [
             "write_file", "append_file", "delete_path", "move_path", "copy_path",
@@ -25,12 +23,6 @@ struct ToolRequest: Identifiable, Hashable, Sendable {
         return text
     }
 
-    private static func commandName(_ commandLine: String) -> String? {
-        commandLine
-            .split(whereSeparator: { $0.isWhitespace })
-            .first
-            .map { String($0).lowercased() }
-    }
 }
 
 struct SandboxToolExecutor: Sendable {

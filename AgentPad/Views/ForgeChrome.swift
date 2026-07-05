@@ -551,7 +551,12 @@ struct ForgeMissionStrip: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .agentGlass(radius: AgentDesign.rowRadius, tint: tint)
+        .modifier(
+            ForgeMissionStripSurface(
+                tint: tint,
+                usesSafetySurface: status.tone == .approval && !autoContinue.isCountingDown
+            )
+        )
         .animation(.snappy(duration: 0.3), value: status)
         .animation(.snappy(duration: 0.3), value: autoContinue)
     }
@@ -620,6 +625,40 @@ struct ForgeMissionStrip: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
+    }
+}
+
+private struct ForgeMissionStripSurface: ViewModifier {
+    let tint: Color
+    let usesSafetySurface: Bool
+
+    func body(content: Content) -> some View {
+        if usesSafetySurface {
+            let shape = RoundedRectangle(cornerRadius: AgentDesign.rowRadius, style: .continuous)
+            content
+                .background(
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                AgentPalette.surfaceElevated.opacity(0.96),
+                                AgentPalette.surface.opacity(0.92),
+                                tint.opacity(0.10)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                )
+                .overlay(shape.strokeBorder(tint.opacity(0.36), lineWidth: 0.85))
+                .overlay(alignment: .leading) {
+                    UnevenRoundedRectangle(topLeadingRadius: AgentDesign.rowRadius, bottomLeadingRadius: AgentDesign.rowRadius)
+                        .fill(tint.opacity(0.86))
+                        .frame(width: 3)
+                }
+                .shadow(color: AgentPalette.shadow.opacity(0.08), radius: 10, x: 0, y: 5)
+        } else {
+            content.agentGlass(radius: AgentDesign.rowRadius, tint: tint)
+        }
     }
 }
 

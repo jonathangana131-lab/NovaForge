@@ -102,7 +102,7 @@ final class SandboxToolExecutorTests: XCTestCase {
             XCTAssertFalse(request.isMutating, "\(command) should be treated as read-only")
         }
 
-        for command in ["mkdir docs", "touch a.txt", "rm a.txt", "mv a b", "cp a b"] {
+        for command in ["mkdir docs", "  touch a.txt", "rm a.txt", "mv a b", "cp a b", "rm 'draft note.txt'"] {
             let request = ToolRequest(id: command, name: "run_command", arguments: ["command": command])
             XCTAssertTrue(request.isMutating, "\(command) should require write approval")
         }

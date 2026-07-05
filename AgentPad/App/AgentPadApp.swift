@@ -94,7 +94,7 @@ struct NovaForgeMainApp: App {
         PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context)
         ProjectBootstrap.ensureDefaultProject(in: context, settings: settings)
 
-        if arguments.contains("--stress-chat"),
+        if Self.hasLaunchFlag("--stress-chat", in: arguments),
            let stressConversation = seedStressConversation(in: context, project: activeProject) {
             UserDefaults.standard.set(
                 stressConversation.id.uuidString,
@@ -153,6 +153,16 @@ struct NovaForgeMainApp: App {
     }
 
     // MARK: - Static Helpers
+
+    private static func hasLaunchFlag(_ flag: String, in arguments: [String]) -> Bool {
+        arguments.contains(flag) ||
+            arguments.joined(separator: " ").contains(flag) ||
+            arguments.contains { argument in
+                argument == flag ||
+                    argument.hasPrefix("\(flag)=") ||
+                    argument.split(whereSeparator: { $0.isWhitespace }).contains(Substring(flag))
+            }
+    }
 
     private static func makeContainer(
         schema: Schema,

@@ -765,7 +765,7 @@ actor LocalModelClient {
 
                 let elapsed = lastDelivery.duration(to: .now)
                 if !pending.isEmpty,
-                   elapsed >= .milliseconds(520) || pending.count >= 260 || pending.contains("\n\n") {
+                   elapsed >= .milliseconds(180) || pending.count >= 180 || pending.contains("\n\n") {
                     await onContentBatch(pending)
                     pending.removeAll(keepingCapacity: true)
                     lastDelivery = .now

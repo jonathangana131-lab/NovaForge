@@ -11,113 +11,202 @@ import SwiftUI
 import UIKit
 
 struct CleanChatEmptyState: View {
-    var apply: (String) -> Void = { _ in }
-
-    private static let starters: [(symbol: String, title: String, prompt: String)] = [
-        ("hammer.fill", "Build something", "Build me a small SwiftUI view and save it to the workspace"),
-        ("list.bullet.clipboard.fill", "Plan a mission", "Draft a step-by-step plan for my next feature and wait for my go"),
-        ("doc.text.magnifyingglass", "Explore my files", "Summarize what is in my workspace right now")
-    ]
-
-    @State private var spin = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var allowsMotion: Bool {
-        AgentPerformance.allowsDecorativeMotion && !reduceMotion
+    struct Readiness {
+        let title: String
+        let detail: String
+        let symbol: String
+        let tint: Color
+        let actionTitle: String?
+        let badgeTitle: String
     }
 
+    fileprivate struct Starter: Identifiable {
+        let id: String
+        let symbol: String
+        let title: String
+        let detail: String
+        let prompt: String
+        let tint: Color
+    }
+
+    var readiness = Readiness(
+        title: "Ready for a real mission",
+        detail: "Tell NovaForge what to build, fix, or inspect. It will plan, use safe tools, and bring proof back here.",
+        symbol: "checkmark.seal.fill",
+        tint: AgentPalette.green,
+        actionTitle: nil,
+        badgeTitle: "READY"
+    )
+    var openSettings: () -> Void = {}
+    var apply: (String) -> Void = { _ in }
+
+    private static let starters: [Starter] = [
+        Starter(
+            id: "prototype",
+            symbol: "hammer.fill",
+            title: "Build a prototype",
+            detail: "Create one working artifact and show how to open it.",
+            prompt: "Build a small polished prototype in this workspace. Create the working file, validate it, and tell me exactly how to open the result.",
+            tint: AgentPalette.blue
+        ),
+        Starter(
+            id: "audit",
+            symbol: "doc.text.magnifyingglass",
+            title: "Audit the workspace",
+            detail: "Find the important files, risks, and next moves first.",
+            prompt: "Audit this workspace like a senior developer. Show the important files, risks, and best next actions before changing anything risky.",
+            tint: AgentPalette.cyan
+        ),
+        Starter(
+            id: "ship",
+            symbol: "checklist.checked",
+            title: "Prepare to ship",
+            detail: "Pick a focused polish pass, verify it, and report proof.",
+            prompt: "Do a focused ship-readiness pass: choose the highest-impact safe improvement, verify it, and give me the final proof plus any remaining risks.",
+            tint: AgentPalette.green
+        )
+    ]
+
     var body: some View {
-        VStack(spacing: 22) {
-            ZStack {
-                Circle()
-                    .fill(AgentPalette.primaryAccent.opacity(0.13))
-                    .frame(width: 84, height: 84)
-                    .blur(radius: 18)
-                Circle()
-                    .stroke(AgentPalette.primaryAccent.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [1, 6.5]))
-                    .frame(width: 126, height: 126)
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(
-                        allowsMotion ? .linear(duration: 52).repeatForever(autoreverses: false) : nil,
-                        value: spin
-                    )
-                Circle()
-                    .strokeBorder(AgentPalette.primaryAccent.opacity(0.20), lineWidth: 1)
-                    .frame(width: 92, height: 92)
-                Circle()
-                    .trim(from: 0.58, to: 0.84)
-                    .stroke(
-                        AngularGradient(
-                            colors: [AgentPalette.primaryAccent.opacity(0), AgentPalette.primaryAccent.opacity(0.85)],
-                            center: .center,
-                            startAngle: .degrees(209),
-                            endAngle: .degrees(302)
-                        ),
-                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
-                    )
-                    .frame(width: 92, height: 92)
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(
-                        allowsMotion ? .linear(duration: 8).repeatForever(autoreverses: false) : nil,
-                        value: spin
-                    )
-                Image(systemName: "sparkles")
-                    .font(.system(size: 27, weight: .semibold))
-                    .foregroundStyle(AgentPalette.primaryAccent)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                NovaReticleGlyph(symbol: "sparkles", tint: AgentPalette.primaryAccent, size: 48, isActive: true)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("FIRST MISSION")
+                        .novaLabel(AgentPalette.tertiaryText)
+                    Text("Start with one clear task")
+                        .font(NovaType.display)
+                        .foregroundStyle(AgentPalette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Pick a starter or write your own. NovaForge will plan, ask before risky writes, work in the workspace, and return proof.")
+                        .font(NovaType.body)
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
             }
-            .onAppear { spin = true }
-            .accessibilityHidden(true)
+
+            firstMissionReadinessCard
 
             VStack(spacing: 7) {
-                Text("On-Device Intelligence")
-                    .novaKickerText(AgentPalette.tertiaryText)
-                Text("Ready when you are")
-                    .font(NovaType.display)
-                    .foregroundStyle(AgentPalette.ink)
-                Text("Ask anything, or hand NovaForge a mission.\nEverything runs on this device.")
-                    .font(NovaType.body)
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-            }
-
-            VStack(spacing: 8) {
                 ForEach(Self.starters, id: \.title) { starter in
-                    Button {
-                        NovaHaptics.tick()
+                    FirstMissionStarterButton(starter: starter) {
                         apply(starter.prompt)
-                    } label: {
-                        HStack(spacing: 11) {
-                            Image(systemName: starter.symbol)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(AgentPalette.primaryAccent)
-                                .frame(width: 20)
-                            Text(starter.title)
-                                .font(NovaType.headline)
-                                .foregroundStyle(AgentPalette.ink)
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(AgentPalette.quaternaryText)
-                        }
-                        .padding(.horizontal, 17)
-                        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget + 2)
-                        .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
-                    .background(Capsule(style: .continuous).fill(AgentPalette.controlFill.opacity(0.5)))
-                    .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.primaryAccent.opacity(0.22), lineWidth: 0.8))
-                    .accessibilityLabel(starter.title)
                 }
             }
-            .frame(maxWidth: 330)
         }
-        .padding(.top, 40)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(16)
+        .agentSurface(radius: 24, tint: AgentPalette.primaryAccent.opacity(0.04))
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.top, 10)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Clean chat ready")
+        .accessibilityLabel("First mission ready. \(readiness.title). \(readiness.detail)")
         .accessibilityIdentifier("cleanChatEmptyState")
+    }
+
+    private var firstMissionReadinessCard: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: readiness.symbol)
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(readiness.tint)
+                .frame(width: 30, height: 30)
+                .agentControlSurface(radius: 11, tint: readiness.tint.opacity(0.10), selected: false)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(readiness.title)
+                    .font(NovaType.headline)
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.84)
+                Text(readiness.detail)
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.84)
+            }
+
+            Spacer(minLength: 0)
+
+            if let actionTitle = readiness.actionTitle {
+                Button {
+                    NovaHaptics.tick()
+                    openSettings()
+                } label: {
+                    Text(actionTitle)
+                        .font(NovaType.label)
+                        .lineLimit(1)
+                        .foregroundStyle(readiness.tint)
+                        .frame(minWidth: 62, minHeight: AgentDesign.minimumTouchTarget)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .background(Capsule(style: .continuous).fill(readiness.tint.opacity(0.11)))
+                .overlay(Capsule(style: .continuous).strokeBorder(readiness.tint.opacity(0.28), lineWidth: 0.8))
+                .accessibilityIdentifier("firstMissionReadinessAction")
+            } else {
+                Text(readiness.badgeTitle)
+                    .font(NovaType.label)
+                    .foregroundStyle(readiness.tint)
+                    .padding(.horizontal, 9)
+                    .frame(height: 28)
+                    .agentControlSurface(radius: 10, tint: readiness.tint.opacity(0.10), selected: true)
+            }
+        }
+        .padding(10)
+        .agentRowSurface(radius: 16, tint: readiness.tint.opacity(0.07), selected: false)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("firstMissionReadiness")
+    }
+}
+
+private struct FirstMissionStarterButton: View {
+    let starter: CleanChatEmptyState.Starter
+    let apply: () -> Void
+
+    var body: some View {
+        Button {
+            NovaHaptics.tick()
+            apply()
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: starter.symbol)
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(starter.tint)
+                    .frame(width: 30, height: 30)
+                    .agentControlSurface(radius: 11, tint: starter.tint.opacity(0.10), selected: false)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(starter.title)
+                        .font(NovaType.headline)
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(1)
+                    Text(starter.detail)
+                        .font(NovaType.caption)
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.84)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(starter.tint)
+                    .frame(width: 22, height: 22)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .agentRowSurface(radius: 15, tint: starter.tint.opacity(0.08), selected: false)
+        .accessibilityLabel(starter.title)
+        .accessibilityIdentifier("firstMissionStarter-\(starter.id)")
     }
 }
 
@@ -199,12 +288,17 @@ struct ChatLiveResponseIsland: View {
         let isWorking = runtime.isWorking
         let stream = runtime.liveStream
         ZStack(alignment: .topLeading) {
-            LiveResponseView(isWorking: isWorking, stream: stream, runtime: runtime)
+            LiveResponseView(
+                isWorking: isWorking,
+                isHandoffActive: stream.isHandoffActive,
+                stream: stream,
+                runtime: runtime
+            )
 
             if AgentPerformance.shouldProfileFrameRate {
                 ChatStreamingFrameRateProbe(
                     stream: stream,
-                    isWorking: isWorking,
+                    isWorking: isWorking || stream.isHandoffActive,
                     isVisibleForFrameProfiling: isVisibleForFrameProfiling
                 )
             }
@@ -616,64 +710,122 @@ struct FirstRunPowerUp: View {
     }
 
     var body: some View {
-        VStack(spacing: 22) {
-            NovaReactorGauge(
-                fraction: fraction,
-                value: gaugeValue,
-                label: variant.shortName,
-                tint: AgentPalette.cyan,
-                size: 118,
-                isLive: isBusy
-            )
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 13) {
+                NovaReactorGauge(
+                    fraction: fraction,
+                    value: gaugeValue,
+                    label: variant.shortName,
+                    tint: AgentPalette.cyan,
+                    size: 84,
+                    isLive: isBusy
+                )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("LOCAL SETUP")
+                        .novaLabel(AgentPalette.tertiaryText)
+                    Text(headline)
+                        .font(NovaType.display)
+                        .foregroundStyle(AgentPalette.ink)
+                        .contentTransition(.opacity)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(detail)
+                        .font(NovaType.body)
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             VStack(spacing: 7) {
-                Text("On-Device Intelligence")
-                    .novaKickerText(AgentPalette.tertiaryText)
-                Text(headline)
-                    .font(NovaType.display)
-                    .foregroundStyle(AgentPalette.ink)
-                    .contentTransition(.opacity)
-                Text(detail)
-                    .font(NovaType.body)
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .frame(maxWidth: 300)
-                    .fixedSize(horizontal: false, vertical: true)
+                PowerUpReadinessRow(
+                    title: "Next action",
+                    value: actionTitle,
+                    symbol: isBusy ? "waveform" : "arrow.down.circle.fill",
+                    tint: AgentPalette.cyan
+                )
+                PowerUpReadinessRow(
+                    title: "Unlocks",
+                    value: "Starter prompts, local chat, and workspace proof",
+                    symbol: "sparkles",
+                    tint: AgentPalette.green
+                )
+                PowerUpReadinessRow(
+                    title: "Safety",
+                    value: "Runs stay on this iPhone; writes still ask first",
+                    symbol: "lock.shield.fill",
+                    tint: AgentPalette.lilac
+                )
             }
 
-            VStack(spacing: 9) {
-                if case .incompatible = localModels.status {
-                    EmptyView()
-                } else {
-                    NovaCapsuleButton(
-                        title: actionTitle,
-                        symbol: isBusy ? "waveform" : "bolt.fill",
-                        tint: AgentPalette.cyan,
-                        accessibilityIdentifier: "firstRunPowerUpButton"
-                    ) {
-                        guard !isBusy else { return }
-                        localModels.downloadSelected()
-                    }
-                    .disabled(isBusy)
-                    .opacity(isBusy ? 0.65 : 1)
+            if case .incompatible = localModels.status {
+                EmptyView()
+            } else {
+                NovaCapsuleButton(
+                    title: actionTitle,
+                    symbol: isBusy ? "waveform" : "bolt.fill",
+                    tint: AgentPalette.cyan,
+                    accessibilityIdentifier: "firstRunPowerUpButton"
+                ) {
+                    guard !isBusy else { return }
+                    localModels.downloadSelected()
                 }
+                .disabled(isBusy)
+                .opacity(isBusy ? 0.65 : 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-                HStack(spacing: 6) {
-                    Image(systemName: "lock.shield.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(AgentPalette.quaternaryText)
-                    Text("\(variant.expectedSizeLabel) · \(variant.executionLabel) · stays on this iPhone")
-                        .font(NovaType.caption)
-                        .foregroundStyle(AgentPalette.tertiaryText)
-                }
+            HStack(spacing: 6) {
+                Image(systemName: "externaldrive.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(AgentPalette.quaternaryText)
+                Text("\(variant.expectedSizeLabel) / \(variant.executionLabel) / no API key needed")
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
             }
         }
-        .padding(.top, 40)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(16)
+        .agentSurface(radius: 24, tint: AgentPalette.cyan.opacity(0.04))
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.top, 10)
         .animation(.smooth(duration: 0.4), value: fraction)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("firstRunPowerUp")
+    }
+}
+
+private struct PowerUpReadinessRow: View {
+    let title: String
+    let value: String
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .black))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+                .agentControlSurface(radius: 9, tint: tint.opacity(0.09), selected: false)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title.uppercased())
+                    .font(NovaType.label)
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .lineLimit(1)
+                Text(value)
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.84)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .agentRowSurface(radius: 14, tint: tint.opacity(0.06), selected: false)
     }
 }

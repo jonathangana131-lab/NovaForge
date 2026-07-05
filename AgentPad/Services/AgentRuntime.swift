@@ -74,19 +74,22 @@ struct AgentTraceEvent: Identifiable, Hashable {
 
 @MainActor
 final class LiveStreamBuffer: ObservableObject {
-    private let minimumDisplayInterval: Duration = .milliseconds(110)
+    private let minimumDisplayInterval: Duration = .milliseconds(80)
     private let minimumInitialDisplayCharacters = 1
-    private let maximumPendingCharacters = 180
+    private let maximumPendingCharacters = 260
     @Published private var frame = LiveStreamFrame()
     @ObservationIgnored private var visibleText = ""
     @ObservationIgnored private var pendingText = ""
     @ObservationIgnored private var flushTask: Task<Void, Never>?
     @ObservationIgnored private var lastDisplayUpdate = ContinuousClock.now
+    @Published private(set) var responseID = UUID()
+    @Published private(set) var handoffMessageID: UUID?
 
     var displayText: String { frame.displayText }
     var characterCount: Int { frame.characterCount }
     var revision: Int { frame.revision }
     var isEmpty: Bool { frame.characterCount == 0 }
+    var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
     /// The live bubble no longer truncates to a tail window; the transcript is
     /// bottom-anchored at the layout level instead, so the full streamed text
     /// is always the display text.
@@ -97,6 +100,8 @@ final class LiveStreamBuffer: ObservableObject {
         flushTask = nil
         pendingText = ""
         visibleText = ""
+        responseID = UUID()
+        handoffMessageID = nil
         frame = LiveStreamFrame()
         lastDisplayUpdate = .now
     }
@@ -132,6 +137,25 @@ final class LiveStreamBuffer: ObservableObject {
         AgentPerformance.value("Live Stream Flush Characters", Double(delta.count))
         AgentPerformance.value("Live Stream Visible Characters", Double(visibleText.count))
         lastDisplayUpdate = .now
+    }
+
+    func finishHandoff(to messageID: UUID) {
+        flushPending()
+        flushTask?.cancel()
+        flushTask = nil
+        responseID = messageID
+        handoffMessageID = messageID
+        frame = LiveStreamFrame(
+            displayText: visibleText,
+            characterCount: visibleText.count,
+            revision: frame.revision + 1
+        )
+        lastDisplayUpdate = .now
+    }
+
+    func clearHandoffIfRendered(messageID: UUID) {
+        guard handoffMessageID == messageID else { return }
+        reset()
     }
 
     private func scheduleFlush() {
@@ -1339,7 +1363,7 @@ final class AgentRuntime {
                 setActivity("Local mode is safe", detail: "Short local fallback keeps iPhone 12 responsive.")
                 await showImmediateResponse(responseText)
                 guard isActiveRun(runID) else { return }
-                let assistant = ChatMessage(role: .assistant, content: responseText, conversation: conversation)
+                let assistant = ChatMessage(id: liveStream.responseID, role: .assistant, content: responseText, conversation: conversation)
                 conversation.appendMessage(assistant)
                 context.insert(assistant)
                 ProjectEventRecorder.record(
@@ -1368,7 +1392,7 @@ final class AgentRuntime {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     throw error
                 }
-                liveStream.reset()
+                liveStream.finishHandoff(to: assistant.id)
                 pushTrace("Local safe response", detail: "Skipped unstable local generation for this prompt.", status: .success)
                 isWorking = false
                 runState = .completed
@@ -1451,6 +1475,7 @@ final class AgentRuntime {
                     let toolCallsJSON = (try? encoder.encode(effectiveToolCalls)).flatMap { String(data: $0, encoding: .utf8) }
 
                     let assistant = ChatMessage(
+                        id: liveStream.responseID,
                         role: .assistant,
                         content: response.content ?? "",
                         toolCallsJSON: toolCallsJSON,
@@ -1486,6 +1511,7 @@ final class AgentRuntime {
                         context: context
                     )
                     try saveCompacted(context)
+                    liveStream.finishHandoff(to: assistant.id)
 
                     var pausedForApproval = false
                     var toolMessages: [ChatMessage] = []
@@ -1607,6 +1633,7 @@ final class AgentRuntime {
                         pushTrace("Tool results not saved", detail: message, status: .failed)
                         return
                     }
+                    liveStream.finishHandoff(to: assistant.id)
                     activeToolName = nil
                     activeToolDetail = ""
                     setActivity("Reading tool output", detail: "Sending results back to the model.")
@@ -1619,6 +1646,7 @@ final class AgentRuntime {
                 setActivity("Finalizing response", detail: "Saving the live model output to the chat.")
 
                 let assistant = ChatMessage(
+                    id: liveStream.responseID,
                     role: .assistant,
                     content: text,
                     conversation: conversation
@@ -1641,7 +1669,7 @@ final class AgentRuntime {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     throw error
                 }
-                liveStream.reset()
+                liveStream.finishHandoff(to: assistant.id)
                 pushTrace("Response complete", detail: "\(text.count) characters delivered.", status: .success)
                 ProjectEventRecorder.record(
                     project: activeProject,
@@ -1775,7 +1803,9 @@ final class AgentRuntime {
 
         guard isActiveRun(runID) else { return }
         isWorking = false
-        liveStream.reset()
+        if !liveStream.isHandoffActive {
+            liveStream.reset()
+        }
         activeToolName = nil
         activeToolDetail = ""
         if let runStartedAt {

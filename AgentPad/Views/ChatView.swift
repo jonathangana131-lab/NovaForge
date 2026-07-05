@@ -86,7 +86,11 @@ struct ChatView: View {
     }
 
     private var projectConversations: [Conversation] {
-        ChatProjectSeparation.visibleChatConversations(from: conversations).sorted { lhs, rhs in
+        let visibleConversations = ChatProjectSeparation.visibleChatConversations(from: conversations)
+        let drawerConversations = visibleConversations.contains(where: { $0.id == conversation.id })
+            ? visibleConversations
+            : [conversation] + visibleConversations
+        return drawerConversations.sorted { lhs, rhs in
             if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
@@ -179,6 +183,23 @@ struct ChatView: View {
         scrollAttachment == .detached && hasLatestJumpTarget
     }
 
+    private var hasRenderedLiveHandoff: Bool {
+        guard let handoffMessageID = runtime.liveStream.handoffMessageID else { return false }
+        return cachedMessages.contains { $0.id == handoffMessageID }
+    }
+
+    private var shouldTopAnchorEmptyTranscript: Bool {
+        cachedMessages.isEmpty &&
+            !hasForeignActiveRun &&
+            !(ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil))
+    }
+
+    private var shouldShowLiveResponseIsland: Bool {
+        ownsActiveRunState &&
+            !hasRenderedLiveHandoff &&
+            (runtime.isWorking || runtime.liveStream.isHandoffActive)
+    }
+
     private var usesCompactStreamingComposer: Bool {
         AgentPerformance.prefersReducedVisualEffects &&
             ownsActiveRunState &&
@@ -216,7 +237,10 @@ struct ChatView: View {
         if settings.provider == .local, needsLocalPowerUp {
             FirstRunPowerUp(localModels: runtime.localModels)
         } else {
-            CleanChatEmptyState { starterPrompt in
+            CleanChatEmptyState(
+                readiness: firstMissionReadiness,
+                openSettings: { openWorkspaceSurface(.settings) }
+            ) { starterPrompt in
                 prompt = starterPrompt
                 composerFocused = true
             }
@@ -231,6 +255,48 @@ struct ChatView: View {
         case .missing, .partial, .downloading, .failed, .incompatible: return true
         case .checking, .ready: return false
         }
+    }
+
+    private var missingCredentialSetup: Bool {
+        settings.provider != .local &&
+            runtime.apiKey(for: settings.provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var providerSetupBlocksComposer: Bool {
+        missingCredentialSetup || (settings.provider == .local && needsLocalPowerUp)
+    }
+
+    private var firstMissionReadiness: CleanChatEmptyState.Readiness {
+        if missingCredentialSetup {
+            return CleanChatEmptyState.Readiness(
+                title: "\(settings.provider.displayName) needs a key",
+                detail: "Add the key once in Control, then these starter missions can run for real.",
+                symbol: "key.slash.fill",
+                tint: AgentPalette.rose,
+                actionTitle: "Control",
+                badgeTitle: "SETUP"
+            )
+        }
+
+        if settings.provider == .local {
+            return CleanChatEmptyState.Readiness(
+                title: "Local model ready",
+                detail: "\(runtime.localModels.selectedVariant.shortName) is ready for private on-device work.",
+                symbol: "cpu.fill",
+                tint: AgentPalette.green,
+                actionTitle: nil,
+                badgeTitle: "READY"
+            )
+        }
+
+        return CleanChatEmptyState.Readiness(
+            title: "\(settings.provider.displayName) ready",
+            detail: "Provider setup is complete. NovaForge can plan, run safe tools, and report proof.",
+            symbol: settings.provider.symbol,
+            tint: settings.provider.tint,
+            actionTitle: nil,
+            badgeTitle: "READY"
+        )
     }
 
     private var shouldShowProjectStatusBoard: Bool {
@@ -339,6 +405,7 @@ struct ChatView: View {
 
         let conversationID = conversation.id
         let fetchLimit = max(messageRenderWindowSize, messageRenderLimit)
+        let relationshipSources = Self.recentMessageSources(from: conversation.messages, limit: fetchLimit)
         let sources: [ChatMessageSource]
         do {
             var descriptor = FetchDescriptor<ChatMessage>(
@@ -350,9 +417,13 @@ struct ChatView: View {
             descriptor.fetchLimit = fetchLimit
             let fetched = try modelContext.fetch(descriptor)
             let ordered = fetched.reversed()
-            sources = ordered.map(ChatMessageSource.init)
+            sources = Self.mergedRecentMessageSources(
+                fetched: ordered.map(ChatMessageSource.init),
+                relationship: relationshipSources,
+                limit: fetchLimit
+            )
         } catch {
-            sources = Self.recentMessageSources(from: conversation.messages, limit: fetchLimit)
+            sources = relationshipSources
         }
         let runtimeArtifacts = ownsActiveRunState ? runtime.currentArtifacts : []
 
@@ -380,6 +451,10 @@ struct ChatView: View {
             cachedMessages = snapshots
             cachedSourceMessageCount = sources.count
             updateCachedArtifacts(from: snapshots, runtimeArtifacts: runtimeArtifacts)
+            if let handoffMessageID = runtime.liveStream.handoffMessageID,
+               snapshots.contains(where: { $0.id == handoffMessageID }) {
+                runtime.liveStream.clearHandoffIfRendered(messageID: handoffMessageID)
+            }
         }
     }
 
@@ -456,7 +531,38 @@ struct ChatView: View {
         return newest.sorted(by: Self.messageAscending).map(ChatMessageSource.init)
     }
 
+    private nonisolated static func mergedRecentMessageSources(
+        fetched: [ChatMessageSource],
+        relationship: [ChatMessageSource],
+        limit: Int
+    ) -> [ChatMessageSource] {
+        guard limit > 0 else { return [] }
+        guard !fetched.isEmpty || !relationship.isEmpty else { return [] }
+
+        var sourcesByID: [UUID: ChatMessageSource] = [:]
+        sourcesByID.reserveCapacity(fetched.count + relationship.count)
+        for source in fetched {
+            sourcesByID[source.id] = source
+        }
+        // Prefer relationship values so newly inserted, not-yet-flushed messages
+        // cannot disappear if a SwiftData fetch lags behind the model graph.
+        for source in relationship {
+            sourcesByID[source.id] = source
+        }
+
+        return Array(
+            sourcesByID.values
+                .sorted(by: Self.messageSourceAscending)
+                .suffix(limit)
+        )
+    }
+
     private nonisolated static func messageAscending(_ lhs: ChatMessage, _ rhs: ChatMessage) -> Bool {
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    private nonisolated static func messageSourceAscending(_ lhs: ChatMessageSource, _ rhs: ChatMessageSource) -> Bool {
         if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
         return lhs.id.uuidString < rhs.id.uuidString
     }
@@ -613,12 +719,12 @@ struct ChatView: View {
                                         messageBubble(for: message)
                                     }
 
-                                    if ownsActiveRunState {
+                                    if shouldShowLiveResponseIsland {
                                         ChatLiveResponseIsland(
                                             runtime: runtime,
                                             isVisibleForFrameProfiling: isVisibleForFrameProfiling
                                         )
-                                        .id("liveResponse")
+                                        .id(runtime.liveStream.responseID)
                                     }
                                 }
                                 .padding(.bottom, transcriptBottomPadding)
@@ -639,7 +745,7 @@ struct ChatView: View {
                         // no animation fights, and no per-flush layout jumps.
                         // Detach/re-pin is still governed by the scroll
                         // attachment state machine below.
-                        .defaultScrollAnchor(.bottom, for: .initialOffset)
+                        .defaultScrollAnchor(shouldTopAnchorEmptyTranscript ? .top : .bottom, for: .initialOffset)
                         .defaultScrollAnchor(shouldKeepTranscriptPinned ? .bottom : nil, for: .sizeChanges)
                         .contentShape(Rectangle())
                         .simultaneousGesture(
@@ -679,6 +785,7 @@ struct ChatView: View {
                                 requestJumpToLatest(animated: true, delay: .milliseconds(80))
                             } else {
                                 forceScrollToBottom = false
+                                settleLiveStreamHandoff(animated: true)
                             }
                         }
                         .onChange(of: runtime.runState) { _, newState in
@@ -846,6 +953,8 @@ struct ChatView: View {
             transient.lastReportedBottomDistance = .infinity
             transient.accessoryResizeFollowUpTask?.cancel()
             transient.scrollRequestTask?.cancel()
+            transient.manualRepinTask?.cancel()
+            transient.manualRepinUntil = .distantPast
             keyboard.reset()
             scrollAttachment = .pinned
             forceScrollToBottom = conversation.messageCount > 0 || (ownsActiveRunState && runtime.isWorking)
@@ -992,7 +1101,7 @@ struct ChatView: View {
 
             if shouldShowJumpToLatestAccessory {
                 JumpToLatestButton(tint: chatChromeTint) {
-                    requestJumpToLatest()
+                    jumpToLatestFromAccessory()
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.trailing, 18)
@@ -1019,7 +1128,9 @@ struct ChatView: View {
     }
 
     private var composerInputDisabled: Bool {
-        hasForeignActiveRun || (ownsActiveRunState && runtime.pendingTool != nil)
+        hasForeignActiveRun ||
+            providerSetupBlocksComposer ||
+            (ownsActiveRunState && runtime.pendingTool != nil)
     }
 
     private var composerCanSend: Bool {
@@ -1030,12 +1141,15 @@ struct ChatView: View {
         if hasForeignActiveRun { return "Open the running chat to send" }
         if ownsActiveRunState && runtime.pendingTool != nil { return "Approval needed before the next send" }
         if ownsActiveRunState && runtime.isWorking { return "Queue a follow-up" }
-        if settings.provider == .local && !runtime.localModels.isDownloaded { return "Finish local model setup, then ask NovaForge" }
+        if missingCredentialSetup { return "Add \(settings.provider.credentialDisplayName) key in Control" }
+        if settings.provider == .local && needsLocalPowerUp { return "Download the local model, then ask" }
         return "Ask NovaForge"
     }
 
     private var composerSendAccessibilityLabel: String {
         if hasForeignActiveRun { return "Open running chat to send" }
+        if missingCredentialSetup { return "Send disabled until provider key is added" }
+        if settings.provider == .local && needsLocalPowerUp { return "Send disabled until local model is downloaded" }
         if ownsActiveRunState && runtime.pendingTool != nil { return "Send disabled while approval is pending" }
         return ownsActiveRunState && runtime.isWorking ? "Queue follow-up" : "Send message"
     }
@@ -1050,7 +1164,10 @@ struct ChatView: View {
         if ownsActiveRunState && runtime.isWorking {
             return ComposerStatus(title: trimmedPrompt.isEmpty ? "Running" : "Queue", symbol: trimmedPrompt.isEmpty ? "waveform" : "plus.message.fill", tint: chatChromeTint)
         }
-        if settings.provider == .local && !runtime.localModels.isDownloaded {
+        if missingCredentialSetup {
+            return ComposerStatus(title: "Setup", symbol: "key.slash.fill", tint: AgentPalette.rose)
+        }
+        if settings.provider == .local && needsLocalPowerUp {
             return ComposerStatus(title: "Setup", symbol: "arrow.down.circle.fill", tint: AgentPalette.lilac)
         }
         if !trimmedPrompt.isEmpty {
@@ -1258,6 +1375,9 @@ struct ChatView: View {
         forceScrollToBottom = true
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         runtime.send(prompt: text, conversation: conversation, settings: settings, context: modelContext, project: scopedProject)
+        updateCachedMessages()
+        scrollAttachment = .restoring
+        requestJumpToLatest(animated: true, delay: .milliseconds(60))
     }
 
     private func sendSuggestion(_ suggestion: QuickDelegateSuggestion) {
@@ -1306,7 +1426,7 @@ struct ChatView: View {
 
     private var hasLatestJumpTarget: Bool {
         !cachedMessages.isEmpty ||
-            (ownsActiveRunState && (runtime.isWorking || runtime.hasTraceEvents || cachedDurableRunSnapshot.hasCompletionEvidence))
+            (ownsActiveRunState && (runtime.isWorking || runtime.liveStream.isHandoffActive || runtime.hasTraceEvents || cachedDurableRunSnapshot.hasCompletionEvidence))
     }
 
     private var shouldKeepTranscriptPinned: Bool {
@@ -1368,12 +1488,26 @@ struct ChatView: View {
     }
 
     private func handleRunStateChange(_ state: AgentRunState) {
+        settleLiveStreamHandoff(animated: state != .waitingForApproval)
         switch state {
         case .completed, .cancelled, .failed(_):
             keepLatestReadableAfterAccessoryResize()
-        case .idle, .running, .waitingForApproval:
+        case .waitingForApproval:
+            if shouldKeepTranscriptPinned {
+                scrollAttachment = .restoring
+                requestJumpToLatest(animated: true, delay: .milliseconds(80))
+            }
+        case .idle, .running:
             break
         }
+    }
+
+    private func settleLiveStreamHandoff(animated: Bool) {
+        guard ownsActiveRunState, runtime.liveStream.handoffMessageID != nil else { return }
+        updateCachedMessages()
+        guard shouldKeepTranscriptPinned else { return }
+        scrollAttachment = .restoring
+        requestJumpToLatest(animated: animated, delay: .milliseconds(60))
     }
 
     private func keepLatestReadableAfterAccessoryResize() {
@@ -1389,6 +1523,17 @@ struct ChatView: View {
     }
 
     private func updateBottomDistance(_ distance: CGFloat) {
+        if Date() < transient.manualRepinUntil {
+            if distance <= detachedRepinThreshold {
+                scrollAttachment = .pinned
+                forceScrollToBottom = false
+                transient.manualRepinUntil = .distantPast
+            } else {
+                scrollAttachment = .restoring
+            }
+            return
+        }
+
         if ownsActiveRunState,
            runtime.isWorking,
            scrollAttachment != .detached,
@@ -1400,15 +1545,15 @@ struct ChatView: View {
         }
 
         if scrollAttachment == .detached {
-            if Date() < transient.userDetachedUntil {
-                return
-            }
-
             if distance <= detachedRepinThreshold {
                 scrollAttachment = .pinned
                 transient.userDetachedUntil = .distantPast
                 transient.userScrollIntentUntil = .distantPast
                 AgentPerformance.event("Chat Scroll Pinned")
+                return
+            }
+
+            if Date() < transient.userDetachedUntil {
                 return
             }
         }
@@ -1438,25 +1583,73 @@ struct ChatView: View {
 
     private func handleScrollPhaseChange(_ phase: ScrollPhase, context: ScrollPhaseChangeContext) {
         guard ownsActiveRunState, runtime.isWorking else { return }
+        guard Date() >= transient.manualRepinUntil else {
+            scrollAttachment = .restoring
+            return
+        }
         guard phase == .tracking || phase == .interacting || phase == .decelerating else { return }
 
-        transient.userScrollIntentUntil = Date().addingTimeInterval(1.5)
-        if phase == .interacting || phase == .decelerating {
-            markUserDetached()
+        let distance = max(0, context.geometry.contentSize.height - context.geometry.visibleRect.maxY)
+        if distance <= detachedRepinThreshold {
+            updateBottomDistance(distance)
             return
         }
 
-        let distance = max(0, context.geometry.contentSize.height - context.geometry.visibleRect.maxY)
-        guard distance > detachedRepinThreshold else { return }
+        transient.userScrollIntentUntil = Date().addingTimeInterval(1.5)
+        guard phase == .interacting || phase == .decelerating else { return }
         markUserDetached()
     }
 
     private func markUserDetached() {
+        guard Date() >= transient.manualRepinUntil else {
+            scrollAttachment = .restoring
+            return
+        }
         scrollAttachment = .detached
         forceScrollToBottom = false
         transient.userDetachedUntil = Date().addingTimeInterval(6)
         transient.userScrollIntentUntil = Date().addingTimeInterval(1.5)
         AgentPerformance.event("Chat Scroll Detached")
+    }
+
+    private func jumpToLatestFromAccessory() {
+        transient.bottomDistanceUpdateTask?.cancel()
+        transient.scrollRequestTask?.cancel()
+        transient.manualRepinTask?.cancel()
+        transient.userDetachedUntil = .distantPast
+        transient.userScrollIntentUntil = .distantPast
+        transient.manualRepinUntil = Date().addingTimeInterval(6)
+        forceScrollToBottom = true
+        scrollAttachment = .restoring
+        requestJumpToLatest(animated: true)
+
+        transient.manualRepinTask = Task { @MainActor in
+            let followUps: [Duration] = [
+                .milliseconds(140),
+                .milliseconds(380),
+                .milliseconds(900),
+                .milliseconds(1_600),
+                .milliseconds(2_400)
+            ]
+            for delay in followUps {
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                requestJumpToLatest(animated: false)
+            }
+
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            forceScrollToBottom = false
+            scrollAttachment = .pinned
+        }
     }
 
     private func handleLatestMessageChange(
@@ -1568,16 +1761,19 @@ private final class ChatTransientState: ObservableObject {
     var accessoryHeightUpdateTask: Task<Void, Never>?
     var accessoryResizeFollowUpTask: Task<Void, Never>?
     var scrollRequestTask: Task<Void, Never>?
+    var manualRepinTask: Task<Void, Never>?
     var lastLiveStreamJumpRequestAt = Date.distantPast
     var lastReportedBottomDistance: CGFloat = .infinity
     var userDetachedUntil = Date.distantPast
     var userScrollIntentUntil = Date.distantPast
+    var manualRepinUntil = Date.distantPast
 
     func cancelLayoutTasks() {
         bottomDistanceUpdateTask?.cancel()
         accessoryHeightUpdateTask?.cancel()
         accessoryResizeFollowUpTask?.cancel()
         scrollRequestTask?.cancel()
+        manualRepinTask?.cancel()
     }
 }
 

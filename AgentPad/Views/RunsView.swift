@@ -118,6 +118,11 @@ struct RunsView: View {
         let timelinePhases: [RunTimelinePhase]
         let artifact: WorkspaceArtifact?
         let terminalProof: TerminalProofData?
+        let receiptTitle: String
+        let requestLine: String
+        let outcomeLine: String
+        let proofLine: String
+        let proofDetail: String
 
         init(run: ToolRun, terminalRecord: TerminalCommandRecord?) {
             id = run.id
@@ -166,6 +171,11 @@ struct RunsView: View {
             }
             artifact = resolvedArtifact
             terminalProof = resolvedTerminalProof
+            receiptTitle = Self.receiptTitle(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
+            requestLine = Self.requestLine(for: run, displayName: displayName, argumentSummary: argumentSummary)
+            outcomeLine = Self.outcomeLine(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
+            proofLine = Self.proofLine(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
+            proofDetail = Self.proofDetail(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
             elapsedText = Self.elapsedText(for: run)
             phaseTitle = Self.phaseTitle(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
             phaseDetail = Self.phaseDetail(for: run, argumentSummary: argumentSummary, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
@@ -174,6 +184,92 @@ struct RunsView: View {
             nextActionTitle = Self.nextActionTitle(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
             nextActionDetail = Self.nextActionDetail(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
             timelinePhases = Self.timelinePhases(for: run, artifact: resolvedArtifact, terminalProof: resolvedTerminalProof)
+        }
+
+        private static func receiptTitle(
+            for run: ToolRun,
+            artifact: WorkspaceArtifact?,
+            terminalProof: TerminalProofData?
+        ) -> String {
+            switch run.status {
+            case .pendingApproval:
+                return "Approval required"
+            case .approved:
+                return "Approved run active"
+            case .rejected:
+                return "Cancelled before change"
+            case .failed:
+                return "Failure preserved"
+            case .completed:
+                if artifact != nil { return "Proof artifact saved" }
+                if terminalProof != nil { return "Command proof captured" }
+                if run.isMutating { return "Workspace change recorded" }
+                return "Run completed"
+            }
+        }
+
+        private static func requestLine(
+            for run: ToolRun,
+            displayName: String,
+            argumentSummary: String?
+        ) -> String {
+            guard let argumentSummary else { return displayName }
+            return "\(displayName) · \(argumentSummary)"
+        }
+
+        private static func outcomeLine(
+            for run: ToolRun,
+            artifact: WorkspaceArtifact?,
+            terminalProof: TerminalProofData?
+        ) -> String {
+            switch run.status {
+            case .pendingApproval:
+                return "Waiting for a decision before the tool changes anything."
+            case .approved:
+                return "Approved and waiting for the final tool result."
+            case .rejected:
+                return "The requested tool action was stopped before execution."
+            case .failed:
+                return firstUsefulOutputLine(from: run.output) ?? "The run failed without a saved output line."
+            case .completed:
+                if let artifact { return "Saved \(artifact.title) as reviewable proof." }
+                if let terminalProof { return terminalProof.outputPreview.isEmpty ? "Terminal command completed." : terminalProof.terminalFocusQuery }
+                return firstUsefulOutputLine(from: run.output) ?? "Completed with arguments and status retained."
+            }
+        }
+
+        private static func proofLine(
+            for run: ToolRun,
+            artifact: WorkspaceArtifact?,
+            terminalProof: TerminalProofData?
+        ) -> String {
+            var proof: [String] = []
+            if artifact != nil { proof.append("artifact") }
+            if terminalProof != nil { proof.append("terminal") }
+            if run.isMutating { proof.append("workspace change") }
+            if !run.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { proof.append("output") }
+            if proof.isEmpty { return "Arguments retained" }
+            return proof
+                .map { String($0.prefix(1)).uppercased() + String($0.dropFirst()) }
+                .joined(separator: " + ")
+        }
+
+        private static func proofDetail(
+            for run: ToolRun,
+            artifact: WorkspaceArtifact?,
+            terminalProof: TerminalProofData?
+        ) -> String {
+            if let artifact { return artifact.path }
+            if let terminalProof { return "\(terminalProof.outputLineCountText) · \(terminalProof.outputByteText)" }
+            if !run.output.isEmpty { return byteText(for: run.output) }
+            return byteText(for: run.argumentsJSON)
+        }
+
+        private static func firstUsefulOutputLine(from output: String) -> String? {
+            output
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty && !$0.hasPrefix("…") }
         }
 
         private static func displayName(for name: String) -> String {
@@ -698,10 +794,15 @@ struct RunsView: View {
                         runsScreenHeader
                             .padding(.bottom, 2)
 
+                        if cachedStats.total > 0 {
+                            historyVaultSummary
+                        }
+
                         // Live mission state, same component as Forge — one
                         // vocabulary for "the agent is doing something".
                         // Only rendered when there is something to act on.
-                        if ForgeMissionStrip.isVisible(
+                        if shouldShowHistoryMissionStrip,
+                           ForgeMissionStrip.isVisible(
                             scopedProject: project,
                             status: liveStatus,
                             autoContinue: .disabled
@@ -716,6 +817,21 @@ struct RunsView: View {
                                 stop: { runtime.stopGenerating(context: modelContext) },
                                 pauseAutoContinue: {},
                                 openDossier: openProject
+                            )
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
+                        if shouldShowRuntimeReceiptBanner {
+                            HistoryRuntimeReceiptBanner(
+                                state: runtime.runState,
+                                title: runtime.activityTitle,
+                                detail: runtime.activityDetail,
+                                pendingToolName: runtime.pendingTool?.name,
+                                lastRunDuration: runtime.lastRunDuration,
+                                approve: approvePendingTool,
+                                reject: rejectPendingTool,
+                                stop: { runtime.stopGenerating(context: modelContext) },
+                                openChat: openChat
                             )
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
@@ -777,12 +893,21 @@ struct RunsView: View {
             for _ in 0..<24 {
                 if let run = runs.first(where: { $0.status == .completed }) {
                     try? await Task.sleep(for: .milliseconds(700))
+                    let linkedTerminalRecords = terminalRecordsBySourceRunID()
+                    let row = RunRowData(
+                        run: run,
+                        terminalRecord: linkedTerminalRecords[run.id.uuidString]
+                    )
                     replayTarget = RunReplayTarget(
                         id: run.id,
-                        name: run.name,
-                        status: run.status,
-                        windowStart: run.createdAt.addingTimeInterval(-1),
-                        windowEnd: (run.completedAt ?? run.createdAt).addingTimeInterval(1)
+                        name: row.displayName,
+                        status: row.status,
+                        windowStart: row.createdAt.addingTimeInterval(-1),
+                        windowEnd: (run.completedAt ?? row.createdAt).addingTimeInterval(1),
+                        requestSummary: row.requestLine,
+                        outcomeSummary: row.outcomeLine,
+                        proofSummary: "\(row.proofLine) · \(row.proofDetail)",
+                        durationText: row.elapsedText
                     )
                     return
                 }
@@ -863,6 +988,7 @@ struct RunsView: View {
             openProject: openProject,
             approvePendingTool: approvePendingTool,
             rejectPendingTool: rejectPendingTool,
+            openChat: openChat,
             dismissSearch: {
                 searchFocused = false
             },
@@ -875,7 +1001,11 @@ struct RunsView: View {
                     name: row.displayName,
                     status: row.status,
                     windowStart: row.createdAt,
-                    windowEnd: row.createdAt.addingTimeInterval(max(1, row.durationMs / 1_000) + 1)
+                    windowEnd: row.createdAt.addingTimeInterval(max(1, row.durationMs / 1_000) + 1),
+                    requestSummary: row.requestLine,
+                    outcomeSummary: row.outcomeLine,
+                    proofSummary: "\(row.proofLine) · \(row.proofDetail)",
+                    durationText: row.elapsedText
                 )
             }
         )
@@ -946,6 +1076,28 @@ struct RunsView: View {
             tint: AgentPalette.lilac,
             isActive: runtime.isWorking
         )
+    }
+
+    var historyVaultSummary: some View {
+        HistoryVaultSummaryPanel(
+            stats: cachedStats,
+            visibleCount: cachedFilteredRuns.count,
+            matchingCount: cachedMatchingRunCount,
+            hasOffscreenRuns: hasOffscreenRuns
+        )
+    }
+
+    var shouldShowHistoryMissionStrip: Bool {
+        runtime.isWorking || runtime.pendingTool != nil
+    }
+
+    var shouldShowRuntimeReceiptBanner: Bool {
+        switch runtime.runState {
+        case .running, .waitingForApproval, .cancelled, .failed(_):
+            return true
+        case .idle, .completed:
+            return false
+        }
     }
 
     var runsHeaderStatusLine: String {
@@ -1063,6 +1215,238 @@ struct RunsView: View {
         }
     }
 
+}
+
+private struct HistoryVaultSummaryPanel: View {
+    let stats: RunsView.RunStats
+    let visibleCount: Int
+    let matchingCount: Int
+    let hasOffscreenRuns: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "archivebox.fill")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(AgentPalette.lilac)
+                    .frame(width: 30, height: 30)
+                    .background(AgentPalette.lilac.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Replay Vault")
+                        .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.ink)
+                    Text(vaultDetail)
+                        .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                HistoryVaultMetric(value: "\(stats.total)", label: "Receipts", symbol: "doc.text.magnifyingglass", tint: AgentPalette.lilac)
+                HistoryVaultMetric(value: stats.successRateText, label: "Complete", symbol: "checkmark.seal.fill", tint: AgentPalette.green)
+                HistoryVaultMetric(value: "\(stats.failures)", label: "Failed", symbol: "exclamationmark.triangle.fill", tint: AgentPalette.rose)
+                HistoryVaultMetric(value: "\(stats.pending)", label: "Approval", symbol: "checkmark.shield.fill", tint: AgentPalette.cyan)
+            }
+        }
+        .padding(12)
+        .background(AgentPalette.row.opacity(0.62), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(AgentPalette.lilac.opacity(0.18), lineWidth: 0.7)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("historyVaultSummaryPanel")
+    }
+
+    private var vaultDetail: String {
+        let shownText = hasOffscreenRuns ? "\(visibleCount) of \(matchingCount) shown" : "\(visibleCount) shown"
+        return "\(shownText) · avg \(stats.averageDurationText) · failures stay retained"
+    }
+}
+
+private struct HistoryVaultMetric: View {
+    let value: String
+    let label: String
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 8, weight: .black))
+                Text(label)
+                    .font(.system(size: 7.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .textCase(.uppercase)
+            }
+            .foregroundStyle(AgentPalette.tertiaryText)
+
+            Text(value)
+                .font(.system(size: 14, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .background(tint.opacity(0.075), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct HistoryRuntimeReceiptBanner: View {
+    let state: AgentRunState
+    let title: String
+    let detail: String
+    let pendingToolName: String?
+    let lastRunDuration: TimeInterval?
+    let approve: () -> Void
+    let reject: () -> Void
+    let stop: () -> Void
+    let openChat: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(tint)
+                    .frame(width: 31, height: 31)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stateTitle)
+                        .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.ink)
+                    Text(stateDetail)
+                        .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                switch state {
+                case .waitingForApproval:
+                    runtimeButton("Approve", symbol: "checkmark", tint: AgentPalette.green, action: approve)
+                    runtimeButton("Reject", symbol: "xmark", tint: AgentPalette.rose, action: reject)
+                case .running:
+                    runtimeButton("Open Forge", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan, action: openChat)
+                    runtimeButton("Stop", symbol: "stop.fill", tint: AgentPalette.rose, action: stop)
+                case .cancelled:
+                    runtimeButton(cancelledPrimaryTitle, symbol: "arrow.clockwise", tint: AgentPalette.lilac, action: openChat)
+                case .failed(_):
+                    runtimeButton("Retry", symbol: "arrow.clockwise", tint: AgentPalette.rose, action: openChat)
+                    runtimeButton("Open Forge", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan, action: openChat)
+                case .idle, .completed:
+                    EmptyView()
+                }
+            }
+        }
+        .padding(12)
+        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(tint.opacity(0.22), lineWidth: 0.75)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("historyRuntimeReceiptBanner")
+    }
+
+    private var stateTitle: String {
+        switch state {
+        case .running:
+            return "Run in progress"
+        case .waitingForApproval:
+            return pendingToolName.map { "Approval needed for \($0)" } ?? "Approval needed"
+        case .cancelled:
+            return isPaused ? "Run paused" : "Run cancelled"
+        case .failed(_):
+            return "Run failed"
+        case .completed:
+            return "Run completed"
+        case .idle:
+            return "Ready"
+        }
+    }
+
+    private var stateDetail: String {
+        switch state {
+        case .failed(let message):
+            return message
+        case .cancelled:
+            return detail.isEmpty ? "Progress was saved where possible." : detail
+        default:
+            if !detail.isEmpty { return detail }
+            return title
+        }
+    }
+
+    private var cancelledPrimaryTitle: String {
+        isPaused ? "Continue" : "Resume"
+    }
+
+    private var isPaused: Bool {
+        title.localizedCaseInsensitiveContains("paused") ||
+            detail.localizedCaseInsensitiveContains("paused")
+    }
+
+    private var symbol: String {
+        switch state {
+        case .running:
+            return "waveform.path.ecg"
+        case .waitingForApproval:
+            return "checkmark.shield.fill"
+        case .cancelled:
+            return isPaused ? "pause.circle.fill" : "xmark.octagon.fill"
+        case .failed(_):
+            return "exclamationmark.triangle.fill"
+        case .completed:
+            return "checkmark.seal.fill"
+        case .idle:
+            return "archivebox.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch state {
+        case .running:
+            return AgentPalette.green
+        case .waitingForApproval:
+            return AgentPalette.cyan
+        case .cancelled:
+            return isPaused ? AgentPalette.lilac : AgentPalette.rose
+        case .failed(_):
+            return AgentPalette.rose
+        case .completed:
+            return AgentPalette.green
+        case .idle:
+            return AgentPalette.lilac
+        }
+    }
+
+    private func runtimeButton(_ title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AgentPalette.ink)
+        .agentControlSurface(radius: 11, tint: tint.opacity(0.14), selected: true)
+    }
 }
 
 

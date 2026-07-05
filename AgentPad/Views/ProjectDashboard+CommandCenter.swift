@@ -12,24 +12,45 @@ import SwiftUI
 extension ProjectDashboardView {
     var projectOSControlCenter: some View {
         let tint = projectOSTint
-        return VStack(alignment: .leading, spacing: 13) {
+        let state = dashboardExecutionState
+        let stateTint = dashboardExecutionTint(state)
+        let intentModeTitle = adaptiveIntent.mode.displayName
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 8) {
-                        NovaKicker(text: "Command Center", tint: tint)
-                        Text(adaptiveIntent.mode.displayName)
-                            .novaLabel(tint)
-                            .padding(.horizontal, 8)
-                            .frame(height: 19)
-                            .background(tint.opacity(0.10), in: Capsule(style: .continuous))
-                            .accessibilityIdentifier("projectOSIntentMode")
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        NovaKicker(text: "Mission Intel", tint: tint)
+
+                        HStack(spacing: 7) {
+                            Text(state.shortTitle)
+                                .novaLabel(stateTint)
+                                .padding(.horizontal, 8)
+                                .frame(height: 19)
+                                .background(stateTint.opacity(0.10), in: Capsule(style: .continuous))
+                                .accessibilityIdentifier("projectOSExecutionStatePill")
+                            if intentModeTitle.localizedCaseInsensitiveCompare(state.shortTitle) != .orderedSame {
+                                Text(intentModeTitle)
+                                    .novaLabel(tint)
+                                    .padding(.horizontal, 8)
+                                    .frame(height: 19)
+                                    .background(tint.opacity(0.10), in: Capsule(style: .continuous))
+                                    .accessibilityIdentifier("projectOSIntentMode")
+                            }
+                        }
                     }
 
-                    Text(projectOSMissionText)
+                    Text(project.name)
                         .font(NovaType.display)
                         .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(4)
-                        .minimumScaleFactor(0.72)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.68)
+                        .accessibilityIdentifier("projectOSProjectName")
+
+                    Text(projectOSMissionText)
+                        .font(NovaType.body)
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.82)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("projectOSMission")
                 }
@@ -49,6 +70,9 @@ extension ProjectDashboardView {
                 }
             }
 
+            projectOSIntelligenceTelemetry
+            projectOSIntelligenceSignalGrid
+
             Rectangle()
                 .fill(AgentPalette.divider.opacity(0.45))
                 .frame(height: 0.7)
@@ -66,6 +90,94 @@ extension ProjectDashboardView {
         .accessibilityIdentifier("projectOSControlCenter")
     }
 
+    var projectOSIntelligenceTelemetry: some View {
+        NovaTelemetryStrip(
+            items: [
+                NovaTelemetryItem("State", dashboardExecutionState.shortTitle, tint: dashboardExecutionTint(dashboardExecutionState)),
+                NovaTelemetryItem("Health", "\(summary.review.healthScore)%", tint: reviewTint(for: summary.review.recommendation)),
+                NovaTelemetryItem("Proof", "\(projectOSEvidenceMetricCount)", tint: trustTint, isEmphasized: projectOSEvidenceMetricCount > 0),
+                NovaTelemetryItem("Gates", projectOSGateMetricText, tint: projectOSGateMetricTint)
+            ],
+            compact: true
+        )
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(AgentPalette.row.opacity(0.42), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .strokeBorder(tintForIntelligenceTelemetry.opacity(0.16), lineWidth: 0.55)
+        )
+        .accessibilityIdentifier("projectOSIntelligenceTelemetry")
+    }
+
+    var projectOSIntelligenceSignalGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+            projectOSSnapshotCell(
+                title: "Now",
+                value: projectOSCurrentActionText,
+                symbol: dashboardExecutionState.symbolName,
+                tint: dashboardExecutionTint(dashboardExecutionState),
+                identifier: "intelligence-now"
+            )
+            projectOSSnapshotCell(
+                title: "Next",
+                value: projectOSNextStepText,
+                symbol: "arrow.right.circle.fill",
+                tint: commandTint(for: recommendedCommandIntent),
+                identifier: "intelligence-next"
+            )
+            projectOSSnapshotCell(
+                title: "Proof",
+                value: projectOSProofText,
+                symbol: "checkmark.seal.fill",
+                tint: trustTint,
+                identifier: "intelligence-proof"
+            )
+            projectOSSnapshotCell(
+                title: projectOSBlockerTitle,
+                value: projectOSBlockerText,
+                symbol: projectOSBlockerSymbol,
+                tint: projectOSBlockerTint,
+                identifier: "intelligence-gate"
+            )
+        }
+        .accessibilityIdentifier("projectOSIntelligenceSignals")
+    }
+
+    var projectOSEvidenceMetricCount: Int {
+        summary.proofItems.count + projectArtifacts.count + projectFileChanges.count
+    }
+
+    var projectOSGateMetricText: String {
+        let count = projectOSGateMetricCount
+        return count == 0 ? "Clear" : "\(count)"
+    }
+
+    var projectOSGateMetricCount: Int {
+        let hasBlockingProjectState = projectOSStatus == .blocked ||
+            projectOSStatus == .failed ||
+            !summary.blocker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            autoContinueState.state == .blocked
+        return summary.pendingApprovalCount + (hasBlockingProjectState ? 1 : 0)
+    }
+
+    var projectOSGateMetricTint: Color {
+        if projectOSStatus == .blocked ||
+            projectOSStatus == .failed ||
+            autoContinueState.state == .blocked {
+            return AgentPalette.rose
+        }
+        if summary.pendingApprovalCount > 0 || projectOSStatus == .waiting {
+            return AgentPalette.cyan
+        }
+        return AgentPalette.green
+    }
+
+    var tintForIntelligenceTelemetry: Color {
+        if projectOSGateMetricCount > 0 { return projectOSGateMetricTint }
+        return trustTint
+    }
+
     var projectOSExecutionStatePanel: some View {
         let state = dashboardExecutionState
         let tint = dashboardExecutionTint(state)
@@ -77,10 +189,10 @@ extension ProjectDashboardView {
                             .fill(tint)
                             .frame(width: 6, height: 6)
                             .shadow(color: AgentPerformance.prefersReducedVisualEffects ? .clear : tint.opacity(0.8), radius: 4)
-                        Text(state.shortTitle)
+                        Text("Execution")
                             .novaLabel(tint)
-                            .accessibilityIdentifier("projectOSExecutionStatePill")
                     }
+                    .accessibilityHidden(true)
 
                     Text(state.headline)
                         .font(NovaType.title)
