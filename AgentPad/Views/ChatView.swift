@@ -55,11 +55,13 @@ struct ChatView: View {
     @AppStorage("codexTerminalPaired") private var codexTerminalPaired = false
     @AppStorage("novaForgeChatDraftsByConversation") private var persistedDraftsJSON = "{}"
 
+    private static let chatLatestAnchorID = "chatLatestAnchor"
     private static let chatBottomID = "chatBottom"
     private static let chatScrollSpace = "chatScroll"
     private let messageRenderWindowSize = 80
     private let bottomPinnedThreshold: CGFloat = 160
     private let detachedRepinThreshold: CGFloat = 28
+    private let latestResponseClearance: CGFloat = 64
 
     private var shouldAnimateDecorative: Bool {
         AgentPerformance.allowsDecorativeMotion && !reduceMotion
@@ -129,6 +131,10 @@ struct ChatView: View {
 
     private var latestMessageID: UUID? {
         cachedMessages.last?.id
+    }
+
+    private var latestScrollTargetID: String? {
+        transcriptRows.isEmpty ? nil : Self.chatLatestAnchorID
     }
 
     private var transcriptBottomPadding: CGFloat {
@@ -738,22 +744,34 @@ struct ChatView: View {
                                     }
 
                                     ForEach(transcriptRows) { row in
-                                        switch row {
-                                        case .message(let message):
-                                            messageBubble(for: message)
-                                        case .live:
-                                            ChatLiveResponseIsland(
-                                                runtime: runtime,
-                                                isVisibleForFrameProfiling: isVisibleForFrameProfiling
-                                            )
+                                        Group {
+                                            switch row {
+                                            case .message(let message):
+                                                messageBubble(for: message)
+                                            case .live:
+                                                ChatLiveResponseIsland(
+                                                    runtime: runtime,
+                                                    isVisibleForFrameProfiling: isVisibleForFrameProfiling
+                                                )
+                                            }
                                         }
+                                        .id(row.id)
                                     }
                                 }
-                                .padding(.bottom, transcriptBottomPadding)
                                 .padding(.top, 20)
 
                                 Color.clear
+                                    .frame(height: latestResponseClearance)
+                                    .accessibilityHidden(true)
+                                    .id(Self.chatLatestAnchorID)
+
+                                Color.clear
+                                    .frame(height: transcriptBottomPadding)
+                                    .accessibilityHidden(true)
+
+                                Color.clear
                                     .frame(height: 1)
+                                    .accessibilityHidden(true)
                                     .id(Self.chatBottomID)
                             }
                         }
@@ -761,14 +779,7 @@ struct ChatView: View {
                         .accessibilityIdentifier("chatTranscriptScroll")
                         .scrollContentBackground(.hidden)
                         .scrollDismissesKeyboard(.interactively)
-                        // Layout-level bottom pinning: while the user is at the
-                        // bottom, content growth (streaming text, tool rows)
-                        // keeps the transcript pinned with NO scrollTo calls,
-                        // no animation fights, and no per-flush layout jumps.
-                        // Detach/re-pin is still governed by the scroll
-                        // attachment state machine below.
                         .defaultScrollAnchor(shouldTopAnchorEmptyTranscript ? .top : .bottom, for: .initialOffset)
-                        .defaultScrollAnchor(shouldKeepTranscriptPinned ? .bottom : nil, for: .sizeChanges)
                         .contentShape(Rectangle())
                         .simultaneousGesture(
                             DragGesture(minimumDistance: 14, coordinateSpace: .named(Self.chatScrollSpace))
@@ -780,7 +791,8 @@ struct ChatView: View {
                             composerFocused = false
                         }
                         .onScrollGeometryChange(for: Int.self) { geometry in
-                            let distance = max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+                            let distanceToContentBottom = max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+                            let distance = max(0, distanceToContentBottom - transcriptBottomPadding)
                             let bucketSize: CGFloat = AgentPerformance.isPerformanceMode ? 24 : 8
                             return Int((distance / bucketSize).rounded())
                         } action: { _, distanceBucket in
@@ -1720,7 +1732,7 @@ struct ChatView: View {
     private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool) {
         let action = {
             scrollAttachment = .restoring
-            proxy.scrollTo(Self.chatBottomID, anchor: .bottom)
+            proxy.scrollTo(latestScrollTargetID ?? Self.chatBottomID, anchor: .bottom)
             forceScrollToBottom = false
             transient.userDetachedUntil = .distantPast
             transient.userScrollIntentUntil = .distantPast

@@ -220,7 +220,11 @@ final class AgentPadUITests: XCTestCase {
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
         XCTAssertLessThanOrEqual(assistantBubble.frame.maxY, bottomAccessory.frame.minY - 4, "Auto-scroll should keep the latest response readable above the composer.")
+        let assistantDockGap = bottomAccessory.frame.minY - assistantBubble.frame.maxY
+        XCTAssertGreaterThanOrEqual(assistantDockGap, 4, "Auto-scroll should not tuck the latest assistant response under the composer.")
+        XCTAssertLessThanOrEqual(assistantDockGap, 96, "Auto-scroll should land on the latest assistant response, not an invisible spacer below the transcript.")
         XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 4), "Running/Calling state should clear after a valid response.")
+        capture("sev0-chat-send-stream-visible-before-followup", app: app)
 
         composer.tap()
         composer.typeText("Follow-up ready")
@@ -1177,7 +1181,10 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "Live streaming should stay pinned at the bottom without asking the user to manually jump to latest.")
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        let liveBubble = app.otherElements["liveStreamingBubble"]
+        XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the run/composer stack.")
+        XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The live bubble itself should not continue behind the run/composer stack.")
         capture("23-streaming-bottom-pinned", app: app)
 
         let progressToggle = runProgressToggle(in: app)
@@ -1218,7 +1225,10 @@ final class AgentPadUITests: XCTestCase {
             assertComposerDockAligned(in: app)
         }
 
+        let liveBubble = app.otherElements["liveStreamingBubble"]
+        XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the full bottom accessory stack.")
+        XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The focused-composer live bubble should not flow under the bottom accessory stack.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "A focused composer should not show Jump to Latest while the transcript remains pinned.")
         capture("29-chat-layout-contract-keyboard-streaming", app: app)
     }

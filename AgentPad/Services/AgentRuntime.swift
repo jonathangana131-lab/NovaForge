@@ -77,6 +77,7 @@ final class LiveStreamBuffer: ObservableObject {
     private let minimumDisplayInterval: Duration = .milliseconds(80)
     private let minimumInitialDisplayCharacters = 1
     private let maximumPendingCharacters = 260
+    private let maximumDisplayedCharacters = 900
     @Published private var frame = LiveStreamFrame()
     @ObservationIgnored private var visibleText = ""
     @ObservationIgnored private var pendingText = ""
@@ -85,15 +86,17 @@ final class LiveStreamBuffer: ObservableObject {
     @Published private(set) var responseID = UUID()
     @Published private(set) var handoffMessageID: UUID?
 
-    var displayText: String { frame.displayText }
+    var displayText: String {
+        guard frame.displayText.count > maximumDisplayedCharacters else {
+            return frame.displayText
+        }
+        return "...\n" + String(frame.displayText.suffix(maximumDisplayedCharacters))
+    }
     var characterCount: Int { frame.characterCount }
     var revision: Int { frame.revision }
     var isEmpty: Bool { frame.characterCount == 0 }
     var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
-    /// The live bubble no longer truncates to a tail window; the transcript is
-    /// bottom-anchored at the layout level instead, so the full streamed text
-    /// is always the display text.
-    var isShowingTail: Bool { false }
+    var isShowingTail: Bool { frame.displayText.count > maximumDisplayedCharacters }
 
     func reset() {
         flushTask?.cancel()
