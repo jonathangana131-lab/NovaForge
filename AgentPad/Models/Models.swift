@@ -1442,6 +1442,7 @@ enum PersistedPayloadBudget {
     static let maxToolRunArgumentsCharacters = 8_000
     static let maxToolCallArgumentsCharacters = 6_000
     static let maxToolCallsJSONCharacters = 24_000
+    static let maxReasoningContentCharacters = 12_000
 
     static func compactMessageContent(_ content: String, role: ChatRole) -> String {
         let limit = role == .tool ? maxToolMessageContentCharacters : maxMessageContentCharacters
@@ -1454,6 +1455,13 @@ enum PersistedPayloadBudget {
 
     static func compactToolRunOutput(_ output: String) -> String {
         compact(output, label: "persisted tool output", limit: maxToolRunOutputCharacters)
+    }
+
+    static func compactReasoningContent(_ content: String?) -> String? {
+        guard let content else { return nil }
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return compact(trimmed, label: "provider reasoning replay", limit: maxReasoningContentCharacters)
     }
 
     static func compactToolCallsJSON(_ json: String?) -> String? {
@@ -1495,6 +1503,11 @@ enum PersistedPayloadBudget {
                 let compactedToolCallsJSON = compactToolCallsJSON(message.toolCallsJSON)
                 if compactedToolCallsJSON != message.toolCallsJSON {
                     message.toolCallsJSON = compactedToolCallsJSON
+                }
+
+                let compactedReasoningContent = compactReasoningContent(message.reasoningContent)
+                if compactedReasoningContent != message.reasoningContent {
+                    message.reasoningContent = compactedReasoningContent
                 }
             }
         }
@@ -1590,6 +1603,7 @@ final class ChatMessage {
     var conversation: Conversation?
     var toolCallID: String?
     var toolCallsJSON: String?
+    var reasoningContent: String?
 
     var role: ChatRole {
         get { ChatRole(rawValue: roleRawValue) ?? .assistant }
@@ -1607,6 +1621,7 @@ final class ChatMessage {
         content: String,
         toolCallID: String? = nil,
         toolCallsJSON: String? = nil,
+        reasoningContent: String? = nil,
         conversation: Conversation? = nil
     ) {
         self.id = UUID()
@@ -1614,6 +1629,7 @@ final class ChatMessage {
         self.content = PersistedPayloadBudget.compactMessageContent(content, role: role)
         self.toolCallID = toolCallID
         self.toolCallsJSON = PersistedPayloadBudget.compactToolCallsJSON(toolCallsJSON)
+        self.reasoningContent = PersistedPayloadBudget.compactReasoningContent(reasoningContent)
         self.createdAt = Date()
         self.conversation = conversation
     }

@@ -104,6 +104,20 @@ struct ChatView: View {
         cachedMessages.last?.id
     }
 
+    private var liveStreamHandoffReplacementVisible: Bool {
+        guard let handoffID = runtime.liveStreamHandoffMessageID else { return false }
+        return cachedMessages.contains { $0.id == handoffID }
+    }
+
+    private var isLiveStreamHandoffPending: Bool {
+        guard runtime.liveStreamHandoffMessageID != nil else { return false }
+        return !liveStreamHandoffReplacementVisible && !runtime.liveStream.isEmpty
+    }
+
+    private var shouldShowLiveResponseIsland: Bool {
+        ownsActiveRunState && (runtime.isWorking || isLiveStreamHandoffPending)
+    }
+
     private var transcriptBottomPadding: CGFloat {
         activeLayoutContract.transcriptBreathingRoom
     }
@@ -380,6 +394,7 @@ struct ChatView: View {
             cachedMessages = snapshots
             cachedSourceMessageCount = sources.count
             updateCachedArtifacts(from: snapshots, runtimeArtifacts: runtimeArtifacts)
+            acknowledgeLiveStreamHandoffIfVisible(in: snapshots)
         }
     }
 
@@ -398,6 +413,12 @@ struct ChatView: View {
             context: modelContext
         )
         updateCachedArtifacts(from: cachedMessages)
+    }
+
+    private func acknowledgeLiveStreamHandoffIfVisible(in snapshots: [ChatMessageSnapshot]) {
+        guard let handoffID = runtime.liveStreamHandoffMessageID,
+              snapshots.contains(where: { $0.id == handoffID }) else { return }
+        runtime.acknowledgeLiveStreamHandoff(messageID: handoffID)
     }
 
     private static func placeholderMissionContract(for project: Project) -> MissionOSContract {
@@ -613,9 +634,10 @@ struct ChatView: View {
                                         messageBubble(for: message)
                                     }
 
-                                    if ownsActiveRunState {
+                                    if shouldShowLiveResponseIsland {
                                         ChatLiveResponseIsland(
                                             runtime: runtime,
+                                            isHandoffPending: isLiveStreamHandoffPending,
                                             isVisibleForFrameProfiling: isVisibleForFrameProfiling
                                         )
                                         .id("liveResponse")

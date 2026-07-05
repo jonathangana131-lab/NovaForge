@@ -7,6 +7,7 @@ struct ProviderMessageInput: Sendable {
     let createdAt: Date
     let toolCallID: String?
     let toolCalls: [APIToolCall]
+    let reasoningContent: String?
 }
 
 struct ProviderChatMessage: Equatable, Sendable {
@@ -14,6 +15,7 @@ struct ProviderChatMessage: Equatable, Sendable {
     let content: String?
     let toolCallID: String?
     let toolCalls: [APIToolCall]?
+    let reasoningContent: String?
 
     var roleLogDescription: String {
         switch role {
@@ -65,7 +67,8 @@ enum ProviderMessageSanitizer {
                 role: "system",
                 content: Self.compactProviderContent(systemPrompt, label: "system prompt", limit: maxSystemContentCharacters),
                 toolCallID: nil,
-                toolCalls: nil
+                toolCalls: nil,
+                reasoningContent: nil
             )
         ]
         var dropped: [ProviderMessageDrop] = []
@@ -93,7 +96,8 @@ enum ProviderMessageSanitizer {
                         role: "user",
                         content: Self.compactProviderContent(content, label: "user message", limit: maxUserContentCharacters),
                         toolCallID: nil,
-                        toolCalls: nil
+                        toolCalls: nil,
+                        reasoningContent: nil
                     ))
                 }
                 index = ordered.index(after: index)
@@ -108,7 +112,8 @@ enum ProviderMessageSanitizer {
                             role: "assistant",
                             content: Self.compactProviderContent(content, label: "assistant message", limit: maxAssistantContentCharacters),
                             toolCallID: nil,
-                            toolCalls: nil
+                            toolCalls: nil,
+                            reasoningContent: Self.compactOptionalReasoningContent(input.reasoningContent)
                         ))
                     }
                     index = ordered.index(after: index)
@@ -127,7 +132,8 @@ enum ProviderMessageSanitizer {
                                 role: "tool",
                                 content: Self.compactProviderContent(tool.content, label: "tool result", limit: maxToolContentCharacters),
                                 toolCallID: toolCallID,
-                                toolCalls: nil
+                                toolCalls: nil,
+                                reasoningContent: nil
                             ))
                         } else {
                             toolDrops.append(.init(
@@ -144,7 +150,8 @@ enum ProviderMessageSanitizer {
                             role: "assistant",
                             content: Self.compactOptionalAssistantContent(input.content),
                             toolCallID: nil,
-                            toolCalls: Self.compactToolCallsForProvider(input.toolCalls)
+                            toolCalls: Self.compactToolCallsForProvider(input.toolCalls),
+                            reasoningContent: Self.compactOptionalReasoningContent(input.reasoningContent)
                         ))
                         messages.append(contentsOf: matchedTools)
                         dropped.append(contentsOf: toolDrops)
@@ -175,6 +182,13 @@ enum ProviderMessageSanitizer {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return compactProviderContent(trimmed, label: "assistant tool-call message", limit: maxAssistantContentCharacters)
+    }
+
+    private static func compactOptionalReasoningContent(_ content: String?) -> String? {
+        guard let content else { return nil }
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return compactProviderContent(trimmed, label: "assistant reasoning replay", limit: maxAssistantContentCharacters)
     }
 
     private static func compactProviderContent(_ content: String, label: String, limit: Int) -> String {
@@ -278,7 +292,8 @@ enum ProviderMessageSanitizer {
             role: system.role,
             content: compactedSystemContent,
             toolCallID: nil,
-            toolCalls: nil
+            toolCalls: nil,
+            reasoningContent: nil
         )
         return [compactedSystem] + kept
     }
@@ -363,7 +378,8 @@ extension ChatMessage {
             content: content,
             createdAt: createdAt,
             toolCallID: toolCallID,
-            toolCalls: toolCalls ?? []
+            toolCalls: toolCalls ?? [],
+            reasoningContent: reasoningContent
         )
     }
 }

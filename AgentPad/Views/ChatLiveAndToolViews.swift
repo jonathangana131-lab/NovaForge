@@ -500,20 +500,25 @@ private struct ToolActivityRow: View {
 
 struct LiveResponseView: View {
     let isWorking: Bool
+    let isHandoffPending: Bool
     @ObservedObject var stream: LiveStreamBuffer
     let runtime: AgentRuntime
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Live Response Body")
         Group {
-            if isWorking {
+            if isWorking || (isHandoffPending && !stream.isEmpty) {
                 VStack(alignment: .leading, spacing: 10) {
                     // Reads runtime.activeToolName in its own tiny body, so
                     // tool changes re-render just this chip — never the chat.
-                    NovaLiveActivityPulse(runtime: runtime)
+                    if isWorking {
+                        NovaLiveActivityPulse(runtime: runtime)
+                    }
 
                     if stream.isEmpty {
-                        ThinkingView()
+                        if isWorking {
+                            ThinkingView()
+                        }
                     } else {
                         StreamingBubble(stream: stream)
                     }

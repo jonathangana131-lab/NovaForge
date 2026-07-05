@@ -231,6 +231,10 @@ struct ProviderConfiguration: Equatable, Sendable {
         return URL(string: String(trimmed.dropLast("/chat/completions".count)) + "/models")
     }
 
+    var modelCapabilities: ProviderModelCapabilities {
+        ProviderModelCapabilities(provider: provider, modelID: modelID)
+    }
+
     private var normalizedCustomChatCompletionsURL: String {
         var trimmed = customChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while trimmed.hasSuffix("/") {
@@ -243,5 +247,15 @@ struct ProviderConfiguration: Equatable, Sendable {
             return trimmed + "/chat/completions"
         }
         return trimmed
+    }
+}
+
+struct ProviderModelCapabilities: Equatable, Sendable {
+    let requiresReasoningContentForToolContinuation: Bool
+
+    init(provider: AIProvider, modelID: String) {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        requiresReasoningContentForToolContinuation = provider == .openCodeZen &&
+            normalizedModelID.hasPrefix("deepseek-v4-")
     }
 }
