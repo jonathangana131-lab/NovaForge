@@ -476,6 +476,43 @@ struct AppRootView: View {
             runtime.localModels.debugOverrideStatusForUITest(.ready)
             try? modelContext.save()
         }
+        if arguments.contains("--debug-provider-send-ready"),
+           let settings {
+            selectedTab = .chat
+            settings.provider = .openAI
+            settings.modelID = AIProvider.openAI.defaultModel
+            settings.temperature = min(settings.temperature, 0.2)
+            settings.updatedAt = Date()
+            try? runtime.saveAPIKey("debug-provider-key", for: .openAI)
+            runtime.debugInstallProviderResponses([
+                ProviderResponse(
+                    message: ChatCompletionsResponse.Choice.Message(
+                        role: "assistant",
+                        content: """
+                        Hey! What can I do for you today? Want me to check out the workspace, build something new, or tweak an existing file?
+
+                        I can inspect the current files, make a small focused change, run the relevant checks, and bring back proof without duplicating this welcome-style response. I will keep this one assistant turn attached to a stable message identity while it streams.
+
+                        For this send-flow check, I am deliberately taking a few beats so the transcript can prove that streaming updates one live bubble in place before it becomes the final assistant message.
+                        """,
+                        tool_calls: nil
+                    ),
+                    roleLog: "debug streamed send completion"
+                )
+            ])
+            try? modelContext.save()
+        }
+        if arguments.contains("--debug-provider-send-fails"),
+           let settings {
+            selectedTab = .chat
+            settings.provider = .openAI
+            settings.modelID = AIProvider.openAI.defaultModel
+            settings.temperature = min(settings.temperature, 0.2)
+            settings.updatedAt = Date()
+            try? runtime.saveAPIKey("debug-provider-key", for: .openAI)
+            runtime.debugInstallProviderFailure(URLError(.timedOut))
+            try? modelContext.save()
+        }
         if arguments.contains("--settings-auto-approve"),
            let settings {
             selectedTab = .settings

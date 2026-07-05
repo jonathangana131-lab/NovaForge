@@ -357,6 +357,8 @@ struct UserMessageBubble: View {
                 .chatMessageSurface(radius: 22, tint: AgentPalette.accent, emphasis: .user)
         }
         .padding(.horizontal, 18)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatUserMessageBubble")
     }
 }
 
@@ -400,6 +402,8 @@ struct AssistantMessageBubble: View {
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatAssistantMessageBubble")
     }
 }
 

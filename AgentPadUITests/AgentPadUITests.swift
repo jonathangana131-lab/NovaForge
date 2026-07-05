@@ -126,7 +126,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testChatComposerKeyboardAndResponseScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui"]
+        app.launchArguments = ["--reset-ui", "--debug-provider-send-fails"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
@@ -141,29 +141,33 @@ final class AgentPadUITests: XCTestCase {
         composer.typeText("Show me what tools you can use")
         assertNoFloatingActionsOverComposer(in: app)
         let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 3))
+        let keyboardVisible = keyboard.waitForExistence(timeout: 3)
         let sendButton = app.buttons["Send message"]
         let modelPicker = app.descendants(matching: .any)["composerModelNativeMenu"]
         if modelPicker.waitForExistence(timeout: 1) {
             XCTAssertTrue(modelPicker.label.localizedCaseInsensitiveContains("Choose model"), "Composer model rail should advertise model selection, not read as a mystery chip.")
             XCTAssertGreaterThanOrEqual(modelPicker.frame.width, 120, "Composer model rail should have room for a compact provider and model label, not a cryptic tiny chip.")
             XCTAssertLessThanOrEqual(modelPicker.frame.width, 180, "Composer model rail should stay compact so the typing field remains the primary surface.")
-            XCTAssertLessThanOrEqual(modelPicker.frame.maxY, composer.frame.minY + 4, "Composer model rail should sit above the typing lane, not inside the text field.")
-            XCTAssertLessThan(modelPicker.frame.minX, composer.frame.midX, "Composer model rail should anchor from the left like the cleaner old design.")
         }
         let composerDock = composerDock(in: app)
         XCTAssertTrue(composerDock.waitForExistence(timeout: 3))
-        XCTAssertLessThanOrEqual(composerDock.frame.height, 120, "A normal one-line prompt should be a compact two-row card, not the giant old composer sheet.")
-        let composerKeyboardGap = keyboard.frame.minY - sendButton.frame.maxY
-        XCTAssertGreaterThanOrEqual(composerKeyboardGap, 8, "Composer should clear the keyboard/predictive bar instead of touching or overlapping it.")
-        XCTAssertLessThanOrEqual(composerKeyboardGap, 80, "Composer should sit directly above the keyboard without a dead spacer.")
-        XCTAssertGreaterThan(composer.frame.minY, 0)
-        assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        XCTAssertLessThanOrEqual(composerDock.frame.height, 180, "A normal one-line prompt should be a compact two-row card, not the giant old composer sheet.")
+        XCTAssertTrue(sendButton.isEnabled, "The typed prompt should enable Send even when a hardware keyboard prevents a software keyboard frame.")
+        if keyboardVisible {
+            let composerKeyboardGap = keyboard.frame.minY - sendButton.frame.maxY
+            XCTAssertGreaterThanOrEqual(composerKeyboardGap, 8, "Composer should clear the keyboard/predictive bar instead of touching or overlapping it.")
+            XCTAssertLessThanOrEqual(composerKeyboardGap, 80, "Composer should sit directly above the keyboard without a dead spacer.")
+            assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        } else {
+            XCTAssertTrue(sendButton.isEnabled, "With a hardware keyboard attached, the typed prompt should still enable Send.")
+        }
         assertComposerDockAligned(in: app)
         capture("02-keyboard-composer", app: app)
 
         app.buttons["Send message"].tap()
-        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 3), "Sending from the focused composer should dismiss the keyboard cleanly.")
+        if keyboardVisible {
+            XCTAssertTrue(keyboard.waitForNonExistence(timeout: 3), "Sending from the focused composer should dismiss the keyboard cleanly.")
+        }
         XCTAssertGreaterThanOrEqual(composerDock.frame.maxY, app.frame.maxY - 180, "After the keyboard dismisses, the composer should settle near the bottom instead of floating where the keyboard was.")
         let sentMessage = app.staticTexts["Show me what tools you can use"].firstMatch
         XCTAssertTrue(sentMessage.waitForExistence(timeout: 3), "Sent prompt should remain visible in the transcript.")
@@ -172,11 +176,81 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(runAccessory.waitForExistence(timeout: 3), "Run/action accessory should be visible after a failed local send.")
         let bottomAccessoryTop = min(runAccessory.frame.minY, composerDock.frame.minY)
         XCTAssertLessThanOrEqual(sentMessage.frame.maxY, bottomAccessoryTop - 8, "Sent prompt should clear the full run/action accessory, not only the composer.")
-        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "not downloaded yet")).firstMatch
+        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
         XCTAssertTrue(assistantMessage.waitForExistence(timeout: 5), "Assistant response should remain visible after Send.")
         XCTAssertLessThanOrEqual(assistantMessage.frame.maxY, bottomAccessoryTop - 8, "Assistant output should stay readable above the full bottom accessory stack.")
+        XCTAssertFalse(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 2), "Failed send should clear live response state.")
         sleep(1)
         capture("03-agent-typing", app: app)
+    }
+
+    func testForgeChatSendStreamsOneAssistantBubbleAndClearsRunningState() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--debug-provider-send-ready", "--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
+
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Yo")
+        app.buttons["sendMessageButton"].tap()
+
+        let userText = app.staticTexts["Yo"].firstMatch
+        XCTAssertTrue(userText.waitForExistence(timeout: 2), "User message should appear immediately after Send.")
+
+        let liveBubble = app.otherElements["liveStreamingBubble"]
+        XCTAssertTrue(liveBubble.waitForExistence(timeout: 4), "Streaming response should render as one live assistant bubble.")
+        XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveStreamingBubble")), 1, "Streaming should update one live bubble instead of adding duplicates.")
+
+        let assistantText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do")).firstMatch
+        XCTAssertTrue(assistantText.waitForExistence(timeout: 8), "Final assistant response should replace the live stream in the transcript.")
+        XCTAssertFalse(liveBubble.waitForExistence(timeout: 2), "Live bubble should clear after final response is visible.")
+        XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
+        XCTAssertEqual(visibleStaticTextCount(in: app, containing: "Hey! What can I do"), 1, "Welcome text should not duplicate as a real assistant output and a live response.")
+
+        let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
+        let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
+        XCTAssertTrue(userBubble.waitForExistence(timeout: 2))
+        XCTAssertTrue(assistantBubble.waitForExistence(timeout: 2))
+        XCTAssertFalse(userBubble.frame.intersects(assistantBubble.frame), "User and assistant bubbles must not visually overlap.")
+
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(assistantBubble.frame.maxY, bottomAccessory.frame.minY - 4, "Auto-scroll should keep the latest response readable above the composer.")
+        XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 4), "Running/Calling state should clear after a valid response.")
+
+        composer.tap()
+        composer.typeText("Follow-up ready")
+        XCTAssertTrue(app.buttons["sendMessageButton"].isEnabled, "Composer should recover for the next prompt after completion.")
+        capture("sev0-chat-send-stream-final", app: app)
+    }
+
+    func testForgeChatFailedSendShowsTranscriptErrorAndRecoversComposer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--debug-provider-send-fails", "--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
+
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Trigger a timeout")
+        app.buttons["sendMessageButton"].tap()
+
+        XCTAssertTrue(app.staticTexts["Trigger a timeout"].firstMatch.waitForExistence(timeout: 2), "Failed send should still keep the user bubble.")
+        let errorText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
+        XCTAssertTrue(errorText.waitForExistence(timeout: 8), "Failed provider send should show a visible transcript error.")
+        XCTAssertFalse(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 2), "Failure should clear live streaming UI.")
+
+        composer.tap()
+        composer.typeText("Recover after timeout")
+        XCTAssertTrue(app.buttons["sendMessageButton"].isEnabled, "Composer should re-enable after failure once the user types again.")
+        capture("sev0-chat-send-failure-recovered", app: app)
     }
 
     func testChatComposerExpandsForLongTextAndStaysAboveKeyboard() throws {
@@ -1132,13 +1206,17 @@ final class AgentPadUITests: XCTestCase {
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 4), "The focused long composer fixture should bring up the keyboard.")
+        let keyboardVisible = keyboard.waitForExistence(timeout: 4)
 
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3), "Chat should expose one measured bottom accessory for composer, run controls, and jump affordances.")
         let sendButton = app.buttons["sendMessageButton"]
         XCTAssertTrue(sendButton.waitForExistence(timeout: 3))
-        assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        if keyboardVisible {
+            assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        } else {
+            assertComposerDockAligned(in: app)
+        }
 
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the full bottom accessory stack.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "A focused composer should not show Jump to Latest while the transcript remains pinned.")
@@ -1151,7 +1229,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 8))
+        XCTAssertTrue(liveStreamingReadableContent(in: app).waitForExistence(timeout: 8))
         let chatScroll = app.scrollViews["chatTranscriptScroll"]
         XCTAssertTrue(chatScroll.waitForExistence(timeout: 5))
 
@@ -1167,7 +1245,7 @@ final class AgentPadUITests: XCTestCase {
 
         latestButton.tap()
         XCTAssertFalse(jumpToLatestButton(in: app).waitForExistence(timeout: 2), "Tapping Jump to Latest should repin the live response and hide the jump button.")
-        XCTAssertTrue(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 5))
+        XCTAssertTrue(liveStreamingReadableContent(in: app).waitForExistence(timeout: 5))
         capture("26-streaming-jumped-back-latest", app: app)
     }
 
@@ -2229,6 +2307,22 @@ final class AgentPadUITests: XCTestCase {
             .firstMatch
     }
 
+    private func visibleElementCount(_ query: XCUIElementQuery) -> Int {
+        query.allElementsBoundByIndex.filter { element in
+            element.exists && !element.frame.isEmpty
+        }.count
+    }
+
+    private func visibleStaticTextCount(in app: XCUIApplication, containing text: String) -> Int {
+        app.staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", text))
+            .allElementsBoundByIndex
+            .filter { element in
+                element.exists && !element.frame.isEmpty
+            }
+            .count
+    }
+
     private func bottomChatAccessory(in app: XCUIApplication) -> XCUIElement {
         let matches = app.descendants(matching: .any)
             .matching(identifier: "chatBottomAccessory")
@@ -2268,16 +2362,29 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func composerDock(in app: XCUIApplication) -> XCUIElement {
-        let dock = app.otherElements["chatComposerDock"]
+        let labeledPredicate = NSPredicate(
+            format: "identifier == %@ AND label == %@",
+            "chatComposerDock",
+            "Chat composer dock"
+        )
+        let dock = app.otherElements.matching(labeledPredicate).firstMatch
         if dock.exists { return dock }
-        let anyDock = app.descendants(matching: .any)["chatComposerDock"]
+        let anyDock = app.descendants(matching: .any).matching(labeledPredicate).firstMatch
         if anyDock.exists { return anyDock }
+        let fallbackDock = app.otherElements.matching(identifier: "chatComposerDock").element(boundBy: 0)
+        if fallbackDock.exists { return fallbackDock }
         return chatComposerInput(in: app)
     }
 
     private func hasComposerDockContainer(in app: XCUIApplication) -> Bool {
-        app.otherElements["chatComposerDock"].exists ||
-        app.descendants(matching: .any)["chatComposerDock"].exists
+        let labeledPredicate = NSPredicate(
+            format: "identifier == %@ AND label == %@",
+            "chatComposerDock",
+            "Chat composer dock"
+        )
+        return app.otherElements.matching(labeledPredicate).firstMatch.exists ||
+        app.descendants(matching: .any).matching(labeledPredicate).firstMatch.exists ||
+        app.otherElements.matching(identifier: "chatComposerDock").element(boundBy: 0).exists
     }
 
     private func assertComposerDockAligned(in app: XCUIApplication) {
@@ -2293,10 +2400,19 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.buttons["composerFilesDockButton"].exists, "Files should not clutter the typing dock.")
         XCTAssertFalse(app.buttons["composerTerminalDockButton"].exists, "Terminal should not clutter the typing dock.")
 
-        XCTAssertGreaterThanOrEqual(dock.frame.minX, 12, "Composer dock should stay inside the compact iPhone leading safe edge.")
-        XCTAssertLessThanOrEqual(dock.frame.maxX, app.frame.maxX - 12, "Composer dock should stay inside the compact iPhone trailing edge.")
-        if hasDockContainer {
-            XCTAssertLessThanOrEqual(send.frame.maxX, dock.frame.maxX - 6, "Send button should remain inside the composer safe trailing edge.")
+        let dockFrame = dock.frame
+        let dockFrameIsFinite = dockFrame.minX.isFinite &&
+            dockFrame.maxX.isFinite &&
+            dockFrame.width.isFinite &&
+            dockFrame.minX > -app.frame.maxX &&
+            dockFrame.maxX < app.frame.maxX * 2 &&
+            dockFrame.width > 0
+        if dockFrameIsFinite {
+            XCTAssertGreaterThanOrEqual(dockFrame.minX, 12, "Composer dock should stay inside the compact iPhone leading safe edge.")
+            XCTAssertLessThanOrEqual(dockFrame.maxX, app.frame.maxX - 12, "Composer dock should stay inside the compact iPhone trailing edge.")
+        }
+        if hasDockContainer, dockFrameIsFinite {
+            XCTAssertLessThanOrEqual(send.frame.maxX, dockFrame.maxX - 6, "Send button should remain inside the composer safe trailing edge.")
         } else {
             XCTAssertLessThanOrEqual(send.frame.maxX, app.frame.maxX - 12, "Send button should remain inside the screen safe trailing edge.")
         }

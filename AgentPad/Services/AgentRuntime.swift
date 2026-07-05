@@ -249,6 +249,7 @@ final class AgentRuntime {
     var outgoingProviderRoleLog = ""
     var lastRunDuration: TimeInterval?
     var wasInterrupted = false
+    private(set) var queuedFollowUpMessageIDs: Set<UUID> = []
     let localModels = LocalModelManager()
     /// Transient in-app feedback queue (saves, copies, recoverable failures).
     /// Surfaces through AgentToastView so user-facing operations no longer fail
@@ -277,12 +278,15 @@ final class AgentRuntime {
     private var didInjectRecoverableFailureFixture = false
     private var debugCompactedSaveOverride: ((ModelContext) throws -> Void)?
     private var debugProviderResponses: [ProviderResponse] = []
+    private var debugProviderFailure: Error?
+    private var debugProviderCredentialOverride = false
     #endif
 
     private struct QueuedPrompt: Identifiable {
         let id = UUID()
         let text: String
         let conversation: Conversation
+        let visibleMessageID: UUID?
         let createdAt = Date()
     }
 
@@ -370,7 +374,13 @@ final class AgentRuntime {
     }
 
     func debugInstallProviderResponses(_ responses: [ProviderResponse]) {
+        debugProviderCredentialOverride = true
         debugProviderResponses = responses
+    }
+
+    func debugInstallProviderFailure(_ error: Error) {
+        debugProviderCredentialOverride = true
+        debugProviderFailure = error
     }
 
     func debugSimulateActiveStatusStripRun(conversation: Conversation? = nil) {
@@ -600,6 +610,9 @@ final class AgentRuntime {
 
     func hasUsableProviderCredential(settings: AgentSettings) -> Bool {
         if settings.provider == .local { return true }
+        #if DEBUG || targetEnvironment(simulator)
+        if debugProviderCredentialOverride || !debugProviderResponses.isEmpty || debugProviderFailure != nil { return true }
+        #endif
         return !apiKey(for: settings.provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -620,18 +633,7 @@ final class AgentRuntime {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 return
             }
-            if queueFollowUp(prompt, conversation: conversation) {
-                ProjectEventRecorder.record(
-                    project: project ?? conversation.project,
-                    kind: .promptQueued,
-                    title: "Follow-up queued",
-                    detail: prompt,
-                    severity: .running,
-                    sourceType: .conversation,
-                    sourceID: conversation.id,
-                    context: context
-                )
-                saveCompactedIfPossible(context)
+            if queueFollowUp(prompt, conversation: conversation, context: context, project: project ?? conversation.project) {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
             return
@@ -921,6 +923,7 @@ final class AgentRuntime {
         traceEvents = []
         plannedProgressSteps = []
         currentArtifacts = []
+        queuedFollowUpMessageIDs.removeAll()
         discardQueuedPrompts()
         outgoingProviderRoleLog = ""
         lastRunDuration = nil
@@ -939,6 +942,30 @@ final class AgentRuntime {
         origin: AgentRunOrigin = .manual,
         visiblePrompt: String? = nil
     ) {
+        startPrompt(
+            prompt,
+            conversation: conversation,
+            settings: settings,
+            context: context,
+            project: project,
+            clearsStaleQueuedFollowUps: clearsStaleQueuedFollowUps,
+            origin: origin,
+            visiblePrompt: visiblePrompt,
+            existingVisibleUserMessageID: nil
+        )
+    }
+
+    private func startPrompt(
+        _ prompt: String,
+        conversation: Conversation,
+        settings: AgentSettings,
+        context: ModelContext,
+        project: Project?,
+        clearsStaleQueuedFollowUps: Bool,
+        origin: AgentRunOrigin,
+        visiblePrompt: String?,
+        existingVisibleUserMessageID: UUID?
+    ) {
         if clearsStaleQueuedFollowUps {
             discardQueuedPrompts()
         }
@@ -954,20 +981,31 @@ final class AgentRuntime {
             context: context
         )
         let displayedPrompt = visiblePrompt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? visiblePrompt! : prompt
-        let userMessage = ChatMessage(role: .user, content: displayedPrompt, conversation: conversation)
-        conversation.appendMessage(userMessage)
-        context.insert(userMessage)
-        ProjectEventRecorder.record(
-            project: activeProject,
-            kind: .promptQueued,
-            title: origin == .autoContinued ? "Auto-continued prompt queued" : "Prompt queued",
-            detail: displayedPrompt,
-            severity: .running,
-            sourceType: .conversation,
-            sourceID: conversation.id,
-            metadata: ["origin": origin.rawValue],
-            context: context
-        )
+        let visibleUserMessage: ChatMessage
+        if let existingVisibleUserMessageID,
+           let existing = conversation.messages.first(where: { $0.id == existingVisibleUserMessageID }) {
+            existing.content = PersistedPayloadBudget.compactMessageContent(displayedPrompt, role: .user)
+            existing.conversation = conversation
+            visibleUserMessage = existing
+            queuedFollowUpMessageIDs.remove(existingVisibleUserMessageID)
+            conversation.refreshMessageMetadata(updateTimestamp: Date())
+        } else {
+            let userMessage = ChatMessage(role: .user, content: displayedPrompt, conversation: conversation)
+            conversation.appendMessage(userMessage)
+            context.insert(userMessage)
+            visibleUserMessage = userMessage
+            ProjectEventRecorder.record(
+                project: activeProject,
+                kind: .promptQueued,
+                title: origin == .autoContinued ? "Auto-continued prompt queued" : "Prompt queued",
+                detail: displayedPrompt,
+                severity: .running,
+                sourceType: .conversation,
+                sourceID: conversation.id,
+                metadata: ["origin": origin.rawValue],
+                context: context
+            )
+        }
 
         isWorking = true
         runState = .running
@@ -1025,6 +1063,13 @@ final class AgentRuntime {
                 currentPrompt = nil
                 isWorking = false
                 runState = .failed(message)
+                appendVisibleErrorMessage(
+                    "I hit an error before NovaForge could send: \(message)",
+                    conversation: conversation,
+                    context: context,
+                    project: activeProject,
+                    sourceID: visibleUserMessage.id
+                )
                 ProjectEventRecorder.record(
                     project: activeProject,
                     kind: .runFailed,
@@ -1306,16 +1351,23 @@ final class AgentRuntime {
             )
 
             #if DEBUG || targetEnvironment(simulator)
-            let hasDebugProviderResponses = !debugProviderResponses.isEmpty
+            let hasDebugProviderOverride = !debugProviderResponses.isEmpty || debugProviderFailure != nil
             #else
-            let hasDebugProviderResponses = false
+            let hasDebugProviderOverride = false
             #endif
-            if runProvider != .local && providerConfiguration.apiKey.isEmpty && !hasDebugProviderResponses {
+            if runProvider != .local && providerConfiguration.apiKey.isEmpty && !hasDebugProviderOverride {
                 let message = "\(runProvider.missingCredentialMessage) NovaForge did not fake a provider response."
                 lastError = message
                 lastFailedPrompt = currentPrompt
                 setActivity("Provider setup needed", detail: message)
                 pushTrace("Provider key missing", detail: "No request was sent to \(runProvider.displayName).", status: .failed)
+                let assistant = ChatMessage(
+                    role: .assistant,
+                    content: "I hit an error: \(message)",
+                    conversation: conversation
+                )
+                conversation.appendMessage(assistant)
+                context.insert(assistant)
                 ProjectEventRecorder.record(
                     project: activeProject,
                     kind: .runFailed,
@@ -2397,6 +2449,34 @@ final class AgentRuntime {
         try? context.save()
     }
 
+    private func appendVisibleErrorMessage(
+        _ text: String,
+        conversation: Conversation,
+        context: ModelContext,
+        project: Project?,
+        sourceID: UUID?
+    ) {
+        let assistant = ChatMessage(role: .assistant, content: text, conversation: conversation)
+        conversation.appendMessage(assistant)
+        context.insert(assistant)
+        ProjectEventRecorder.record(
+            project: project,
+            kind: .runFailed,
+            title: "Error shown in transcript",
+            detail: text,
+            severity: .failure,
+            sourceType: .message,
+            sourceID: sourceID ?? assistant.id,
+            context: context
+        )
+        do {
+            try saveCompacted(context)
+        } catch {
+            rollbackUnsavedMessage(assistant, from: conversation, context: context)
+            presentToast("NovaForge could not save the error transcript: \(friendlyError(error))", tone: .error)
+        }
+    }
+
     private func localAnswer(for prompt: String) -> String {
         if prompt.lowercased().contains("command") {
             return "I can run safe sandbox commands like `ls`, `cat`, `mkdir`, `touch`, `grep`, `find`, `wc`, `head`, and `validate_html`. Add an API key in Settings when you want live model reasoning."
@@ -2496,7 +2576,12 @@ final class AgentRuntime {
         conversation.refreshMessageMetadata()
     }
 
-    private func queueFollowUp(_ prompt: String, conversation: Conversation) -> Bool {
+    private func queueFollowUp(
+        _ prompt: String,
+        conversation: Conversation,
+        context: ModelContext? = nil,
+        project: Project? = nil
+    ) -> Bool {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         queuedPromptCount = queuedPrompts.count
@@ -2511,7 +2596,33 @@ final class AgentRuntime {
             return false
         }
 
-        queuedPrompts.append(QueuedPrompt(text: prompt, conversation: conversation))
+        var visibleMessageID: UUID?
+        if let context {
+            let userMessage = ChatMessage(role: .user, content: prompt, conversation: conversation)
+            conversation.appendMessage(userMessage)
+            context.insert(userMessage)
+            visibleMessageID = userMessage.id
+            queuedFollowUpMessageIDs.insert(userMessage.id)
+            ProjectEventRecorder.record(
+                project: project ?? conversation.project,
+                kind: .promptQueued,
+                title: "Follow-up queued",
+                detail: prompt,
+                severity: .running,
+                sourceType: .conversation,
+                sourceID: conversation.id,
+                context: context
+            )
+            do {
+                try saveCompacted(context)
+            } catch {
+                let message = friendlyError(error)
+                presentToast("Follow-up is visible but was not saved yet: \(message)", tone: .error)
+                pushTrace("Follow-up save delayed", detail: message, status: .failed)
+            }
+        }
+
+        queuedPrompts.append(QueuedPrompt(text: prompt, conversation: conversation, visibleMessageID: visibleMessageID))
         queuedPromptCount = queuedPrompts.count
         setActivity("Prompt queued", detail: "\(queuedPromptCount) follow-up\(queuedPromptCount == 1 ? "" : "s") waiting.")
         pushTrace("Follow-up queued", detail: "Waiting for the current run to finish.", status: .queued)
@@ -2529,12 +2640,20 @@ final class AgentRuntime {
             settings: settings,
             context: context,
             project: next.conversation.project ?? conversation.project,
-            clearsStaleQueuedFollowUps: false
+            clearsStaleQueuedFollowUps: false,
+            origin: .manual,
+            visiblePrompt: nil,
+            existingVisibleUserMessageID: next.visibleMessageID
         )
     }
 
     private func discardQueuedPrompts() {
         guard !queuedPrompts.isEmpty || queuedPromptCount != 0 else { return }
+        for prompt in queuedPrompts {
+            if let messageID = prompt.visibleMessageID {
+                queuedFollowUpMessageIDs.remove(messageID)
+            }
+        }
         queuedPrompts.removeAll()
         queuedPromptCount = 0
     }
@@ -2550,8 +2669,21 @@ final class AgentRuntime {
         onContentBatch: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> ProviderResponse {
         #if DEBUG || targetEnvironment(simulator)
+        if let debugProviderFailure {
+            self.debugProviderFailure = nil
+            try await streamDebugProviderText(
+                "Preparing deterministic failure...",
+                onContentBatch: onContentBatch
+            )
+            throw debugProviderFailure
+        }
         if !debugProviderResponses.isEmpty {
-            return debugProviderResponses.removeFirst()
+            let response = debugProviderResponses.removeFirst()
+            if let content = response.message.content,
+               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try await streamDebugProviderText(content, onContentBatch: onContentBatch)
+            }
+            return response
         }
         #endif
         var attempt = 0
@@ -2577,6 +2709,24 @@ final class AgentRuntime {
         }
     }
 
+    #if DEBUG || targetEnvironment(simulator)
+    private func streamDebugProviderText(
+        _ text: String,
+        onContentBatch: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws {
+        var index = text.startIndex
+        while index < text.endIndex {
+            try Task.checkCancellation()
+            let end = text.index(index, offsetBy: 24, limitedBy: text.endIndex) ?? text.endIndex
+            onContentBatch(String(text[index..<end]))
+            index = end
+            if index < text.endIndex {
+                try await Task.sleep(for: .milliseconds(160))
+            }
+        }
+    }
+    #endif
+
     private func isRecoverableNetworkError(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
         return [.networkConnectionLost, .notConnectedToInternet, .timedOut, .cannotConnectToHost, .dnsLookupFailed]
@@ -2584,7 +2734,9 @@ final class AgentRuntime {
     }
 
     private func providerHistory(for conversation: Conversation, limit: Int) -> [ProviderMessageInput] {
-        var inputs = recentMessages(for: conversation, limit: limit).map(\.providerInput)
+        var inputs = recentMessages(for: conversation, limit: limit)
+            .filter { !queuedFollowUpMessageIDs.contains($0.id) }
+            .map(\.providerInput)
         guard let currentPrompt,
               activeConversationID == conversation.id,
               let latestUserIndex = inputs.lastIndex(where: { $0.role == .user }) else {

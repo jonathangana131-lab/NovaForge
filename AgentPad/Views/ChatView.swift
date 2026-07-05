@@ -85,6 +85,29 @@ struct ChatView: View {
         return cachedMessages.suffix(messageRenderLimit)
     }
 
+    private var transcriptRows: [ChatTranscriptRow] {
+        var rows = visibleMessages.map(ChatTranscriptRow.message)
+        guard shouldShowLiveResponseIsland else { return rows }
+
+        let liveResponseID = runtime.liveStream.responseID
+        let handoffMessageID = runtime.liveStream.handoffMessageID
+        rows.removeAll { row in
+            guard let messageID = row.messageID else { return false }
+            return messageID == liveResponseID || messageID == handoffMessageID
+        }
+
+        let liveRow = ChatTranscriptRow.live(responseID: liveResponseID)
+        if let firstQueuedFollowUpIndex = rows.firstIndex(where: { row in
+            guard let messageID = row.messageID else { return false }
+            return runtime.queuedFollowUpMessageIDs.contains(messageID)
+        }) {
+            rows.insert(liveRow, at: firstQueuedFollowUpIndex)
+        } else {
+            rows.append(liveRow)
+        }
+        return rows
+    }
+
     private var projectConversations: [Conversation] {
         let visibleConversations = ChatProjectSeparation.visibleChatConversations(from: conversations)
         let drawerConversations = visibleConversations.contains(where: { $0.id == conversation.id })
@@ -196,7 +219,6 @@ struct ChatView: View {
 
     private var shouldShowLiveResponseIsland: Bool {
         ownsActiveRunState &&
-            !hasRenderedLiveHandoff &&
             (runtime.isWorking || runtime.liveStream.isHandoffActive)
     }
 
@@ -259,7 +281,7 @@ struct ChatView: View {
 
     private var missingCredentialSetup: Bool {
         settings.provider != .local &&
-            runtime.apiKey(for: settings.provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !runtime.hasUsableProviderCredential(settings: settings)
     }
 
     private var providerSetupBlocksComposer: Bool {
@@ -715,16 +737,16 @@ struct ChatView: View {
                                         .transition(.opacity)
                                     }
 
-                                    ForEach(visibleMessages) { message in
-                                        messageBubble(for: message)
-                                    }
-
-                                    if shouldShowLiveResponseIsland {
-                                        ChatLiveResponseIsland(
-                                            runtime: runtime,
-                                            isVisibleForFrameProfiling: isVisibleForFrameProfiling
-                                        )
-                                        .id(runtime.liveStream.responseID)
+                                    ForEach(transcriptRows) { row in
+                                        switch row {
+                                        case .message(let message):
+                                            messageBubble(for: message)
+                                        case .live:
+                                            ChatLiveResponseIsland(
+                                                runtime: runtime,
+                                                isVisibleForFrameProfiling: isVisibleForFrameProfiling
+                                            )
+                                        }
                                     }
                                 }
                                 .padding(.bottom, transcriptBottomPadding)
@@ -790,6 +812,9 @@ struct ChatView: View {
                         }
                         .onChange(of: runtime.runState) { _, newState in
                             handleRunStateChange(newState)
+                        }
+                        .onReceive(runtime.liveStream.objectWillChange) { _ in
+                            keepLiveStreamReadableDuringGrowth()
                         }
                         .onChange(of: composerFocused) {
                             guard composerFocused else { return }
@@ -1522,8 +1547,25 @@ struct ChatView: View {
         }
     }
 
+    private func keepLiveStreamReadableDuringGrowth() {
+        guard ownsActiveRunState, runtime.isWorking else { return }
+        guard scrollAttachment != .detached else { return }
+        let now = Date()
+        guard now >= transient.userScrollIntentUntil,
+              now >= transient.userDetachedUntil else { return }
+        let minimumInterval: TimeInterval = AgentPerformance.isPerformanceMode ? 0.28 : 0.18
+        guard now.timeIntervalSince(transient.lastLiveStreamJumpRequestAt) >= minimumInterval else { return }
+        transient.lastLiveStreamJumpRequestAt = now
+        scrollAttachment = .restoring
+        requestJumpToLatest(animated: false, delay: .milliseconds(20))
+    }
+
     private func updateBottomDistance(_ distance: CGFloat) {
-        if Date() < transient.manualRepinUntil {
+        let now = Date()
+        let isLiveRunGrowing = ownsActiveRunState && runtime.isWorking
+        let hasRecentUserScrollIntent = now < transient.userScrollIntentUntil
+
+        if now < transient.manualRepinUntil {
             if distance <= detachedRepinThreshold {
                 scrollAttachment = .pinned
                 forceScrollToBottom = false
@@ -1534,17 +1576,20 @@ struct ChatView: View {
             return
         }
 
-        if ownsActiveRunState,
-           runtime.isWorking,
+        if isLiveRunGrowing,
            scrollAttachment != .detached,
            !forceScrollToBottom,
-           Date() < transient.userScrollIntentUntil,
+           hasRecentUserScrollIntent,
            distance > detachedRepinThreshold {
             markUserDetached()
             return
         }
 
         if scrollAttachment == .detached {
+            if now < transient.userDetachedUntil {
+                return
+            }
+
             if distance <= detachedRepinThreshold {
                 scrollAttachment = .pinned
                 transient.userDetachedUntil = .distantPast
@@ -1553,9 +1598,6 @@ struct ChatView: View {
                 return
             }
 
-            if Date() < transient.userDetachedUntil {
-                return
-            }
         }
 
         let activePinnedThreshold = ownsActiveRunState && runtime.isWorking && scrollAttachment != .detached ? max(bottomPinnedThreshold, 360) : bottomPinnedThreshold
@@ -1566,8 +1608,15 @@ struct ChatView: View {
                 AgentPerformance.event("Chat Scroll Pinned")
             }
         } else if !forceScrollToBottom && scrollAttachment != .detached {
-            scrollAttachment = .detached
-            AgentPerformance.event("Chat Scroll Detached")
+            if isLiveRunGrowing && !hasRecentUserScrollIntent {
+                if scrollAttachment != .restoring {
+                    scrollAttachment = .restoring
+                }
+                requestJumpToLatest(animated: false, delay: .milliseconds(40))
+            } else {
+                scrollAttachment = .detached
+                AgentPerformance.event("Chat Scroll Detached")
+            }
         }
     }
 
@@ -1753,6 +1802,29 @@ private enum ChatRunAccessoryState: Equatable {
     case completion
 }
 
+private enum ChatTranscriptRow: Identifiable, Equatable {
+    case message(ChatMessageSnapshot)
+    case live(responseID: UUID)
+
+    var id: String {
+        switch self {
+        case .message(let message):
+            return "message-\(message.id.uuidString)"
+        case .live(let responseID):
+            return "live-\(responseID.uuidString)"
+        }
+    }
+
+    var messageID: UUID? {
+        switch self {
+        case .message(let message):
+            return message.id
+        case .live:
+            return nil
+        }
+    }
+}
+
 @MainActor
 private final class ChatTransientState: ObservableObject {
     var messageCacheGeneration = 0
@@ -1803,14 +1875,14 @@ private struct ChatLayoutContract: Equatable {
     }
 
     var transcriptBreathingRoom: CGFloat {
-        let accessoryClearance = max(accessoryHeight, bottomChromeCoverage) + 18
+        let accessoryClearance = max(accessoryHeight, bottomChromeCoverage)
         switch runAccessory {
         case .hidden:
-            return max(composerMode == .expanded ? 28 : 20, accessoryClearance)
+            return max(composerMode == .expanded ? 28 : 20, accessoryClearance + 18)
         case .progress, .completion:
-            return max(26, accessoryClearance)
+            return max(58, accessoryClearance + 58)
         case .approval, .failure:
-            return max(32, accessoryClearance)
+            return max(64, accessoryClearance + 64)
         }
     }
 
