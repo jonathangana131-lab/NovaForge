@@ -37,6 +37,20 @@ final class ProviderMessageSanitizerTests: XCTestCase {
         XCTAssertTrue(ProviderMessageSanitizer.validate(transcript.messages).isEmpty)
     }
 
+    func testAssistantToolCallReasoningSurvivesProviderSanitization() throws {
+        let call = toolCall(id: "call_1", name: "make_directory")
+        let transcript = ProviderMessageSanitizer.sanitize(systemPrompt: "system", history: [
+            input(.user, "Create a folder"),
+            input(.assistant, "", toolCalls: [call], reasoningContent: "I should create the requested folder."),
+            input(.tool, "Created TaskManager", toolCallID: "call_1")
+        ])
+
+        let assistant = try XCTUnwrap(transcript.messages.first { $0.role == "assistant" })
+        XCTAssertEqual(assistant.reasoningContent, "I should create the requested folder.")
+        XCTAssertEqual(assistant.chatCompletionsMessage.reasoning_content, "I should create the requested folder.")
+        XCTAssertTrue(ProviderMessageSanitizer.validate(transcript.messages).isEmpty)
+    }
+
     func testSecondPromptAfterToolRunKeepsProviderPayloadValid() {
         let call = toolCall(id: "call_1", name: "write_file")
         let transcript = ProviderMessageSanitizer.sanitize(systemPrompt: "system", history: [
@@ -188,6 +202,7 @@ final class ProviderMessageSanitizerTests: XCTestCase {
         _ content: String,
         toolCallID: String? = nil,
         toolCalls: [APIToolCall] = [],
+        reasoningContent: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> ProviderMessageInput {
@@ -197,7 +212,8 @@ final class ProviderMessageSanitizerTests: XCTestCase {
             content: content,
             createdAt: Date().addingTimeInterval(Double(line)),
             toolCallID: toolCallID,
-            toolCalls: toolCalls
+            toolCalls: toolCalls,
+            reasoningContent: reasoningContent
         )
     }
 

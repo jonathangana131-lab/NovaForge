@@ -192,6 +192,7 @@ final class AgentRuntime {
         }
     }
     @ObservationIgnored var liveStream = LiveStreamBuffer()
+    private(set) var liveStreamHandoffMessageID: UUID?
     var pendingTool: ToolRequest? {
         didSet {
             if pendingTool != nil, oldValue == nil {
@@ -491,7 +492,8 @@ final class AgentRuntime {
             content: "Write a two-line poem about forging stars. Reply with only the poem.",
             createdAt: started,
             toolCallID: nil,
-            toolCalls: []
+            toolCalls: [],
+            reasoningContent: nil
         )
 
         do {
@@ -884,6 +886,8 @@ final class AgentRuntime {
     func clearCurrentRunState(keepLastFailure: Bool = true) {
         isWorking = false
         runState = .idle
+        liveStreamHandoffMessageID = nil
+        liveStream.reset()
         stopRequested = false
         wasInterrupted = false
         if !keepLastFailure {
@@ -903,6 +907,12 @@ final class AgentRuntime {
         runStartedAt = nil
         currentPrompt = nil
         setLastRunConversation(nil)
+    }
+
+    func acknowledgeLiveStreamHandoff(messageID: UUID) {
+        guard liveStreamHandoffMessageID == messageID else { return }
+        liveStreamHandoffMessageID = nil
+        liveStream.reset()
     }
 
     private func startPrompt(
@@ -952,6 +962,7 @@ final class AgentRuntime {
         runStartedAt = Date()
         currentPrompt = prompt
         setLastRunConversation(conversation)
+        liveStreamHandoffMessageID = nil
         liveStream.reset()
         lastError = nil
         lastFailedPrompt = nil
@@ -1256,6 +1267,8 @@ final class AgentRuntime {
         runState = .running
         lastError = nil
         var shouldDrainQueuedFollowUps = false
+        var completedToolSummariesThisRun: [String] = []
+        var providerFailureContextName = "provider"
 
         do {
             try AppRootPersistence.repairStaleModelSelection(
@@ -1264,6 +1277,7 @@ final class AgentRuntime {
             )
             let runProvider = settings.provider
             let runModelID = settings.modelID
+            providerFailureContextName = runProvider.displayName
             let runTemperature = settings.temperature
             let runCustomSystemPrompt = settings.customSystemPrompt
             let runCustomChatCompletionsURL = settings.resolvedCustomChatCompletionsURL
@@ -1368,7 +1382,7 @@ final class AgentRuntime {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     throw error
                 }
-                liveStream.reset()
+                markLiveStreamHandoff(to: assistant)
                 pushTrace("Local safe response", detail: "Skipped unstable local generation for this prompt.", status: .success)
                 isWorking = false
                 runState = .completed
@@ -1431,7 +1445,7 @@ final class AgentRuntime {
                 let response = providerResponse.message
                 outgoingProviderRoleLog = providerResponse.roleLog
 
-                if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
+	                if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
                     let effectiveToolCalls: [APIToolCall]
                     if !runAutoApproveWrites,
                        let firstApprovalIndex = toolCalls.firstIndex(where: { ToolRequest(id: $0.id, name: $0.function.name, arguments: parseArguments($0.function.arguments)).isMutating }) {
@@ -1441,21 +1455,27 @@ final class AgentRuntime {
                         // result, the provider transcript sanitizer would correctly
                         // drop the whole exchange as incomplete after approval.
                         effectiveToolCalls = Array(toolCalls.prefix(through: firstApprovalIndex))
-                    } else {
-                        effectiveToolCalls = toolCalls
-                    }
+	                    } else {
+	                        effectiveToolCalls = toolCalls
+	                    }
+
+	                    if providerConfiguration.modelCapabilities.requiresReasoningContentForToolContinuation,
+	                       response.reasoning_content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+	                        throw OpenAIError.requestFailed("OpenCode Zen DeepSeek V4 returned tool calls without the replay metadata NovaForge needs to safely continue after tools. No workspace changes were made. Retry, or switch to a non-DeepSeek V4 Zen model until the provider includes reasoning_content.")
+	                    }
 
                     setActivity("Tool plan ready", detail: "\(effectiveToolCalls.count) action\(effectiveToolCalls.count == 1 ? "" : "s") queued.")
                     pushTrace("Model requested tools", detail: effectiveToolCalls.map { $0.function.name }.joined(separator: ", "), status: .tool)
                     let encoder = JSONEncoder()
                     let toolCallsJSON = (try? encoder.encode(effectiveToolCalls)).flatMap { String(data: $0, encoding: .utf8) }
 
-                    let assistant = ChatMessage(
-                        role: .assistant,
-                        content: response.content ?? "",
-                        toolCallsJSON: toolCallsJSON,
-                        conversation: conversation
-                    )
+	                    let assistant = ChatMessage(
+	                        role: .assistant,
+	                        content: response.content ?? "",
+	                        toolCallsJSON: toolCallsJSON,
+	                        reasoningContent: response.reasoning_content,
+	                        conversation: conversation
+	                    )
                     conversation.appendMessage(assistant)
                     context.insert(assistant)
                     ProjectEventRecorder.record(
@@ -1484,8 +1504,9 @@ final class AgentRuntime {
                         sourceType: .message,
                         sourceID: assistant.id,
                         context: context
-                    )
-                    try saveCompacted(context)
+	                    )
+	                    try saveCompacted(context)
+	                    markLiveStreamHandoff(to: assistant)
 
                     var pausedForApproval = false
                     var toolMessages: [ChatMessage] = []
@@ -1539,8 +1560,11 @@ final class AgentRuntime {
                                 project: activeProject,
                                 context: context
                             )
-                            persistedToolRuns.append(run)
-                            if let artifact = WorkspaceArtifact.fromToolOutput(output) {
+	                            persistedToolRuns.append(run)
+	                            if !output.hasPrefix("Error:") {
+	                                completedToolSummariesThisRun.append(completedToolSummary(for: toolReq, output: output))
+	                            }
+	                            if let artifact = WorkspaceArtifact.fromToolOutput(output) {
                                 currentArtifacts.removeAll { $0.id == artifact.id }
                                 currentArtifacts.insert(artifact, at: 0)
                                 if currentArtifacts.count > 8 {
@@ -1618,11 +1642,12 @@ final class AgentRuntime {
                 let text = response.content ?? "I have finished processing your request."
                 setActivity("Finalizing response", detail: "Saving the live model output to the chat.")
 
-                let assistant = ChatMessage(
-                    role: .assistant,
-                    content: text,
-                    conversation: conversation
-                )
+	                let assistant = ChatMessage(
+	                    role: .assistant,
+	                    content: text,
+	                    reasoningContent: response.reasoning_content,
+	                    conversation: conversation
+	                )
                 conversation.appendMessage(assistant)
                 context.insert(assistant)
                 ProjectEventRecorder.record(
@@ -1635,13 +1660,13 @@ final class AgentRuntime {
                     sourceID: assistant.id,
                     context: context
                 )
-                do {
-                    try saveCompacted(context)
-                } catch {
-                    rollbackUnsavedMessage(assistant, from: conversation, context: context)
-                    throw error
-                }
-                liveStream.reset()
+	                do {
+	                    try saveCompacted(context)
+	                } catch {
+	                    rollbackUnsavedMessage(assistant, from: conversation, context: context)
+	                    throw error
+	                }
+	                markLiveStreamHandoff(to: assistant)
                 pushTrace("Response complete", detail: "\(text.count) characters delivered.", status: .success)
                 ProjectEventRecorder.record(
                     project: activeProject,
@@ -1724,6 +1749,7 @@ final class AgentRuntime {
                 discardQueuedPrompts()
                 do {
                     try saveCompacted(context)
+                    markLiveStreamHandoff(to: assistant)
                 } catch {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     let saveMessage = friendlyError(error)
@@ -1733,8 +1759,11 @@ final class AgentRuntime {
                     runState = .failed(saveMessage)
                 }
             } else {
-                let message = friendlyError(error)
-                lastError = message
+	                let baseMessage = friendlyError(error)
+	                let message = completedToolSummariesThisRun.isEmpty
+	                    ? baseMessage
+	                    : "\(completedToolSummarySentence(completedToolSummariesThisRun)), but \(providerFailureContextName) could not continue: \(baseMessage)"
+	                lastError = message
                 lastFailedPrompt = latestUserPrompt(in: conversation)
                 setActivity("Something needs attention", detail: message)
                 pushTrace("Run failed", detail: message, status: .failed)
@@ -1759,6 +1788,7 @@ final class AgentRuntime {
                 context.insert(assistant)
                 do {
                     try saveCompacted(context)
+                    markLiveStreamHandoff(to: assistant)
                 } catch {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     let saveMessage = friendlyError(error)
@@ -1775,7 +1805,7 @@ final class AgentRuntime {
 
         guard isActiveRun(runID) else { return }
         isWorking = false
-        liveStream.reset()
+        resetLiveStreamIfNoPendingHandoff()
         activeToolName = nil
         activeToolDetail = ""
         if let runStartedAt {
@@ -2160,6 +2190,7 @@ final class AgentRuntime {
             context: context
         )
         try saveCompacted(context)
+        markLiveStreamHandoff(to: assistant)
 
         var failedToolSummaries: [String] = []
         for call in plan.toolCalls {
@@ -2268,6 +2299,7 @@ final class AgentRuntime {
                 context: context
             )
             try saveCompacted(context)
+            markLiveStreamHandoff(to: final)
             pushTrace("Local run failed", detail: compactOutputSummary(failureSummary), status: .failed)
             lastError = compactOutputSummary(failureSummary)
             lastFailedPrompt = latestUserPrompt(in: conversation)
@@ -2323,6 +2355,7 @@ final class AgentRuntime {
             context: context
         )
         try saveCompacted(context)
+        markLiveStreamHandoff(to: final)
         pushTrace("Local run complete", detail: plan.completion, status: .success)
         runState = .completed
         isWorking = false
@@ -2365,6 +2398,16 @@ final class AgentRuntime {
         guard let context else { return }
         PersistedPayloadBudget.compactBeforeSave(in: context)
         try? context.save()
+    }
+
+    private func markLiveStreamHandoff(to message: ChatMessage) {
+        guard message.role == .assistant else { return }
+        liveStreamHandoffMessageID = message.id
+    }
+
+    private func resetLiveStreamIfNoPendingHandoff() {
+        guard liveStreamHandoffMessageID == nil else { return }
+        liveStream.reset()
     }
 
     private func localAnswer(for prompt: String) -> String {
@@ -2567,7 +2610,8 @@ final class AgentRuntime {
             content: currentPrompt,
             createdAt: visible.createdAt,
             toolCallID: visible.toolCallID,
-            toolCalls: visible.toolCalls
+            toolCalls: visible.toolCalls,
+            reasoningContent: visible.reasoningContent
         )
         return inputs
     }
@@ -2760,7 +2804,47 @@ final class AgentRuntime {
                 break
             }
         }
-        return error.localizedDescription
+        return ProviderErrorDecoder.message(from: error.localizedDescription, fallback: error.localizedDescription)
+    }
+
+    private func completedToolSummary(for request: ToolRequest, output: String) -> String {
+        switch request.name {
+        case "make_directory":
+            if let path = pathArgument("path", in: request) {
+                return "created folder \(path)"
+            }
+            return "created a folder"
+        case "write_file":
+            if let path = pathArgument("path", in: request) {
+                return "wrote \(path)"
+            }
+            return "wrote a file"
+        case "append_file":
+            if let path = pathArgument("path", in: request) {
+                return "updated \(path)"
+            }
+            return "updated a file"
+        case "replace_text":
+            if let path = pathArgument("path", in: request) {
+                return "edited \(path)"
+            }
+            return "edited a file"
+        case "run_command":
+            if let command = request.arguments["command"]?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty {
+                return "ran \(command)"
+            }
+            return "ran a command"
+        default:
+            return output.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "completed \(request.name)"
+        }
+    }
+
+    private func completedToolSummarySentence(_ summaries: [String]) -> String {
+        guard let first = summaries.first else { return "NovaForge saved the completed workspace change" }
+        if summaries.count == 1 {
+            return "NovaForge \(first)"
+        }
+        return "NovaForge completed \(summaries.count) actions, including \(first)"
     }
 
     private func compactToolDetail(_ request: ToolRequest) -> String {

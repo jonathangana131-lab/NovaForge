@@ -192,6 +192,7 @@ struct ActiveResponseElsewhereDock: View {
 
 struct ChatLiveResponseIsland: View {
     let runtime: AgentRuntime
+    let isHandoffPending: Bool
     let isVisibleForFrameProfiling: Bool
 
     var body: some View {
@@ -199,12 +200,17 @@ struct ChatLiveResponseIsland: View {
         let isWorking = runtime.isWorking
         let stream = runtime.liveStream
         ZStack(alignment: .topLeading) {
-            LiveResponseView(isWorking: isWorking, stream: stream, runtime: runtime)
+            LiveResponseView(
+                isWorking: isWorking,
+                isHandoffPending: isHandoffPending,
+                stream: stream,
+                runtime: runtime
+            )
 
             if AgentPerformance.shouldProfileFrameRate {
                 ChatStreamingFrameRateProbe(
                     stream: stream,
-                    isWorking: isWorking,
+                    isWorking: isWorking || isHandoffPending,
                     isVisibleForFrameProfiling: isVisibleForFrameProfiling
                 )
             }

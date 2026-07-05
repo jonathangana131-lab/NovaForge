@@ -29,6 +29,38 @@ final class OpenAIClientStreamingTests: XCTestCase {
         XCTAssertEqual(tool.function.arguments, "{\"path\":\"index.html\",\"contents\":\"hi\"}")
     }
 
+    func testDecodesStreamedReasoningContentForProviderReplay() async throws {
+        let message = try await StreamingResponseDecoder.decode(lines: [
+            sseReasoning("Need a folder."),
+            sseToolCall(id: "call_1", type: "function", name: "make_directory", arguments: #"{"path":"TaskManager"}"#),
+            "data: [DONE]"
+        ])
+
+        XCTAssertEqual(message.reasoning_content, "Need a folder.")
+        XCTAssertEqual(message.tool_calls?.first?.function.name, "make_directory")
+    }
+
+    func testOutgoingAssistantMessagesEncodeReasoningContent() throws {
+        let message = ChatMessage(
+            role: .assistant,
+            content: "",
+            toolCallsJSON: #"[]"#,
+            reasoningContent: "Replay this reasoning."
+        )
+
+        let data = try JSONEncoder().encode(message.toAPIMessage())
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["reasoning_content"] as? String, "Replay this reasoning.")
+    }
+
+    func testProviderErrorEnvelopeDecodesToPlainMessage() {
+        let raw = #"{"error":{"message":"Upstream request failed","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#
+        XCTAssertEqual(
+            ProviderErrorDecoder.message(from: raw, fallback: "fallback"),
+            "Upstream request failed"
+        )
+    }
+
     func testMalformedAfterUsableContentThrowsInsteadOfSavingPartialOutput() async throws {
         await XCTAssertThrowsAsyncError(
             try await StreamingResponseDecoder.decode(lines: [
@@ -196,6 +228,13 @@ final class OpenAIClientStreamingTests: XCTestCase {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "data: {\"choices\":[{\"delta\":{\"content\":\"\(escaped)\"}}]}"
+    }
+
+    private func sseReasoning(_ text: String) -> String {
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"\(escaped)\"}}]}"
     }
 
     private func sseToolCall(

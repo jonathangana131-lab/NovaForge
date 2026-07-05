@@ -78,8 +78,7 @@ struct AIProviderClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown OpenAI error"
-            throw OpenAIError.requestFailed(message)
+            throw OpenAIError.requestFailed(ProviderErrorDecoder.message(from: data, fallback: "Unknown OpenAI error"))
         }
         
         let decoded = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
@@ -167,7 +166,7 @@ struct AIProviderClient {
             for try await line in bytes.lines {
                 message += line
             }
-            throw OpenAIError.requestFailed(message.isEmpty ? "Unknown streaming provider error" : message)
+            throw OpenAIError.requestFailed(ProviderErrorDecoder.message(from: message, fallback: "Unknown streaming provider error"))
         }
 
         let decoded = try await decodeStreamingResponse(from: bytes, onContentBatch: onContentBatch)
@@ -193,7 +192,8 @@ struct AIProviderClient {
                 content: "ping",
                 name: nil,
                 tool_call_id: nil,
-                tool_calls: nil
+                tool_calls: nil,
+                reasoning_content: nil
             )
         ]
 
@@ -208,8 +208,7 @@ struct AIProviderClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown connection error"
-            throw OpenAIError.requestFailed(message)
+            throw OpenAIError.requestFailed(ProviderErrorDecoder.message(from: data, fallback: "Unknown connection error"))
         }
         
         _ = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
@@ -229,8 +228,7 @@ struct AIProviderClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Could not load models."
-            throw OpenAIError.requestFailed(message)
+            throw OpenAIError.requestFailed(ProviderErrorDecoder.message(from: data, fallback: "Could not load models."))
         }
 
         let decoded = try JSONDecoder().decode(ProviderModelsResponse.self, from: data)
@@ -266,6 +264,40 @@ private struct ProviderModelsResponse: Decodable {
 struct ProviderResponse: Sendable {
     let message: ChatCompletionsResponse.Choice.Message
     let roleLog: String
+}
+
+struct ProviderErrorDecoder {
+    private struct ErrorEnvelope: Decodable {
+        struct Body: Decodable {
+            let message: String?
+            let type: String?
+            let code: String?
+        }
+
+        let error: Body?
+    }
+
+    static func message(from data: Data, fallback: String) -> String {
+        if let decoded = try? JSONDecoder().decode(ErrorEnvelope.self, from: data),
+           let message = decoded.error?.message?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !message.isEmpty {
+            return message
+        }
+        guard let raw = String(data: data, encoding: .utf8) else { return fallback }
+        return message(from: raw, fallback: fallback)
+    }
+
+    static func message(from raw: String, fallback: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fallback }
+        if let data = trimmed.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(ErrorEnvelope.self, from: data),
+           let message = decoded.error?.message?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !message.isEmpty {
+            return message
+        }
+        return trimmed
+    }
 }
 
 private struct StreamingToolCallPart {
@@ -312,6 +344,7 @@ struct ChatCompletionsRequest: Encodable, Sendable {
         let name: String?
         let tool_call_id: String?
         let tool_calls: [APIToolCall]?
+        let reasoning_content: String?
     }
 
     struct ToolDefinition: Encodable, Sendable {
@@ -566,7 +599,20 @@ struct ChatCompletionsResponse: Decodable {
         struct Message: Decodable, Sendable {
             let role: String
             let content: String?
+            let reasoning_content: String?
             let tool_calls: [APIToolCall]?
+
+            init(
+                role: String,
+                content: String?,
+                reasoning_content: String? = nil,
+                tool_calls: [APIToolCall]?
+            ) {
+                self.role = role
+                self.content = content
+                self.reasoning_content = reasoning_content
+                self.tool_calls = tool_calls
+            }
         }
         let message: Message?
     }
@@ -591,6 +637,7 @@ private struct ChatCompletionsStreamChunk: Decodable {
 
             let role: String?
             let content: String?
+            let reasoning_content: String?
             let tool_calls: [ToolCall]?
         }
 
@@ -604,6 +651,7 @@ private struct ChatCompletionsStreamChunk: Decodable {
 struct StreamingResponseValidator {
     static func makeMessage(
         content: String,
+        reasoningContent: String? = nil,
         toolCalls: [APIToolCall],
         sawDataPayload: Bool,
         malformedPayloadCount: Int,
@@ -632,6 +680,7 @@ struct StreamingResponseValidator {
         return ChatCompletionsResponse.Choice.Message(
             role: "assistant",
             content: content.isEmpty ? nil : content,
+            reasoning_content: reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? reasoningContent : nil,
             tool_calls: toolCalls.isEmpty ? nil : toolCalls
         )
     }
@@ -682,6 +731,7 @@ struct StreamingResponseDecoder {
 
     private let decoder = JSONDecoder()
     private var content = ""
+    private var reasoningContent = ""
     private var pendingContent = ""
     private var lastDelivery = ContinuousClock.now
     private var toolParts: [Int: StreamingToolCallPart] = [:]
@@ -733,6 +783,10 @@ struct StreamingResponseDecoder {
                 }
             }
 
+            if let reasoning = delta.reasoning_content, !reasoning.isEmpty {
+                reasoningContent += reasoning
+            }
+
             for toolDelta in delta.tool_calls ?? [] {
                 let index = toolDelta.index ?? toolParts.count
                 if toolParts[index] == nil, toolParts.count >= Self.maxStreamedToolCalls {
@@ -776,6 +830,7 @@ struct StreamingResponseDecoder {
 
         return try StreamingResponseValidator.makeMessage(
             content: content,
+            reasoningContent: reasoningContent,
             toolCalls: toolCalls,
             sawDataPayload: sawDataPayload,
             malformedPayloadCount: malformedPayloadCount,
@@ -819,7 +874,8 @@ extension ChatMessage {
             content: content.isEmpty && apiToolCalls != nil ? nil : content,
             name: nil,
             tool_call_id: toolCallID,
-            tool_calls: apiToolCalls
+            tool_calls: apiToolCalls,
+            reasoning_content: reasoningContent
         )
     }
 }
@@ -831,7 +887,8 @@ extension ProviderChatMessage {
             content: content,
             name: nil,
             tool_call_id: toolCallID,
-            tool_calls: toolCalls
+            tool_calls: toolCalls,
+            reasoning_content: reasoningContent
         )
     }
 }
