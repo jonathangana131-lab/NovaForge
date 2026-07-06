@@ -139,6 +139,7 @@ struct AppRootView: View {
     @State private var didInjectArtifactDedupeFixture = false
     @State private var didInjectWebPageArtifactFixture = false
     @State private var didInjectSwiftGameArtifactFixture = false
+    @State private var didInjectComposerSendResponseFixture = false
     @State private var didInjectProjectContinuationFixture = false
     @State private var didInjectLiveTerminalRecordFixture = false
     @State private var didInjectProjectRunningFixture = false
@@ -565,6 +566,28 @@ struct AppRootView: View {
             installLocalAgentBoundaryFixture(in: conversation)
             try? modelContext.save()
         }
+        if arguments.contains("--composer-send-response-test"),
+           let settings,
+           !runtime.isWorking,
+           !didInjectComposerSendResponseFixture {
+            didInjectComposerSendResponseFixture = true
+            selectedTab = .chat
+            settings.provider = .openAI
+            settings.modelID = AIProvider.openAI.defaultModel
+            settings.temperature = min(settings.temperature, 0.2)
+            settings.updatedAt = Date()
+            runtime.debugInstallProviderResponses([
+                ProviderResponse(
+                    message: ChatCompletionsResponse.Choice.Message(
+                        role: "assistant",
+                        content: "I can inspect files, plan changes, run builds, and capture proof screenshots.",
+                        tool_calls: nil
+                    ),
+                    roleLog: "debug composer send response"
+                )
+            ])
+            try? modelContext.save()
+        }
         if arguments.contains("--local-web-artifact-test"),
            let conversation = selectedConversation,
            !runtime.isWorking,
@@ -749,6 +772,15 @@ struct AppRootView: View {
         if hasDebugLaunchFlag("--pending-approval-demo", in: arguments),
            !hasDebugLaunchFlag("--open-project", in: arguments),
            !didInjectPendingApprovalFixture {
+            return true
+        }
+        if hasDebugLaunchFlag("--local-agent-boundary-test", in: arguments), !didInjectLocalAgentBoundaryFixture {
+            return true
+        }
+        if hasDebugLaunchFlag("--local-web-artifact-test", in: arguments), !didInjectWebPageArtifactFixture {
+            return true
+        }
+        if hasDebugLaunchFlag("--artifact-dedupe-demo", in: arguments), !didInjectArtifactDedupeFixture {
             return true
         }
         if hasDebugLaunchFlag("--terminal-live-record-demo", in: arguments), !didInjectLiveTerminalRecordFixture {
@@ -2697,6 +2729,21 @@ struct AppRootView: View {
         """
         try? runtime.workspace.write(artifact.path, contents: html)
 
+        let greeting = ChatMessage(
+            role: .assistant,
+            content: "Hello! How can I help you with your iOS project or workspace today? Feel free to ask me to inspect files, edit code, build something new, or anything else you need.",
+            conversation: conversation
+        )
+        let priorUser = ChatMessage(
+            role: .user,
+            content: "Yessir",
+            conversation: conversation
+        )
+        let priorAssistant = ChatMessage(
+            role: .assistant,
+            content: "Let me check the current workspace state so I'm ready for your request. The workspace currently has a few Swift files, proof artifacts, and a recent verification run. This scrollback exists so completed-run controls can be tested while reading older chat context.",
+            conversation: conversation
+        )
         let user = ChatMessage(
             role: .user,
             content: "Build a landing page at cron-18-landing.html for a robotics startup.",
@@ -2707,7 +2754,10 @@ struct AppRootView: View {
             content: "Local web artifact ready. Open cron-18-landing.html from Run Control.",
             conversation: conversation
         )
-        conversation.appendMessages([user, assistant])
+        conversation.appendMessages([greeting, priorUser, priorAssistant, user, assistant])
+        modelContext.insert(greeting)
+        modelContext.insert(priorUser)
+        modelContext.insert(priorAssistant)
         modelContext.insert(user)
         modelContext.insert(assistant)
 

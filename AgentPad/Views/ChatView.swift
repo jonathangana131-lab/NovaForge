@@ -502,7 +502,7 @@ struct ChatView: View {
 
     private func chatLayout(topSafeArea: CGFloat, rootBottom: CGFloat) -> some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Layout")
-        return ZStack {
+        return ZStack(alignment: .bottomTrailing) {
             ChatTranscriptBackdrop()
 
             VStack(spacing: 0) {
@@ -641,6 +641,14 @@ struct ChatView: View {
                         // attachment state machine below.
                         .defaultScrollAnchor(.bottom, for: .initialOffset)
                         .defaultScrollAnchor(shouldKeepTranscriptPinned ? .bottom : nil, for: .sizeChanges)
+                        // When a completed run has only a short prompt + handoff,
+                        // there may be no scrollable offset for `scrollTo` to
+                        // create. Without an alignment anchor, SwiftUI top-aligns
+                        // the short transcript and leaves a giant blank tail above
+                        // Run Control/composer. Keep pinned short transcripts
+                        // bottom-aligned while long transcripts continue to use
+                        // the sentinel/size-change pinning above.
+                        .defaultScrollAnchor(shouldKeepTranscriptPinned ? .bottom : nil, for: .alignment)
                         .contentShape(Rectangle())
                         .simultaneousGesture(
                             DragGesture(minimumDistance: 14, coordinateSpace: .named(Self.chatScrollSpace))
@@ -995,7 +1003,7 @@ struct ChatView: View {
                     requestJumpToLatest()
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 18)
+                .padding(.trailing, 16)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
@@ -1065,7 +1073,7 @@ struct ChatView: View {
     private var composer: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Composer Body")
         let compactStreamingComposer = usesCompactStreamingComposer
-        let usesMultilineComposer = !compactStreamingComposer && (prompt.contains("\n") || prompt.count > 28)
+        let usesMultilineComposer = !compactStreamingComposer && (prompt.contains("\n") || prompt.count > 72)
         let fieldHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 74 : 46)
         let fieldMaxHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 148 : 84)
         let textLaneVerticalPadding: CGFloat = compactStreamingComposer ? 2 : (usesMultilineComposer ? 3 : 4)
@@ -1275,8 +1283,11 @@ struct ChatView: View {
         guard !composerFocused, trimmedPrompt.isEmpty else { return false }
         // Completion evidence only earns the bar above a transcript that
         // actually contains the completed work. A fresh, empty conversation
-        // stays clean — the welcome state owns that moment.
-        return hasCompletedRunEvidence && !cachedMessages.isEmpty
+        // stays clean — the welcome state owns that moment. When the user has
+        // deliberately scrolled away from the bottom, collapse the completed
+        // summary so it does not hover over the older transcript they are
+        // trying to read; Latest becomes the single return affordance.
+        return isNearChatBottom && hasCompletedRunEvidence && !cachedMessages.isEmpty
     }
 
     private var hasActionableRunState: Bool {
@@ -1330,11 +1341,21 @@ struct ChatView: View {
     }
 
     private func scheduleAccessoryGeometryUpdate(_ geometry: ChatAccessoryGeometry, rootBottom: CGFloat) {
-        let sanitizedHeight = min(max(geometry.height, 0), keyboard.isVisible ? 260 : 492)
+        let sanitizedHeight = min(max(geometry.height, 0), keyboard.isVisible ? 260 : 300)
         let rawCoverage = rootBottom.isFinite && geometry.minY.isFinite
             ? rootBottom - geometry.minY
             : sanitizedHeight
-        let sanitizedCoverage = min(max(rawCoverage, sanitizedHeight, 0), max(rootBottom, sanitizedHeight, 0))
+        // The transcript already receives the Forge composer / Run Control as a
+        // safe-area inset.  The old calculation trusted the global minY of that
+        // inset and treated everything from there to the screen bottom as extra
+        // scrollable breathing room. During send/keyboard/dock transitions that
+        // frame can include the tab bar, keyboard animation, or a transient
+        // full-screen coordinate, so `scrollTo(chatBottomID)` landed on a hidden
+        // spacer far below the newest message.  Keep the manual clearance tied
+        // to the measured accessory height, plus only the real keyboard overlap.
+        let expectedCoverage = sanitizedHeight + (keyboard.isVisible ? keyboard.overlapHeight : 0) + 36
+        let maxCoverage = min(max(rootBottom, sanitizedHeight, 0), max(expectedCoverage, sanitizedHeight))
+        let sanitizedCoverage = min(max(rawCoverage, sanitizedHeight, 0), maxCoverage)
         let threshold: CGFloat = AgentPerformance.isPerformanceMode ? 6 : 1
         let heightChanged = abs(measuredAccessoryHeight - sanitizedHeight) > threshold
         let coverageChanged = abs(measuredBottomChromeCoverage - sanitizedCoverage) > threshold
@@ -1427,17 +1448,17 @@ struct ChatView: View {
     }
 
     private func handleUserScrollGesture(_ value: DragGesture.Value) {
-        guard ownsActiveRunState, runtime.isWorking else { return }
+        guard ownsActiveRunState, hasLatestJumpTarget else { return }
         // In a chat transcript, a downward finger drag means the user is pulling
-        // away from the live bottom to read older content. Once that happens,
-        // streaming/tool growth must stop forcing the scroll position until the
-        // explicit Latest button is tapped.
+        // away from the live/completed bottom to read older content. Once that
+        // happens, streaming/tool growth and completed-run chrome must stop
+        // forcing or covering the scroll position until Latest is tapped.
         guard value.translation.height > 18 else { return }
         markUserDetached()
     }
 
     private func handleScrollPhaseChange(_ phase: ScrollPhase, context: ScrollPhaseChangeContext) {
-        guard ownsActiveRunState, runtime.isWorking else { return }
+        guard ownsActiveRunState, hasLatestJumpTarget else { return }
         guard phase == .tracking || phase == .interacting || phase == .decelerating else { return }
 
         transient.userScrollIntentUntil = Date().addingTimeInterval(1.5)
@@ -1607,14 +1628,19 @@ private struct ChatLayoutContract: Equatable {
     }
 
     var transcriptBreathingRoom: CGFloat {
-        let accessoryClearance = max(accessoryHeight, bottomChromeCoverage) + 18
+        // `chatBottomAccessory` is installed with `.safeAreaInset(edge: .bottom)`,
+        // so SwiftUI already removes the Run Control / composer dock from the
+        // transcript viewport.  Padding the transcript by the measured dock
+        // height double-counts that inset and makes the bottom sentinel live far
+        // below the newest bubble.  Keep only a small visual gutter between the
+        // latest message and the inset chrome.
         switch runAccessory {
         case .hidden:
-            return max(composerMode == .expanded ? 28 : 20, accessoryClearance)
+            return composerMode == .expanded ? 28 : 20
         case .progress, .completion:
-            return max(26, accessoryClearance)
+            return 26
         case .approval, .failure:
-            return max(32, accessoryClearance)
+            return 32
         }
     }
 

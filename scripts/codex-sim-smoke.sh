@@ -120,6 +120,7 @@ INSTALL_LOG="$LOG_DIR/install-$STAMP.log"
 LAUNCH_LOG="$LOG_DIR/launch-$STAMP.log"
 SCREENSHOT_LOG="$LOG_DIR/screenshot-$STAMP.log"
 SCREENSHOT_PATH="${SCREENSHOT_PATH:-$SCREENSHOT_DIR/$SCREENSHOT_NAME}"
+LAUNCHED_APP_PID=""
 
 if [[ "$BUILD_FIRST" == "1" ]]; then
   echo "Building $SCHEME with $BUILD_SDK..."
@@ -220,7 +221,18 @@ else
   exit 1
 fi
 
+LAUNCHED_APP_PID="$(grep -E "^${BUNDLE_ID}: " "$LAUNCH_LOG" | tail -n 1 | cut -d: -f2 | tr -cd '[:digit:]' || true)"
+
 sleep "$WAIT_SECONDS"
+
+if [[ "$CAPTURE_SCREENSHOT" == "1" && -n "$LAUNCHED_APP_PID" ]]; then
+  if ! kill -0 "$LAUNCHED_APP_PID" >/dev/null 2>&1; then
+    echo "Launched app exited before screenshot (pid $LAUNCHED_APP_PID). Refusing to capture SpringBoard/Home Screen as proof." >&2
+    echo "Last 80 lines from $LAUNCH_LOG:" >&2
+    tail -n 80 "$LAUNCH_LOG" >&2
+    exit 1
+  fi
+fi
 
 if [[ "$CAPTURE_SCREENSHOT" != "1" ]]; then
   echo "Skipping screenshot. Set CAPTURE_SCREENSHOT=1 to capture after launch."

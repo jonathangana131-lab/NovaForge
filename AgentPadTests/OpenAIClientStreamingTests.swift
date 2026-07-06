@@ -226,6 +226,62 @@ final class OpenAIClientStreamingTests: XCTestCase {
     }
 }
 
+final class ProviderConfigurationTests: XCTestCase {
+    func testCustomBaseV1EndpointNormalizesChatAndModelsURLs() throws {
+        let configuration = customConfiguration("  https://api.example.test/v1/  ")
+
+        XCTAssertEqual(configuration.chatCompletionsURL?.absoluteString, "https://api.example.test/v1/chat/completions")
+        XCTAssertEqual(configuration.modelsURL?.absoluteString, "https://api.example.test/v1/models")
+    }
+
+    func testCustomChatEndpointDerivesModelsURLWithPathComponents() throws {
+        let configuration = customConfiguration("https://api.example.test/custom/v1/chat/completions/")
+
+        XCTAssertEqual(configuration.chatCompletionsURL?.absoluteString, "https://api.example.test/custom/v1/chat/completions")
+        XCTAssertEqual(configuration.modelsURL?.absoluteString, "https://api.example.test/custom/v1/models")
+    }
+
+    func testCustomEndpointsRejectUnsafeOrHostlessURLs() throws {
+        for unsafeURL in [
+            "http://api.example.test/v1",
+            "file:///tmp/openai-compatible/v1",
+            "ftp://api.example.test/v1",
+            "https:///v1",
+            "api.example.test/v1"
+        ] {
+            let configuration = customConfiguration(unsafeURL)
+
+            XCTAssertNil(configuration.chatCompletionsURL, unsafeURL)
+            XCTAssertNil(configuration.modelsURL, unsafeURL)
+        }
+    }
+
+    func testBuiltInProviderEndpointsStayHTTPS() throws {
+        for provider in AIProvider.allCases where provider != .local && provider != .custom {
+            let configuration = ProviderConfiguration(
+                provider: provider,
+                modelID: provider.defaultModel,
+                apiKey: "test-key",
+                customChatCompletionsURL: ""
+            )
+
+            XCTAssertEqual(configuration.chatCompletionsURL?.scheme, "https", provider.rawValue)
+            XCTAssertFalse(configuration.chatCompletionsURL?.host?.isEmpty ?? true, provider.rawValue)
+            XCTAssertEqual(configuration.modelsURL?.scheme, "https", provider.rawValue)
+            XCTAssertFalse(configuration.modelsURL?.host?.isEmpty ?? true, provider.rawValue)
+        }
+    }
+
+    private func customConfiguration(_ endpoint: String) -> ProviderConfiguration {
+        ProviderConfiguration(
+            provider: .custom,
+            modelID: AIProvider.custom.defaultModel,
+            apiKey: "test-key",
+            customChatCompletionsURL: endpoint
+        )
+    }
+}
+
 private func XCTAssertThrowsAsyncError<T>(
     _ expression: @autoclosure @escaping () async throws -> T,
     _ errorHandler: (Error) -> Void,

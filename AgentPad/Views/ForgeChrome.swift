@@ -386,18 +386,9 @@ struct ForgeSignalChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: signal.symbol)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(signal.tint)
-                Text(signal.title)
-                    .novaLabel(signal.tint)
-                    .fixedSize()
-                Text(signal.detail)
-                    .font(NovaType.caption)
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            ViewThatFits(in: .horizontal) {
+                signalLine(showDetail: true)
+                signalLine(showDetail: false)
             }
             .contentShape(Rectangle())
         }
@@ -406,6 +397,24 @@ struct ForgeSignalChip: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(signal.title): \(signal.detail)")
         .accessibilityIdentifier(signal.accessibilityID)
+    }
+
+    private func signalLine(showDetail: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: signal.symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(signal.tint)
+            Text(signal.title)
+                .novaLabel(signal.tint)
+                .fixedSize(horizontal: true, vertical: false)
+            if showDetail {
+                Text(signal.detail)
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
     }
 }
 

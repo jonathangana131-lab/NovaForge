@@ -610,6 +610,61 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Local run complete" })
     }
 
+    func testSendPersistsAssistantResponseThroughProviderRuntimePath() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Send Proof", mission: "Prove Send saves the assistant response.", workspaceName: "Default")
+        let conversation = Conversation(title: "Send Proof", project: project)
+        let settings = AgentSettings(provider: .openAI, modelID: AIProvider.openAI.defaultModel, activeProjectID: project.id)
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "I can inspect files, plan changes, run builds, and capture proof screenshots.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug provider send proof"
+            )
+        ])
+
+        runtime.send(
+            prompt: "Show me what tools you can use",
+            conversation: conversation,
+            settings: settings,
+            context: context,
+            project: project
+        )
+
+        let deadline = Date().addingTimeInterval(3)
+        while runtime.isWorking && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertNil(runtime.lastError)
+        XCTAssertNil(runtime.lastFailedPrompt)
+        XCTAssertEqual(conversation.messages.map(\.role), [.user, .assistant])
+        XCTAssertEqual(conversation.messages.first?.content, "Show me what tools you can use")
+        XCTAssertEqual(conversation.messages.last?.content, "I can inspect files, plan changes, run builds, and capture proof screenshots.")
+        XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Response complete" })
+
+        let events = try context.fetch(FetchDescriptor<ProjectEvent>())
+        XCTAssertTrue(events.contains { $0.kind == .promptQueued && $0.detail == "Show me what tools you can use" })
+        XCTAssertTrue(events.contains { $0.kind == .responseSaved && $0.detail.contains("inspect files") })
+        XCTAssertTrue(events.contains { $0.kind == .runCompleted && $0.title == "Run completed" })
+        XCTAssertTrue(events.contains { $0.kind == .agentProofCreated && $0.title == "Agent proof captured" })
+    }
+
     func testLocalNativePlanDoesNotCompleteAfterHistorySaveFailure() async throws {
         enum SaveFailure: LocalizedError {
             case diskFull

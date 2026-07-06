@@ -57,10 +57,10 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["Local model not downloaded"].exists)
-        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Starter missions are blocked")).firstMatch.exists)
-        XCTAssertFalse(app.buttons["firstRunSetupDownload"].exists)
+        XCTAssertTrue(app.otherElements["firstRunPowerUp"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Power up NovaForge"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["firstRunPowerUpButton"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "No account, no cloud")).firstMatch.exists)
 
         for identifier in ["missionStarter-build", "missionStarter-fix", "missionStarter-audit", "missionStarter-ship"] {
             XCTAssertFalse(app.buttons[identifier].exists, "\(identifier) should not appear as a dead button while setup blocks starters.")
@@ -109,10 +109,10 @@ final class AgentPadUITests: XCTestCase {
 
     func testChatComposerKeyboardAndResponseScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui"]
+        app.launchArguments = ["--reset-ui", "--composer-send-response-test", "--open-chat"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Ready when you are"].waitForExistence(timeout: 5))
         let headerTitle = app.staticTexts["currentChatTitle"].firstMatch
         assertHeaderAnchoredNearTop(headerTitle, in: app, message: "Chat header should stay anchored near the top safe area.")
 
@@ -122,40 +122,50 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         composer.tap()
         composer.typeText("Show me what tools you can use")
+        let draftedComposer = chatComposerInput(in: app)
+        XCTAssertTrue(draftedComposer.waitForExistence(timeout: 3))
         assertNoFloatingActionsOverComposer(in: app)
         let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 3))
         let sendButton = app.buttons["Send message"]
+        let softwareKeyboardVisible = keyboard.waitForExistence(timeout: 3)
         let modelPicker = app.descendants(matching: .any)["composerModelNativeMenu"]
         if modelPicker.waitForExistence(timeout: 1) {
             XCTAssertTrue(modelPicker.label.localizedCaseInsensitiveContains("Choose model"), "Composer model rail should advertise model selection, not read as a mystery chip.")
             XCTAssertGreaterThanOrEqual(modelPicker.frame.width, 120, "Composer model rail should have room for a compact provider and model label, not a cryptic tiny chip.")
             XCTAssertLessThanOrEqual(modelPicker.frame.width, 180, "Composer model rail should stay compact so the typing field remains the primary surface.")
-            XCTAssertLessThanOrEqual(modelPicker.frame.maxY, composer.frame.minY + 4, "Composer model rail should sit above the typing lane, not inside the text field.")
-            XCTAssertLessThan(modelPicker.frame.minX, composer.frame.midX, "Composer model rail should anchor from the left like the cleaner old design.")
+            XCTAssertLessThanOrEqual(modelPicker.frame.maxY, draftedComposer.frame.minY + 4, "Composer model rail should sit above the typing lane, not inside the text field.")
+            XCTAssertLessThan(modelPicker.frame.minX, draftedComposer.frame.midX, "Composer model rail should anchor from the left like the cleaner old design.")
         }
-        let composerDock = composerDock(in: app)
-        XCTAssertTrue(composerDock.waitForExistence(timeout: 3))
-        XCTAssertLessThanOrEqual(composerDock.frame.height, 120, "A normal one-line prompt should be a compact two-row card, not the giant old composer sheet.")
-        let composerKeyboardGap = keyboard.frame.minY - sendButton.frame.maxY
-        XCTAssertGreaterThanOrEqual(composerKeyboardGap, 8, "Composer should clear the keyboard/predictive bar instead of touching or overlapping it.")
-        XCTAssertLessThanOrEqual(composerKeyboardGap, 80, "Composer should sit directly above the keyboard without a dead spacer.")
-        XCTAssertGreaterThan(composer.frame.minY, 0)
-        assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        let composerDockElement = composerDock(in: app)
+        XCTAssertTrue(composerDockElement.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(composerDockElement.frame.height, 120, "A normal one-line prompt should be a compact two-row card, not the giant old composer sheet.")
+        if softwareKeyboardVisible {
+            let composerKeyboardGap = keyboard.frame.minY - sendButton.frame.maxY
+            XCTAssertGreaterThanOrEqual(composerKeyboardGap, 8, "Composer should clear the keyboard/predictive bar instead of touching or overlapping it.")
+            XCTAssertLessThanOrEqual(composerKeyboardGap, 80, "Composer should sit directly above the keyboard without a dead spacer.")
+        }
+        XCTAssertGreaterThan(draftedComposer.frame.minY, 0)
+        if softwareKeyboardVisible {
+            assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        }
         assertComposerDockAligned(in: app)
-        capture("02-keyboard-composer", app: app)
+        capture(softwareKeyboardVisible ? "02-keyboard-composer" : "02-hardware-keyboard-composer", app: app)
 
         app.buttons["Send message"].tap()
-        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 3), "Sending from the focused composer should dismiss the keyboard cleanly.")
-        XCTAssertGreaterThanOrEqual(composerDock.frame.maxY, app.frame.maxY - 180, "After the keyboard dismisses, the composer should settle near the bottom instead of floating where the keyboard was.")
+        if softwareKeyboardVisible {
+            XCTAssertTrue(keyboard.waitForNonExistence(timeout: 3), "Sending from the focused composer should dismiss the keyboard cleanly.")
+        }
+        let settledComposerDock = composerDock(in: app)
+        XCTAssertTrue(settledComposerDock.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(settledComposerDock.frame.maxY, app.frame.maxY - 180, "After the keyboard dismisses, the composer should settle near the bottom instead of floating where the keyboard was.")
         let sentMessage = app.staticTexts["Show me what tools you can use"].firstMatch
         XCTAssertTrue(sentMessage.waitForExistence(timeout: 3), "Sent prompt should remain visible in the transcript.")
-        XCTAssertLessThanOrEqual(sentMessage.frame.maxY, composerDock.frame.minY - 8, "Latest messages should remain readable above the composer after sending.")
+        XCTAssertLessThanOrEqual(sentMessage.frame.maxY, settledComposerDock.frame.minY - 8, "Latest messages should remain readable above the composer after sending.")
         let runAccessory = runProgressToggle(in: app)
         XCTAssertTrue(runAccessory.waitForExistence(timeout: 3), "Run/action accessory should be visible after a failed local send.")
-        let bottomAccessoryTop = min(runAccessory.frame.minY, composerDock.frame.minY)
+        let bottomAccessoryTop = min(runAccessory.frame.minY, settledComposerDock.frame.minY)
         XCTAssertLessThanOrEqual(sentMessage.frame.maxY, bottomAccessoryTop - 8, "Sent prompt should clear the full run/action accessory, not only the composer.")
-        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "not downloaded yet")).firstMatch
+        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "inspect files")).firstMatch
         XCTAssertTrue(assistantMessage.waitForExistence(timeout: 5), "Assistant response should remain visible after Send.")
         XCTAssertLessThanOrEqual(assistantMessage.frame.maxY, bottomAccessoryTop - 8, "Assistant output should stay readable above the full bottom accessory stack.")
         sleep(1)
@@ -1158,6 +1168,56 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(jumpToLatestButton(in: app).waitForExistence(timeout: 2), "Tapping Jump to Latest should repin the live response and hide the jump button.")
         XCTAssertTrue(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 5))
         capture("26-streaming-jumped-back-latest", app: app)
+    }
+
+    func testCompletedRunAutoscrollKeepsArtifactHandoffAboveRunControl() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-chat", "--local-web-artifact-test"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let userPrompt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Build a landing page at cron-18-landing.html")).firstMatch
+        XCTAssertTrue(userPrompt.waitForExistence(timeout: 8), "The deterministic completed-run fixture should seed the sent user prompt after reset.")
+        let finalHandoff = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Local web artifact ready")).firstMatch
+        XCTAssertTrue(finalHandoff.waitForExistence(timeout: 8), "The final assistant handoff should be visible after completed-run autoscroll.")
+
+        let progressToggle = runProgressToggle(in: app)
+        XCTAssertTrue(progressToggle.waitForExistence(timeout: 5), "Completed runs should expose the Run Control summary below the handoff.")
+        let composer = composerDock(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5), "Composer dock should remain visible below the completed-run summary.")
+
+        let bottomAccessoryTop = min(progressToggle.frame.minY, composer.frame.minY)
+        XCTAssertLessThanOrEqual(userPrompt.frame.maxY, finalHandoff.frame.minY + 8, "The sent prompt should stay directly before the final assistant handoff, not disappear above an overscrolled gap.")
+        XCTAssertLessThanOrEqual(finalHandoff.frame.maxY, bottomAccessoryTop - 8, "The final assistant handoff must clear Run Control/composer.")
+        XCTAssertLessThanOrEqual(bottomAccessoryTop - finalHandoff.frame.maxY, 180, "Completed-run autoscroll should not leave a giant blank tail between the handoff and Run Control.")
+        XCTAssertFalse(jumpToLatestButton(in: app).exists, "A pinned completed run should not ask the user to jump to the latest message.")
+        capture("27-completed-run-autoscroll-handoff", app: app)
+    }
+
+    func testCompletedRunScrollAwayCollapsesSummaryAndFloatsLatestAboveComposer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-chat", "--local-web-artifact-test"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let finalHandoff = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Local web artifact ready")).firstMatch
+        XCTAssertTrue(finalHandoff.waitForExistence(timeout: 8), "The completed fixture should seed the final assistant handoff.")
+        XCTAssertTrue(runProgressToggle(in: app).waitForExistence(timeout: 5), "Completed runs should show Run Control while pinned at the bottom.")
+
+        let chatScroll = app.scrollViews["chatTranscriptScroll"]
+        XCTAssertTrue(chatScroll.waitForExistence(timeout: 5))
+        let pullStart = chatScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.42))
+        let pullEnd = chatScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.82))
+        pullStart.press(forDuration: 0.15, thenDragTo: pullEnd)
+
+        let latestButton = jumpToLatestButton(in: app)
+        XCTAssertTrue(latestButton.waitForExistence(timeout: 4), "Scrolling up after a completed run should expose one compact Latest affordance.")
+        XCTAssertTrue(runProgressToggle(in: app).waitForNonExistence(timeout: 4), "The completed-run summary should collapse out of the reading path while scrolled up.")
+        let composer = composerDock(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(latestButton.frame.maxY, composer.frame.minY - 8, "Latest should float above the composer instead of stacking between Run Control and the composer.")
+
+        capture("28-completed-run-scrollaway-latest-clean", app: app)
     }
 
     func testLocalNativeToolPlanScreenshot() throws {
@@ -2257,10 +2317,18 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func composerDock(in app: XCUIApplication) -> XCUIElement {
-        let dock = app.otherElements["chatComposerDock"]
-        if dock.exists { return dock }
-        let anyDock = app.descendants(matching: .any)["chatComposerDock"]
-        if anyDock.exists { return anyDock }
+        let visibleDocks = app.descendants(matching: .any)
+            .matching(identifier: "chatComposerDock")
+            .allElementsBoundByIndex
+            .filter { $0.exists && !$0.frame.isEmpty }
+        if let labeledDock = visibleDocks.first(where: { $0.label == "Chat composer dock" }) {
+            return labeledDock
+        }
+        if let largestDock = visibleDocks.max(by: { lhs, rhs in
+            (lhs.frame.width * lhs.frame.height) < (rhs.frame.width * rhs.frame.height)
+        }) {
+            return largestDock
+        }
         return chatComposerInput(in: app)
     }
 

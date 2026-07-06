@@ -217,31 +217,68 @@ struct ProviderConfiguration: Equatable, Sendable {
     let customChatCompletionsURL: String
 
     var chatCompletionsURL: URL? {
-        let raw = provider == .custom ? normalizedCustomChatCompletionsURL : provider.defaultChatCompletionsURL
-        return URL(string: raw)
+        if provider == .custom {
+            return normalizedCustomChatCompletionsURL
+        }
+        return Self.secureEndpointURL(from: provider.defaultChatCompletionsURL)
     }
 
     var modelsURL: URL? {
         if let providerModelsURL = provider.modelsURL {
-            return providerModelsURL
+            return Self.isSecureEndpoint(providerModelsURL) ? providerModelsURL : nil
         }
         guard provider == .custom else { return nil }
-        let trimmed = normalizedCustomChatCompletionsURL
-        guard trimmed.hasSuffix("/chat/completions") else { return nil }
-        return URL(string: String(trimmed.dropLast("/chat/completions".count)) + "/models")
+        guard let chatURL = normalizedCustomChatCompletionsURL else { return nil }
+        return Self.customModelsURL(from: chatURL)
     }
 
-    private var normalizedCustomChatCompletionsURL: String {
+    private var normalizedCustomChatCompletionsURL: URL? {
         var trimmed = customChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while trimmed.hasSuffix("/") {
             trimmed.removeLast()
         }
-        if trimmed.hasSuffix("/chat/completions") {
-            return trimmed
+        guard var components = URLComponents(string: trimmed),
+              components.scheme?.lowercased() == "https",
+              components.host?.isEmpty == false else { return nil }
+
+        components.scheme = "https"
+        components.path = Self.normalizedCustomChatPath(components.path)
+        return components.url.flatMap { Self.isSecureEndpoint($0) ? $0 : nil }
+    }
+
+    private static func secureEndpointURL(from raw: String) -> URL? {
+        guard let url = URL(string: raw), isSecureEndpoint(url) else { return nil }
+        return url
+    }
+
+    private static func isSecureEndpoint(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && !(url.host(percentEncoded: false)?.isEmpty ?? true)
+    }
+
+    private static func normalizedCustomChatPath(_ rawPath: String) -> String {
+        var path = rawPath
+        while path.hasSuffix("/") && path != "/" {
+            path.removeLast()
         }
-        if trimmed.hasSuffix("/v1") {
-            return trimmed + "/chat/completions"
+        if path.hasSuffix("/chat/completions") {
+            return path
         }
-        return trimmed
+        if path.hasSuffix("/v1") {
+            return path + "/chat/completions"
+        }
+        return path
+    }
+
+    private static func customModelsURL(from chatURL: URL) -> URL? {
+        guard var components = URLComponents(url: chatURL, resolvingAgainstBaseURL: false),
+              isSecureEndpoint(chatURL) else { return nil }
+
+        let chatPath = normalizedCustomChatPath(components.path)
+        guard chatPath.hasSuffix("/chat/completions") else { return nil }
+
+        components.path = String(chatPath.dropLast("/chat/completions".count)) + "/models"
+        components.query = nil
+        components.fragment = nil
+        return components.url.flatMap { isSecureEndpoint($0) ? $0 : nil }
     }
 }

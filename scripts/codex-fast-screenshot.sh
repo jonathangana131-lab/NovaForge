@@ -31,6 +31,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 SCREENSHOT_NAME="${SCREENSHOT_NAME:-codex-fast-$STAMP.png}"
 SCREENSHOT_PATH="${SCREENSHOT_PATH:-$SCREENSHOT_DIR/$SCREENSHOT_NAME}"
 APP_PATH="${APP_PATH:-}"
+LAUNCHED_APP_PID=""
 
 SCREENSHOT_DIR="${SCREENSHOT_DIR:A}"
 LOG_DIR="${LOG_DIR:A}"
@@ -175,6 +176,28 @@ launch_app() {
     "${LAUNCH_ARGS[@]}" >"$LAUNCH_LOG" 2>&1
 }
 
+record_launched_app_pid() {
+  LAUNCHED_APP_PID=""
+  if [[ -f "$LAUNCH_LOG" ]]; then
+    LAUNCHED_APP_PID="$(grep -E "^${BUNDLE_ID}: " "$LAUNCH_LOG" | tail -n 1 | cut -d: -f2 | tr -cd '[:digit:]' || true)"
+  fi
+}
+
+assert_launched_app_is_alive() {
+  record_launched_app_pid
+  if [[ -z "$LAUNCHED_APP_PID" ]]; then
+    echo "Warning: unable to read launched app PID from $LAUNCH_LOG; continuing with screenshot capture." >&2
+    return
+  fi
+
+  if ! kill -0 "$LAUNCHED_APP_PID" >/dev/null 2>&1; then
+    echo "Launched app exited before screenshot (pid $LAUNCHED_APP_PID). Refusing to capture SpringBoard/Home Screen as proof." >&2
+    echo "Last 60 lines from $LAUNCH_LOG:" >&2
+    tail -n 60 "$LAUNCH_LOG" >&2
+    exit 1
+  fi
+}
+
 terminate_app() {
   if run_with_timeout "$SIMCTL_TIMEOUT" xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1; then
     :
@@ -256,6 +279,10 @@ else
 fi
 
 sleep "$WAIT_SECONDS"
+
+if [[ "$LAUNCH_APP" == "1" && "$CAPTURE_SCREENSHOT" == "1" ]]; then
+  assert_launched_app_is_alive
+fi
 
 if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
   capture_ready_screenshot
