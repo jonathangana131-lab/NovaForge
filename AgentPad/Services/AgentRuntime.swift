@@ -74,15 +74,21 @@ struct AgentTraceEvent: Identifiable, Hashable {
 
 @MainActor
 final class LiveStreamBuffer: ObservableObject {
-    private let minimumDisplayInterval: Duration = .milliseconds(80)
+    /// Text from providers can arrive in uneven chunks. The UI should not mirror
+    /// those chunks directly; it should reveal text on a steady display-paced
+    /// cadence so the response flows like a native chat app.
+    private var activeRevealFrameInterval: Duration {
+        AgentPerformance.shouldProfileFrameRate ? .milliseconds(90) : .milliseconds(34)
+    }
     private let minimumInitialDisplayCharacters = 1
-    private let maximumPendingCharacters = 260
     private let maximumDisplayedCharacters = 900
     @Published private var frame = LiveStreamFrame()
     @ObservationIgnored private var visibleText = ""
-    @ObservationIgnored private var pendingText = ""
-    @ObservationIgnored private var flushTask: Task<Void, Never>?
-    @ObservationIgnored private var lastDisplayUpdate = ContinuousClock.now
+    @ObservationIgnored private var pendingRevealText = ""
+    @ObservationIgnored private var revealTask: Task<Void, Never>?
+    @ObservationIgnored private var punctuationPauseFrames = 0
+    @ObservationIgnored private var pendingHandoffClearMessageID: UUID?
+    @ObservationIgnored private var revealMetricTickCounter = 0
     @Published private(set) var responseID = UUID()
     @Published private(set) var handoffMessageID: UUID?
 
@@ -97,88 +103,158 @@ final class LiveStreamBuffer: ObservableObject {
     var isEmpty: Bool { frame.characterCount == 0 }
     var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
     var isShowingTail: Bool { frame.displayText.count > maximumDisplayedCharacters }
+    var revealBacklog: Int { pendingRevealText.count }
 
     func reset() {
-        flushTask?.cancel()
-        flushTask = nil
-        pendingText = ""
+        revealTask?.cancel()
+        revealTask = nil
+        pendingRevealText = ""
         visibleText = ""
+        punctuationPauseFrames = 0
+        pendingHandoffClearMessageID = nil
+        revealMetricTickCounter = 0
         responseID = UUID()
         handoffMessageID = nil
         frame = LiveStreamFrame()
-        lastDisplayUpdate = .now
     }
 
     func append(_ delta: String) {
         guard !delta.isEmpty else { return }
-        pendingText += delta
+        pendingRevealText += delta
 
-        if visibleText.isEmpty && pendingText.count < minimumInitialDisplayCharacters {
-            scheduleFlush()
-        } else if visibleText.isEmpty || pendingText.count >= maximumPendingCharacters {
-            flushPending()
-        } else {
-            scheduleFlush()
+        // Show the first glyph immediately so the bubble feels responsive, then
+        // let the reveal loop pace the remaining text instead of spawning a
+        // whole provider batch at once.
+        if visibleText.isEmpty {
+            revealNextSlice(forceMinimum: true)
         }
+        startRevealLoopIfNeeded()
     }
 
+    /// Legacy/testing escape hatch: reveal everything now. Normal provider
+    /// completion uses finishHandoff(to:) so the final saved message does not
+    /// pop in before the live reveal catches up.
     func flushPending() {
-        flushTask?.cancel()
-        flushTask = nil
-        guard !pendingText.isEmpty else { return }
-
-        let delta = pendingText
-        pendingText.removeAll(keepingCapacity: true)
-        let updatedCharacterCount = frame.characterCount + delta.count
-        visibleText += delta
-        frame = LiveStreamFrame(
-            displayText: visibleText,
-            characterCount: updatedCharacterCount,
-            revision: frame.revision + 1
-        )
-        AgentPerformance.event("Live Stream Flush")
-        AgentPerformance.value("Live Stream Flush Characters", Double(delta.count))
-        AgentPerformance.value("Live Stream Visible Characters", Double(visibleText.count))
-        lastDisplayUpdate = .now
+        revealTask?.cancel()
+        revealTask = nil
+        revealAllPending(reason: "Live Stream Flush")
     }
 
     func finishHandoff(to messageID: UUID) {
-        flushPending()
-        flushTask?.cancel()
-        flushTask = nil
-        responseID = messageID
+        // Keep the live-row identity stable while the saved assistant message
+        // waits behind the reveal. Changing responseID here recreates the live
+        // SwiftUI row at completion time and can look like a bubble pop.
         handoffMessageID = messageID
-        frame = LiveStreamFrame(
-            displayText: visibleText,
-            characterCount: visibleText.count,
-            revision: frame.revision + 1
-        )
-        lastDisplayUpdate = .now
+        publishVisibleFrame(extraRevision: true)
+        if !pendingRevealText.isEmpty {
+            startRevealLoopIfNeeded()
+        } else {
+            completeHandoffIfReady()
+        }
     }
 
     func clearHandoffIfRendered(messageID: UUID) {
         guard handoffMessageID == messageID else { return }
-        reset()
+        pendingHandoffClearMessageID = messageID
+        if pendingRevealText.isEmpty {
+            reset()
+        } else {
+            startRevealLoopIfNeeded()
+        }
     }
 
-    private func scheduleFlush() {
-        let elapsed = lastDisplayUpdate.duration(to: .now)
-        if elapsed >= minimumDisplayInterval {
-            flushPending()
-            return
-        }
-
-        guard flushTask == nil else { return }
-        let delay = minimumDisplayInterval - elapsed
-        flushTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: delay)
-            } catch {
-                return
+    private func startRevealLoopIfNeeded() {
+        guard revealTask == nil, !pendingRevealText.isEmpty else { return }
+        revealTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled, !self.pendingRevealText.isEmpty {
+                do {
+                    try await Task.sleep(for: self.activeRevealFrameInterval)
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled else { break }
+                if self.punctuationPauseFrames > 0 {
+                    self.punctuationPauseFrames -= 1
+                } else {
+                    self.revealNextSlice(forceMinimum: false)
+                }
             }
-            guard !Task.isCancelled else { return }
-            self?.flushPending()
+            self?.revealTask = nil
+            self?.completeHandoffIfReady()
         }
+    }
+
+    private func revealNextSlice(forceMinimum: Bool) {
+        guard !pendingRevealText.isEmpty else { return }
+        let count = min(revealCharacterBudget(forceMinimum: forceMinimum), pendingRevealText.count)
+        let end = pendingRevealText.index(pendingRevealText.startIndex, offsetBy: count)
+        let slice = String(pendingRevealText[..<end])
+        pendingRevealText.removeSubrange(..<end)
+        visibleText += slice
+        punctuationPauseFrames = pauseFrames(after: visibleText.last)
+        publishVisibleFrame(extraRevision: false)
+        revealMetricTickCounter += 1
+        if revealMetricTickCounter.isMultiple(of: 8) || pendingRevealText.isEmpty {
+            AgentPerformance.event("Live Stream Reveal Tick")
+            AgentPerformance.value("Live Stream Reveal Characters", Double(slice.count))
+            AgentPerformance.value("Live Stream Visible Characters", Double(visibleText.count))
+            AgentPerformance.value("Live Stream Reveal Backlog", Double(pendingRevealText.count))
+        }
+    }
+
+    private func revealAllPending(reason: StaticString) {
+        guard !pendingRevealText.isEmpty else { return }
+        let delta = pendingRevealText
+        pendingRevealText.removeAll(keepingCapacity: true)
+        visibleText += delta
+        punctuationPauseFrames = 0
+        publishVisibleFrame(extraRevision: false)
+        AgentPerformance.event(reason)
+        AgentPerformance.value("Live Stream Reveal Characters", Double(delta.count))
+        AgentPerformance.value("Live Stream Visible Characters", Double(visibleText.count))
+        AgentPerformance.value("Live Stream Reveal Backlog", 0)
+        completeHandoffIfReady()
+    }
+
+    private func revealCharacterBudget(forceMinimum: Bool) -> Int {
+        if forceMinimum { return minimumInitialDisplayCharacters }
+        if AgentPerformance.shouldProfileFrameRate { return min(260, max(48, pendingRevealText.count)) }
+        let backlog = pendingRevealText.count
+        switch backlog {
+        case 0...48:
+            return 2
+        case 49...140:
+            return 4
+        case 141...320:
+            return 7
+        case 321...720:
+            return 12
+        default:
+            return 20
+        }
+    }
+
+    private func pauseFrames(after character: Character?) -> Int {
+        guard let character else { return 0 }
+        if character == "\n" { return 1 }
+        if character == "," || character == ";" || character == ":" { return 1 }
+        if character == "." || character == "!" || character == "?" { return 2 }
+        return 0
+    }
+
+    private func publishVisibleFrame(extraRevision: Bool) {
+        frame = LiveStreamFrame(
+            displayText: visibleText,
+            characterCount: visibleText.count,
+            revision: frame.revision + 1 + (extraRevision ? 1 : 0)
+        )
+    }
+
+    private func completeHandoffIfReady() {
+        guard let messageID = pendingHandoffClearMessageID,
+              handoffMessageID == messageID,
+              pendingRevealText.isEmpty else { return }
+        reset()
     }
 
 }

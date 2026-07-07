@@ -465,19 +465,21 @@ struct AgentBackground: View {
             )
             .ignoresSafeArea()
 
-            AgentThemeBackdrop(
-                theme: theme,
-                allowsMotion: allowsMotion,
-                reducedDetail: AgentPerformance.prefersReducedVisualEffects
-            )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(conservativeRendering ? 0 : 1)
-                // Identity is keyed by theme only. Including allowsMotion here
-                // used to force a full Canvas/TimelineView teardown+rebuild on
-                // every tab switch and scene-phase change — a large, invisible
-                // hitch. Animation state now transitions in place.
-                .id("agent-backdrop-\(theme.rawValue)")
-                .ignoresSafeArea()
+            if !AgentPerformance.shouldProfileFrameRate {
+                AgentThemeBackdrop(
+                    theme: theme,
+                    allowsMotion: allowsMotion,
+                    reducedDetail: AgentPerformance.prefersReducedVisualEffects
+                )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(conservativeRendering ? 0 : 1)
+                    // Identity is keyed by theme only. Including allowsMotion here
+                    // used to force a full Canvas/TimelineView teardown+rebuild on
+                    // every tab switch and scene-phase change — a large, invisible
+                    // hitch. Animation state now transitions in place.
+                    .id("agent-backdrop-\(theme.rawValue)")
+                    .ignoresSafeArea()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .compositingGroup()
@@ -519,7 +521,7 @@ struct MatrixRainBackdrop: View {
 
     var body: some View {
         if animated {
-            TimelineView(.animation(minimumInterval: reducedDetail ? 1.0 / 20.0 : 1.0 / 24.0)) { timeline in
+            TimelineView(.animation(minimumInterval: reducedDetail ? 1.0 / 30.0 : 1.0 / 60.0)) { timeline in
                 rainFrame(time: timeline.date.timeIntervalSinceReferenceDate)
             }
         } else {
@@ -536,6 +538,7 @@ struct MatrixRainBackdrop: View {
         // to run everywhere, including sheets and performance mode.
         let nearSprites = MatrixRainGlyphAtlas.shared.sprites(for: .near, palette: palette)
         let distantSprites = MatrixRainGlyphAtlas.shared.sprites(for: .distant, palette: palette)
+        let foregroundSprites = MatrixRainGlyphAtlas.shared.sprites(for: .foreground, palette: palette)
         let reducedSprites = MatrixRainGlyphAtlas.shared.sprites(for: .staticReduced, palette: palette)
         return Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
             drawMatrixDepth(in: &context, size: size)
@@ -544,8 +547,13 @@ struct MatrixRainBackdrop: View {
                     drawMatrixColumns(in: &context, size: size, time: time, layer: .distant, sprites: distantSprites)
                 }
                 drawMatrixColumns(in: &context, size: size, time: time, layer: .near, sprites: nearSprites)
+                if !reducedDetail {
+                    drawMatrixColumns(in: &context, size: size, time: time, layer: .foreground, sprites: foregroundSprites, columnStride: 2)
+                }
+                drawMatrixScanlines(in: &context, size: size, time: time)
             } else {
                 drawMatrixColumns(in: &context, size: size, time: time, layer: .staticReduced, sprites: reducedSprites)
+                drawMatrixScanlines(in: &context, size: size, time: 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -570,12 +578,14 @@ final class MatrixRainGlyphAtlas {
     enum LayerKind: String {
         case distant
         case near
+        case foreground
         case staticReduced
 
         fileprivate var layer: MatrixRainLayer {
             switch self {
             case .distant: .distant
             case .near: .near
+            case .foreground: .foreground
             case .staticReduced: .staticReduced
             }
         }
@@ -713,7 +723,8 @@ private extension MatrixRainBackdrop {
         size: CGSize,
         time: TimeInterval,
         layer: MatrixRainLayer,
-        sprites: MatrixRainGlyphAtlas.LayerSprites
+        sprites: MatrixRainGlyphAtlas.LayerSprites,
+        columnStride: Int = 1
     ) {
         let columnWidth = layer.columnWidth
         let rowHeight = layer.rowHeight
@@ -722,8 +733,9 @@ private extension MatrixRainBackdrop {
         let heightPadding = rowHeight * 3
         let glyphCount = MatrixRainSeed.glyphs.count
         let previousOpacity = context.opacity
+        let step = max(1, columnStride)
 
-        for column in 0..<columns {
+        for column in stride(from: 0, to: columns, by: step) {
             let seed = MatrixRainSeed.columns[column % MatrixRainSeed.columns.count]
             let speed = layer.speedScale * seed.speed
             let phase = seed.phase * Double(rows)
@@ -760,6 +772,40 @@ private extension MatrixRainBackdrop {
             }
         }
 
+        context.opacity = previousOpacity
+    }
+
+    func drawMatrixScanlines(in context: inout GraphicsContext, size: CGSize, time: TimeInterval) {
+        let previousOpacity = context.opacity
+        let spacing: CGFloat = 7
+        let rows = max(1, Int(size.height / spacing))
+        context.opacity = 1
+        for row in 0..<rows where row.isMultiple(of: 2) {
+            let y = CGFloat(row) * spacing
+            var line = Path()
+            line.move(to: CGPoint(x: 0, y: y))
+            line.addLine(to: CGPoint(x: size.width, y: y))
+            context.stroke(line, with: .color(Color.black.opacity(0.105)), lineWidth: 0.55)
+        }
+
+        let pulseTravel = max(size.height + 180, 1)
+        let pulseY = CGFloat((time * 96).truncatingRemainder(dividingBy: Double(pulseTravel))) - 90
+        let pulseRect = CGRect(x: 0, y: pulseY, width: size.width, height: 82)
+        var pulsePath = Path()
+        pulsePath.addRect(pulseRect)
+        context.fill(
+            pulsePath,
+            with: .linearGradient(
+                Gradient(colors: [
+                    .clear,
+                    palette.primaryAccent.opacity(0.045),
+                    palette.textPrimary.opacity(0.035),
+                    .clear
+                ]),
+                startPoint: CGPoint(x: 0, y: pulseRect.minY),
+                endPoint: CGPoint(x: 0, y: pulseRect.maxY)
+            )
+        )
         context.opacity = previousOpacity
     }
 }
@@ -1118,6 +1164,19 @@ private struct MatrixRainLayer {
         glowRadius: 1.0
     )
 
+    static let foreground = MatrixRainLayer(
+        columnWidth: 58,
+        rowHeight: 34,
+        speedScale: 1.62,
+        driftScale: 0.72,
+        offsetScale: 1.22,
+        alphaScale: 0.94,
+        tailLength: 10,
+        headFontSize: 15,
+        tailFontSize: 10.5,
+        glowRadius: 2.0
+    )
+
     static let staticReduced = MatrixRainLayer(
         columnWidth: 38,
         rowHeight: 30,
@@ -1141,7 +1200,7 @@ private struct MatrixRainColumnSeed {
 }
 
 private enum MatrixRainSeed {
-    static let glyphs = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$#/<>{}[]+-=*~").map { String($0) }
+    static let glyphs = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ$#/<>{}[]+-=*~").map { String($0) }
     static let columns: [MatrixRainColumnSeed] = (0..<128).map { index in
         let base = Double(index)
         let speed = 86.0 + Double((index * 37) % 74)

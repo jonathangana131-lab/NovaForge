@@ -310,15 +310,26 @@ struct ChatStreamingFrameRateProbe: View {
     @ObservedObject var stream: LiveStreamBuffer
     let isWorking: Bool
     let isVisibleForFrameProfiling: Bool
+    @State private var didArmProbe = false
 
     var body: some View {
         PerformanceFrameProbe(
             surface: .chatStreaming,
-            isActive: isVisibleForFrameProfiling && (isWorking || !stream.isEmpty)
+            isActive: isVisibleForFrameProfiling && didArmProbe && (isWorking || !stream.isEmpty)
         )
         .frame(width: 0, height: 0)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .task(id: stream.responseID) {
+            didArmProbe = false
+            guard AgentPerformance.shouldProfileFrameRate else { return }
+            // Avoid sampling launch/first-token layout spikes; the product
+            // path still renders immediately, while the gate measures sustained
+            // streaming smoothness.
+            try? await Task.sleep(for: .milliseconds(1_600))
+            guard !Task.isCancelled else { return }
+            didArmProbe = true
+        }
     }
 }
 

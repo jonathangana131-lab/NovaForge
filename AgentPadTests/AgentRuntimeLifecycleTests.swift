@@ -23,6 +23,43 @@ enum TestModelSchema {
 
 @MainActor
 final class AgentRuntimeLifecycleTests: XCTestCase {
+    func testLiveStreamBufferRevealsLargeChunksGradually() async throws {
+        let stream = LiveStreamBuffer()
+        let text = String(repeating: "NovaForge should flow like a native chat response instead of spawning a full provider batch. ", count: 8)
+
+        stream.append(text)
+
+        XCTAssertFalse(stream.displayText.isEmpty)
+        XCTAssertLessThan(stream.displayText.count, text.count, "The first display update should reveal only the start of a large provider batch.")
+        XCTAssertGreaterThan(stream.revealBacklog, 0)
+
+        let initialCount = stream.displayText.count
+        try await Task.sleep(for: .milliseconds(140))
+        XCTAssertGreaterThan(stream.displayText.count, initialCount, "The display-paced reveal loop should keep flowing after the first glyph.")
+        XCTAssertLessThan(stream.displayText.count, text.count, "The reveal loop should not dump the entire backlog in one UI update.")
+
+        stream.flushPending()
+        XCTAssertEqual(stream.displayText, text)
+        XCTAssertEqual(stream.revealBacklog, 0)
+    }
+
+    func testLiveStreamHandoffWaitsForRevealBeforeClearingLiveBubble() {
+        let stream = LiveStreamBuffer()
+        let messageID = UUID()
+        let text = String(repeating: "handoff should wait for the live reveal to catch up before final text replaces it. ", count: 6)
+
+        stream.append(text)
+        stream.finishHandoff(to: messageID)
+        stream.clearHandoffIfRendered(messageID: messageID)
+
+        XCTAssertTrue(stream.isHandoffActive, "Final message rendering should not clear the live island while reveal backlog remains.")
+        XCTAssertGreaterThan(stream.revealBacklog, 0)
+
+        stream.flushPending()
+        XCTAssertTrue(stream.isEmpty)
+        XCTAssertNil(stream.handoffMessageID)
+    }
+
     func testRuntimeFixtureExposesStructuredProjectProgressInputs() {
         let runtime = AgentRuntime()
         runtime.debugSimulateActiveStatusStripRun()

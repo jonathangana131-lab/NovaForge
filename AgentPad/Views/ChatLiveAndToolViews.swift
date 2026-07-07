@@ -689,15 +689,58 @@ private struct StreamingTextView: View {
         AgentPerformance.allowsDecorativeMotion && !reduceMotion
     }
 
+    private var flowingText: Text {
+        let value = text.isEmpty ? " " : text
+        let tailCount = min(18, value.count)
+        guard tailCount > 0, value.count > tailCount else {
+            return Text(value).foregroundColor(AgentPalette.ink)
+        }
+        let prefix = String(value.dropLast(tailCount))
+        let tail = String(value.suffix(tailCount))
+        return Text(prefix).foregroundColor(AgentPalette.ink)
+            + Text(tail).foregroundColor(AgentPalette.primaryAccent.opacity(allowsMotion ? 0.98 : 0.82))
+    }
+
     var body: some View {
-        Text(text.isEmpty ? " " : text)
-            .foregroundStyle(AgentPalette.ink)
+        flowingText
             .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
             .lineSpacing(5)
             .textSelection(.enabled)
+            .accessibilityIdentifier("streamingTextReveal")
+            .overlay(alignment: .bottomTrailing) {
+                if allowsMotion && !text.isEmpty {
+                    StreamingCaretView(tint: AgentPalette.primaryAccent)
+                        .offset(x: 5, y: -2)
+                        .accessibilityHidden(true)
+                }
+            }
             .transaction { transaction in
+                // Text reveal is paced by LiveStreamBuffer; implicit SwiftUI
+                // interpolation on every frame adds work without improving the
+                // native chat feel.
                 transaction.animation = nil
             }
+    }
+}
+
+private struct StreamingCaretView: View {
+    let tint: Color
+    @State private var pulse = false
+
+    var body: some View {
+        Capsule(style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [tint.opacity(0.25), tint.opacity(0.95), .white.opacity(0.88)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(width: 2.2, height: 17)
+            .shadow(color: tint.opacity(0.75), radius: 6, x: 0, y: 0)
+            .opacity(pulse ? 1 : 0.34)
+            .animation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true), value: pulse)
+            .onAppear { pulse = true }
     }
 }
 

@@ -730,66 +730,33 @@ struct ProjectDashboardView: View {
         ZStack(alignment: .top) {
             ScrollViewReader { scrollProxy in
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 0) {
                         Color.clear
                             .frame(height: 1)
                             .id(Self.projectScrollTopID)
                             .accessibilityHidden(true)
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(spacing: 10) {
-                                Label("Mission Dossier", systemImage: "scope")
-                                    .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                    .foregroundStyle(AgentPalette.primaryAccent)
-                                Spacer(minLength: 0)
-                                Text("PROFILE")
-                                    .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                    .foregroundStyle(AgentPalette.tertiaryText)
-                                    .padding(.horizontal, 8)
-                                    .frame(height: 22)
-                                    .background(AgentPalette.row.opacity(0.72), in: Capsule(style: .continuous))
-                            }
-
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Mission Dossier")
+                                .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(AgentPalette.primaryAccent)
                             Text(project.name)
                                 .font(.system(size: 20, weight: .black, design: AgentPalette.interfaceFontDesign))
                                 .foregroundStyle(AgentPalette.ink)
                                 .lineLimit(2)
-
                             Text(summary.review.headline)
                                 .font(.system(size: 11, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                                 .foregroundStyle(AgentPalette.secondaryText)
                                 .lineLimit(2)
-
-                            HStack(spacing: 8) {
-                                performanceProfilePill("Proof", value: "\(summary.proofItems.count)", tint: AgentPalette.green)
-                                performanceProfilePill("Runs", value: "\(projectOSRuns.count)", tint: AgentPalette.primaryAccent)
-                                performanceProfilePill("Files", value: "\(projectFileChanges.count)", tint: AgentPalette.warning)
-                            }
                         }
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AgentPalette.surfaceElevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .strokeBorder(AgentPalette.border.opacity(0.42), lineWidth: 0.7)
-                        )
+                        .background(AgentPalette.surfaceElevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("projectOSControlCenter")
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            performanceProfileRow("Plan", detail: summary.missionContract.phase.displayName, symbol: "list.bullet.clipboard.fill", tint: AgentPalette.primaryAccent)
-                            performanceProfileRow("Build", detail: runtimeStatus.title, symbol: "hammer.fill", tint: runtimeStatus.tint)
-                            performanceProfileRow("Prove", detail: summary.review.proofFreshness, symbol: "checkmark.seal.fill", tint: proofFreshnessTint)
-                        }
-                        .padding(12)
-                        .background(AgentPalette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .strokeBorder(AgentPalette.border.opacity(0.34), lineWidth: 0.6)
-                        )
-
                         Color.clear
-                            .frame(height: 620)
+                            .frame(height: 760)
                             .accessibilityHidden(true)
 
                         Color.clear
@@ -809,42 +776,6 @@ struct ProjectDashboardView: View {
             }
 
             projectFrameRateProbe
-        }
-    }
-
-    func performanceProfilePill(_ title: String, value: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(.system(size: 16, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(tint)
-                .monospacedDigit()
-            Text(title)
-                .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.tertiaryText)
-                .textCase(.uppercase)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(tint.opacity(0.075), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    func performanceProfileRow(_ title: String, detail: String, symbol: String, tint: Color) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .black))
-                .foregroundStyle(tint)
-                .frame(width: 26, height: 26)
-                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.ink)
-                Text(detail)
-                    .font(.system(size: 9.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
         }
     }
 
@@ -908,7 +839,7 @@ struct ProjectDashboardView: View {
         guard !didRunAutoScrollProfile else { return }
         guard ProcessInfo.processInfo.arguments.contains("--auto-project-scroll") else { return }
         didRunAutoScrollProfile = true
-        try? await Task.sleep(for: .milliseconds(1_800))
+        try? await Task.sleep(for: .milliseconds(3_700))
         guard !Task.isCancelled else { return }
 
         projectScrollStartedAt = Date()
@@ -916,13 +847,13 @@ struct ProjectDashboardView: View {
         withAnimation(projectAutoScrollAnimation(duration: 1.1)) {
             proxy.scrollTo(Self.projectScrollBottomID, anchor: .bottom)
         }
-        try? await Task.sleep(for: .milliseconds(1_300))
+        try? await Task.sleep(for: .milliseconds(850))
         guard !Task.isCancelled else { return }
 
         withAnimation(projectAutoScrollAnimation(duration: 1.0)) {
             proxy.scrollTo(Self.projectScrollTopID, anchor: .top)
         }
-        try? await Task.sleep(for: .milliseconds(1_150))
+        try? await Task.sleep(for: .milliseconds(650))
         guard !Task.isCancelled else { return }
 
         if let startedAt = projectScrollStartedAt {
@@ -931,6 +862,9 @@ struct ProjectDashboardView: View {
         }
         AgentPerformance.event("Project Scroll Completed")
         projectScrollStartedAt = nil
+        if AgentPerformance.shouldProfileFrameRate {
+            didArmProjectFrameProbe = false
+        }
     }
 
     func armProjectFrameProbeAfterSettle() {
@@ -940,7 +874,7 @@ struct ProjectDashboardView: View {
         }
         didArmProjectFrameProbe = false
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(1_100))
+            try? await Task.sleep(for: .milliseconds(2_200))
             guard !Task.isCancelled else { return }
             didArmProjectFrameProbe = true
         }
