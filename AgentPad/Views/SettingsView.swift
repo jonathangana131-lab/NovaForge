@@ -74,6 +74,8 @@ struct SettingsView: View {
                                 safetyTitle: safetyModeTitle,
                                 safetyDetail: safetyModeDetail,
                                 safetyTint: safetyModeTint,
+                                buildLabel: bundleVersionLabel,
+                                buildDetail: compactBuildDiagnosticsDetail,
                                 theme: selectedTheme
                             )
                             .accessibilityIdentifier("settingsCommandDeck")
@@ -954,8 +956,52 @@ struct SettingsView: View {
                 detail: safetyModeDetail,
                 symbol: settings.autoApproveWrites ? "bolt.badge.checkmark.fill" : "checkmark.shield.fill",
                 tint: safetyModeTint
+            ),
+            SettingsDiagnosticItem(
+                id: "build",
+                title: "App build",
+                value: bundleVersionLabel,
+                detail: buildDiagnosticsDetail,
+                symbol: "iphone.gen3",
+                tint: AgentPalette.cyan
             )
         ]
+    }
+
+    private var bundleVersionLabel: String {
+        let info = Bundle.main.infoDictionary
+        let version = (info?["CFBundleShortVersionString"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let build = (info?["CFBundleVersion"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch (version.isEmpty, build.isEmpty) {
+        case (false, false): return "\(version) (\(build))"
+        case (false, true): return version
+        case (true, false): return "Build \(build)"
+        case (true, true): return "Dev"
+        }
+    }
+
+    private var buildDiagnosticsDetail: String {
+        let identifier = Bundle.main.bundleIdentifier ?? "com.joey.NovaForge"
+        #if DEBUG
+        let lane = "Debug"
+        #elseif targetEnvironment(simulator)
+        let lane = "Simulator Release"
+        #else
+        let lane = "Device Release"
+        #endif
+        return "\(lane) · \(identifier)"
+    }
+
+    private var compactBuildDiagnosticsDetail: String {
+        let identifier = Bundle.main.bundleIdentifier ?? "com.joey.NovaForge"
+        #if DEBUG
+        let lane = "Debug"
+        #elseif targetEnvironment(simulator)
+        let lane = "Simulator"
+        #else
+        let lane = "Device"
+        #endif
+        return "\(lane) · \(identifier)"
     }
 
     private func providerReadiness(for provider: AIProvider) -> (title: String, tint: Color) {

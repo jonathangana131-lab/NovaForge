@@ -1016,6 +1016,21 @@ final class AgentPadUITests: XCTestCase {
         capture("86-settings-ready-card-readable-hierarchy", app: app)
     }
 
+    func testSettingsDiagnosticsShowsAppBuildForInstallVerification() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-settings"]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
+        let buildLabel = app.staticTexts.containing(NSPredicate(format: "label == %@", "APP BUILD")).firstMatch
+        XCTAssertTrue(buildLabel.waitForExistence(timeout: 5), "The Control deck should expose the app build immediately so phone-update proof can be matched to the installed app.")
+        let bundleLabel = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "com.joey.NovaForge")).firstMatch
+        XCTAssertTrue(bundleLabel.waitForExistence(timeout: 3), "Build diagnostics should include the bundle ID used by devicectl install/launch.")
+        XCTAssertGreaterThanOrEqual(buildLabel.frame.minY, app.frame.minY + 180, "Build label should sit in the visible top Control deck, not below the fold.")
+        XCTAssertLessThanOrEqual(bundleLabel.frame.maxY, app.frame.maxY - 300, "Bundle build detail should be visible before scrolling.")
+        capture("88-settings-diagnostics-app-build", app: app)
+    }
+
     func testCustomProviderInvalidEndpointShowsInlineValidationScreenshot() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--settings-local-model-ready"]

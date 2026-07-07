@@ -36,6 +36,8 @@ struct SettingsCommandDeck: View {
     let safetyTitle: String
     let safetyDetail: String
     let safetyTint: Color
+    let buildLabel: String
+    let buildDetail: String
     let theme: AgentTheme
 
     var body: some View {
@@ -65,6 +67,8 @@ struct SettingsCommandDeck: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            SettingsCommandDeckBuildPill(label: buildLabel, detail: buildDetail)
 
             LazyVGrid(
                 columns: [
@@ -102,6 +106,45 @@ struct SettingsCommandDeck: View {
         }
         .padding(12)
         .agentSurface(radius: 20, tint: readinessTint.opacity(0.08))
+    }
+}
+
+private struct SettingsCommandDeckBuildPill: View {
+    let label: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "iphone.gen3")
+                .font(.system(size: 11, weight: .black))
+                .foregroundStyle(AgentPalette.cyan)
+                .frame(width: 24, height: 24)
+                .agentControlSurface(radius: 8, tint: AgentPalette.cyan.opacity(0.12), selected: false)
+
+            Text("App build")
+                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.tertiaryText)
+                .textCase(.uppercase)
+
+            Text(label)
+                .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+
+            Spacer(minLength: 4)
+
+            Text(detail)
+                .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(.horizontal, 10)
+        .frame(minHeight: 38)
+        .agentRowSurface(radius: 13, tint: AgentPalette.cyan.opacity(0.06))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settingsBuildPill")
     }
 }
 
@@ -559,6 +602,8 @@ struct SettingsDiagnosticsPanel: View {
                 }
                 .padding(10)
                 .agentRowSurface(radius: 14, tint: item.tint.opacity(0.05))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("settingsDiagnostic-\(item.id)")
             }
         }
         .accessibilityIdentifier("settingsDiagnosticsPanel")

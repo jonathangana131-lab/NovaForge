@@ -237,13 +237,13 @@ enum CodeSyntaxHighlighter {
 
     // MARK: - Regexes (compiled once)
 
-    nonisolated(unsafe) private static let regexString: NSRegularExpression? =
+    private static let regexString: NSRegularExpression? =
         try? NSRegularExpression(pattern: "\"\"\"[\\s\\S]*?\"\"\"|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'|`(?:[^`\\\\]|\\\\.)*`")
 
-    nonisolated(unsafe) private static let regexNumber: NSRegularExpression? =
+    private static let regexNumber: NSRegularExpression? =
         try? NSRegularExpression(pattern: "\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|\\d[\\d_]*(?:\\.[\\d_]+)?(?:[eE][+-]?\\d+)?)\\b")
 
-    nonisolated(unsafe) private static let regexWord: NSRegularExpression? =
+    private static let regexWord: NSRegularExpression? =
         try? NSRegularExpression(pattern: "[A-Za-z_][A-Za-z0-9_]*")
 
     nonisolated(unsafe) private static var blockCommentCache: [String: NSRegularExpression] = [:]

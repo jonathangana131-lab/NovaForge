@@ -178,6 +178,22 @@ Fast gate does not fully cover:
 - Full accessibility audit across every Dynamic Type size and VoiceOver rotor path.
 - Exhaustive Liquid Glass frame-time analysis across every device/runtime; the fast performance gate enforces the Project scroll, tab switch, and Chat streaming budgets on the proof simulator, while deep performance sweeps remain separate.
 
+## Physical iPhone Update
+
+Use the guarded phone helper when a verified build needs to be installed on Joey’s plugged-in iPhone:
+
+```sh
+CONFIGURATION=Release scripts/run-on-iphone.sh
+```
+
+The helper writes logs under `QA/phone-update-*`, builds into isolated DerivedData, records `QA/latest-phone-update-dir.txt`, checks CoreDevice/USB reachability before install, installs with `devicectl`, launches `com.joey.NovaForge`, and verifies the NovaForge process. If the phone is paired but unavailable, it exits with a clear `PHONE UPDATE BLOCKED` message instead of repeatedly rebuilding or hiding the device issue.
+
+Useful knobs:
+
+- `APP_PATH=/path/to/NovaForge.app` reuses an already-built app.
+- `WAIT_FOR_DEVICE=0` performs one fast reachability check and exits if the phone is unavailable.
+- `MAX_ATTEMPTS=120 SLEEP_SECONDS=10` waits up to ~20 minutes for unlock/replug/trust recovery.
+
 ## Cleanup Check
 
 After any simulator proof, verify the Mac is quiet:

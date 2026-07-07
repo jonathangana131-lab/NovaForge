@@ -697,8 +697,12 @@ private struct StreamingTextView: View {
         }
         let prefix = String(value.dropLast(tailCount))
         let tail = String(value.suffix(tailCount))
-        return Text(prefix).foregroundColor(AgentPalette.ink)
-            + Text(tail).foregroundColor(AgentPalette.primaryAccent.opacity(allowsMotion ? 0.98 : 0.82))
+        var attributed = AttributedString(prefix)
+        attributed.foregroundColor = AgentPalette.ink
+        var highlightedTail = AttributedString(tail)
+        highlightedTail.foregroundColor = AgentPalette.primaryAccent.opacity(allowsMotion ? 0.98 : 0.82)
+        attributed.append(highlightedTail)
+        return Text(attributed)
     }
 
     var body: some View {
