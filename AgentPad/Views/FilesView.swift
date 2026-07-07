@@ -1638,7 +1638,7 @@ private struct FilesEmptyState: View {
     let openChat: () -> Void
 
     var body: some View {
-        NovaOrbitalEmptyState(
+        NovaGlassEmptyState(
             symbol: "folder.badge.plus",
             title: "Nothing forged here yet",
             detail: "This workspace folder is standing by. Create the first file, or hand NovaForge a mission from Chat and it will land evidence here.",

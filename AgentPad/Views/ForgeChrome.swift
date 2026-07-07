@@ -45,6 +45,7 @@ struct ForgeHeader: View {
     let createProject: () -> Void
     let openWorkspaceSurface: (AppTab) -> Void
     let openArtifact: (WorkspaceArtifact) -> Void
+    let openMissionDossier: () -> Void
     let openChatDrawer: () -> Void
 
     private var chromeTint: Color { AgentPalette.primaryAccent }
@@ -163,6 +164,13 @@ struct ForgeHeader: View {
 
     private var scopeMenu: some View {
         Menu {
+            Button {
+                openMissionDossier()
+            } label: {
+                Label("Open Mission Dossier", systemImage: "doc.text.magnifyingglass")
+            }
+            .accessibilityIdentifier("missionDossierMenuItem")
+
             Button {
                 changeScope(nil)
             } label: {
@@ -682,16 +690,19 @@ struct MissionDossierCover<Dashboard: View>: View {
                 NovaHaptics.surfaceRevealed()
                 close()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(AgentPalette.ink.opacity(0.08)))
-                    .overlay(Circle().strokeBorder(AgentPalette.divider.opacity(0.7), lineWidth: 0.8))
-                    .contentShape(Circle())
+                ZStack {
+                    Color.clear
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                }
+                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                .background(Circle().fill(AgentPalette.ink.opacity(0.08)))
+                .overlay(Circle().strokeBorder(AgentPalette.divider.opacity(0.7), lineWidth: 0.8))
+                .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .padding(.trailing, 16)
+            .padding(.trailing, 12)
             .padding(.top, 8)
             .accessibilityLabel("Close mission dossier")
             .accessibilityIdentifier("missionDossierClose")

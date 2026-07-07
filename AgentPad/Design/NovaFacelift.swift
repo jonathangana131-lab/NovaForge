@@ -632,3 +632,140 @@ extension NovaHaptics {
         UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.8)
     }
 }
+
+// MARK: - Mission-requested glass primitives
+
+/// Reusable high-level glass panel. Prefer this for large screen regions that
+/// need one readable surface without re-creating gradients in feature views.
+struct NovaGlassPanel<Content: View>: View {
+    var tint: Color = AgentPalette.accent
+    var radius: CGFloat = AgentDesign.panelRadius
+    private let content: Content
+
+    init(tint: Color = AgentPalette.accent, radius: CGFloat = AgentDesign.panelRadius, @ViewBuilder content: () -> Content) {
+        self.tint = tint
+        self.radius = radius
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .agentSurface(radius: radius, tint: tint.opacity(0.07))
+    }
+}
+
+/// Compact card primitive for rows, receipts, and inline proof blocks.
+struct NovaGlassCard<Content: View>: View {
+    var tint: Color = AgentPalette.accent
+    var selected = false
+    private let content: Content
+
+    init(tint: Color = AgentPalette.accent, selected: Bool = false, @ViewBuilder content: () -> Content) {
+        self.tint = tint
+        self.selected = selected
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .agentRowSurface(radius: AgentDesign.rowRadius, tint: tint.opacity(0.08), selected: selected)
+    }
+}
+
+struct NovaGlassToolbar<Content: View>: View {
+    var tint: Color = AgentPalette.accent
+    private let content: Content
+
+    init(tint: Color = AgentPalette.accent, @ViewBuilder content: () -> Content) {
+        self.tint = tint
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(spacing: 8) { content }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .agentGlass(radius: 22, interactive: true, tint: tint.opacity(0.08))
+    }
+}
+
+struct NovaGlassSheetBackground: View {
+    var tint: Color = AgentPalette.accent
+
+    var body: some View {
+        AgentBackground()
+            .overlay(
+                LinearGradient(
+                    colors: [tint.opacity(0.12), Color.clear, AgentPalette.surface.opacity(0.30)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .ignoresSafeArea()
+    }
+}
+
+struct NovaGlassStatusChip: View {
+    let title: String
+    var symbol: String = "sparkles"
+    var tint: Color = AgentPalette.accent
+
+    var body: some View {
+        StatusChip(text: title, symbol: symbol, tint: tint)
+            .minimumTapTarget()
+    }
+}
+
+struct NovaGlassTextFieldBackground: ViewModifier {
+    var focused: Bool
+    var tint: Color = AgentPalette.accent
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .composerGlassSurface(focused: focused, tint: tint, style: .default)
+    }
+}
+
+struct NovaGlassDivider: View {
+    var tint: Color = AgentPalette.accent
+
+    var body: some View {
+        LinearGradient(
+            colors: [Color.clear, tint.opacity(0.34), AgentPalette.divider.opacity(0.55), Color.clear],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(height: 1)
+        .accessibilityHidden(true)
+    }
+}
+
+struct NovaGlassEmptyState: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    var tint: Color = AgentPalette.accent
+    var actions: [NovaOrbitalEmptyState.Action] = []
+
+    var body: some View {
+        NovaOrbitalEmptyState(
+            symbol: symbol,
+            title: title,
+            detail: detail,
+            tint: tint,
+            actions: actions
+        )
+    }
+}
+
+extension View {
+    func novaGlassTextFieldBackground(focused: Bool, tint: Color = AgentPalette.accent) -> some View {
+        modifier(NovaGlassTextFieldBackground(focused: focused, tint: tint))
+    }
+}

@@ -78,8 +78,9 @@ struct AIProviderClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown OpenAI error"
-            throw OpenAIError.requestFailed(message)
+            throw OpenAIError.requestFailed(
+                OpenAIError.providerFailureMessage(data: data, fallback: "Unknown OpenAI error")
+            )
         }
         
         let decoded = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
@@ -165,9 +166,20 @@ struct AIProviderClient {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             var message = ""
             for try await line in bytes.lines {
-                message += line
+                if message.count < OpenAIError.maxProviderFailureBodyCharacters {
+                    message += line
+                    message += "\n"
+                }
+                if message.count >= OpenAIError.maxProviderFailureBodyCharacters {
+                    break
+                }
             }
-            throw OpenAIError.requestFailed(message.isEmpty ? "Unknown streaming provider error" : message)
+            throw OpenAIError.requestFailed(
+                OpenAIError.providerFailureMessage(
+                    rawText: message,
+                    fallback: "Unknown streaming provider error"
+                )
+            )
         }
 
         let decoded = try await decodeStreamingResponse(from: bytes, onContentBatch: onContentBatch)
@@ -208,8 +220,9 @@ struct AIProviderClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown connection error"
-            throw OpenAIError.requestFailed(message)
+            throw OpenAIError.requestFailed(
+                OpenAIError.providerFailureMessage(data: data, fallback: "Unknown connection error")
+            )
         }
         
         _ = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
@@ -229,8 +242,9 @@ struct AIProviderClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Could not load models."
-            throw OpenAIError.requestFailed(message)
+            throw OpenAIError.requestFailed(
+                OpenAIError.providerFailureMessage(data: data, fallback: "Could not load models.")
+            )
         }
 
         let decoded = try JSONDecoder().decode(ProviderModelsResponse.self, from: data)
@@ -287,11 +301,49 @@ private struct StreamingToolCallPart {
 enum OpenAIError: LocalizedError {
     case requestFailed(String)
 
+    static let maxProviderFailureBodyCharacters = 8_000
+    private static let maxProviderFailureMessageCharacters = 1_400
+
     var errorDescription: String? {
         switch self {
         case .requestFailed(let message):
             message
         }
+    }
+
+    static func providerFailureMessage(data: Data, fallback: String) -> String {
+        let rawText = String(data: data, encoding: .utf8) ?? ""
+        return providerFailureMessage(rawText: rawText, fallback: fallback)
+    }
+
+    static func providerFailureMessage(rawText: String, fallback: String) -> String {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseMessage = trimmed.isEmpty ? fallback : trimmed
+        let redacted = redactSensitiveProviderText(baseMessage)
+        guard redacted.count > maxProviderFailureMessageCharacters else {
+            return redacted
+        }
+
+        let note = "\n\n[NovaForge shortened this provider error; the raw response was too large to show safely.]\n\n"
+        let budget = maxProviderFailureMessageCharacters - note.count
+        let headCount = max(320, Int(Double(budget) * 0.70))
+        let tailCount = max(160, budget - headCount)
+        return "\(redacted.prefix(headCount))\(note)--- \(max(0, redacted.count - headCount - tailCount)) characters omitted ---\n\(redacted.suffix(tailCount))"
+    }
+
+    private static func redactSensitiveProviderText(_ text: String) -> String {
+        var output = text
+        let patterns: [(String, String)] = [
+            (#"sk-[A-Za-z0-9_\-]{12,}"#, "sk-…redacted"),
+            (#"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s\"']+"#, "$1…redacted"),
+            (#"(?i)(api[_-]?key\s*[:=]\s*)[^\s\"',}]+"#, "$1…redacted")
+        ]
+        for (pattern, replacement) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(output.startIndex..<output.endIndex, in: output)
+            output = regex.stringByReplacingMatches(in: output, range: range, withTemplate: replacement)
+        }
+        return output
     }
 }
 

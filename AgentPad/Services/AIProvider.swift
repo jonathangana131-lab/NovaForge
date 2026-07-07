@@ -218,17 +218,17 @@ struct ProviderConfiguration: Equatable, Sendable {
 
     var chatCompletionsURL: URL? {
         let raw = provider == .custom ? normalizedCustomChatCompletionsURL : provider.defaultChatCompletionsURL
-        return URL(string: raw)
+        return Self.validatedProviderURL(raw)
     }
 
     var modelsURL: URL? {
         if let providerModelsURL = provider.modelsURL {
-            return providerModelsURL
+            return Self.validatedProviderURL(providerModelsURL.absoluteString)
         }
         guard provider == .custom else { return nil }
         let trimmed = normalizedCustomChatCompletionsURL
         guard trimmed.hasSuffix("/chat/completions") else { return nil }
-        return URL(string: String(trimmed.dropLast("/chat/completions".count)) + "/models")
+        return Self.validatedProviderURL(String(trimmed.dropLast("/chat/completions".count)) + "/models")
     }
 
     private var normalizedCustomChatCompletionsURL: String {
@@ -243,5 +243,18 @@ struct ProviderConfiguration: Equatable, Sendable {
             return trimmed + "/chat/completions"
         }
         return trimmed
+    }
+
+    private static func validatedProviderURL(_ raw: String) -> URL? {
+        guard let components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil,
+              let url = components.url else {
+            return nil
+        }
+        return url
     }
 }

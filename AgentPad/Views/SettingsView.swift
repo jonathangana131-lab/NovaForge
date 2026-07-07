@@ -43,70 +43,74 @@ struct SettingsView: View {
     @AppStorage(AgentPerformance.storageKey) private var performanceModeEnabled = false
 
     var body: some View {
-        ZStack(alignment: .top) {
-            ScrollView {
-                // One continuous vertical settings surface feels more native and
-                // predictable than the old segmented dashboard. Everything is
-                // reachable by normal scrolling, while advanced sheets still use
-                // native NavigationStack/List pickers.
-                GlassGroup(spacing: 16) {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        SettingsHero(
-                            projectName: project.name,
-                            subtitle: "Command deck // theme studio",
-                            tint: AgentPalette.primaryAccent
-                        )
-                        .accessibilityIdentifier("settingsHero")
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
+                NovaGlassSheetBackground(tint: AgentPalette.primaryAccent)
 
-                        SettingsCommandDeck(
-                            readinessTitle: settingsReadinessTitle,
-                            readinessDetail: settingsReadinessDetail,
-                            readinessSymbol: settingsReadinessSymbol,
-                            readinessTint: settingsReadinessTint,
-                            providerName: settings.provider.displayName,
-                            providerSymbol: settings.provider.symbol,
-                            providerTint: settings.provider.tint,
-                            modelName: modelDisplayName(settings.modelID),
-                            modelDetail: modelReadinessDetail,
-                            safetyTitle: safetyModeTitle,
-                            safetyDetail: safetyModeDetail,
-                            safetyTint: safetyModeTint,
-                            theme: selectedTheme
-                        )
-                        .accessibilityIdentifier("settingsCommandDeck")
+                ScrollView {
+                    // One continuous vertical settings surface feels more native and
+                    // predictable than the old segmented dashboard. Everything is
+                    // reachable by normal scrolling, while advanced sheets still use
+                    // native NavigationStack/List pickers.
+                    GlassGroup(spacing: 16) {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            SettingsHero(
+                                projectName: project.name,
+                                subtitle: "Command deck // theme studio",
+                                tint: AgentPalette.primaryAccent
+                            )
+                            .accessibilityIdentifier("settingsHero")
 
-                        providerSection
-                        modelSection
-                        presetSection
+                            SettingsCommandDeck(
+                                readinessTitle: settingsReadinessTitle,
+                                readinessDetail: settingsReadinessDetail,
+                                readinessSymbol: settingsReadinessSymbol,
+                                readinessTint: settingsReadinessTint,
+                                providerName: settings.provider.displayName,
+                                providerSymbol: settings.provider.symbol,
+                                providerTint: settings.provider.tint,
+                                modelName: modelDisplayName(settings.modelID),
+                                modelDetail: modelReadinessDetail,
+                                safetyTitle: safetyModeTitle,
+                                safetyDetail: safetyModeDetail,
+                                safetyTint: safetyModeTint,
+                                theme: selectedTheme
+                            )
+                            .accessibilityIdentifier("settingsCommandDeck")
 
-                        if settings.provider == .openAICodex {
-                            credentialSection
-                            if showsCodexTerminalDemo {
-                                codexTerminalSection
+                            providerSection
+                            modelSection
+                            presetSection
+
+                            if settings.provider == .openAICodex {
+                                credentialSection
+                                if showsCodexTerminalDemo {
+                                    codexTerminalSection
+                                }
+                            } else if settings.provider == .local {
+                                localModelSection
+                            } else {
+                                credentialSection
                             }
-                        } else if settings.provider == .local {
-                            localModelSection
-                        } else {
-                            credentialSection
+
+                            behaviorSection
+                            diagnosticsSection
+                            appearanceSection
                         }
-
-                        behaviorSection
-                        diagnosticsSection
-                        appearanceSection
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, controlContentTopPadding(for: geometry.safeAreaInsets.top))
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 24)
-            }
-            .scrollContentBackground(.hidden)
-            .scrollDismissesKeyboard(.interactively)
-            .agentDockEdgeFade()
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                BottomDockContentShield(height: BottomDockMetrics.scrollClearance)
-            }
+                .scrollContentBackground(.hidden)
+                .scrollDismissesKeyboard(.interactively)
+                .agentDockEdgeFade()
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    BottomDockContentShield(height: BottomDockMetrics.scrollClearance)
+                }
 
-            SettingsSaveToast(isVisible: showSavedToast)
+                SettingsSaveToast(isVisible: showSavedToast)
+            }
         }
         .accessibilityIdentifier("settingsRoot")
         .onAppear(perform: prepare)
@@ -246,8 +250,11 @@ struct SettingsView: View {
                 return "Local model needs attention"
             }
         }
-        if settings.provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Endpoint required"
+        if settings.provider == .custom,
+           let customEndpointValidationMessage {
+            return customEndpointValidationMessage == Self.missingCustomEndpointMessage
+                ? "Endpoint required"
+                : "Fix endpoint URL"
         }
         return apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "API key required" : "Ready to run"
     }
@@ -256,14 +263,33 @@ struct SettingsView: View {
         if settings.provider == .local {
             return localModelStatusDetail
         }
-        if settings.provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Add a chat completions URL before custom provider runs."
+        if settings.provider == .custom,
+           let customEndpointValidationMessage {
+            return customEndpointValidationMessage
         }
         if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "Save a \(settings.provider.displayName) key before live hosted runs"
         }
         return "\(settings.provider.displayName) key saved · \(settings.autoApproveWrites ? "auto writes" : "asks before writes")"
     }
+
+    private var customEndpointValidationMessage: String? {
+        guard settings.provider == .custom else { return nil }
+        let trimmed = settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Self.missingCustomEndpointMessage }
+        let configuration = ProviderConfiguration(
+            provider: .custom,
+            modelID: settings.modelID,
+            apiKey: "",
+            customChatCompletionsURL: trimmed
+        )
+        guard configuration.chatCompletionsURL != nil else {
+            return "Use a valid http:// or https:// endpoint with a host. Keep API keys in the key field, not in the URL."
+        }
+        return nil
+    }
+
+    private static let missingCustomEndpointMessage = "Add a chat completions URL before custom provider runs."
 
     private var settingsReadinessSymbol: String {
         if settings.provider == .local {
@@ -323,9 +349,7 @@ struct SettingsView: View {
             return "\(variant.quantization) · \(variant.expectedSizeLabel) · \(runtime.localModels.status.title)"
         }
         if settings.provider == .custom {
-            return settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Custom endpoint not set"
-                : "Custom endpoint configured"
+            return customEndpointValidationMessage ?? "Custom endpoint configured"
         }
         return "\(settings.provider.displayName) hosted model ID"
     }
@@ -451,6 +475,14 @@ struct SettingsView: View {
                         symbol: "link"
                     )
                     .keyboardType(.URL)
+
+                    if let customEndpointValidationMessage {
+                        Label(customEndpointValidationMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AgentPalette.warning)
+                            .lineLimit(3)
+                            .accessibilityIdentifier("settingsCustomEndpointValidation")
+                    }
                 }
             }
         }
@@ -980,6 +1012,10 @@ struct SettingsView: View {
                 }
             }
         )
+    }
+
+    private func controlContentTopPadding(for topSafeArea: CGFloat) -> CGFloat {
+        max(28, topSafeArea + 10)
     }
 
     private func prepare() {

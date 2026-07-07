@@ -149,6 +149,7 @@ struct AppRootView: View {
     @State private var didInjectAutoContinueCountdownFixture = false
     @State private var didInjectProjectSpineE2EFixture = false
     @State private var didInjectRunsApprovalFixture = false
+    @State private var didPresentDebugMissionDossier = false
     @State private var debugLaunchTaskRetryCount = 0
     #endif
     @AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue
@@ -292,6 +293,7 @@ struct AppRootView: View {
                 syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
                 #if DEBUG || targetEnvironment(simulator)
                 applyDebugLaunchTabArgument()
+                presentDebugMissionDossierIfRequested()
                 #endif
             }
         }
@@ -301,6 +303,9 @@ struct AppRootView: View {
                 syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
             }
             persistSelectedConversationIfSafe()
+            #if DEBUG || targetEnvironment(simulator)
+            presentDebugMissionDossierIfRequested()
+            #endif
         }
         .onChange(of: selectedConversation?.updatedAt) {
             persistSelectedConversationIfSafe()
@@ -356,7 +361,13 @@ struct AppRootView: View {
             .ignoresSafeArea()
 
             if let conversation = selectedConversation, let settings, let activeProject {
-                if usesDebugTerminalSurface {
+                if showingMissionDossier && AgentPerformance.shouldProfileFrameRate {
+                    // The Mission Dossier is a full-screen cover. During the
+                    // frame-rate gate, keep the covered tab tree out of the
+                    // compositor so the Project probe measures the dossier
+                    // itself instead of a hidden Forge/chat surface.
+                    AgentPalette.surface.ignoresSafeArea()
+                } else if usesDebugTerminalSurface {
                     TerminalConsoleView(runtime: runtime, project: activeProject, openChat: {
                         openTab(.chat)
                     })
@@ -412,7 +423,7 @@ struct AppRootView: View {
         if arguments.contains("--stress-streaming"), !runtime.isWorking {
             if let conversation = selectedConversation, conversation.messageCount == 0 {
                 seedStreamingStressConversation(conversation)
-                try? modelContext.save()
+                saveRootLaunchState("streaming stress conversation fixture")
             }
             runtime.simulateStreamingStress()
         }
@@ -454,7 +465,7 @@ struct AppRootView: View {
             settings.providerRawValue = AIProvider.openAI.rawValue
             settings.modelID = AIProvider.local.defaultModel
             settings.updatedAt = Date()
-            try? modelContext.save()
+            saveRootLaunchState("stale OpenAI local model fixture")
         }
         if arguments.contains("--first-run-local-model-missing"),
            let settings {
@@ -464,7 +475,7 @@ struct AppRootView: View {
             settings.updatedAt = Date()
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
             runtime.localModels.debugOverrideStatusForUITest(.missing)
-            try? modelContext.save()
+            saveRootLaunchState("first-run local model missing fixture")
         }
         if arguments.contains("--settings-local-model-ready"),
            let settings {
@@ -474,7 +485,7 @@ struct AppRootView: View {
             settings.updatedAt = Date()
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
             runtime.localModels.debugOverrideStatusForUITest(.ready)
-            try? modelContext.save()
+            saveRootLaunchState("settings local model ready fixture")
         }
         if arguments.contains("--debug-provider-send-ready"),
            let settings {
@@ -500,7 +511,7 @@ struct AppRootView: View {
                     roleLog: "debug streamed send completion"
                 )
             ])
-            try? modelContext.save()
+            saveRootLaunchState("debug provider send ready fixture")
         }
         if arguments.contains("--debug-provider-send-fails"),
            let settings {
@@ -511,14 +522,14 @@ struct AppRootView: View {
             settings.updatedAt = Date()
             try? runtime.saveAPIKey("debug-provider-key", for: .openAI)
             runtime.debugInstallProviderFailure(URLError(.timedOut))
-            try? modelContext.save()
+            saveRootLaunchState("debug provider send failure fixture")
         }
         if arguments.contains("--settings-auto-approve"),
            let settings {
             selectedTab = .settings
             settings.autoApproveWrites = true
             settings.updatedAt = Date()
-            try? modelContext.save()
+            saveRootLaunchState("settings auto-approve fixture")
         }
         if arguments.contains("--settings-local-model-partial"),
            let settings {
@@ -528,7 +539,7 @@ struct AppRootView: View {
             settings.updatedAt = Date()
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
             runtime.localModels.debugOverrideStatusForUITest(.partial, receivedBytes: LocalModelCatalog.defaultVariant.expectedBytes / 3)
-            try? modelContext.save()
+            saveRootLaunchState("settings local model partial fixture")
         }
         repairRootStaleModelSelection()
         applyDebugLaunchTabArgument()
@@ -557,7 +568,7 @@ struct AppRootView: View {
                     roleLog: "debug project continuation completion"
                 )
             ])
-            try? modelContext.save()
+            saveRootLaunchState("auto-continue project provider fixture")
             continueProject(activeProject)
         }
         if arguments.contains("--resume-local-model-download") {
@@ -626,7 +637,7 @@ struct AppRootView: View {
             settings.modelID = LocalModelCatalog.defaultVariant.id
             settings.temperature = min(settings.temperature, 0.2)
             settings.updatedAt = Date()
-            try? modelContext.save()
+            saveRootLaunchState("local agent boundary provider fixture")
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
             runtime.send(
                 prompt: "Reply with one short sentence: local model is working.",
@@ -643,7 +654,7 @@ struct AppRootView: View {
             didInjectLocalAgentBoundaryFixture = true
             selectedTab = .chat
             installLocalAgentBoundaryFixture(in: conversation)
-            try? modelContext.save()
+            saveRootLaunchState("local agent boundary transcript fixture")
         }
         if arguments.contains("--local-web-artifact-test"),
            let conversation = selectedConversation,
@@ -652,7 +663,7 @@ struct AppRootView: View {
             didInjectWebPageArtifactFixture = true
             selectedTab = .chat
             installCompletedWebPageArtifactFixture(in: conversation)
-            try? modelContext.save()
+            saveRootLaunchState("local web artifact fixture")
         }
         if hasDebugLaunchFlag("--swift-game-artifact-demo", in: arguments),
            let conversation = selectedConversation,
@@ -661,7 +672,7 @@ struct AppRootView: View {
             didInjectSwiftGameArtifactFixture = true
             selectedTab = .chat
             installCompletedSwiftGameArtifactFixture(in: conversation)
-            try? modelContext.save()
+            saveRootLaunchState("swift game artifact fixture")
         }
         if hasDebugLaunchFlag("--pending-approval-demo", in: arguments),
            !hasDebugLaunchFlag("--open-project", in: arguments),
@@ -687,7 +698,7 @@ struct AppRootView: View {
                 )
             ])
             installPendingApprovalFixture(in: conversation)
-            try? modelContext.save()
+            saveRootLaunchState("pending approval chat fixture")
         }
         if arguments.contains("--artifact-dedupe-demo"),
            let conversation = selectedConversation,
@@ -696,7 +707,7 @@ struct AppRootView: View {
             didInjectArtifactDedupeFixture = true
             selectedTab = .chat
             installCompletedArtifactFixture(in: conversation)
-            try? modelContext.save()
+            saveRootLaunchState("artifact dedupe fixture")
         }
     }
 
@@ -711,7 +722,7 @@ struct AppRootView: View {
             let conversation = projectConversation(for: activeProject, now: Date())
             installProjectRunningFixture(for: activeProject, conversation: conversation)
             preserveGeneralChatSelection()
-            try? modelContext.save()
+            saveRootLaunchState("project running mission dossier fixture")
         }
         if hasDebugLaunchFlag("--project-blocked-demo", in: arguments),
            let activeProject,
@@ -721,7 +732,7 @@ struct AppRootView: View {
             let conversation = projectConversation(for: activeProject, now: Date())
             installProjectBlockedFixture(for: activeProject, conversation: conversation)
             preserveGeneralChatSelection()
-            try? modelContext.save()
+            saveRootLaunchState("project blocked mission dossier fixture")
         }
         if shouldInstallProjectApprovalDemo,
            let activeProject,
@@ -731,7 +742,7 @@ struct AppRootView: View {
             let conversation = projectConversation(for: activeProject, now: Date())
             installProjectWaitingFixture(for: activeProject, conversation: conversation)
             preserveGeneralChatSelection()
-            try? modelContext.save()
+            saveRootLaunchState("project waiting mission dossier fixture")
         }
         if hasDebugLaunchFlag("--project-resume-demo", in: arguments),
            let activeProject,
@@ -741,7 +752,7 @@ struct AppRootView: View {
             let conversation = projectConversation(for: activeProject, now: Date())
             installProjectResumeFixture(for: activeProject, conversation: conversation)
             preserveGeneralChatSelection()
-            try? modelContext.save()
+            saveRootLaunchState("project resume mission dossier fixture")
         }
         // Deterministic Runs-tab approval capture. The generic
         // --pending-approval-demo forces selectedTab = .chat (its sheet is a
@@ -756,7 +767,7 @@ struct AppRootView: View {
             let conversation = projectConversation(for: activeProject, now: Date())
             installProjectWaitingFixture(for: activeProject, conversation: conversation)
             preserveGeneralChatSelection()
-            try? modelContext.save()
+            saveRootLaunchState("runs approval history fixture")
             // Late conversation-selection bootstrap can steal the tab back to
             // chat after this fixture runs (run 34, shot 19). Re-assert after
             // the launch dust settles — the CI screenshot fires at +9s.
@@ -773,7 +784,7 @@ struct AppRootView: View {
             let conversation = projectConversation(for: activeProject, now: Date())
             installProjectProofFixture(for: activeProject, conversation: conversation)
             preserveGeneralChatSelection()
-            try? modelContext.save()
+            saveRootLaunchState("project proof mission dossier fixture")
         }
         if hasDebugLaunchFlag("--project-spine-e2e-demo", in: arguments),
            let activeProject,
@@ -797,7 +808,7 @@ struct AppRootView: View {
                     }
                 }
             }
-            try? modelContext.save()
+            saveRootLaunchState("project spine e2e fixture")
         }
         if hasDebugLaunchFlag("--auto-continue-countdown-demo", in: arguments),
            let activeProject,
@@ -1150,7 +1161,7 @@ struct AppRootView: View {
                     runProjectCommand: runProjectCommand,
                     draftProjectCommand: draftProjectCommand,
                     openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
-                    isVisibleForFrameProfiling: false
+                    isVisibleForFrameProfiling: AgentPerformance.shouldProfileFrameRate
                 )
             }
         }
@@ -2307,6 +2318,18 @@ struct AppRootView: View {
     }
 
     @discardableResult
+    private func saveRootLaunchState(_ reason: String) -> Bool {
+        do {
+            try modelContext.save()
+            return true
+        } catch {
+            modelContext.rollback()
+            showRootSaveFailure("NovaForge could not save launch state for \(reason):", error)
+            return false
+        }
+    }
+
+    @discardableResult
     private func saveRootContext(_ failureMessage: String) -> Bool {
         do {
             try modelContext.save()
@@ -2446,7 +2469,7 @@ struct AppRootView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(1_500))
             installLiveTerminalRecordFixture(for: project)
-            try? modelContext.save()
+            saveRootLaunchState("live terminal record fixture")
         }
     }
 
@@ -3232,7 +3255,7 @@ struct AppRootView: View {
         projectRuntime.wasInterrupted = false
         projectRuntime.activityTitle = "Next step ready"
         projectRuntime.activityDetail = project.nextStep
-        try? modelContext.save()
+        saveRootLaunchState("auto-continue countdown fixture")
 
         let evaluation = autoContinueEvaluation(for: project, settings: settings)
         if evaluation.action == .schedule {
@@ -3241,7 +3264,7 @@ struct AppRootView: View {
             project.autoContinueState = .blocked
             project.autoContinueDecision = evaluation.detail
             project.autoContinueUpdatedAt = now
-            try? modelContext.save()
+            saveRootLaunchState("auto-continue blocked decision fixture")
         }
     }
 
@@ -3804,7 +3827,7 @@ struct AppRootView: View {
         optimisticSelectedConversation = conversation
         selectedConversationID = conversation.id
         persistedSelectedConversationID = conversation.id.uuidString
-        try? modelContext.save()
+        saveRootLaunchState("project conversation bootstrap fixture")
     }
 
     private func appendLongStressExchange(_ index: Int, to conversation: Conversation) {
@@ -3857,15 +3880,24 @@ struct AppRootView: View {
             selectedTab = .forge
         }
         // Sheets that used to hang off the Project tab now live on the
-        // mission dossier cover — mount it so their demo flags can fire.
-        if !showingMissionDossier,
-           arguments.contains("--project-intake-demo") ||
-           arguments.contains("--project-delete-confirm-demo") ||
-           arguments.contains("--open-mission-dossier-demo") {
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(900))
-                showingMissionDossier = true
-            }
+        // mission dossier cover — mount it so their demo flags can fire once
+        // the root has real project/conversation/settings state.
+        presentDebugMissionDossierIfRequested()
+    }
+
+    private func presentDebugMissionDossierIfRequested() {
+        let arguments = ProcessInfo.processInfo.arguments
+        let shouldOpenDossier = hasDebugLaunchFlag("--project-intake-demo", in: arguments) ||
+            hasDebugLaunchFlag("--project-delete-confirm-demo", in: arguments) ||
+            hasDebugLaunchFlag("--open-mission-dossier-demo", in: arguments)
+        guard shouldOpenDossier, !didPresentDebugMissionDossier else { return }
+        guard selectedConversation != nil, settings != nil, activeProject != nil else { return }
+        didPresentDebugMissionDossier = true
+        selectedTab = .forge
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            showingMissionDossier = true
         }
     }
 

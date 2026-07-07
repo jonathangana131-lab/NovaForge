@@ -737,6 +737,8 @@ struct FirstRunPowerUp: View {
                 }
             }
 
+            NovaGlassDivider(tint: AgentPalette.cyan)
+
             VStack(spacing: 7) {
                 PowerUpReadinessRow(
                     title: "Next action",
@@ -775,19 +777,27 @@ struct FirstRunPowerUp: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Image(systemName: "externaldrive.fill")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(AgentPalette.quaternaryText)
+                    .foregroundStyle(AgentPalette.cyan)
                 Text("\(variant.expectedSizeLabel) / \(variant.executionLabel) / no API key needed")
                     .font(NovaType.caption)
-                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .foregroundStyle(AgentPalette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
+                Spacer(minLength: 0)
+                Text("LOCAL-FIRST")
+                    .font(NovaType.label)
+                    .foregroundStyle(AgentPalette.cyan)
+                    .lineLimit(1)
             }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .agentControlSurface(radius: 11, tint: AgentPalette.cyan.opacity(0.07), selected: false)
         }
         .padding(16)
-        .agentSurface(radius: 24, tint: AgentPalette.cyan.opacity(0.04))
+        .agentSurface(radius: 24, tint: AgentPalette.cyan.opacity(0.07))
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.top, 10)
         .animation(.smooth(duration: 0.4), value: fraction)

@@ -737,7 +737,12 @@ struct RunsView: View {
             project: project,
             context: modelContext
         )
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            runDeleteError = "NovaForge opened the artifact, but could not save the preview event. \(error.localizedDescription)"
+        }
         previewArtifact = artifact
     }
 
@@ -841,7 +846,7 @@ struct RunsView: View {
                         }
 
                         if cachedFilteredRuns.isEmpty {
-                            NovaOrbitalEmptyState(
+                            NovaGlassEmptyState(
                                 symbol: emptyRunsSymbol,
                                 title: emptyRunsTitle,
                                 detail: emptyRunsDetail,

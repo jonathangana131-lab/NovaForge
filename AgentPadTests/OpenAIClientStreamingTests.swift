@@ -191,6 +191,65 @@ final class OpenAIClientStreamingTests: XCTestCase {
         }
     }
 
+    func testCustomProviderEndpointRequiresHTTPHostAndNoInlineCredentials() {
+        let missingScheme = ProviderConfiguration(
+            provider: .custom,
+            modelID: "model",
+            apiKey: "test-key",
+            customChatCompletionsURL: "localhost:11434/v1"
+        )
+        XCTAssertNil(missingScheme.chatCompletionsURL)
+        XCTAssertNil(missingScheme.modelsURL)
+
+        let fileURL = ProviderConfiguration(
+            provider: .custom,
+            modelID: "model",
+            apiKey: "test-key",
+            customChatCompletionsURL: "file:///tmp/provider.json"
+        )
+        XCTAssertNil(fileURL.chatCompletionsURL)
+        XCTAssertNil(fileURL.modelsURL)
+
+        let inlineCredentialURL = ProviderConfiguration(
+            provider: .custom,
+            modelID: "model",
+            apiKey: "test-key",
+            customChatCompletionsURL: "https://secret@example.com/v1"
+        )
+        XCTAssertNil(inlineCredentialURL.chatCompletionsURL)
+        XCTAssertNil(inlineCredentialURL.modelsURL)
+
+        let localhost = ProviderConfiguration(
+            provider: .custom,
+            modelID: "model",
+            apiKey: "test-key",
+            customChatCompletionsURL: "http://localhost:11434/v1/"
+        )
+        XCTAssertEqual(localhost.chatCompletionsURL?.absoluteString, "http://localhost:11434/v1/chat/completions")
+        XCTAssertEqual(localhost.modelsURL?.absoluteString, "http://localhost:11434/v1/models")
+    }
+
+    func testProviderFailureMessagesAreRedactedAndCapped() {
+        let raw = "Authorization: Bearer sk-testsecret1234567890\n" +
+            "api_key=another-secret-value\n" +
+            String(repeating: "provider html body ", count: 400)
+
+        let message = OpenAIError.providerFailureMessage(rawText: raw, fallback: "fallback")
+
+        XCTAssertLessThanOrEqual(message.count, 1_450)
+        XCTAssertTrue(message.contains("NovaForge shortened this provider error"))
+        XCTAssertFalse(message.contains("sk-testsecret1234567890"))
+        XCTAssertFalse(message.contains("another-secret-value"))
+        XCTAssertTrue(message.contains("redacted"))
+    }
+
+    func testProviderFailureMessageUsesFallbackForEmptyBodies() {
+        XCTAssertEqual(
+            OpenAIError.providerFailureMessage(rawText: "  \n\t", fallback: "Unknown provider error"),
+            "Unknown provider error"
+        )
+    }
+
     private func sseContent(_ text: String) -> String {
         let escaped = text
             .replacingOccurrences(of: "\\", with: "\\\\")

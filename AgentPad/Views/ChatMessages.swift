@@ -371,11 +371,8 @@ struct AssistantMessageBubble: View {
     var body: some View {
         HStack {
             HStack(alignment: .top, spacing: 11) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundStyle(tint)
-                    .frame(width: 26, height: 26)
-                    .agentControlSurface(radius: 9, tint: tint.opacity(0.10), selected: true)
+                NovaReticleGlyph(symbol: "sparkles", tint: tint, size: 30)
+                    .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 10) {
                     if blocks.isEmpty {

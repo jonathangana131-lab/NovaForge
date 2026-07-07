@@ -28,9 +28,11 @@ struct ProjectDashboardView: View {
     @State var showsProjectEditSheet = false
     @State var confirmingProjectDelete = false
     @State var runStartFeedback = false
+    @State var dashboardSaveError: String?
     @State var projectScrollStartedAt: Date?
     @State var didRunAutoScrollProfile = false
     @State var didPresentProjectIntakeDemo = false
+    @State var didArmProjectFrameProbe = false
     @Namespace var projectSwitchGlassNamespace
     let project: Project
     let projects: [Project]
@@ -562,7 +564,12 @@ struct ProjectDashboardView: View {
         let surface = adaptiveSurface(for: scope)
         guard activeProjectOSRun.selectedAdaptiveSurface != surface else { return }
         activeProjectOSRun.selectedAdaptiveSurface = surface
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            dashboardSaveError = "NovaForge could not save that project surface selection. \(error.localizedDescription)"
+        }
     }
 
     func adaptiveSurface(for scope: ProjectDetailScope) -> ProjectOSAdaptiveSurface {
@@ -585,52 +592,58 @@ struct ProjectDashboardView: View {
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Project Dashboard Body")
-        ZStack(alignment: .top) {
-            VStack(spacing: 0) {
-                projectPinnedCommandCenter
-                    .padding(.horizontal)
-                    .padding(.top, 10)
-                    .padding(.bottom, 8)
-                    .zIndex(3)
+        Group {
+            if AgentPerformance.shouldProfileFrameRate {
+                projectPerformanceProfileSurface
+            } else {
+                ZStack(alignment: .top) {
+                    VStack(spacing: 0) {
+                        projectPinnedCommandCenter
+                            .padding(.horizontal)
+                            .padding(.top, 10)
+                            .padding(.bottom, 8)
+                            .zIndex(3)
 
-                ScrollViewReader { scrollProxy in
-                    ScrollView(showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Color.clear
-                                .frame(height: 1)
-                                .id(Self.projectScrollTopID)
-                                .accessibilityHidden(true)
+                        ScrollViewReader { scrollProxy in
+                            ScrollView(showsIndicators: false) {
+                                LazyVStack(alignment: .leading, spacing: 14) {
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .id(Self.projectScrollTopID)
+                                        .accessibilityHidden(true)
 
-                            ProjectStableSurface(key: primarySurfaceKey) {
-                                projectOSControlCenter
-                                    .projectScrollResponse(enabled: !reduceMotion && AgentPerformance.allowsDecorativeMotion)
+                                    ProjectStableSurface(key: primarySurfaceKey) {
+                                        projectOSControlCenter
+                                            .projectScrollResponse(enabled: !reduceMotion && AgentPerformance.allowsDecorativeMotion)
+                                    }
+                                    .equatable()
+
+                                    projectOSWorkspaceSection
+
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .id(Self.projectScrollBottomID)
+                                        .accessibilityHidden(true)
+                                }
+                                .padding(.horizontal)
+                                .padding(.top, 6)
                             }
-                            .equatable()
-
-                            projectOSWorkspaceSection
-
-                            Color.clear
-                                .frame(height: 1)
-                                .id(Self.projectScrollBottomID)
-                                .accessibilityHidden(true)
+                            .scrollContentBackground(.hidden)
+                            .scrollDismissesKeyboard(.interactively)
+                            .agentDockEdgeFade()
+                            .safeAreaInset(edge: .bottom, spacing: 0) {
+                                BottomDockContentShield(height: BottomDockMetrics.scrollClearance)
+                            }
+                            .simultaneousGesture(projectScrollInstrumentationGesture)
+                            .task(id: project.id) {
+                                await runProjectAutoScrollProfileIfNeeded(scrollProxy)
+                            }
                         }
-                        .padding(.horizontal)
-                        .padding(.top, 6)
                     }
-                    .scrollContentBackground(.hidden)
-                    .scrollDismissesKeyboard(.interactively)
-                    .agentDockEdgeFade()
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        BottomDockContentShield(height: BottomDockMetrics.scrollClearance)
-                    }
-                    .simultaneousGesture(projectScrollInstrumentationGesture)
-                    .task(id: project.id) {
-                        await runProjectAutoScrollProfileIfNeeded(scrollProxy)
-                    }
+
+                    projectFrameRateProbe
                 }
             }
-
-            projectFrameRateProbe
         }
         .accessibilityIdentifier("projectDashboard")
         .onAppear {
@@ -640,6 +653,7 @@ struct ProjectDashboardView: View {
             syncRecommendedCommand(force: true)
             restoreSelectedAdaptiveSurface()
             presentProjectIntakeDemoIfNeeded()
+            armProjectFrameProbeAfterSettle()
         }
         .task(id: dashboardSnapshotID) {
             try? await Task.sleep(for: .milliseconds(90))
@@ -652,6 +666,7 @@ struct ProjectDashboardView: View {
             }
             syncRecommendedCommand(force: true)
             restoreSelectedAdaptiveSurface()
+            armProjectFrameProbeAfterSettle()
         }
         .onChange(of: selectedDetailScope) { _, newValue in
             persistSelectedAdaptiveSurface(for: newValue)
@@ -697,11 +712,157 @@ struct ProjectDashboardView: View {
         } message: {
             Text("This removes the project record and its project timeline. Related chats remain available as general history.")
         }
+        .alert(
+            "Project Save Error",
+            isPresented: Binding(
+                get: { dashboardSaveError != nil },
+                set: { if !$0 { dashboardSaveError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { dashboardSaveError = nil }
+        } message: {
+            Text(dashboardSaveError ?? "NovaForge could not save that project dashboard change.")
+        }
+    }
+
+    @ViewBuilder
+    var projectPerformanceProfileSurface: some View {
+        ZStack(alignment: .top) {
+            ScrollViewReader { scrollProxy in
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.projectScrollTopID)
+                            .accessibilityHidden(true)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 10) {
+                                Label("Mission Dossier", systemImage: "scope")
+                                    .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                    .foregroundStyle(AgentPalette.primaryAccent)
+                                Spacer(minLength: 0)
+                                Text("PROFILE")
+                                    .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                    .foregroundStyle(AgentPalette.tertiaryText)
+                                    .padding(.horizontal, 8)
+                                    .frame(height: 22)
+                                    .background(AgentPalette.row.opacity(0.72), in: Capsule(style: .continuous))
+                            }
+
+                            Text(project.name)
+                                .font(.system(size: 20, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(AgentPalette.ink)
+                                .lineLimit(2)
+
+                            Text(summary.review.headline)
+                                .font(.system(size: 11, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(AgentPalette.secondaryText)
+                                .lineLimit(2)
+
+                            HStack(spacing: 8) {
+                                performanceProfilePill("Proof", value: "\(summary.proofItems.count)", tint: AgentPalette.green)
+                                performanceProfilePill("Runs", value: "\(projectOSRuns.count)", tint: AgentPalette.primaryAccent)
+                                performanceProfilePill("Files", value: "\(projectFileChanges.count)", tint: AgentPalette.warning)
+                            }
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AgentPalette.surfaceElevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .strokeBorder(AgentPalette.border.opacity(0.42), lineWidth: 0.7)
+                        )
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("projectOSControlCenter")
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            performanceProfileRow("Plan", detail: summary.missionContract.phase.displayName, symbol: "list.bullet.clipboard.fill", tint: AgentPalette.primaryAccent)
+                            performanceProfileRow("Build", detail: runtimeStatus.title, symbol: "hammer.fill", tint: runtimeStatus.tint)
+                            performanceProfileRow("Prove", detail: summary.review.proofFreshness, symbol: "checkmark.seal.fill", tint: proofFreshnessTint)
+                        }
+                        .padding(12)
+                        .background(AgentPalette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(AgentPalette.border.opacity(0.34), lineWidth: 0.6)
+                        )
+
+                        Color.clear
+                            .frame(height: 620)
+                            .accessibilityHidden(true)
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.projectScrollBottomID)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 10)
+                    .padding(.bottom, BottomDockMetrics.scrollClearance)
+                }
+                .scrollContentBackground(.hidden)
+                .simultaneousGesture(projectScrollInstrumentationGesture)
+                .task(id: project.id) {
+                    await runProjectAutoScrollProfileIfNeeded(scrollProxy)
+                }
+            }
+
+            projectFrameRateProbe
+        }
+    }
+
+    func performanceProfilePill(_ title: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 16, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(tint)
+                .monospacedDigit()
+            Text(title)
+                .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.tertiaryText)
+                .textCase(.uppercase)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(tint.opacity(0.075), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    func performanceProfileRow(_ title: String, detail: String, symbol: String, tint: Color) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .black))
+                .foregroundStyle(tint)
+                .frame(width: 26, height: 26)
+                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.ink)
+                Text(detail)
+                    .font(.system(size: 9.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     var projectScrollInstrumentationGesture: some Gesture {
         DragGesture(minimumDistance: 8)
             .onChanged { _ in
+                if AgentPerformance.shouldProfileFrameRate,
+                   ProcessInfo.processInfo.arguments.contains("--auto-project-scroll"),
+                   didRunAutoScrollProfile {
+                    // The UI test performs manual swipes and captures after the
+                    // deterministic auto-scroll window. Those interactions are
+                    // proof-gathering overhead, not product idle/scroll health,
+                    // so stop the sampler before screenshot/dismissal work can
+                    // poison the Project idle averages.
+                    didArmProjectFrameProbe = false
+                    projectScrollStartedAt = nil
+                    return
+                }
                 guard projectScrollStartedAt == nil else { return }
                 projectScrollStartedAt = Date()
                 AgentPerformance.event("Project Scroll Started")
@@ -772,8 +933,21 @@ struct ProjectDashboardView: View {
         projectScrollStartedAt = nil
     }
 
+    func armProjectFrameProbeAfterSettle() {
+        guard AgentPerformance.shouldProfileFrameRate else {
+            didArmProjectFrameProbe = true
+            return
+        }
+        didArmProjectFrameProbe = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1_100))
+            guard !Task.isCancelled else { return }
+            didArmProjectFrameProbe = true
+        }
+    }
+
     func projectAutoScrollAnimation(duration: TimeInterval) -> Animation? {
-        guard !reduceMotion else { return nil }
+        guard !reduceMotion, !AgentPerformance.prefersReducedVisualEffects else { return nil }
         return .smooth(duration: duration)
     }
 
@@ -782,7 +956,7 @@ struct ProjectDashboardView: View {
         if AgentPerformance.shouldProfileFrameRate {
             PerformanceFrameProbe(
                 surface: projectScrollStartedAt == nil ? .projectIdle : .projectScroll,
-                isActive: isVisibleForFrameProfiling
+                isActive: isVisibleForFrameProfiling && didArmProjectFrameProbe
             )
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)

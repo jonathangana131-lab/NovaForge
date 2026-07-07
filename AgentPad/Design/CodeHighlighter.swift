@@ -216,7 +216,7 @@ enum CodeSyntaxHighlighter {
         // 4. Keywords
         let keywords = family.keywords
         if !keywords.isEmpty {
-            Self.regexWord.enumerateMatches(in: code, options: [], range: full) { match, _, _ in
+            Self.regexWord?.enumerateMatches(in: code, options: [], range: full) { match, _, _ in
                 guard let match else { return }
                 let r = match.range
                 guard r.location != NSNotFound, !claimed[r.location] else { return }
@@ -243,8 +243,8 @@ enum CodeSyntaxHighlighter {
     nonisolated(unsafe) private static let regexNumber: NSRegularExpression? =
         try? NSRegularExpression(pattern: "\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|\\d[\\d_]*(?:\\.[\\d_]+)?(?:[eE][+-]?\\d+)?)\\b")
 
-    nonisolated(unsafe) private static let regexWord: NSRegularExpression =
-        try! NSRegularExpression(pattern: "[A-Za-z_][A-Za-z0-9_]*")
+    nonisolated(unsafe) private static let regexWord: NSRegularExpression? =
+        try? NSRegularExpression(pattern: "[A-Za-z_][A-Za-z0-9_]*")
 
     nonisolated(unsafe) private static var blockCommentCache: [String: NSRegularExpression] = [:]
 

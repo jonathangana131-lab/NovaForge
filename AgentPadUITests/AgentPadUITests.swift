@@ -346,7 +346,7 @@ final class AgentPadUITests: XCTestCase {
         let startingFrame = tabBar.frame
         capture("41-bottom-menu-before-loading-tabs", app: app)
 
-        for tab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+        for tab in ["Forge", "Workspace", "History", "Control"] {
             let button = app.tabBars.buttons[tab]
             XCTAssertTrue(button.waitForExistence(timeout: 5))
             let beforeFrame = button.frame
@@ -360,26 +360,58 @@ final class AgentPadUITests: XCTestCase {
         capture("42-bottom-menu-after-all-tabs-loaded", app: app)
     }
 
-    func testProjectLiquidGlassPerformanceTraceFlow() throws {
+    func testFourTabDockAndMissionDossierRouteSemantics() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project", "--profile-frame-rate", "--profile-events", "--auto-project-scroll"]
+        app.launchArguments = ["--reset-ui", "--open-project"]
         app.launch()
 
-        let projectHero = app.otherElements["projectHeroCard"]
-        XCTAssertTrue(projectHero.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8), "Legacy --open-project should route to Forge instead of reviving a Project dock tab.")
+        for tab in ["Forge", "Workspace", "History", "Control"] {
+            XCTAssertTrue(app.tabBars.buttons[tab].waitForExistence(timeout: 5), "Four-tab dock should expose \(tab).")
+        }
+        for oldTab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+            XCTAssertFalse(app.tabBars.buttons[oldTab].exists, "Legacy dock tab should stay removed: \(oldTab).")
+        }
+        XCTAssertFalse(app.otherElements["projectDashboard"].exists, "Project dashboard should not be a public tab surface for --open-project.")
+        capture("43-four-tab-open-project-forge-route", app: app)
+
+        app.terminate()
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 8), "Mission Dossier should mount the project dashboard when explicitly requested.")
+        let close = app.buttons["missionDossierClose"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "Mission Dossier should expose a stable close control.")
+        assertMinimumTouchTarget(close, named: "Mission Dossier close")
+        capture("44-mission-dossier-explicit-route", app: app)
+        close.tap()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5), "Closing Mission Dossier should reveal Forge.")
+    }
+
+    func testProjectLiquidGlassPerformanceTraceFlow() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo", "--profile-frame-rate", "--profile-events", "--auto-project-scroll"]
+        app.launch()
+
+        let projectHero = app.otherElements["projectOSControlCenter"]
+        XCTAssertTrue(projectHero.waitForExistence(timeout: 8), "Project dashboard proof now lives inside the Mission Dossier cover, not a public Project tab.")
+        XCTAssertTrue(app.buttons["missionDossierClose"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists)
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists)
 
         sleep(5)
         app.swipeUp()
         app.swipeDown()
+        capture("43-mission-dossier-performance-scroll", app: app)
+        app.buttons["missionDossierClose"].tap()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
 
-        for tab in ["Files", "Project", "Chat", "Runs", "Project"] {
+        for tab in ["Workspace", "Forge", "History", "Control", "Forge"] {
             let tabButton = app.tabBars.buttons[tab]
             XCTAssertTrue(tabButton.waitForExistence(timeout: 5))
             tabButton.tap()
         }
-        XCTAssertTrue(projectHero.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.tabBars.buttons["Project"].exists, "Project should not return as a public tab; the dashboard is the Mission Dossier.")
 
         app.terminate()
         app.launchArguments = ["--reset-ui", "--stress-streaming", "--open-chat", "--profile-frame-rate", "--profile-events"]
@@ -393,7 +425,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
 
-        let filesTab = app.tabBars.buttons["Files"]
+        let filesTab = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(filesTab.waitForExistence(timeout: 5))
         filesTab.tap()
 
@@ -412,7 +444,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        let filesTab = app.tabBars.buttons["Files"]
+        let filesTab = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(filesTab.waitForExistence(timeout: 5))
         filesTab.tap()
 
@@ -487,7 +519,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        let filesTab = app.tabBars.buttons["Files"]
+        let filesTab = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(filesTab.waitForExistence(timeout: 5))
         filesTab.tap()
 
@@ -760,7 +792,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let runsTab = app.tabBars.buttons["Runs"]
+        let runsTab = app.tabBars.buttons["History"]
         XCTAssertTrue(runsTab.waitForExistence(timeout: 5))
         runsTab.tap()
 
@@ -949,7 +981,7 @@ final class AgentPadUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        let settingsTab = app.tabBars.buttons["Settings"]
+        let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
@@ -982,6 +1014,32 @@ final class AgentPadUITests: XCTestCase {
             assertMinimumTouchTarget(provider, named: "settings provider \(providerID)")
         }
         capture("86-settings-ready-card-readable-hierarchy", app: app)
+    }
+
+    func testCustomProviderInvalidEndpointShowsInlineValidationScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--settings-local-model-ready"]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
+        let customProvider = app.buttons["settingsProvider-custom"]
+        if !customProvider.waitForExistence(timeout: 2) {
+            app.swipeDown()
+        }
+        XCTAssertTrue(customProvider.waitForExistence(timeout: 5))
+        customProvider.tap()
+
+        let endpointField = app.textFields["Custom endpoint URL"]
+        if !endpointField.waitForExistence(timeout: 2) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(endpointField.waitForExistence(timeout: 5))
+        endpointField.tap()
+        endpointField.typeText("file:///tmp/not-a-provider")
+
+        let validation = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Use a valid http:// or https:// endpoint")).firstMatch
+        XCTAssertTrue(validation.waitForExistence(timeout: 5), "Custom providers should explain invalid URLs before a run fails.")
+        capture("87-settings-custom-endpoint-validation", app: app)
     }
 
     func testLocalModelDestructiveActionsRequireConfirmation() throws {
@@ -1035,7 +1093,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let settingsTab = app.tabBars.buttons["Settings"]
+        let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
@@ -1081,7 +1139,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let settingsTab = app.tabBars.buttons["Settings"]
+        let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
@@ -1105,7 +1163,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists, "Simulated terminal copy must be hidden unless a debug demo flag is passed.")
         capture("38-settings-codex-key-required-no-terminal", app: app)
 
-        let chatTab = app.tabBars.buttons["Chat"]
+        let chatTab = app.tabBars.buttons["Forge"]
         XCTAssertTrue(chatTab.waitForExistence(timeout: 5))
         chatTab.tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
@@ -1313,7 +1371,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 10), "Approved local tool run should complete instead of leaving pending approval stuck.")
         XCTAssertFalse(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 1), "Pending approval label should clear after approve.")
 
-        app.tabBars.buttons["Runs"].tap()
+        app.tabBars.buttons["History"].tap()
         XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
         let searchField = app.textFields["runsSearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5))
@@ -1630,14 +1688,14 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--theme-world=matrixRain"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        app.tabBars.buttons["Settings"].tap()
+        app.tabBars.buttons["Control"].tap()
         let midnightTheme = identifiedElement("settingsThemeRow-midnightBlack", in: app)
         scrollUntilHittable(midnightTheme, in: app)
         XCTAssertTrue(midnightTheme.isHittable, "Midnight theme row should be reachable from Settings.")
         midnightTheme.tap()
         capture("goal-theme-switched-midnight-settings", app: app)
 
-        app.tabBars.buttons["Chat"].tap()
+        app.tabBars.buttons["Forge"].tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5), "Chat should return as a readable clean surface after leaving Matrix.")
         capture("goal-theme-switched-midnight-chat", app: app)
@@ -1645,18 +1703,18 @@ final class AgentPadUITests: XCTestCase {
 
     func testGoalProjectControlCenterCreateEditDeleteAndRunFeedbackScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["NovaForge Project"].waitForExistence(timeout: 8), "Project should open to the active project control center.")
         capture("goal-project-control-center-idle", app: app)
 
         app.terminate()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["NovaForge Project"].waitForExistence(timeout: 8))
-        identifiedElement("projectSwitcherSheetButton", in: app).tap()
+        identifiedElement("projectPinnedSwitcherButton", in: app).tap()
         XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         if identifiedElement("projectNewButton", in: app).waitForExistence(timeout: 2), identifiedElement("projectNewButton", in: app).isHittable {
             identifiedElement("projectNewButton", in: app).tap()
@@ -1679,7 +1737,7 @@ final class AgentPadUITests: XCTestCase {
             .containing(NSPredicate(format: "label CONTAINS %@", "Arcade Memory Lab"))
             .firstMatch
         XCTAssertTrue(createdProjectName.waitForExistence(timeout: 8), "Creating a project should select the project built from the intake brief.")
-        XCTAssertFalse(app.staticTexts["Arcade Memory Lab"].exists && app.tabBars.buttons["Chat"].isSelected, "Project creation should stay in Project instead of dumping a raw chat prompt.")
+        XCTAssertFalse(app.staticTexts["Arcade Memory Lab"].exists && app.tabBars.buttons["Forge"].isSelected, "Project creation should stay in Project instead of dumping a raw chat prompt.")
 
         app.buttons["Project actions"].tap()
         XCTAssertTrue(app.buttons["Edit Project"].waitForExistence(timeout: 5))
@@ -1695,7 +1753,7 @@ final class AgentPadUITests: XCTestCase {
         app.buttons["Delete Project"].tap()
         XCTAssertTrue(app.buttons["Delete Project"].waitForExistence(timeout: 5))
         app.buttons["Delete Project"].tap()
-        let activeName = identifiedElement("projectActiveName", in: app)
+        let activeName = identifiedElement("projectOSProjectName", in: app)
         XCTAssertTrue(activeName.waitForExistence(timeout: 8))
         XCTAssertFalse(activeName.label.contains("Arcade Memory Lab"), "Deleting the active project should fall back to a safe remaining project.")
         capture("goal-project-delete-fallback", app: app)
@@ -1703,7 +1761,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testProjectCreationAndSingleActionSurfaceScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         func projectSwipeUp() {
@@ -1721,16 +1779,16 @@ final class AgentPadUITests: XCTestCase {
             }
         }
 
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists, "Mission OS details should stay behind More so Project opens clean.")
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists, "Empty proof should not clutter the first Project viewport.")
-        XCTAssertTrue(app.buttons["projectSwitcherSheetButton"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["projectHeroRunButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedSwitcherButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedRunButton"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["projectNextStepReason"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["projectExpectedProof"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["projectApprovalExpectation"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["projectHeroDraftButton"].exists, "Project OS should expose one primary Run action, not a competing Draft action.")
-        assertMinimumTouchTarget(app.buttons["projectSwitcherSheetButton"], named: "Project switcher sheet")
+        assertMinimumTouchTarget(app.buttons["projectPinnedSwitcherButton"], named: "Project switcher sheet")
         XCTAssertFalse(app.otherElements["projectSwitcherPanel"].exists, "Project switcher should live in the glass sheet, not the main Project scroll.")
         XCTAssertFalse(app.otherElements["projectCommandCenter"].exists, "Project OS should not expose a manual command chooser on first load.")
         XCTAssertFalse(app.descendants(matching: .any)["projectMetricGrid"].exists, "Metrics should not make the initial Project tab visually busy.")
@@ -1740,7 +1798,7 @@ final class AgentPadUITests: XCTestCase {
         }
         capture("90-project-creation-single-action", app: app)
 
-        app.buttons["projectSwitcherSheetButton"].tap()
+        app.buttons["projectPinnedSwitcherButton"].tap()
         XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Create Project"].waitForExistence(timeout: 5), "Project creation should read like an intentional SwiftUI mission card, not a random tiny plus row.")
         let newProjectButton = app.descendants(matching: .any)["projectNewButton"]
@@ -1755,13 +1813,13 @@ final class AgentPadUITests: XCTestCase {
             app.staticTexts["Create Project"].tap()
         }
         XCTAssertTrue(app.staticTexts["Project 2"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["projectHeroRunButton"].waitForExistence(timeout: 5), "Project hero should keep the single primary run action available after creating a project.")
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedRunButton"].waitForExistence(timeout: 5), "Project hero should keep the single primary run action available after creating a project.")
         XCTAssertFalse(app.buttons["projectContinueButton"].exists, "The old Continue Project action should not reappear alongside the new hero action.")
         XCTAssertFalse(app.otherElements["projectCommandMenu"].exists, "Command Menu should stay removed after creating a project.")
         capture("91-project2-created-single-action-switcher", app: app)
 
-        app.buttons["projectSwitcherSheetButton"].tap()
+        app.buttons["projectPinnedSwitcherButton"].tap()
         XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         let activeProjectRow = app.descendants(matching: .any)["projectSwitcherActiveRow"]
         XCTAssertTrue(activeProjectRow.waitForExistence(timeout: 5))
@@ -1786,7 +1844,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testProjectTabCreatesAndSwitchesProjectsScreenshot() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         func projectSwipeDown() {
@@ -1805,7 +1863,7 @@ final class AgentPadUITests: XCTestCase {
         }
 
         func openProjectSwitcher() {
-            let switcherButton = app.buttons["projectSwitcherSheetButton"]
+            let switcherButton = app.buttons["projectPinnedSwitcherButton"]
             for _ in 0..<5 where !switcherButton.isHittable {
                 projectSwipeDown()
             }
@@ -1815,7 +1873,7 @@ final class AgentPadUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         }
 
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists, "Project tab should keep deeper Mission OS detail collapsed by default.")
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists, "Project tab should not show empty proof cards on first load.")
         XCTAssertTrue(app.descendants(matching: .any)["projectStatusPill"].waitForExistence(timeout: 5), "Project hero should show a compact project status pill.")
@@ -1858,7 +1916,7 @@ final class AgentPadUITests: XCTestCase {
         projectTwoRow.tap()
         XCTAssertTrue(app.staticTexts["Project 2"].waitForExistence(timeout: 5))
 
-        let runButton = app.buttons["projectHeroRunButton"]
+        let runButton = app.buttons["projectPinnedRunButton"]
         for _ in 0..<5 where !runButton.isHittable {
             projectSwipeDown()
         }
@@ -1868,8 +1926,8 @@ final class AgentPadUITests: XCTestCase {
         runButton.tap()
 
         XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 5), "Project Run should keep Project OS as the execution surface.")
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["projectHeroRunButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedRunButton"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 1), "Project Run should not force a hidden chat handoff.")
         XCTAssertFalse(app.buttons["projectHeroDraftButton"].exists, "Project OS should continue to expose one primary Run action after execution starts.")
         capture("86-project-run-stays-on-project-os", app: app)
@@ -1892,7 +1950,7 @@ final class AgentPadUITests: XCTestCase {
         assertReadableLabel(app.buttons["Open chats"], named: "Open chats")
         assertReadableLabel(app.buttons["New chat"], named: "New chat")
 
-        for tab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+        for tab in ["Forge", "Workspace", "History", "Control"] {
             let tabButton = app.tabBars.buttons[tab]
             XCTAssertTrue(tabButton.waitForExistence(timeout: 5), "\(tab) tab should keep its compact label visible on iPhone 12 before the keyboard intentionally hides the tab dock.")
             assertMinimumTouchTarget(tabButton, named: "\(tab) tab")
@@ -1922,7 +1980,7 @@ final class AgentPadUITests: XCTestCase {
         capture("73-accessibility-chat-drawer-controls", app: app)
         app.buttons["chatDrawerClose"].tap()
 
-        app.tabBars.buttons["Files"].tap()
+        app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
         for identifier in ["filesGoUpButton", "filesLayoutToggle", "filesSearchButton", "filesWorkspaceMenu", "filesCreateFileButton"] {
             let control = app.buttons[identifier]
@@ -1932,7 +1990,7 @@ final class AgentPadUITests: XCTestCase {
         }
         capture("74-accessibility-files-action-bar", app: app)
 
-        app.tabBars.buttons["Chat"].tap()
+        app.tabBars.buttons["Forge"].tap()
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         assertMinimumTouchTarget(composerModelControl(in: app), named: "composer model picker")
@@ -2003,18 +2061,18 @@ final class AgentPadUITests: XCTestCase {
             assertReadableLabel(openChatButton, named: "workspace status open chat on \(surface)")
         }
 
-        app.tabBars.buttons["Files"].tap()
+        app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
         assertWorkspaceStatusControls(on: "Files")
         capture("75-accessibility-workspace-status-strip-files", app: app)
 
-        app.tabBars.buttons["Runs"].tap()
+        app.tabBars.buttons["History"].tap()
         XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
         assertWorkspaceStatusControls(on: "Runs")
         capture("76-accessibility-workspace-status-strip-runs", app: app)
 
-        app.tabBars.buttons["Project"].tap()
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Forge"].tap()
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
         assertWorkspaceStatusControls(on: "Project")
         capture("77-accessibility-workspace-status-strip-project", app: app)
     }
@@ -2025,7 +2083,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        app.tabBars.buttons["Runs"].tap()
+        app.tabBars.buttons["History"].tap()
         XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
         for label in ["All", "Writes", "Failures"] {
             let filter = app.buttons[label]
@@ -2056,7 +2114,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        app.tabBars.buttons["Files"].tap()
+        app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.staticTexts["notes.md"].waitForExistence(timeout: 8))
         capture("80-files-actions-before", app: app)
 

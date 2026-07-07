@@ -720,7 +720,7 @@ final class AgentRuntime {
         }
         pendingTool = nil
         pendingApprovalRun = nil
-        discardQueuedPrompts()
+        discardQueuedPrompts(context: context)
         isWorking = false
         runState = .cancelled
         wasInterrupted = true
@@ -970,7 +970,7 @@ final class AgentRuntime {
         existingVisibleUserMessageID: UUID?
     ) {
         if clearsStaleQueuedFollowUps {
-            discardQueuedPrompts()
+            discardQueuedPrompts(context: context)
         }
 
         let activeProject = project ?? conversation.project
@@ -1198,7 +1198,7 @@ final class AgentRuntime {
                     let message = friendlyError(error)
                     lastError = message
                     lastFailedPrompt = latestUserPrompt(in: targetConversation)
-                    discardQueuedPrompts()
+                    discardQueuedPrompts(context: context)
                     isWorking = false
                     runState = .failed(message)
                     setActivity(
@@ -1386,7 +1386,7 @@ final class AgentRuntime {
                 runState = .failed(message)
                 activeToolName = nil
                 activeToolDetail = ""
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
                 runStartedAt = nil
                 currentPrompt = nil
                 try saveCompacted(context)
@@ -1407,7 +1407,7 @@ final class AgentRuntime {
                 if completedLocalPlan {
                     drainQueueIfPossible(conversation: conversation, settings: settings, context: context)
                 } else {
-                    discardQueuedPrompts()
+                    discardQueuedPrompts(context: context)
                 }
                 return
             }
@@ -1671,7 +1671,7 @@ final class AgentRuntime {
                         let message = friendlyError(error)
                         lastError = message
                         lastFailedPrompt = latestUserPrompt(in: conversation)
-                        discardQueuedPrompts()
+                        discardQueuedPrompts(context: context)
                         isWorking = false
                         runState = .failed(message)
                         activeToolName = nil
@@ -1774,7 +1774,7 @@ final class AgentRuntime {
                     context: context
                 )
                 runState = .cancelled
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
             } else if case AgentRuntimeError.tooManyToolRounds = error {
                 let message = "Paused after \(maxToolRoundCount) tool rounds. NovaForge saved the project run so you can continue without restarting completed work."
                 lastError = nil
@@ -1804,7 +1804,7 @@ final class AgentRuntime {
                 conversation.appendMessage(assistant)
                 context.insert(assistant)
                 runState = .cancelled
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
                 do {
                     try saveCompacted(context)
                 } catch {
@@ -1832,7 +1832,7 @@ final class AgentRuntime {
                     context: context
                 )
                 runState = .failed(message)
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
                 let assistant = ChatMessage(
                     role: .assistant,
                     content: "I hit an error: \(message)",
@@ -2449,7 +2449,13 @@ final class AgentRuntime {
     private func saveCompactedIfPossible(_ context: ModelContext?) {
         guard let context else { return }
         PersistedPayloadBudget.compactBeforeSave(in: context)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            let message = friendlyError(error)
+            presentToast("NovaForge could not save the latest run state: \(message)", tone: .error)
+            pushTrace("Run state save failed", detail: message, status: .failed)
+        }
     }
 
     private func appendVisibleErrorMessage(
@@ -2650,12 +2656,14 @@ final class AgentRuntime {
         )
     }
 
-    private func discardQueuedPrompts() {
+    private func discardQueuedPrompts(context: ModelContext? = nil) {
         guard !queuedPrompts.isEmpty || queuedPromptCount != 0 else { return }
         for prompt in queuedPrompts {
-            if let messageID = prompt.visibleMessageID {
-                queuedFollowUpMessageIDs.remove(messageID)
-            }
+            guard let messageID = prompt.visibleMessageID else { continue }
+            queuedFollowUpMessageIDs.remove(messageID)
+            guard let context,
+                  let message = prompt.conversation.messages.first(where: { $0.id == messageID }) else { continue }
+            rollbackUnsavedMessage(message, from: prompt.conversation, context: context)
         }
         queuedPrompts.removeAll()
         queuedPromptCount = 0

@@ -32,6 +32,7 @@ struct ChatView: View {
     var createProject: () -> Void = {}
     @State private var prompt = ""
     @State private var selectedArtifact: WorkspaceArtifact?
+    @State private var chatSaveError: String?
     @State private var showingChatDrawer = false
     @State private var progressExpanded = false
     @State private var messageRenderLimit = 80
@@ -661,6 +662,7 @@ struct ChatView: View {
                         createProject: createProject,
                         openWorkspaceSurface: openWorkspaceSurface,
                         openArtifact: previewArtifact,
+                        openMissionDossier: openMissionDossier,
                         openChatDrawer: {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             withAnimation(shouldAnimateDecorative ? .smooth(duration: 0.22) : nil) {
@@ -1028,6 +1030,17 @@ struct ChatView: View {
                 iterationPrompt: cachedWorkflowSpine?.iterationPrompt
             )
         }
+        .alert(
+            "Chat Save Error",
+            isPresented: Binding(
+                get: { chatSaveError != nil },
+                set: { if !$0 { chatSaveError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { chatSaveError = nil }
+        } message: {
+            Text(chatSaveError ?? "NovaForge could not save that chat change.")
+        }
     }
 
     private func messageBubble(for message: ChatMessageSnapshot) -> some View {
@@ -1049,7 +1062,12 @@ struct ChatView: View {
             project: project,
             context: modelContext
         )
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            chatSaveError = "NovaForge opened the artifact, but could not save the preview event. \(error.localizedDescription)"
+        }
         selectedArtifact = artifact
     }
 

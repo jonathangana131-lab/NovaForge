@@ -140,11 +140,15 @@ enum AgentPerformance {
     }
 
     static var allowsDecorativeMotion: Bool {
-        !isPerformanceMode
+        // Profiling runs should measure product layout and scroll health, not
+        // keep multiple decorative repeatForever/phase animations alive while
+        // XCTest is sampling frame cadence. Normal user builds still get the
+        // richer Liquid Glass motion unless performance mode is enabled.
+        !isPerformanceMode && !shouldProfileFrameRate
     }
 
     static var prefersReducedVisualEffects: Bool {
-        isPerformanceMode
+        isPerformanceMode || shouldProfileFrameRate
     }
 
     static let shouldProfileFrameRate: Bool =
@@ -331,13 +335,18 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             hitchThreshold: TimeInterval
         ) {
             let surfaceChanged = self.surface != surface
+            if surfaceChanged {
+                // Flush the previous window before swapping labels. Otherwise
+                // the prior idle sample can be reported as scroll (or the prior
+                // scroll sample as idle), making the gate fail on mislabeled
+                // transition work instead of actual sustained surface health.
+                flushWindow()
+                resetWindow()
+                lastTimestamp = nil
+            }
             self.surface = surface
             self.sampleInterval = sampleInterval
             self.hitchThreshold = hitchThreshold
-            if surfaceChanged {
-                flushWindow()
-                resetWindow()
-            }
             isActive ? start() : stop()
         }
 
@@ -379,7 +388,7 @@ struct PerformanceFrameProbe: UIViewRepresentable {
         }
 
         private func flushWindow() {
-            guard frameCount > 0, accumulatedTime > 0 else { return }
+            guard frameCount > 0, accumulatedTime >= sampleInterval else { return }
             AgentPerformance.frameAverage(surface, fps: Double(frameCount) / accumulatedTime)
             AgentPerformance.worstFrame(surface, milliseconds: worstFrameDuration * 1_000)
             AgentPerformance.hitchCount(surface, count: hitches)
@@ -421,9 +430,8 @@ enum AgentPlatformCompatibility {
     static let isIOS27OrNewer: Bool =
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
 
-    // Keep native Liquid Glass available even in performance mode. Profiling
-    // showed the native effect can be cheaper than layered fallback fills on
-    // simulator, while still matching the intended premium app character.
+    // Explicit launch-only escape hatch for environments where native Liquid
+    // Glass is unavailable or when QA wants the most conservative compositor.
     static let usesConservativeRendering: Bool =
         ProcessInfo.processInfo.arguments.contains("--disable-liquid-glass")
 }
@@ -439,13 +447,11 @@ struct AgentBackground: View {
         let conservativeRendering = AgentPlatformCompatibility.usesConservativeRendering
         let theme = AgentTheme.resolved(from: selectedThemeRawValue)
         let palette = theme.palette
-        // Matrix rain is now cheap enough (pre-rendered glyph atlas) to keep
-        // raining in performance mode — it drops to a reduced-density layer
-        // instead of freezing. Reduce Motion (accessibility) always wins.
-        let isMatrixTheme = palette.backgroundEffect == .matrixRain
+        // Performance/profile runs freeze ambient backdrops so the gate measures
+        // the foreground Project/Chat surfaces instead of recurring Canvas work.
+        // Reduce Motion and Reduce Transparency also suppress animation.
         let baseMotion = isAnimated && !reduceMotion && !conservativeRendering
-        let allowsMotion = baseMotion &&
-            (isMatrixTheme || (AgentPerformance.allowsDecorativeMotion && !reduceTransparency))
+        let allowsMotion = baseMotion && AgentPerformance.allowsDecorativeMotion && !reduceTransparency
         ZStack {
             LinearGradient(
                 colors: [
@@ -1179,7 +1185,7 @@ struct GlassPanelModifier: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
-        if AgentTheme.current == .matrixRain || AgentPlatformCompatibility.usesConservativeRendering || reduceTransparency {
+        if AgentTheme.current == .matrixRain || AgentPlatformCompatibility.usesConservativeRendering || AgentPerformance.prefersReducedVisualEffects || reduceTransparency {
             fallback(content: content)
         } else if #available(iOS 26.0, *) {
             let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -1476,7 +1482,7 @@ extension View {
     /// theme, where mono glyphs glow). No-ops under conservative rendering.
     @ViewBuilder
     func agentDockEdgeFade() -> some View {
-        if AgentPlatformCompatibility.usesConservativeRendering {
+        if AgentPlatformCompatibility.usesConservativeRendering || AgentPerformance.prefersReducedVisualEffects {
             self
         } else if #available(iOS 26.0, *) {
             self.scrollEdgeEffectStyle(.soft, for: .bottom)

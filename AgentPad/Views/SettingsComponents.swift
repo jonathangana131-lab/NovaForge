@@ -350,6 +350,7 @@ struct SettingsProviderRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("settingsProvider-\(provider.rawValue)")
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(selected ? provider.tint.opacity(0.13) : AgentPalette.controlFill.opacity(0.38))

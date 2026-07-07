@@ -212,7 +212,12 @@ extension ProjectDashboardView {
             project: project,
             context: modelContext
         )
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            dashboardSaveError = "NovaForge opened the artifact, but could not save the preview event. \(error.localizedDescription)"
+        }
         if workspaceArtifact.isWebPage || workspaceArtifact.isSwiftGameArtifact {
             openArtifactLandscapeFullScreen(workspaceArtifact)
         } else {

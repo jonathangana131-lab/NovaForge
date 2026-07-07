@@ -615,35 +615,54 @@ struct LiveShimmerText: View {
 
 private struct StreamingBubble: View {
     @ObservedObject var stream: LiveStreamBuffer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var statusFlow = false
+
+    private var allowsMotion: Bool {
+        AgentPerformance.allowsDecorativeMotion && !reduceMotion
+    }
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Streaming Bubble Body")
         HStack {
-            VStack(alignment: .leading, spacing: 11) {
-                Text(stream.displayText)
-                    .foregroundStyle(AgentPalette.ink)
-                    .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                    .lineSpacing(5)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            LiquidMessageBubble(tint: AgentPalette.primaryAccent, isLive: true) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 10) {
+                        LiquidTypingAuraView(tint: AgentPalette.primaryAccent, compact: true)
+                            .padding(.top, 1)
+                            .accessibilityHidden(true)
 
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(AgentPalette.primaryAccent.opacity(0.82))
-                        .frame(width: 5, height: 5)
-                        .accessibilityHidden(true)
-                    Text("Live response")
-                        .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.tertiaryText)
+                        StreamingTextView(text: stream.displayText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    HStack(spacing: 7) {
+                        LiveShimmerText(
+                            text: "Liquid response",
+                            baseColor: AgentPalette.tertiaryText,
+                            highlightColor: AgentPalette.primaryAccent,
+                            font: .system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign)
+                        )
                         .lineLimit(1)
                         .accessibilityIdentifier("liveStreamingStatusText")
-                    Spacer(minLength: 0)
+
+                        Capsule(style: .continuous)
+                            .fill(AgentPalette.primaryAccent.opacity(0.28))
+                            .frame(height: 1)
+                            .overlay(alignment: .leading) {
+                                Capsule(style: .continuous)
+                                    .fill(AgentPalette.primaryAccent.opacity(allowsMotion ? 0.80 : 0.45))
+                                    .frame(width: allowsMotion ? 54 : 28)
+                                    .offset(x: allowsMotion ? (statusFlow ? 62 : -54) : 0)
+                                    .animation(
+                                        allowsMotion ? .easeInOut(duration: 1.55).repeatForever(autoreverses: true) : nil,
+                                        value: statusFlow
+                                    )
+                            }
+                    }
+                    .accessibilityHidden(false)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .chatMessageSurface(radius: 20, tint: AgentPalette.primaryAccent, emphasis: .live)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("liveStreamingReadableContent")
             Spacer(minLength: 44)
@@ -652,36 +671,165 @@ private struct StreamingBubble: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("liveStreamingBubble")
         .transaction { transaction in
+            // Streaming text changes dozens of times per response. Animating
+            // each append is expensive and can drag the live transcript below
+            // the frame-rate gate; the glass chrome still carries the live
+            // signal while text itself updates immediately.
             transaction.animation = nil
         }
+        .onAppear { statusFlow = true }
+    }
+}
+
+private struct StreamingTextView: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var allowsMotion: Bool {
+        AgentPerformance.allowsDecorativeMotion && !reduceMotion
     }
 
+    var body: some View {
+        Text(text.isEmpty ? " " : text)
+            .foregroundStyle(AgentPalette.ink)
+            .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+            .lineSpacing(5)
+            .textSelection(.enabled)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+    }
+}
+
+private struct LiquidMessageBubble<Content: View>: View {
+    let tint: Color
+    var isLive = false
+    private let content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(tint: Color, isLive: Bool = false, @ViewBuilder content: () -> Content) {
+        self.tint = tint
+        self.isLive = isLive
+        self.content = content()
+    }
+
+    private var allowsMotion: Bool {
+        AgentPerformance.allowsDecorativeMotion && !reduceMotion
+    }
+
+    var body: some View {
+        content
+            .padding(.horizontal, 15)
+            .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .chatMessageSurface(radius: 22, tint: tint, emphasis: isLive ? .live : .assistant)
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(tint.opacity(isLive ? 0.42 : 0.24), lineWidth: isLive ? 0.95 : 0.65)
+                    .blendMode(AgentTheme.current == .matrixRain ? .normal : .screen)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                if isLive && allowsMotion {
+                    LiquidSweepOverlay(tint: tint, radius: 22)
+                }
+            }
+            .shadow(color: tint.opacity(isLive && !AgentPerformance.prefersReducedVisualEffects ? 0.10 : 0), radius: 14, x: 0, y: 5)
+    }
+}
+
+private struct LiquidSweepOverlay: View {
+    let tint: Color
+    let radius: CGFloat
+    @State private var flow = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(.clear)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [.clear, tint.opacity(0.16), .white.opacity(0.10), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: max(72, width * 0.28))
+                        .rotationEffect(.degrees(11))
+                        .offset(x: flow ? width + 80 : -width * 0.45)
+                        .animation(.easeInOut(duration: 2.8).repeatForever(autoreverses: false), value: flow)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        }
+        .allowsHitTesting(false)
+        .onAppear { flow = true }
+    }
 }
 
 private struct ThinkingView: View {
     var body: some View {
         HStack {
-            HStack(spacing: 9) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .black))
-                    .foregroundStyle(AgentPalette.primaryAccent)
-                    .frame(width: 22, height: 22)
-                    .agentControlSurface(radius: 8, tint: AgentPalette.primaryAccent.opacity(0.10), selected: true)
-
-                Text("Preparing response")
-                    .font(.system(size: 14, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.secondaryText)
-
-                Spacer(minLength: 0)
+            LiquidMessageBubble(tint: AgentPalette.primaryAccent, isLive: true) {
+                HStack(spacing: 11) {
+                    LiquidTypingAuraView(tint: AgentPalette.primaryAccent, compact: false)
+                    VStack(alignment: .leading, spacing: 3) {
+                        LiveShimmerText(
+                            text: "Preparing response",
+                            baseColor: AgentPalette.secondaryText,
+                            highlightColor: AgentPalette.ink,
+                            font: .system(size: 14, weight: .semibold, design: AgentPalette.interfaceFontDesign)
+                        )
+                        Text("Warming the local context and composing the first glass bubble")
+                            .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                            .foregroundStyle(AgentPalette.tertiaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                    Spacer(minLength: 0)
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-            .chatMessageSurface(radius: 20, tint: AgentPalette.primaryAccent, emphasis: .live)
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
-        .accessibilityLabel("Assistant is thinking")
+        .accessibilityLabel("Assistant is preparing a response")
+    }
+}
+
+private struct LiquidTypingAuraView: View {
+    let tint: Color
+    var compact = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var orbit = false
+
+    private var allowsMotion: Bool {
+        AgentPerformance.allowsDecorativeMotion && !reduceMotion
+    }
+
+    var body: some View {
+        let size: CGFloat = compact ? 26 : 34
+        ZStack {
+            Circle()
+                .fill(tint.opacity(0.12))
+                .frame(width: size, height: size)
+            Circle()
+                .stroke(tint.opacity(0.24), lineWidth: 1)
+                .frame(width: size - 3, height: size - 3)
+            Circle()
+                .trim(from: 0.12, to: 0.42)
+                .stroke(tint.opacity(0.92), style: StrokeStyle(lineWidth: 2.1, lineCap: .round))
+                .frame(width: size - 5, height: size - 5)
+                .rotationEffect(.degrees(orbit ? 360 : 0))
+                .animation(allowsMotion ? .linear(duration: 1.8).repeatForever(autoreverses: false) : nil, value: orbit)
+            Circle()
+                .fill(tint)
+                .frame(width: compact ? 5 : 6, height: compact ? 5 : 6)
+                .shadow(color: tint.opacity(allowsMotion ? 0.55 : 0.25), radius: compact ? 4 : 6)
+        }
+        .frame(width: size, height: size)
+        .onAppear { orbit = true }
     }
 }
 
