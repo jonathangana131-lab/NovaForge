@@ -505,6 +505,8 @@ struct AppRootView: View {
                         I can inspect the current files, make a small focused change, run the relevant checks, and bring back proof without duplicating this welcome-style response. I will keep this one assistant turn attached to a stable message identity while it streams.
 
                         For this send-flow check, I am deliberately taking a few beats so the transcript can prove that streaming updates one live bubble in place before it becomes the final assistant message.
+
+                        Live feed proof beat one: I am revealing this response through the semantic word tree, not by dumping a finished paragraph all at once. Live feed proof beat two: the tail should move while the settled prefix stays calm and readable. Live feed proof beat three: the composer and run controls should remain clear below the latest message. Live feed proof beat four: this deterministic fixture stays long enough for the UI test to measure live character growth before final handoff.
                         """,
                         tool_calls: nil
                     ),

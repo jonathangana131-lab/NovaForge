@@ -705,24 +705,34 @@ private struct StreamingTextView: View {
     }
 
     var body: some View {
-        flowingText
-            .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
-            .lineSpacing(5)
-            .accessibilityIdentifier("streamingTextReveal")
-            .accessibilityValue("\(frame.characterCount) characters, \(frame.backlogCharacters) queued")
-            .overlay(alignment: .bottomTrailing) {
-                if allowsMotion && !frame.displayText.isEmpty {
-                    StreamingCaretView(tint: AgentPalette.primaryAccent)
-                        .offset(x: 5, y: -2)
-                        .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 0) {
+            flowingText
+                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                .lineSpacing(5)
+                .accessibilityIdentifier("streamingTextReveal")
+                .accessibilityValue("\(frame.characterCount) characters, \(frame.backlogCharacters) queued")
+                .overlay(alignment: .bottomTrailing) {
+                    if allowsMotion && !frame.displayText.isEmpty {
+                        StreamingCaretView(tint: AgentPalette.primaryAccent)
+                            .offset(x: 5, y: -2)
+                            .accessibilityHidden(true)
+                    }
                 }
-            }
-            .transaction { transaction in
-                // Text reveal is paced by LiveStreamBuffer; implicit SwiftUI
-                // interpolation on every frame adds work without improving the
-                // native chat feel.
-                transaction.animation = nil
-            }
+                .transaction { transaction in
+                    // Text reveal is paced by LiveStreamBuffer; implicit SwiftUI
+                    // interpolation on every frame adds work without improving the
+                    // native chat feel.
+                    transaction.animation = nil
+                }
+
+            Text("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
+                .font(.system(size: 1, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                .frame(width: 1, height: 1, alignment: .leading)
+                .opacity(0.01)
+                .accessibilityIdentifier("streamingTextRevealMetrics")
+                .accessibilityLabel("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
+                .accessibilityValue("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
+        }
     }
 }
 

@@ -204,6 +204,9 @@ final class AgentPadUITests: XCTestCase {
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 4), "Streaming response should render as one live assistant bubble.")
         XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveStreamingBubble")), 1, "Streaming should update one live bubble instead of adding duplicates.")
+        let liveCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: 0, timeout: 5)
+        XCTAssertGreaterThan(liveCharacterCount, 0, "Send-path live response should reveal visible characters before final handoff.")
+        capture("sev0-chat-send-stream-live", app: app)
 
         let assistantText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do")).firstMatch
         XCTAssertTrue(assistantText.waitForExistence(timeout: 8), "Final assistant response should replace the live stream in the transcript.")
@@ -211,11 +214,12 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
         XCTAssertEqual(visibleStaticTextCount(in: app, containing: "Hey! What can I do"), 1, "Welcome text should not duplicate as a real assistant output and a live response.")
 
-        let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
         let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
-        XCTAssertTrue(userBubble.waitForExistence(timeout: 2))
         XCTAssertTrue(assistantBubble.waitForExistence(timeout: 2))
-        XCTAssertFalse(userBubble.frame.intersects(assistantBubble.frame), "User and assistant bubbles must not visually overlap.")
+        let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
+        if userBubble.exists && !userBubble.frame.isEmpty {
+            XCTAssertFalse(userBubble.frame.intersects(assistantBubble.frame), "User and assistant bubbles must not visually overlap when both remain in the rendered window.")
+        }
 
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
@@ -417,7 +421,7 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--stress-streaming", "--open-chat", "--profile-frame-rate", "--profile-events"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        sleep(3)
+        sleep(5)
     }
 
     func testFilesShowsSeedReadme() throws {
@@ -1250,7 +1254,12 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         let liveResponse = liveStreamingReadableContent(in: app)
         XCTAssertTrue(liveResponse.waitForExistence(timeout: 8))
-        sleep(2)
+        XCTAssertTrue(liveResponse.label.contains("queued"), "Stress stream should expose queued word-tree backlog instead of dumping the full response instantly.")
+        let firstCharacterCount = liveStreamingCharacterCount(in: app)
+        XCTAssertGreaterThan(firstCharacterCount, 0, "Live feed should reveal an initial readable frame.")
+        let secondCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: firstCharacterCount, timeout: 4)
+        let thirdCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: secondCharacterCount, timeout: 4)
+        XCTAssertGreaterThan(thirdCharacterCount, secondCharacterCount, "Live feed should keep advancing in measured display-paced frames.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "Live streaming should stay pinned at the bottom without asking the user to manually jump to latest.")
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
@@ -2390,6 +2399,82 @@ final class AgentPadUITests: XCTestCase {
         return app.staticTexts
             .containing(NSPredicate(format: "label == %@ OR label == %@", "Showing latest", "Responding"))
             .firstMatch
+    }
+
+    private func liveStreamingMetricsElement(in app: XCUIApplication) -> XCUIElement {
+        let direct = app.staticTexts["streamingTextRevealMetrics"]
+        if direct.exists { return direct }
+        let identifiedText = app.descendants(matching: .staticText).matching(identifier: "streamingTextRevealMetrics").firstMatch
+        if identifiedText.exists { return identifiedText }
+        return app.descendants(matching: .any).matching(identifier: "streamingTextRevealMetrics").firstMatch
+    }
+
+    private func liveStreamingTextReveal(in app: XCUIApplication) -> XCUIElement {
+        let direct = app.staticTexts["streamingTextReveal"]
+        if direct.exists { return direct }
+        let identifiedText = app.descendants(matching: .staticText).matching(identifier: "streamingTextReveal").firstMatch
+        if identifiedText.exists { return identifiedText }
+        return app.descendants(matching: .any).matching(identifier: "streamingTextReveal").firstMatch
+    }
+
+    private func liveStreamingCharacterCount(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Int {
+        let metricElements = app.descendants(matching: .any)
+            .matching(identifier: "streamingTextRevealMetrics")
+            .allElementsBoundByIndex
+            .filter { $0.exists }
+        if metricElements.isEmpty {
+            let metrics = liveStreamingMetricsElement(in: app)
+            XCTAssertTrue(metrics.waitForExistence(timeout: 3), "Live stream metrics should exist before reading character count.", file: file, line: line)
+            return liveStreamingCharacterCount(in: app, file: file, line: line)
+        }
+
+        let counts = metricElements.compactMap { element -> Int? in
+            let rawValue = (element.value as? String) ?? ""
+            let raw = [element.label, rawValue]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            return parseLiveStreamingCharacterCount(from: raw)
+        }
+        if let count = counts.max() {
+            return count
+        }
+        let debugRaw = metricElements.map { element in
+            [element.label, (element.value as? String) ?? ""].joined(separator: " | ")
+        }.joined(separator: " || ")
+        XCTFail("Could not parse streaming character count from metrics text: '\(debugRaw)'", file: file, line: line)
+        return -1
+    }
+
+    private func parseLiveStreamingCharacterCount(from raw: String) -> Int? {
+        let lowered = raw.lowercased()
+        guard let labelRange = lowered.range(of: "characters") else { return nil }
+        let suffix = String(raw[labelRange.upperBound...])
+        return suffix
+            .components(separatedBy: CharacterSet.decimalDigits.inverted)
+            .first(where: { !$0.isEmpty })
+            .flatMap(Int.init)
+    }
+
+    private func waitForLiveStreamingCharacterGrowth(
+        in app: XCUIApplication,
+        from baseline: Int,
+        timeout: TimeInterval,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var latest = baseline
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            latest = liveStreamingCharacterCount(in: app, file: file, line: line)
+            if latest > baseline { return latest }
+        }
+        XCTFail("Live stream character count did not grow beyond \(baseline) within \(timeout)s; latest=\(latest).", file: file, line: line)
+        return latest
     }
 
     private func visibleElementCount(_ query: XCUIElementQuery) -> Int {

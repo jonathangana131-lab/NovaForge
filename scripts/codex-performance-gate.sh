@@ -57,11 +57,13 @@ require_quiet_lane() {
   local active
   active="$(
     {
-      pgrep -fl '[x]codebuild' || true
-      pgrep -fl '[c]odex-fast-screenshot\.sh' || true
-      pgrep -fl '[c]odex-sim-tour\.sh' || true
-      pgrep -fl '[c]odex-focused-tests\.sh' || true
-      pgrep -fl '[r]un-on-iphone\.sh' || true
+      pgrep -x xcodebuild || true
+      pgrep -x swift-frontend || true
+      pgrep -x xctest || true
+      pgrep -f '(^|/)codex-fast-screenshot\.sh( |$)' || true
+      pgrep -f '(^|/)codex-sim-tour\.sh( |$)' || true
+      pgrep -f '(^|/)codex-focused-tests\.sh( |$)' || true
+      pgrep -f '(^|/)run-on-iphone\.sh( |$)' || true
     } | sort -u
   )"
 
@@ -164,6 +166,9 @@ verify_performance_log() {
     MIN_PROJECT_IDLE_FPS="${MIN_PROJECT_IDLE_FPS:-45}" \
     MIN_PROJECT_SCROLL_FPS="${MIN_PROJECT_SCROLL_FPS:-40}" \
     MIN_CHAT_STREAMING_FPS="${MIN_CHAT_STREAMING_FPS:-40}" \
+    MIN_PROJECT_IDLE_SAMPLE_COUNT="${MIN_PROJECT_IDLE_SAMPLE_COUNT:-1}" \
+    MIN_PROJECT_SCROLL_SAMPLE_COUNT="${MIN_PROJECT_SCROLL_SAMPLE_COUNT:-1}" \
+    MIN_CHAT_STREAMING_SAMPLE_COUNT="${MIN_CHAT_STREAMING_SAMPLE_COUNT:-4}" \
     IGNORE_INITIAL_TAB_SWITCH_SAMPLES="${IGNORE_INITIAL_TAB_SWITCH_SAMPLES:-1}" \
     MAX_TAB_SWITCH_AVERAGE_MS="${MAX_TAB_SWITCH_AVERAGE_MS:-900}" \
     MAX_TAB_SWITCH_PEAK_MS="${MAX_TAB_SWITCH_PEAK_MS:-1500}" \
@@ -249,6 +254,20 @@ sub require_average_at_least {
     }
 }
 
+sub require_sample_count_at_least {
+    my ($metric, $threshold_env) = @_;
+    my $items = $values{$metric};
+    if (!$items || !@$items) {
+        push @failures, "$metric missing from performance log";
+        return;
+    }
+    my $threshold = env_num($threshold_env);
+    my $count = scalar(@$items);
+    if ($count < $threshold) {
+        push @failures, sprintf("%s sample count %d below %.0f", $metric, $count, $threshold);
+    }
+}
+
 sub require_max_at_most {
     my ($metric, $threshold_env) = @_;
     my $items = $values{$metric};
@@ -277,6 +296,9 @@ sub require_average_at_most {
     }
 }
 
+require_sample_count_at_least('Project Idle FPS', 'MIN_PROJECT_IDLE_SAMPLE_COUNT');
+require_sample_count_at_least('Project Scroll FPS', 'MIN_PROJECT_SCROLL_SAMPLE_COUNT');
+require_sample_count_at_least('Chat Streaming FPS', 'MIN_CHAT_STREAMING_SAMPLE_COUNT');
 require_average_at_least('Project Idle FPS', 'MIN_PROJECT_IDLE_FPS');
 require_average_at_least('Project Scroll FPS', 'MIN_PROJECT_SCROLL_FPS');
 require_average_at_least('Chat Streaming FPS', 'MIN_CHAT_STREAMING_FPS');

@@ -1684,6 +1684,8 @@ struct ChatView: View {
             scrollAttachment = .restoring
             return
         }
+        transient.scrollRequestTask?.cancel()
+        transient.accessoryResizeFollowUpTask?.cancel()
         scrollAttachment = .detached
         forceScrollToBottom = false
         transient.userDetachedUntil = Date().addingTimeInterval(6)
@@ -1748,6 +1750,7 @@ struct ChatView: View {
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard scrollAttachment != .detached || Date() < transient.manualRepinUntil else { return }
         let action = {
             scrollAttachment = .restoring
             proxy.scrollTo(latestScrollTargetID ?? Self.chatBottomID, anchor: .bottom)
