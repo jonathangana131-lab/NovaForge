@@ -587,6 +587,7 @@ struct LiveShimmerText: View {
                     Text(text)
                         .font(font)
                         .foregroundStyle(highlightColor)
+                        .accessibilityHidden(true)
                         .mask {
                             GeometryReader { proxy in
                                 let width = max(proxy.size.width, 1)
@@ -624,6 +625,7 @@ private struct StreamingBubble: View {
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Streaming Bubble Body")
+        let displayFrame = stream.displayFrame
         HStack {
             LiquidMessageBubble(tint: AgentPalette.primaryAccent, isLive: true) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -632,19 +634,17 @@ private struct StreamingBubble: View {
                             .padding(.top, 1)
                             .accessibilityHidden(true)
 
-                        StreamingTextView(text: stream.displayText)
+                        StreamingTextView(frame: displayFrame)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     HStack(spacing: 7) {
-                        LiveShimmerText(
-                            text: "Liquid response",
-                            baseColor: AgentPalette.tertiaryText,
-                            highlightColor: AgentPalette.primaryAccent,
-                            font: .system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign)
-                        )
-                        .lineLimit(1)
-                        .accessibilityIdentifier("liveStreamingStatusText")
+                        Text(displayFrame.statusLine)
+                            .font(.system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign))
+                            .foregroundStyle(AgentPalette.tertiaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.76)
+                            .accessibilityIdentifier("liveStreamingStatusText")
 
                         Capsule(style: .continuous)
                             .fill(AgentPalette.primaryAccent.opacity(0.28))
@@ -682,7 +682,7 @@ private struct StreamingBubble: View {
 }
 
 private struct StreamingTextView: View {
-    let text: String
+    let frame: ForgeLiveFeedFrame
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var allowsMotion: Bool {
@@ -690,16 +690,15 @@ private struct StreamingTextView: View {
     }
 
     private var flowingText: Text {
-        let value = text.isEmpty ? " " : text
-        let tailCount = min(18, value.count)
-        guard tailCount > 0, value.count > tailCount else {
-            return Text(value).foregroundColor(AgentPalette.ink)
+        guard !frame.displayText.isEmpty else {
+            return Text(" ").foregroundColor(AgentPalette.ink)
         }
-        let prefix = String(value.dropLast(tailCount))
-        let tail = String(value.suffix(tailCount))
-        var attributed = AttributedString(prefix)
+        guard !frame.activeTail.isEmpty else {
+            return Text(frame.displayText).foregroundColor(AgentPalette.ink)
+        }
+        var attributed = AttributedString(frame.settledText)
         attributed.foregroundColor = AgentPalette.ink
-        var highlightedTail = AttributedString(tail)
+        var highlightedTail = AttributedString(frame.activeTail)
         highlightedTail.foregroundColor = AgentPalette.primaryAccent.opacity(allowsMotion ? 0.98 : 0.82)
         attributed.append(highlightedTail)
         return Text(attributed)
@@ -709,10 +708,10 @@ private struct StreamingTextView: View {
         flowingText
             .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
             .lineSpacing(5)
-            .textSelection(.enabled)
             .accessibilityIdentifier("streamingTextReveal")
+            .accessibilityValue("\(frame.characterCount) characters, \(frame.backlogCharacters) queued")
             .overlay(alignment: .bottomTrailing) {
-                if allowsMotion && !text.isEmpty {
+                if allowsMotion && !frame.displayText.isEmpty {
                     StreamingCaretView(tint: AgentPalette.primaryAccent)
                         .offset(x: 5, y: -2)
                         .accessibilityHidden(true)

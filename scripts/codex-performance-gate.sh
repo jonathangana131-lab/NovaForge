@@ -92,7 +92,6 @@ discover_xctestrun() {
   local -a candidates
   candidates=(
     "$ROOT_DIR"/QA/codex-focused-tests-*/DerivedData/Build/Products/${SCHEME}_*.xctestrun(N.om[1])
-    "$HOME"/Library/Developer/Xcode/DerivedData/${SCHEME}-*/Build/Products/${SCHEME}_*.xctestrun(N.om[1])
   )
   if (( ${#candidates} > 0 )); then
     print -r -- "$candidates[1]"

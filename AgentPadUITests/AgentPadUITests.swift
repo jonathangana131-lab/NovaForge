@@ -1266,11 +1266,13 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run Control"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Running Tool"].waitForExistence(timeout: 5))
-        let activeToolDetail = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Rendering batch'")).firstMatch
-        XCTAssertTrue(activeToolDetail.waitForExistence(timeout: 5), "Expanded progress should resize with and expose the current streaming/tool detail.")
+        let status = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Word tree")).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5), "Live feed should expose the new word-tree status line while streaming.")
+        let activeToolDetail = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Normalizing chunk")).firstMatch
+        XCTAssertTrue(activeToolDetail.waitForExistence(timeout: 5), "Expanded progress should resize with and expose the current word-tree streaming detail.")
         let latestTrace = app.staticTexts["latestTraceEventTitle"]
         XCTAssertTrue(latestTrace.waitForExistence(timeout: 5), "Expanded progress should expose a stable newest trace row for UI tests and VoiceOver.")
-        XCTAssertTrue(latestTrace.label.contains("Stream batch"), "Expanded progress should show the growing stream/tool trace as the newest row; got '\(latestTrace.label)'.")
+        XCTAssertTrue(latestTrace.label.contains("Word-tree"), "Expanded progress should show the growing word-tree trace as the newest row; got '\(latestTrace.label)'.")
         capture("24-streaming-tool-trace-growth", app: app)
     }
 

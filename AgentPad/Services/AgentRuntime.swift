@@ -74,17 +74,22 @@ struct AgentTraceEvent: Identifiable, Hashable {
 
 @MainActor
 final class LiveStreamBuffer: ObservableObject {
-    /// Text from providers can arrive in uneven chunks. The UI should not mirror
-    /// those chunks directly; it should reveal text on a steady display-paced
-    /// cadence so the response flows like a native chat app.
+    /// Provider chunks can arrive in ragged half-words. The Forge engine first
+    /// builds a semantic word tree, then reveals whole word/phrase frames on a
+    /// steady display cadence so the AI feels like it is speaking instead of
+    /// resizing text on every network packet.
     private var activeRevealFrameInterval: Duration {
-        AgentPerformance.shouldProfileFrameRate ? .milliseconds(90) : .milliseconds(34)
+        // Normal use feels lively; profiling uses a calmer cadence so the gate
+        // measures sustained scroll/render health instead of stress-test packet spam.
+        AgentPerformance.shouldProfileFrameRate ? .milliseconds(140) : .milliseconds(50)
     }
-    private let minimumInitialDisplayCharacters = 1
-    private let maximumDisplayedCharacters = 900
-    @Published private var frame = LiveStreamFrame()
-    @ObservationIgnored private var visibleText = ""
-    @ObservationIgnored private var pendingRevealText = ""
+
+    // Keep the live bubble as a rolling, readable window. The final durable
+    // assistant message still contains the full response after handoff; during
+    // streaming this avoids re-laying out a giant wall of text on every frame.
+    private let maximumDisplayedCharacters = 760
+    @Published private var frame = ForgeLiveFeedFrame.empty
+    @ObservationIgnored private var feedEngine = ForgeLiveFeedEngine()
     @ObservationIgnored private var revealTask: Task<Void, Never>?
     @ObservationIgnored private var punctuationPauseFrames = 0
     @ObservationIgnored private var pendingHandoffClearMessageID: UUID?
@@ -92,41 +97,36 @@ final class LiveStreamBuffer: ObservableObject {
     @Published private(set) var responseID = UUID()
     @Published private(set) var handoffMessageID: UUID?
 
-    var displayText: String {
-        guard frame.displayText.count > maximumDisplayedCharacters else {
-            return frame.displayText
-        }
-        return "...\n" + String(frame.displayText.suffix(maximumDisplayedCharacters))
+    var displayFrame: ForgeLiveFeedFrame {
+        frame.windowed(maxCharacters: maximumDisplayedCharacters)
     }
+
+    var displayText: String { displayFrame.displayText }
     var characterCount: Int { frame.characterCount }
     var revision: Int { frame.revision }
     var isEmpty: Bool { frame.characterCount == 0 }
     var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
-    var isShowingTail: Bool { frame.displayText.count > maximumDisplayedCharacters }
-    var revealBacklog: Int { pendingRevealText.count }
+    var isShowingTail: Bool { displayFrame.isShowingTail }
+    var revealBacklog: Int { frame.backlogCharacters }
 
     func reset() {
         revealTask?.cancel()
         revealTask = nil
-        pendingRevealText = ""
-        visibleText = ""
+        feedEngine.reset()
         punctuationPauseFrames = 0
         pendingHandoffClearMessageID = nil
         revealMetricTickCounter = 0
         responseID = UUID()
         handoffMessageID = nil
-        frame = LiveStreamFrame()
+        frame = .empty
     }
 
     func append(_ delta: String) {
         guard !delta.isEmpty else { return }
-        pendingRevealText += delta
+        feedEngine.ingest(delta)
 
-        // Show the first glyph immediately so the bubble feels responsive, then
-        // let the reveal loop pace the remaining text instead of spawning a
-        // whole provider batch at once.
-        if visibleText.isEmpty {
-            revealNextSlice(forceMinimum: true)
+        if frame.characterCount == 0 {
+            revealNextFrame(forceMinimum: true)
         }
         startRevealLoopIfNeeded()
     }
@@ -137,16 +137,17 @@ final class LiveStreamBuffer: ObservableObject {
     func flushPending() {
         revealTask?.cancel()
         revealTask = nil
-        revealAllPending(reason: "Live Stream Flush")
+        if let next = feedEngine.flush() {
+            publish(next, reason: "Live Stream Flush")
+        }
+        punctuationPauseFrames = 0
+        completeHandoffIfReady()
     }
 
     func finishHandoff(to messageID: UUID) {
-        // Keep the live-row identity stable while the saved assistant message
-        // waits behind the reveal. Changing responseID here recreates the live
-        // SwiftUI row at completion time and can look like a bubble pop.
         handoffMessageID = messageID
-        publishVisibleFrame(extraRevision: true)
-        if !pendingRevealText.isEmpty {
+        frame = feedEngine.currentFrame()
+        if feedEngine.hasPendingReveal {
             startRevealLoopIfNeeded()
         } else {
             completeHandoffIfReady()
@@ -156,7 +157,7 @@ final class LiveStreamBuffer: ObservableObject {
     func clearHandoffIfRendered(messageID: UUID) {
         guard handoffMessageID == messageID else { return }
         pendingHandoffClearMessageID = messageID
-        if pendingRevealText.isEmpty {
+        if !feedEngine.hasPendingReveal {
             reset()
         } else {
             startRevealLoopIfNeeded()
@@ -164,9 +165,9 @@ final class LiveStreamBuffer: ObservableObject {
     }
 
     private func startRevealLoopIfNeeded() {
-        guard revealTask == nil, !pendingRevealText.isEmpty else { return }
+        guard revealTask == nil, feedEngine.hasPendingReveal else { return }
         revealTask = Task { @MainActor [weak self] in
-            while let self, !Task.isCancelled, !self.pendingRevealText.isEmpty {
+            while let self, !Task.isCancelled, self.feedEngine.hasPendingReveal {
                 do {
                     try await Task.sleep(for: self.activeRevealFrameInterval)
                 } catch {
@@ -176,7 +177,7 @@ final class LiveStreamBuffer: ObservableObject {
                 if self.punctuationPauseFrames > 0 {
                     self.punctuationPauseFrames -= 1
                 } else {
-                    self.revealNextSlice(forceMinimum: false)
+                    self.revealNextFrame(forceMinimum: false)
                 }
             }
             self?.revealTask = nil
@@ -184,85 +185,36 @@ final class LiveStreamBuffer: ObservableObject {
         }
     }
 
-    private func revealNextSlice(forceMinimum: Bool) {
-        guard !pendingRevealText.isEmpty else { return }
-        let count = min(revealCharacterBudget(forceMinimum: forceMinimum), pendingRevealText.count)
-        let end = pendingRevealText.index(pendingRevealText.startIndex, offsetBy: count)
-        let slice = String(pendingRevealText[..<end])
-        pendingRevealText.removeSubrange(..<end)
-        visibleText += slice
-        punctuationPauseFrames = pauseFrames(after: visibleText.last)
-        publishVisibleFrame(extraRevision: false)
+    private func revealNextFrame(forceMinimum: Bool) {
+        guard let next = feedEngine.revealNextFrame(
+            forceMinimum: forceMinimum,
+            profileMode: AgentPerformance.shouldProfileFrameRate
+        ) else { return }
+        punctuationPauseFrames = next.suggestedPauseFrames
+        publish(next, reason: nil)
+    }
+
+    private func publish(_ next: ForgeLiveFeedFrame, reason: StaticString?) {
+        frame = next
         revealMetricTickCounter += 1
-        if revealMetricTickCounter.isMultiple(of: 8) || pendingRevealText.isEmpty {
-            AgentPerformance.event("Live Stream Reveal Tick")
-            AgentPerformance.value("Live Stream Reveal Characters", Double(slice.count))
-            AgentPerformance.value("Live Stream Visible Characters", Double(visibleText.count))
-            AgentPerformance.value("Live Stream Reveal Backlog", Double(pendingRevealText.count))
+        if let reason {
+            AgentPerformance.event(reason)
         }
-    }
-
-    private func revealAllPending(reason: StaticString) {
-        guard !pendingRevealText.isEmpty else { return }
-        let delta = pendingRevealText
-        pendingRevealText.removeAll(keepingCapacity: true)
-        visibleText += delta
-        punctuationPauseFrames = 0
-        publishVisibleFrame(extraRevision: false)
-        AgentPerformance.event(reason)
-        AgentPerformance.value("Live Stream Reveal Characters", Double(delta.count))
-        AgentPerformance.value("Live Stream Visible Characters", Double(visibleText.count))
-        AgentPerformance.value("Live Stream Reveal Backlog", 0)
-        completeHandoffIfReady()
-    }
-
-    private func revealCharacterBudget(forceMinimum: Bool) -> Int {
-        if forceMinimum { return minimumInitialDisplayCharacters }
-        if AgentPerformance.shouldProfileFrameRate { return min(260, max(48, pendingRevealText.count)) }
-        let backlog = pendingRevealText.count
-        switch backlog {
-        case 0...48:
-            return 2
-        case 49...140:
-            return 4
-        case 141...320:
-            return 7
-        case 321...720:
-            return 12
-        default:
-            return 20
+        if revealMetricTickCounter.isMultiple(of: 8) || next.backlogCharacters == 0 {
+            AgentPerformance.event("Live Feed Word Tree Tick")
+            AgentPerformance.value("Live Feed Visible Characters", Double(next.characterCount))
+            AgentPerformance.value("Live Feed Visible Atoms", Double(next.visibleAtomCount))
+            AgentPerformance.value("Live Feed Backlog Characters", Double(next.backlogCharacters))
         }
-    }
-
-    private func pauseFrames(after character: Character?) -> Int {
-        guard let character else { return 0 }
-        if character == "\n" { return 1 }
-        if character == "," || character == ";" || character == ":" { return 1 }
-        if character == "." || character == "!" || character == "?" { return 2 }
-        return 0
-    }
-
-    private func publishVisibleFrame(extraRevision: Bool) {
-        frame = LiveStreamFrame(
-            displayText: visibleText,
-            characterCount: visibleText.count,
-            revision: frame.revision + 1 + (extraRevision ? 1 : 0)
-        )
     }
 
     private func completeHandoffIfReady() {
         guard let messageID = pendingHandoffClearMessageID,
               handoffMessageID == messageID,
-              pendingRevealText.isEmpty else { return }
+              !feedEngine.hasPendingReveal else { return }
         reset()
     }
 
-}
-
-fileprivate struct LiveStreamFrame: Equatable {
-    var displayText = ""
-    var characterCount = 0
-    var revision = 0
 }
 
 @MainActor
@@ -499,36 +451,60 @@ final class AgentRuntime {
         wasInterrupted = false
         liveStream.reset()
         traceEvents = []
-        updateActiveTool(name: "stream renderer", detail: "Preparing batch 0 of 600")
-        setActivity("Streaming stress test", detail: "Rendering a deterministic long response.")
-        pushTrace("Streaming fixture started", detail: "600 bounded UI batches.", status: .thinking)
+        updateActiveTool(name: "word tree renderer", detail: "Preparing ragged provider chunks")
+        setActivity("Forge live feed lab", detail: "Streaming through the semantic word-tree renderer.")
+        pushTrace("Word-tree stream started", detail: "Ragged chunks, steady display frames, and bottom-pin proof.", status: .thinking)
 
+        let script = Array(repeating: Self.forgeLiveFeedStressScript, count: 16).joined(separator: "\n\n")
+        let chunks = Self.raggedProviderChunks(from: script)
         let runID = beginRunIdentity()
         currentTask = Task { [weak self] in
             guard let self else { return }
             defer { self.clearCurrentTaskIfActive(runID) }
-            for index in 1...600 {
+            for (offset, chunk) in chunks.enumerated() {
                 guard !Task.isCancelled, !self.stopRequested else { return }
-                if index == 1 || index % 60 == 0 {
-                    self.updateActiveTool(name: "stream renderer", detail: "Rendering batch \(index) of 600")
+                let index = offset + 1
+                if index == 1 || index.isMultiple(of: 44) {
+                    self.updateActiveTool(name: "word tree renderer", detail: "Normalizing chunk \(index) of \(chunks.count)")
                 }
-                self.liveStream.append(
-                    "Batch \(index): NovaForge keeps network parsing off the main actor and updates only the live response island. "
-                )
-                if index == 1 || index % 120 == 0 {
-                    self.pushTrace("Stream batch \(index)", detail: "Live response and progress trace grew without losing the bottom pin.", status: .thinking)
+                self.liveStream.append(chunk)
+                if index == 1 || index.isMultiple(of: 88) {
+                    self.pushTrace("Word-tree chunk \(index)", detail: "Semantic reveal backlog: \(self.liveStream.revealBacklog) characters.", status: .thinking)
                 }
-                try? await Task.sleep(for: .milliseconds(220))
+                try? await Task.sleep(for: .milliseconds(index.isMultiple(of: 9) ? 34 : 16))
             }
 
             guard !Task.isCancelled, !self.stopRequested else { return }
-            self.liveStream.flushPending()
-            self.setActivity("Streaming fixture complete", detail: "The full bounded stream rendered successfully.")
-            self.pushTrace("Streaming fixture complete", detail: "600 batches delivered.", status: .success)
+            self.liveStream.finishHandoff(to: UUID())
+            self.setActivity("Word-tree fixture complete", detail: "The engineered live feed rendered all ragged chunks.")
+            self.pushTrace("Word-tree stream complete", detail: "\(chunks.count) provider chunks normalized into smooth reveal frames.", status: .success)
             self.runState = .completed
             self.isWorking = false
             self.clearActiveTool()
         }
+    }
+
+    private static let forgeLiveFeedStressScript = """
+    NovaForge is speaking through the new Forge live feed. The provider can send half words, weird punctuation, dense technical notes, and sudden pauses, but the phone should only see calm semantic phrases.
+
+    First the engine builds a word tree. Then it reveals stable atoms on a display-paced clock. Old text becomes settled ink, the active phrase glows softly, and the transcript keeps the bottom response readable above the composer.
+
+    This fixture intentionally uses jagged chunks so the renderer proves it can smooth the roughest AI stream without jitter, duplicate bubbles, or sudden jumps.
+    """
+
+    private static func raggedProviderChunks(from text: String) -> [String] {
+        let pattern = [3, 1, 9, 2, 17, 4, 6, 1, 23, 5, 8, 2, 14, 7]
+        var chunks: [String] = []
+        var index = text.startIndex
+        var patternIndex = 0
+        while index < text.endIndex {
+            let length = pattern[patternIndex % pattern.count]
+            let end = text.index(index, offsetBy: length, limitedBy: text.endIndex) ?? text.endIndex
+            chunks.append(String(text[index..<end]))
+            index = end
+            patternIndex += 1
+        }
+        return chunks
     }
 
     func debugSimulateDelayedCompletionForActiveRun(delayMilliseconds: UInt64 = 120) {
