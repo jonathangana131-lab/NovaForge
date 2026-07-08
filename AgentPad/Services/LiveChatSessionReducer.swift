@@ -19,7 +19,11 @@ enum LiveChatSessionReducer {
     }
 
     static func reduce(_ input: LiveChatSessionInput) -> LiveChatSessionViewState {
-        let artifacts = artifactHandoffs(from: input.currentArtifacts)
+        let responseDocument = input.usesAIResponseStage ? input.liveResponseDocument : .empty
+        let artifacts = mergedArtifactHandoffs(
+            artifactHandoffs(from: input.currentArtifacts),
+            responseDocument.artifacts
+        )
         let progress = progressCards(from: input)
         let badges = badges(from: input)
 
@@ -121,6 +125,24 @@ enum LiveChatSessionReducer {
         artifacts: [LiveChatArtifactHandoff]
     ) -> LiveChatSessionViewState {
         let baseActions = runningActions(input)
+
+        if input.usesAIResponseStage, !input.liveResponseDocument.isEmpty {
+            let summary = semanticStreamingSummary(input.liveResponseDocument)
+            return LiveChatSessionViewState(
+                phase: .streaming(summary: summary),
+                primaryLine: summary,
+                secondaryLine: semanticStreamingDetail(input.liveResponseDocument),
+                badges: badges + [LiveChatBadge(id: "ai-response-stage", title: "Live", symbolName: "text.bubble", tone: .active)],
+                actions: baseActions,
+                progressCards: progress,
+                artifactHandoffs: artifacts,
+                liveResponseDocument: input.liveResponseDocument,
+                usesAIResponseStage: true,
+                shouldShowLiveRunCard: true,
+                shouldShowInlineProgress: false,
+                shouldReserveComposerQueue: true
+            )
+        }
 
         if let tool = activeToolSummary(input) {
             return LiveChatSessionViewState(
@@ -236,6 +258,55 @@ enum LiveChatSessionReducer {
                 typeName: artifact.artifactType.displayName,
                 primaryActionTitle: artifact.isReadablePreviewArtifact ? "Preview" : "Open"
             )
+        }
+    }
+
+    private static func mergedArtifactHandoffs(_ primary: [LiveChatArtifactHandoff], _ semantic: [LiveChatArtifactHandoff]) -> [LiveChatArtifactHandoff] {
+        var seen = Set<String>()
+        var merged: [LiveChatArtifactHandoff] = []
+        for handoff in primary + semantic {
+            guard seen.insert(handoff.id).inserted else { continue }
+            merged.append(handoff)
+            if merged.count == 3 { break }
+        }
+        return merged
+    }
+
+    private static func semanticStreamingSummary(_ document: AIStreamDocument) -> String {
+        switch document.status {
+        case .connecting:
+            return "Waiting for model"
+        case .usingTool(let title):
+            return title
+        case .waitingApproval:
+            return "Waiting for approval"
+        case .finalizing:
+            return "Finishing response…"
+        case .complete:
+            return "Ready to review"
+        case .failed:
+            return "Needs recovery"
+        case .idle, .composing:
+            return document.activeFragment.isEmpty ? "Finishing response…" : "Writing answer…"
+        }
+    }
+
+    private static func semanticStreamingDetail(_ document: AIStreamDocument) -> String? {
+        switch document.status {
+        case .connecting(let label):
+            return "Asking \(label)."
+        case .usingTool:
+            return "Keeping the answer in place while work continues."
+        case .waitingApproval(let summary):
+            return summary
+        case .failed(let summary):
+            return summary
+        case .complete:
+            return document.artifacts.isEmpty ? "Response is ready." : "Artifact ready in Workspace."
+        case .finalizing:
+            return "Finishing the last visible phrase."
+        case .idle, .composing:
+            return nil
         }
     }
 
@@ -419,6 +490,8 @@ extension LiveChatSessionInput {
                 revealBacklog: frame.backlogCharacters,
                 isShowingTail: frame.isShowingTail
             ),
+            liveResponseDocument: runtime.liveStream.responseDocument,
+            usesAIResponseStage: runtime.liveStream.shouldUseResponseStage,
             queuedPromptCount: runtime.queuedPromptCount,
             providerDisplayName: providerDisplayName,
             modelDisplayName: modelDisplayName

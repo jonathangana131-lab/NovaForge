@@ -1510,7 +1510,13 @@ struct ChatView: View {
         let rawCoverage = rootBottom.isFinite && geometry.minY.isFinite
             ? rootBottom - geometry.minY
             : sanitizedHeight
-        let sanitizedCoverage = min(max(rawCoverage, sanitizedHeight, 0), max(rootBottom, sanitizedHeight, 0))
+        // Geometry from a safe-area inset can transiently include tab/keyboard/full-screen
+        // coverage while the keyboard or Run Control is settling. Cap it to the actual
+        // accessory plus the real keyboard overlap so those spikes do not become scroll
+        // clearance and push the latest message below an invisible spacer.
+        let keyboardClearance = keyboard.isVisible ? max(keyboard.overlapHeight, 0) : 0
+        let coverageCeiling = sanitizedHeight + keyboardClearance + 24
+        let sanitizedCoverage = min(max(rawCoverage, sanitizedHeight, 0), max(coverageCeiling, sanitizedHeight, 0))
         let threshold: CGFloat = AgentPerformance.isPerformanceMode ? 6 : 1
         let heightChanged = abs(measuredAccessoryHeight - sanitizedHeight) > threshold
         let coverageChanged = abs(measuredBottomChromeCoverage - sanitizedCoverage) > threshold
@@ -1752,9 +1758,11 @@ struct ChatView: View {
 
     private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool) {
         guard scrollAttachment != .detached || Date() < transient.manualRepinUntil else { return }
+        guard let targetID = latestScrollTargetID else { return }
+
         let action = {
             scrollAttachment = .restoring
-            proxy.scrollTo(latestScrollTargetID ?? Self.chatBottomID, anchor: .bottom)
+            proxy.scrollTo(targetID, anchor: .bottom)
             forceScrollToBottom = false
             transient.userDetachedUntil = .distantPast
             transient.userScrollIntentUntil = .distantPast
@@ -1909,14 +1917,19 @@ private struct ChatLayoutContract: Equatable {
     }
 
     var transcriptBreathingRoom: CGFloat {
-        let accessoryClearance = max(accessoryHeight, bottomChromeCoverage)
+        // The composer / Run Control stack is installed with safeAreaInset(edge: .bottom),
+        // so SwiftUI already removes that chrome from the scroll viewport. Adding the
+        // measured accessory height here double-counts the dock, makes scrollTo land on
+        // an invisible spacer, and can leave the newest sent/assistant message stranded
+        // off-screen below a large blank tail. Keep only a small visual gutter below the
+        // latest-response anchor; the inset owns real composer clearance.
         switch runAccessory {
         case .hidden:
-            return max(composerMode == .expanded ? 28 : 20, accessoryClearance + 18)
+            return composerMode == .expanded ? 30 : 22
         case .progress, .completion:
-            return max(58, accessoryClearance + 58)
+            return 58
         case .approval, .failure:
-            return max(64, accessoryClearance + 64)
+            return 64
         }
     }
 

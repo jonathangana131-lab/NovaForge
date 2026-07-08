@@ -325,8 +325,9 @@ struct ChatStreamingFrameRateProbe: View {
             guard AgentPerformance.shouldProfileFrameRate else { return }
             // Avoid sampling launch/first-token layout spikes; the product
             // path still renders immediately, while the gate measures sustained
-            // streaming smoothness.
-            try? await Task.sleep(for: .milliseconds(1_600))
+            // streaming smoothness after the response stage has settled and the
+            // first bottom-pin corrections have completed.
+            try? await Task.sleep(for: .milliseconds(2_800))
             guard !Task.isCancelled else { return }
             didArmProbe = true
         }

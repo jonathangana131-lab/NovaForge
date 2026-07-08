@@ -147,6 +147,8 @@ struct ForgeHeader: View {
         HStack(spacing: 7) {
             scopeMenu
 
+            dossierShortcut
+
             if let signal {
                 Text("·")
                     .font(NovaType.caption)
@@ -164,13 +166,6 @@ struct ForgeHeader: View {
 
     private var scopeMenu: some View {
         Menu {
-            Button {
-                openMissionDossier()
-            } label: {
-                Label("Open Mission Dossier", systemImage: "doc.text.magnifyingglass")
-            }
-            .accessibilityIdentifier("missionDossierMenuItem")
-
             Button {
                 changeScope(nil)
             } label: {
@@ -210,6 +205,36 @@ struct ForgeHeader: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chatProjectScopeMenu")
+    }
+
+    private var dossierShortcut: some View {
+        Button {
+            openMissionDossier()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(AgentPalette.primaryAccent)
+                Text("Dossier")
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.primaryAccent)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(AgentPalette.primaryAccent.opacity(0.08))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(AgentPalette.primaryAccent.opacity(0.18), lineWidth: 0.7)
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open Mission Dossier")
+        .accessibilityIdentifier("missionDossierShortcut")
     }
 
     private var scopeTitle: String {

@@ -334,9 +334,6 @@ struct AppRootView: View {
             AgentPerformance.invalidatePerformanceModeCache()
         }
         .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
-        .fullScreenCover(isPresented: $showingMissionDossier) {
-            missionDossierCover
-        }
         .alert(
             "NovaForge Save Failed",
             isPresented: Binding(
@@ -361,11 +358,11 @@ struct AppRootView: View {
             .ignoresSafeArea()
 
             if let conversation = selectedConversation, let settings, let activeProject {
-                if showingMissionDossier && AgentPerformance.shouldProfileFrameRate {
-                    // The Mission Dossier is a full-screen cover. During the
-                    // frame-rate gate, keep the covered tab tree out of the
-                    // compositor so the Project probe measures the dossier
-                    // itself instead of a hidden Forge/chat surface.
+                if showingMissionDossier {
+                    // The Mission Dossier owns the full screen. Keep the covered
+                    // Forge/chat tree out of layout and compositing while the
+                    // dossier is open so menu presentation feels immediate and
+                    // Project performance measures only the visible surface.
                     AgentPalette.surface.ignoresSafeArea()
                 } else if usesDebugTerminalSurface {
                     TerminalConsoleView(runtime: runtime, project: activeProject, openChat: {
@@ -389,6 +386,12 @@ struct AppRootView: View {
             .allowsHitTesting(false)
 
             rootToastLayer
+
+            if showingMissionDossier {
+                missionDossierCover
+                    .transition(AgentPerformance.prefersReducedVisualEffects ? .identity : .opacity.combined(with: .move(edge: .bottom)))
+                    .zIndex(20)
+            }
         }
     }
 
@@ -1122,7 +1125,25 @@ struct AppRootView: View {
 
     private func presentMissionDossier() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        showingMissionDossier = true
+        setMissionDossierPresented(true)
+    }
+
+    private func dismissMissionDossier(animated: Bool = true) {
+        setMissionDossierPresented(false, animated: animated)
+    }
+
+    private func setMissionDossierPresented(_ isPresented: Bool, animated: Bool = true) {
+        guard showingMissionDossier != isPresented else { return }
+        let update = {
+            showingMissionDossier = isPresented
+        }
+        if animated && !AgentPerformance.prefersReducedVisualEffects {
+            withAnimation(.snappy(duration: isPresented ? 0.18 : 0.15)) {
+                update()
+            }
+        } else {
+            update()
+        }
     }
 
     /// The project deep dive (plan, ledger, proof, project switching) as a
@@ -1131,7 +1152,7 @@ struct AppRootView: View {
     @ViewBuilder
     private var missionDossierCover: some View {
         if let conversation = selectedConversation, let settings, let activeProject {
-            MissionDossierCover(close: { showingMissionDossier = false }) {
+            MissionDossierCover(close: { dismissMissionDossier() }) {
                 ProjectDashboardView(
                     project: activeProject,
                     projects: projects,
@@ -1139,7 +1160,7 @@ struct AppRootView: View {
                     autoContinueState: autoContinueViewState(for: activeProject, settings: settings),
                     conversations: conversations,
                     openTab: { tab in
-                        showingMissionDossier = false
+                        dismissMissionDossier(animated: false)
                         openTab(tab)
                     },
                     stopWorkspaceRun: {
@@ -2355,6 +2376,11 @@ struct AppRootView: View {
         AgentPerformance.event("Tab Switch Started")
         AgentPerformance.value("Tab Switch Source", oldTab.performanceIndex)
         AgentPerformance.value("Tab Switch Target", newTab.performanceIndex)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(220))
+            guard pendingTabSwitch == newTab else { return }
+            completeTabSwitch(to: newTab)
+        }
     }
 
     private func completeTabSwitch(to tab: AppTab) {
@@ -3897,9 +3923,9 @@ struct AppRootView: View {
         didPresentDebugMissionDossier = true
         selectedTab = .forge
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(650))
+            try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
-            showingMissionDossier = true
+            setMissionDossierPresented(true, animated: false)
         }
     }
 

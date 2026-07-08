@@ -123,6 +123,8 @@ struct LiveChatSessionInput: Equatable, Sendable {
     var plannedProgressSteps: [WorkspaceProgressStep]
     var currentArtifacts: [WorkspaceArtifact]
     var liveStream: LiveChatStreamSnapshot
+    var liveResponseDocument: AIStreamDocument
+    var usesAIResponseStage: Bool
     var queuedPromptCount: Int
     var providerDisplayName: String
     var modelDisplayName: String?
@@ -139,6 +141,8 @@ struct LiveChatSessionInput: Equatable, Sendable {
         plannedProgressSteps: [WorkspaceProgressStep] = [],
         currentArtifacts: [WorkspaceArtifact] = [],
         liveStream: LiveChatStreamSnapshot = .empty,
+        liveResponseDocument: AIStreamDocument = .empty,
+        usesAIResponseStage: Bool = false,
         queuedPromptCount: Int = 0,
         providerDisplayName: String = "Local",
         modelDisplayName: String? = nil
@@ -154,6 +158,8 @@ struct LiveChatSessionInput: Equatable, Sendable {
         self.plannedProgressSteps = plannedProgressSteps
         self.currentArtifacts = currentArtifacts
         self.liveStream = liveStream
+        self.liveResponseDocument = liveResponseDocument
+        self.usesAIResponseStage = usesAIResponseStage
         self.queuedPromptCount = queuedPromptCount
         self.providerDisplayName = providerDisplayName
         self.modelDisplayName = modelDisplayName
@@ -168,6 +174,8 @@ struct LiveChatSessionViewState: Equatable, Sendable {
     var actions: [LiveChatAction]
     var progressCards: [LiveChatProgressCard]
     var artifactHandoffs: [LiveChatArtifactHandoff]
+    var liveResponseDocument: AIStreamDocument = .empty
+    var usesAIResponseStage: Bool = false
     var shouldShowLiveRunCard: Bool
     var shouldShowInlineProgress: Bool
     var shouldReserveComposerQueue: Bool

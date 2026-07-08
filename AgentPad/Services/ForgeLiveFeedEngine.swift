@@ -200,7 +200,7 @@ struct ForgeLiveFeedEngine: Sendable {
         revision += 1
         lastActiveTail = Self.makeActiveTail(from: revealed, limit: activeTailCharacterLimit)
         lastPauseFrames = pauseFrames(after: lastKind, revealedText: revealed)
-        return makeFrame(cadence: cadence(forBacklog: backlogCharacters), pauseFrames: lastPauseFrames)
+        return makeFrame(cadence: cadence(forBacklog: backlogCharacters), pauseFrames: lastPauseFrames, profileMode: profileMode)
     }
 
     mutating func flush() -> ForgeLiveFeedFrame? {
@@ -219,8 +219,8 @@ struct ForgeLiveFeedEngine: Sendable {
         return makeFrame(cadence: .idle, pauseFrames: 0)
     }
 
-    func currentFrame() -> ForgeLiveFeedFrame {
-        makeFrame(cadence: cadence(forBacklog: backlogCharacters), pauseFrames: lastPauseFrames)
+    func currentFrame(profileMode: Bool = false) -> ForgeLiveFeedFrame {
+        makeFrame(cadence: cadence(forBacklog: backlogCharacters), pauseFrames: lastPauseFrames, profileMode: profileMode)
     }
 
     private mutating func ingest(_ character: Character) {
@@ -270,11 +270,13 @@ struct ForgeLiveFeedEngine: Sendable {
         partialWordHoldFrames = 0
     }
 
-    private func makeFrame(cadence: ForgeLiveFeedFrame.Cadence, pauseFrames: Int) -> ForgeLiveFeedFrame {
-        ForgeLiveFeedFrame(
-            displayText: visibleText,
-            settledText: Self.settledPrefix(displayText: visibleText, activeTail: lastActiveTail),
-            activeTail: lastActiveTail,
+    private func makeFrame(cadence: ForgeLiveFeedFrame.Cadence, pauseFrames: Int, profileMode: Bool = false) -> ForgeLiveFeedFrame {
+        let displayText = Self.liveDisplayWindow(visibleText, profileMode: profileMode)
+        let activeTail = displayText.hasSuffix(lastActiveTail) ? lastActiveTail : ""
+        return ForgeLiveFeedFrame(
+            displayText: displayText,
+            settledText: Self.settledPrefix(displayText: displayText, activeTail: activeTail),
+            activeTail: activeTail,
             characterCount: visibleText.count,
             visibleAtomCount: visibleAtomCount,
             backlogCharacters: backlogCharacters,
@@ -329,6 +331,11 @@ struct ForgeLiveFeedEngine: Sendable {
         guard !trimmedTrailingNewline.isEmpty else { return "" }
         if trimmedTrailingNewline.count <= limit { return trimmedTrailingNewline }
         return String(trimmedTrailingNewline.suffix(limit))
+    }
+
+    private static func liveDisplayWindow(_ text: String, profileMode: Bool) -> String {
+        guard profileMode, text.count > 640 else { return text }
+        return "…" + String(text.suffix(640))
     }
 
     private static func settledPrefix(displayText: String, activeTail: String) -> String {

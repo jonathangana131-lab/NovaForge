@@ -508,19 +508,28 @@ struct LiveResponseView: View {
         let _ = AgentPerformance.bodyEvaluation("Chat Live Response Body")
         Group {
             if isWorking || isHandoffActive {
-                VStack(alignment: .leading, spacing: 10) {
-                    // Reads runtime.activeToolName in its own tiny body, so
-                    // tool changes re-render just this chip — never the chat.
-                    if isWorking {
-                        NovaLiveActivityPulse(runtime: runtime)
-                    }
-
-                    if stream.isEmpty {
+                if stream.shouldUseResponseStage {
+                    AIResponseStageView(
+                        stream: stream,
+                        isWorking: isWorking,
+                        isHandoffActive: isHandoffActive,
+                        runtime: runtime
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        // Reads runtime.activeToolName in its own tiny body, so
+                        // tool changes re-render just this chip — never the chat.
                         if isWorking {
-                            ThinkingView()
+                            NovaLiveActivityPulse(runtime: runtime)
                         }
-                    } else {
-                        StreamingBubble(stream: stream)
+
+                        if stream.isEmpty {
+                            if isWorking {
+                                ThinkingView()
+                            }
+                        } else {
+                            StreamingBubble(stream: stream)
+                        }
                     }
                 }
             }

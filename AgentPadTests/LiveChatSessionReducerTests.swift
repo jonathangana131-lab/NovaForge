@@ -51,6 +51,63 @@ final class LiveChatSessionReducerTests: XCTestCase {
         XCTAssertEqual(input.liveStream.revealBacklog, 58, "Hidden/proof metrics stay available to tests without becoming visible user copy.")
     }
 
+    func testFeatureFlaggedAIResponseDocumentOwnsLiveRunState() {
+        let document = AIStreamDocument(
+            title: nil,
+            visibleParagraphs: [AIStreamParagraph(id: "p1", text: "Here is the clean plan.", state: .settled)],
+            activeFragment: "Now wiring the final proof",
+            status: .composing,
+            artifacts: [LiveChatArtifactHandoff(id: "Reports/proof.md", title: "proof.md", subtitle: "Markdown ready in Workspace", path: "Reports/proof.md", typeName: "Markdown", primaryActionTitle: "Open")],
+            characterCount: 48,
+            isComplete: false
+        )
+
+        let state = LiveChatSessionReducer.reduce(.init(
+            runState: .running,
+            isWorking: true,
+            activityTitle: "Executing tool",
+            activeToolName: "run_command",
+            activeToolDetail: "xcodebuild test",
+            liveStream: LiveChatStreamSnapshot(displayText: "legacy window", characterCount: 400, revealBacklog: 22, isShowingTail: true),
+            liveResponseDocument: document,
+            usesAIResponseStage: true
+        ))
+
+        XCTAssertTrue(state.usesAIResponseStage)
+        XCTAssertEqual(state.liveResponseDocument, document)
+        XCTAssertEqual(state.primaryLine, "Writing answer…")
+        XCTAssertEqual(state.secondaryLine, nil)
+        XCTAssertEqual(state.artifactHandoffs.first?.path, "Reports/proof.md")
+        XCTAssertFalse(state.shouldShowInlineProgress, "The new response stage must not stack progress chrome on top of the answer.")
+        XCTAssertFalse(state.primaryLine.localizedCaseInsensitiveContains("run_command"))
+    }
+
+    func testAIResponseDocumentIsIgnoredWhenFeatureFlagIsOff() {
+        let document = AIStreamDocument(
+            title: nil,
+            visibleParagraphs: [],
+            activeFragment: "New stage text",
+            status: .composing,
+            artifacts: [],
+            characterCount: 14,
+            isComplete: false
+        )
+
+        let state = LiveChatSessionReducer.reduce(.init(
+            runState: .running,
+            isWorking: true,
+            activityTitle: "Executing tool",
+            activeToolName: "run_command",
+            activeToolDetail: "xcodebuild test",
+            liveResponseDocument: document,
+            usesAIResponseStage: false
+        ))
+
+        XCTAssertFalse(state.usesAIResponseStage)
+        XCTAssertEqual(state.primaryLine, "Running Xcode proof")
+        XCTAssertEqual(state.liveResponseDocument, .empty)
+    }
+
     func testActiveToolsMapIntoHumanVerbs() {
         let state = LiveChatSessionReducer.reduce(.init(
             runState: .running,

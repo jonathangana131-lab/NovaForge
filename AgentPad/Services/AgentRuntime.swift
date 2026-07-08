@@ -95,7 +95,9 @@ final class LiveStreamBuffer: ObservableObject {
         AgentPerformance.shouldProfileFrameRate ? 200 : 220
     }
     @Published private var frame = ForgeLiveFeedFrame.empty
+    @Published private var semanticDocument = AIStreamDocument.empty
     @ObservationIgnored private var feedEngine = ForgeLiveFeedEngine()
+    @ObservationIgnored private var semanticEngine = AIStreamDisplayEngine()
     @ObservationIgnored private var revealTask: Task<Void, Never>?
     @ObservationIgnored private var punctuationPauseFrames = 0
     @ObservationIgnored private var pendingHandoffClearMessageID: UUID?
@@ -106,6 +108,9 @@ final class LiveStreamBuffer: ObservableObject {
     var displayFrame: ForgeLiveFeedFrame {
         frame.windowed(maxCharacters: maximumDisplayedCharacters)
     }
+
+    var responseDocument: AIStreamDocument { semanticDocument }
+    var shouldUseResponseStage: Bool { AIStreamFeatureFlags.responseStageEnabled }
 
     var displayText: String { displayFrame.displayText }
     var characterCount: Int { frame.characterCount }
@@ -119,6 +124,8 @@ final class LiveStreamBuffer: ObservableObject {
         revealTask?.cancel()
         revealTask = nil
         feedEngine.reset()
+        semanticEngine = AIStreamDisplayEngine(configuration: semanticConfiguration)
+        semanticDocument = .empty
         punctuationPauseFrames = 0
         pendingHandoffClearMessageID = nil
         revealMetricTickCounter = 0
@@ -130,6 +137,9 @@ final class LiveStreamBuffer: ObservableObject {
     func append(_ delta: String) {
         guard !delta.isEmpty else { return }
         feedEngine.ingest(delta)
+        if shouldPublishSemanticStream {
+            publishSemanticUpdate(semanticEngine.consume(AIStreamEvent(kind: .textDelta(delta))), reason: nil)
+        }
 
         if frame.characterCount == 0 {
             revealNextFrame(forceMinimum: true)
@@ -146,13 +156,20 @@ final class LiveStreamBuffer: ObservableObject {
         if let next = feedEngine.flush() {
             publish(next, reason: "Live Stream Flush")
         }
+        if shouldPublishSemanticStream {
+            publishSemanticUpdate(semanticEngine.flush(), reason: "AI Stream Flush")
+        }
         punctuationPauseFrames = 0
         completeHandoffIfReady()
     }
 
     func finishHandoff(to messageID: UUID) {
         handoffMessageID = messageID
-        frame = feedEngine.currentFrame()
+        frame = feedEngine.currentFrame(profileMode: AgentPerformance.shouldProfileFrameRate)
+        if shouldPublishSemanticStream {
+            publishSemanticUpdate(semanticEngine.consume(AIStreamEvent(kind: .completed)), reason: "AI Stream Completed")
+            publishSemanticUpdate(semanticEngine.flush(), reason: nil)
+        }
         if feedEngine.hasPendingReveal {
             startRevealLoopIfNeeded()
         } else {
@@ -184,6 +201,9 @@ final class LiveStreamBuffer: ObservableObject {
                     self.punctuationPauseFrames -= 1
                 } else {
                     self.revealNextFrame(forceMinimum: false)
+                    if self.shouldPublishSemanticStream {
+                        self.publishSemanticUpdate(self.semanticEngine.tick(), reason: nil)
+                    }
                 }
             }
             self?.revealTask = nil
@@ -211,6 +231,32 @@ final class LiveStreamBuffer: ObservableObject {
             AgentPerformance.value("Live Feed Visible Characters", Double(next.characterCount))
             AgentPerformance.value("Live Feed Visible Atoms", Double(next.visibleAtomCount))
             AgentPerformance.value("Live Feed Backlog Characters", Double(next.backlogCharacters))
+        }
+    }
+
+    private var semanticConfiguration: AIStreamDisplayEngine.Configuration {
+        AIStreamDisplayEngine.Configuration(
+            minimumUpdateInterval: AgentPerformance.shouldProfileFrameRate ? 0.18 : 1.0 / 18.0,
+            reducedMotion: !AgentPerformance.allowsDecorativeMotion,
+            performanceMode: AgentPerformance.shouldProfileFrameRate,
+            maxAnimatedGlyphs: AgentPerformance.shouldProfileFrameRate ? 48 : 96
+        )
+    }
+
+    private var shouldPublishSemanticStream: Bool {
+        AIStreamFeatureFlags.semanticStreamEnabled && !AgentPerformance.shouldProfileFrameRate
+    }
+
+    private func publishSemanticUpdate(_ update: AIStreamDisplayUpdate?, reason: StaticString?) {
+        guard let update else { return }
+        semanticDocument = update.document
+        if let reason {
+            AgentPerformance.event(reason)
+        }
+        if update.metrics.emittedSnapshotCount.isMultiple(of: 8) || update.document.isComplete {
+            AgentPerformance.event("AI Stream Semantic Tick")
+            AgentPerformance.value("AI Stream Characters", Double(update.document.characterCount))
+            AgentPerformance.value("AI Stream Suppressed Updates", Double(update.metrics.suppressedUpdateCount))
         }
     }
 

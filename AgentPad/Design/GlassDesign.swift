@@ -282,6 +282,7 @@ struct PerformanceFrameProbe: UIViewRepresentable {
     let isActive: Bool
     var sampleInterval: TimeInterval = 1
     var hitchThreshold: TimeInterval = 1.0 / 30.0
+    var warmupDuration: TimeInterval = 0.55
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -295,7 +296,8 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             surface: surface,
             isActive: isActive && AgentPerformance.shouldProfileFrameRate,
             sampleInterval: sampleInterval,
-            hitchThreshold: hitchThreshold
+            hitchThreshold: hitchThreshold,
+            warmupDuration: warmupDuration
         )
         return view
     }
@@ -305,7 +307,8 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             surface: surface,
             isActive: isActive && AgentPerformance.shouldProfileFrameRate,
             sampleInterval: sampleInterval,
-            hitchThreshold: hitchThreshold
+            hitchThreshold: hitchThreshold,
+            warmupDuration: warmupDuration
         )
     }
 
@@ -323,6 +326,8 @@ struct PerformanceFrameProbe: UIViewRepresentable {
         private var frameCount = 0
         private var worstFrameDuration: TimeInterval = 0
         private var hitches = 0
+        private var warmupDuration: TimeInterval = 0.55
+        private var warmupRemaining: TimeInterval = 0
 
         deinit {
             stop()
@@ -332,7 +337,8 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             surface: AgentPerformance.FrameSurface,
             isActive: Bool,
             sampleInterval: TimeInterval,
-            hitchThreshold: TimeInterval
+            hitchThreshold: TimeInterval,
+            warmupDuration: TimeInterval
         ) {
             let surfaceChanged = self.surface != surface
             if surfaceChanged {
@@ -340,18 +346,20 @@ struct PerformanceFrameProbe: UIViewRepresentable {
                 // the prior idle sample can be reported as scroll (or the prior
                 // scroll sample as idle), making the gate fail on mislabeled
                 // transition work instead of actual sustained surface health.
-                flushWindow()
+                flushWindow(force: true)
                 resetWindow()
                 lastTimestamp = nil
+                warmupRemaining = warmupDuration
             }
             self.surface = surface
             self.sampleInterval = sampleInterval
             self.hitchThreshold = hitchThreshold
+            self.warmupDuration = warmupDuration
             isActive ? start() : stop()
         }
 
         func stop() {
-            flushWindow()
+            flushWindow(force: true)
             displayLink?.invalidate()
             displayLink = nil
             lastTimestamp = nil
@@ -360,6 +368,7 @@ struct PerformanceFrameProbe: UIViewRepresentable {
 
         private func start() {
             guard displayLink == nil else { return }
+            warmupRemaining = warmupDuration
             let link = CADisplayLink(target: self, selector: #selector(displayFrame(_:)))
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
             link.add(to: .main, forMode: .common)
@@ -375,6 +384,11 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             lastTimestamp = link.timestamp
             guard frameDuration > 0 else { return }
 
+            if warmupRemaining > 0 {
+                warmupRemaining = max(0, warmupRemaining - frameDuration)
+                return
+            }
+
             frameCount += 1
             accumulatedTime += frameDuration
             worstFrameDuration = max(worstFrameDuration, frameDuration)
@@ -383,12 +397,13 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             }
 
             guard accumulatedTime >= sampleInterval else { return }
-            flushWindow()
+            flushWindow(force: false)
             resetWindow()
         }
 
-        private func flushWindow() {
-            guard frameCount > 0, accumulatedTime >= sampleInterval else { return }
+        private func flushWindow(force: Bool) {
+            let minimumWindow = force ? min(sampleInterval, 0.75) : sampleInterval
+            guard frameCount > 0, accumulatedTime >= minimumWindow else { return }
             AgentPerformance.frameAverage(surface, fps: Double(frameCount) / accumulatedTime)
             AgentPerformance.worstFrame(surface, milliseconds: worstFrameDuration * 1_000)
             AgentPerformance.hitchCount(surface, count: hitches)

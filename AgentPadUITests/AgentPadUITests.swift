@@ -186,7 +186,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testForgeChatSendStreamsOneAssistantBubbleAndClearsRunningState() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--debug-provider-send-ready", "--open-chat"]
+        app.launchArguments = ["--reset-ui", "--debug-provider-send-ready", "--open-chat", "--new-ai-streaming-stage"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
@@ -206,6 +206,11 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveStreamingBubble")), 1, "Streaming should update one live bubble instead of adding duplicates.")
         let liveCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: 0, timeout: 5)
         XCTAssertGreaterThan(liveCharacterCount, 0, "Send-path live response should reveal visible characters before final handoff.")
+        let liveBottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(liveBottomAccessory.waitForExistence(timeout: 3), "Bottom accessory should be measurable while the live response is streaming.")
+        let liveDockGap = liveBottomAccessory.frame.minY - liveBubble.frame.maxY
+        XCTAssertGreaterThanOrEqual(liveDockGap, 4, "Live response should stay readable above the composer while streaming.")
+        XCTAssertLessThanOrEqual(liveDockGap, 112, "Live response auto-scroll should land on the response, not an invisible spacer below the transcript.")
         capture("sev0-chat-send-stream-live", app: app)
 
         let assistantText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do")).firstMatch
@@ -377,6 +382,13 @@ final class AgentPadUITests: XCTestCase {
             XCTAssertFalse(app.tabBars.buttons[oldTab].exists, "Legacy dock tab should stay removed: \(oldTab).")
         }
         XCTAssertFalse(app.otherElements["projectDashboard"].exists, "Project dashboard should not be a public tab surface for --open-project.")
+        let dossierShortcut = app.buttons["missionDossierShortcut"]
+        XCTAssertTrue(dossierShortcut.waitForExistence(timeout: 5), "Forge should expose a direct Mission Dossier shortcut instead of forcing a slow scope menu round-trip.")
+        dossierShortcut.tap()
+        XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 2), "Mission Dossier shortcut should mount the dashboard quickly.")
+        XCTAssertTrue(app.buttons["missionDossierClose"].waitForExistence(timeout: 2))
+        app.buttons["missionDossierClose"].tap()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
         capture("43-four-tab-open-project-forge-route", app: app)
 
         app.terminate()
@@ -394,7 +406,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testProjectLiquidGlassPerformanceTraceFlow() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo", "--profile-frame-rate", "--profile-events", "--auto-project-scroll"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo", "--profile-frame-rate", "--profile-events", "--auto-project-scroll", "--performance-mode"]
         app.launch()
 
         let projectHero = app.otherElements["projectOSControlCenter"]
@@ -418,7 +430,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.tabBars.buttons["Project"].exists, "Project should not return as a public tab; the dashboard is the Mission Dossier.")
 
         app.terminate()
-        app.launchArguments = ["--reset-ui", "--stress-streaming", "--open-chat", "--profile-frame-rate", "--profile-events"]
+        app.launchArguments = ["--reset-ui", "--stress-streaming", "--open-chat", "--profile-frame-rate", "--profile-events", "--performance-mode"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         sleep(5)

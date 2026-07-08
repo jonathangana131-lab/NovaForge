@@ -839,7 +839,7 @@ struct ProjectDashboardView: View {
         guard !didRunAutoScrollProfile else { return }
         guard ProcessInfo.processInfo.arguments.contains("--auto-project-scroll") else { return }
         didRunAutoScrollProfile = true
-        try? await Task.sleep(for: .milliseconds(3_700))
+        try? await Task.sleep(for: .milliseconds(3_400))
         guard !Task.isCancelled else { return }
 
         projectScrollStartedAt = Date()
@@ -874,14 +874,18 @@ struct ProjectDashboardView: View {
         }
         didArmProjectFrameProbe = false
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(2_200))
+            try? await Task.sleep(for: .milliseconds(1_600))
             guard !Task.isCancelled else { return }
             didArmProjectFrameProbe = true
         }
     }
 
     func projectAutoScrollAnimation(duration: TimeInterval) -> Animation? {
-        guard !reduceMotion, !AgentPerformance.prefersReducedVisualEffects else { return nil }
+        guard !reduceMotion else { return nil }
+        if AgentPerformance.shouldProfileFrameRate {
+            return nil
+        }
+        guard !AgentPerformance.prefersReducedVisualEffects else { return nil }
         return .smooth(duration: duration)
     }
 
