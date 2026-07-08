@@ -39,7 +39,9 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertLessThan(stream.displayText.count, text.count, "The reveal loop should not dump the entire backlog in one UI update.")
 
         stream.flushPending()
-        XCTAssertEqual(stream.displayText, text)
+        XCTAssertEqual(stream.characterCount, text.count, "The underlying live frame should still retain the complete provider response for durable handoff.")
+        XCTAssertLessThan(stream.displayText.count, text.count, "The live bubble should remain a compact rolling window even after backlog is flushed.")
+        XCTAssertTrue(stream.displayText.hasPrefix("…\n"), "Windowed live text should visibly signal that older content is above the compact card.")
         XCTAssertEqual(stream.revealBacklog, 0)
     }
 

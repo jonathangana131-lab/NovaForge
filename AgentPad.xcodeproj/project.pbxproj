@@ -12,6 +12,7 @@
 		AA0000000000000000000102 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000002 /* Models.swift */; };
 		AE1000000000000000000101 /* LiveChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000001 /* LiveChatSession.swift */; };
 		AA0000000000000000000103 /* GlassDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000003 /* GlassDesign.swift */; };
+		AF1000000000000000000101 /* NovaMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000001 /* NovaMotion.swift */; };
 		AA0000000000000000000104 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000004 /* KeychainStore.swift */; };
 		AA0000000000000000000105 /* OpenAIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000005 /* OpenAIClient.swift */; };
 		AA0000000000000000000106 /* AgentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000006 /* AgentRuntime.swift */; };
@@ -39,6 +40,7 @@
 		AA0000000000000000000142 /* ChatDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000042 /* ChatDrawerView.swift */; };
 		AA0000000000000000000143 /* ArtifactPreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000043 /* ArtifactPreviewSheet.swift */; };
 		AA0000000000000000000144 /* ChatLiveAndToolViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000044 /* ChatLiveAndToolViews.swift */; };
+		AF1000000000000000000102 /* LiquidStreamingTextReveal.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000002 /* LiquidStreamingTextReveal.swift */; };
 		AA0000000000000000000145 /* LocalModelRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000045 /* LocalModelRuntime.swift */; };
 		AA0000000000000000000146 /* LocalAgentPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000046 /* LocalAgentPlanner.swift */; };
 		AA0000000000000000000150 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000050 /* Assets.xcassets */; };
@@ -157,6 +159,7 @@
 		AA0000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AE0000000000000000000001 /* LiveChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveChatSession.swift; sourceTree = "<group>"; };
 		AA0000000000000000000003 /* GlassDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassDesign.swift; sourceTree = "<group>"; };
+		AF0000000000000000000001 /* NovaMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaMotion.swift; sourceTree = "<group>"; };
 		AA0000000000000000000004 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		AA0000000000000000000005 /* OpenAIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIClient.swift; sourceTree = "<group>"; };
 		AA0000000000000000000006 /* AgentRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRuntime.swift; sourceTree = "<group>"; };
@@ -197,6 +200,7 @@
 		AA0000000000000000000042 /* ChatDrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDrawerView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000043 /* ArtifactPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactPreviewSheet.swift; sourceTree = "<group>"; };
 		AA0000000000000000000044 /* ChatLiveAndToolViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLiveAndToolViews.swift; sourceTree = "<group>"; };
+		AF0000000000000000000002 /* LiquidStreamingTextReveal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidStreamingTextReveal.swift; sourceTree = "<group>"; };
 		AA0000000000000000000045 /* LocalModelRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelRuntime.swift; sourceTree = "<group>"; };
 		AA0000000000000000000046 /* LocalAgentPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAgentPlanner.swift; sourceTree = "<group>"; };
 		AA0000000000000000000050 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -308,6 +312,7 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000003 /* GlassDesign.swift */,
+				AF0000000000000000000001 /* NovaMotion.swift */,
 				AA0000000000000000000000 /* AgentTheme.swift */,
 				AB0000000000000000000010 /* CodeHighlighter.swift */,
 							AB0000000000000000000024 /* NovaFacelift.swift */,
@@ -375,6 +380,7 @@
 				AA0000000000000000000042 /* ChatDrawerView.swift */,
 				AA0000000000000000000043 /* ArtifactPreviewSheet.swift */,
 				AA0000000000000000000044 /* ChatLiveAndToolViews.swift */,
+				AF0000000000000000000002 /* LiquidStreamingTextReveal.swift */,
 				AB0000000000000000000001 /* ChatSupportViews.swift */,
 				AB0000000000000000000002 /* ChatComposer.swift */,
 				AB0000000000000000000003 /* ChatHeaderStrip.swift */,
@@ -612,6 +618,7 @@
 				AA0000000000000000000102 /* Models.swift in Sources */,
 				AE1000000000000000000101 /* LiveChatSession.swift in Sources */,
 				AA0000000000000000000103 /* GlassDesign.swift in Sources */,
+				AF1000000000000000000101 /* NovaMotion.swift in Sources */,
 				AA0000000000000000000100 /* AgentTheme.swift in Sources */,
 				AA0000000000000000000104 /* KeychainStore.swift in Sources */,
 				AA0000000000000000000105 /* OpenAIClient.swift in Sources */,
@@ -639,6 +646,7 @@
 				AA0000000000000000000142 /* ChatDrawerView.swift in Sources */,
 				AA0000000000000000000143 /* ArtifactPreviewSheet.swift in Sources */,
 				AA0000000000000000000144 /* ChatLiveAndToolViews.swift in Sources */,
+				AF1000000000000000000102 /* LiquidStreamingTextReveal.swift in Sources */,
 				AA0000000000000000000145 /* LocalModelRuntime.swift in Sources */,
 				AA0000000000000000000146 /* LocalAgentPlanner.swift in Sources */,
 				AB1000000000000000000001 /* ChatSupportViews.swift in Sources */,

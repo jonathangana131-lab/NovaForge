@@ -1266,6 +1266,11 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertGreaterThan(firstCharacterCount, 0, "Live feed should reveal an initial readable frame.")
         let secondCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: firstCharacterCount, timeout: 4)
         XCTAssertGreaterThan(secondCharacterCount, firstCharacterCount, "Live feed should advance in measured display-paced frames before layout proof.")
+        assertNoLiveStreamingLineArtifacts(in: app)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        capture("31-liquid-motion-mid-reveal", app: app)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.55))
+        capture("32-liquid-motion-settled-reveal", app: app)
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "Live streaming should stay pinned at the bottom without asking the user to manually jump to latest.")
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
@@ -1275,7 +1280,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Streaming bubble should expose one readable human status footer.")
         XCTAssertGreaterThanOrEqual(liveStatus.frame.minY, liveBubble.frame.minY + 8, "Streaming status footer should not clip into the live message top chrome.")
         XCTAssertLessThanOrEqual(liveStatus.frame.maxY, liveBubble.frame.maxY - 8, "Streaming status footer should have enough bottom padding and never clip against the live bubble edge.")
-        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "liveStreamingStatusProgress").firstMatch.exists, "Live response bubbles should not render an under-text decorative progress line.")
+        assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the run/composer stack.")
         XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The live bubble itself should not continue behind the run/composer stack.")
         capture("23-streaming-bottom-pinned", app: app)
@@ -1325,7 +1330,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
         let liveStatus = app.staticTexts["liveStreamingStatusText"]
         XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Focused composer proof should still expose the human live status.")
-        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "liveStreamingStatusProgress").firstMatch.exists, "Focused composer streaming should not revive the under-text progress stripe.")
+        assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the full bottom accessory stack.")
         XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The focused-composer live bubble should not flow under the bottom accessory stack.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "A focused composer should not show Jump to Latest while the transcript remains pinned.")
@@ -2430,6 +2435,25 @@ final class AgentPadUITests: XCTestCase {
         let identifiedText = app.descendants(matching: .staticText).matching(identifier: "streamingTextReveal").firstMatch
         if identifiedText.exists { return identifiedText }
         return app.descendants(matching: .any).matching(identifier: "streamingTextReveal").firstMatch
+    }
+
+    private func assertNoLiveStreamingLineArtifacts(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertFalse(
+            app.descendants(matching: .any).matching(identifier: "liveStreamingStatusProgress").firstMatch.exists,
+            "Live response bubbles should not render an under-text decorative progress line.",
+            file: file,
+            line: line
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any).matching(identifier: "streamingCaret").firstMatch.exists,
+            "Live response bubbles should not render a vertical caret/blue-line artifact.",
+            file: file,
+            line: line
+        )
     }
 
     private func liveStreamingCharacterCount(

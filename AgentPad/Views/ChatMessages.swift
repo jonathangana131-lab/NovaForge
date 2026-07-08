@@ -555,7 +555,7 @@ struct ChatMessageSurfaceModifier: ViewModifier {
         switch emphasis {
         case .assistant: return isLight ? 0.30 : 0.22
         case .user: return isLight ? 0.38 : 0.30
-        case .live: return isLight ? 0.36 : 0.28
+        case .live: return isLight ? 0.24 : 0.16
         }
     }
 
@@ -590,7 +590,7 @@ struct ChatMessageSurfaceModifier: ViewModifier {
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 0.65
+                        lineWidth: emphasis == .live ? 0.48 : 0.65
                     )
                     .allowsHitTesting(false)
             }

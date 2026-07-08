@@ -88,7 +88,11 @@ final class LiveStreamBuffer: ObservableObject {
     // assistant message still contains the full response after handoff; during
     // streaming this avoids re-laying out a giant wall of text on every frame.
     private var maximumDisplayedCharacters: Int {
-        AgentPerformance.shouldProfileFrameRate ? 520 : 760
+        // Keep the live response as a premium rolling window on iPhone 12.
+        // The durable assistant message keeps the complete text after handoff;
+        // during streaming we prioritize a fully readable glass card that does
+        // not slide under the header or composer chrome.
+        AgentPerformance.shouldProfileFrameRate ? 200 : 220
     }
     @Published private var frame = ForgeLiveFeedFrame.empty
     @ObservationIgnored private var feedEngine = ForgeLiveFeedEngine()

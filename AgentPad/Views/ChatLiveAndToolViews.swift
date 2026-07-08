@@ -620,6 +620,7 @@ struct LiveShimmerText: View {
 
 private struct StreamingBubble: View {
     @ObservedObject var stream: LiveStreamBuffer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Streaming Bubble Body")
@@ -632,7 +633,7 @@ private struct StreamingBubble: View {
                             .padding(.top, 1)
                             .accessibilityHidden(true)
 
-                        StreamingTextView(frame: displayFrame)
+                        LiquidStreamingTextReveal(frame: displayFrame)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
@@ -649,76 +650,17 @@ private struct StreamingBubble: View {
                     }
                     .frame(minHeight: 16, alignment: .center)
                     .padding(.top, 2)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 14)
                     .accessibilityHidden(false)
                 }
             }
             .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("liveStreamingReadableContent")
+            .accessibilityIdentifier("liveStreamingBubble")
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
+        .liquidResponseEntrance(enabled: NovaMotion.enabled(reduceMotion: reduceMotion))
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("liveStreamingBubble")
-        .transaction { transaction in
-            // Streaming text changes dozens of times per response. Animating
-            // each append is expensive and can drag the live transcript below
-            // the frame-rate gate; the glass chrome still carries the live
-            // signal while text itself updates immediately.
-            transaction.animation = nil
-        }
-    }
-}
-
-private struct StreamingTextView: View {
-    let frame: ForgeLiveFeedFrame
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var allowsMotion: Bool {
-        AgentPerformance.allowsDecorativeMotion && !reduceMotion
-    }
-
-    private var flowingText: Text {
-        guard !frame.displayText.isEmpty else {
-            return Text(" ").foregroundColor(AgentPalette.ink)
-        }
-        guard !AgentPerformance.prefersReducedVisualEffects,
-              !frame.activeTail.isEmpty,
-              frame.displayText.hasSuffix(frame.activeTail) else {
-            return Text(frame.displayText).foregroundColor(AgentPalette.ink)
-        }
-        let settledEnd = frame.displayText.index(frame.displayText.endIndex, offsetBy: -frame.activeTail.count)
-        let settledPrefix = String(frame.displayText[..<settledEnd])
-        var attributed = AttributedString(settledPrefix)
-        attributed.foregroundColor = AgentPalette.ink
-        var highlightedTail = AttributedString(frame.activeTail)
-        highlightedTail.foregroundColor = AgentPalette.primaryAccent.opacity(allowsMotion ? 0.98 : 0.82)
-        attributed.append(highlightedTail)
-        return Text(attributed)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            flowingText
-                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                .lineSpacing(5)
-                .accessibilityIdentifier("streamingTextReveal")
-                .accessibilityValue("\(frame.characterCount) characters, \(frame.backlogCharacters) queued")
-                .transaction { transaction in
-                    // Text reveal is paced by LiveStreamBuffer; implicit SwiftUI
-                    // interpolation on every frame adds work without improving the
-                    // native chat feel.
-                    transaction.animation = nil
-                }
-
-            Text("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
-                .font(.system(size: 1, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                .frame(width: 1, height: 1, alignment: .leading)
-                .opacity(0.01)
-                .accessibilityIdentifier("streamingTextRevealMetrics")
-                .accessibilityLabel("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
-                .accessibilityValue("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
-        }
     }
 }
 
@@ -746,7 +688,7 @@ private struct LiquidMessageBubble<Content: View>: View {
             .chatMessageSurface(radius: 22, tint: tint, emphasis: isLive ? .live : .assistant)
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(tint.opacity(isLive ? 0.42 : 0.24), lineWidth: isLive ? 0.95 : 0.65)
+                    .strokeBorder(tint.opacity(isLive ? 0.18 : 0.24), lineWidth: isLive ? 0.48 : 0.65)
                     .blendMode(AgentTheme.current == .matrixRain ? .normal : .screen)
                     .allowsHitTesting(false)
             }

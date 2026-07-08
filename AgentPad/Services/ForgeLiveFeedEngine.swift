@@ -62,7 +62,7 @@ struct ForgeLiveFeedFrame: Equatable, Sendable {
 
     func windowed(maxCharacters: Int) -> ForgeLiveFeedFrame {
         guard maxCharacters > 0, displayText.count > maxCharacters else { return self }
-        let suffix = String(displayText.suffix(maxCharacters))
+        let suffix = readableSuffix(maxCharacters: maxCharacters)
         let windowedText = "…\n" + suffix
         let windowedTail: String
         if !activeTail.isEmpty, windowedText.hasSuffix(activeTail) {
@@ -87,6 +87,25 @@ struct ForgeLiveFeedFrame: Equatable, Sendable {
             suggestedPauseFrames: suggestedPauseFrames,
             isShowingTail: true
         )
+    }
+
+    private func readableSuffix(maxCharacters: Int) -> String {
+        guard displayText.count > maxCharacters else { return displayText }
+        let start = displayText.index(displayText.endIndex, offsetBy: -maxCharacters)
+        var suffix = String(displayText[start...])
+        guard start > displayText.startIndex else { return suffix }
+
+        if let boundary = suffix.firstIndex(where: { character in
+            character.isLiveFeedWhitespace || character.isLiveFeedPunctuation
+        }) {
+            let next = suffix.index(after: boundary)
+            if next < suffix.endIndex {
+                suffix = String(suffix[next...])
+            }
+        }
+
+        let trimmed = suffix.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? String(displayText.suffix(maxCharacters)) : trimmed
     }
 }
 

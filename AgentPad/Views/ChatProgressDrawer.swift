@@ -22,6 +22,7 @@ struct ChatContextBar: View {
     let openWorkspaceSurface: (AppTab) -> Void
     let clear: () -> Void
     @Binding var expanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var primaryArtifact: WorkspaceArtifact? { artifacts.first }
     private var hasCompletedRunEvidence: Bool {
@@ -209,7 +210,7 @@ struct ChatContextBar: View {
 
     private func toggleExpanded() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.smooth(duration: 0.22)) {
+        withAnimation(NovaMotion.enabled(reduceMotion: reduceMotion) ? NovaMotion.softSettleSpring : nil) {
             expanded.toggle()
         }
     }
