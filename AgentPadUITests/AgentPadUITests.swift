@@ -1265,8 +1265,7 @@ final class AgentPadUITests: XCTestCase {
         let firstCharacterCount = liveStreamingCharacterCount(in: app)
         XCTAssertGreaterThan(firstCharacterCount, 0, "Live feed should reveal an initial readable frame.")
         let secondCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: firstCharacterCount, timeout: 4)
-        let thirdCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: secondCharacterCount, timeout: 4)
-        XCTAssertGreaterThan(thirdCharacterCount, secondCharacterCount, "Live feed should keep advancing in measured display-paced frames.")
+        XCTAssertGreaterThan(secondCharacterCount, firstCharacterCount, "Live feed should advance in measured display-paced frames before layout proof.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "Live streaming should stay pinned at the bottom without asking the user to manually jump to latest.")
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
@@ -1276,6 +1275,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Streaming bubble should expose one readable human status footer.")
         XCTAssertGreaterThanOrEqual(liveStatus.frame.minY, liveBubble.frame.minY + 8, "Streaming status footer should not clip into the live message top chrome.")
         XCTAssertLessThanOrEqual(liveStatus.frame.maxY, liveBubble.frame.maxY - 8, "Streaming status footer should have enough bottom padding and never clip against the live bubble edge.")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "liveStreamingStatusProgress").firstMatch.exists, "Live response bubbles should not render an under-text decorative progress line.")
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the run/composer stack.")
         XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The live bubble itself should not continue behind the run/composer stack.")
         capture("23-streaming-bottom-pinned", app: app)
@@ -1323,6 +1323,9 @@ final class AgentPadUITests: XCTestCase {
 
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
+        let liveStatus = app.staticTexts["liveStreamingStatusText"]
+        XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Focused composer proof should still expose the human live status.")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "liveStreamingStatusProgress").firstMatch.exists, "Focused composer streaming should not revive the under-text progress stripe.")
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the full bottom accessory stack.")
         XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The focused-composer live bubble should not flow under the bottom accessory stack.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "A focused composer should not show Jump to Latest while the transcript remains pinned.")

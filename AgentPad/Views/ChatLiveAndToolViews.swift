@@ -620,12 +620,6 @@ struct LiveShimmerText: View {
 
 private struct StreamingBubble: View {
     @ObservedObject var stream: LiveStreamBuffer
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var statusFlow = false
-
-    private var allowsMotion: Bool {
-        AgentPerformance.allowsDecorativeMotion && !reduceMotion
-    }
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Streaming Bubble Body")
@@ -642,36 +636,20 @@ private struct StreamingBubble: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Text(displayFrame.statusLine)
-                                .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.tertiaryText)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.78)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("liveStreamingStatusText")
+                    HStack(spacing: 6) {
+                        Text(displayFrame.statusLine)
+                            .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                            .foregroundStyle(AgentPalette.tertiaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("liveStreamingStatusText")
 
-                            Spacer(minLength: 0)
-                        }
-                        .frame(minHeight: 16, alignment: .center)
-
-                        Capsule(style: .continuous)
-                            .fill(AgentPalette.primaryAccent.opacity(0.22))
-                            .frame(height: 2)
-                            .overlay(alignment: .leading) {
-                                Capsule(style: .continuous)
-                                    .fill(AgentPalette.primaryAccent.opacity(allowsMotion ? 0.82 : 0.46))
-                                    .frame(width: allowsMotion ? 58 : 30)
-                                    .offset(x: allowsMotion ? (statusFlow ? 78 : -58) : 0)
-                                    .animation(
-                                        allowsMotion ? .easeInOut(duration: 1.55).repeatForever(autoreverses: true) : nil,
-                                        value: statusFlow
-                                    )
-                            }
+                        Spacer(minLength: 0)
                     }
+                    .frame(minHeight: 16, alignment: .center)
                     .padding(.top, 2)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, 8)
                     .accessibilityHidden(false)
                 }
             }
@@ -689,7 +667,6 @@ private struct StreamingBubble: View {
             // signal while text itself updates immediately.
             transaction.animation = nil
         }
-        .onAppear { statusFlow = true }
     }
 }
 
@@ -727,13 +704,6 @@ private struct StreamingTextView: View {
                 .lineSpacing(5)
                 .accessibilityIdentifier("streamingTextReveal")
                 .accessibilityValue("\(frame.characterCount) characters, \(frame.backlogCharacters) queued")
-                .overlay(alignment: .bottomTrailing) {
-                    if allowsMotion && !frame.displayText.isEmpty {
-                        StreamingCaretView(tint: AgentPalette.primaryAccent)
-                            .offset(x: 5, y: -2)
-                            .accessibilityHidden(true)
-                    }
-                }
                 .transaction { transaction in
                     // Text reveal is paced by LiveStreamBuffer; implicit SwiftUI
                     // interpolation on every frame adds work without improving the
@@ -749,27 +719,6 @@ private struct StreamingTextView: View {
                 .accessibilityLabel("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
                 .accessibilityValue("characters \(frame.characterCount) queued \(frame.backlogCharacters)")
         }
-    }
-}
-
-private struct StreamingCaretView: View {
-    let tint: Color
-    @State private var pulse = false
-
-    var body: some View {
-        Capsule(style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [tint.opacity(0.25), tint.opacity(0.95), .white.opacity(0.88)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .frame(width: 2.2, height: 17)
-            .shadow(color: tint.opacity(0.75), radius: 6, x: 0, y: 0)
-            .opacity(pulse ? 1 : 0.34)
-            .animation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true), value: pulse)
-            .onAppear { pulse = true }
     }
 }
 

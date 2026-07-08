@@ -700,7 +700,7 @@ struct ChatView: View {
 
                 ScrollViewReader { proxy in
                     ZStack(alignment: .bottom) {
-                        ScrollView {
+                        ScrollView(showsIndicators: false) {
                             VStack(spacing: 0) {
                                 LazyVStack(spacing: 14) {
                                     if shouldShowFirstRunGuides {
@@ -780,6 +780,7 @@ struct ChatView: View {
                         .coordinateSpace(name: Self.chatScrollSpace)
                         .accessibilityIdentifier("chatTranscriptScroll")
                         .scrollContentBackground(.hidden)
+                        .scrollIndicators(.hidden)
                         .scrollDismissesKeyboard(.interactively)
                         .defaultScrollAnchor(shouldTopAnchorEmptyTranscript ? .top : .bottom, for: .initialOffset)
                         .contentShape(Rectangle())
