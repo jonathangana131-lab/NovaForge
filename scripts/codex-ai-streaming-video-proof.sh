@@ -125,7 +125,7 @@ if command -v ffmpeg >/dev/null 2>&1; then
   fi
   ffmpeg -y -hide_banner -loglevel error \
     -i "$VIDEO_PATH" \
-    -vf "fps=1/${RECORD_SECONDS},scale=390:-1,tile=4x1:padding=16:margin=16:color=0x111318" \
+    -vf "trim=start=1,setpts=PTS-STARTPTS,fps=1,scale=240:-1,tile=8x2:padding=12:margin=12:color=0x111318" \
     -frames:v 1 "$CONTACT_SHEET"
 fi
 

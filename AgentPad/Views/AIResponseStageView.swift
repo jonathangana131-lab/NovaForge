@@ -156,7 +156,7 @@ struct AIResponseLetterFlowView: View {
     }
 
     private var maxAnimatedGlyphs: Int {
-        AgentPerformance.shouldProfileFrameRate ? 44 : 72
+        AgentPerformance.shouldProfileFrameRate ? 44 : 260
     }
 
     private static func suffixWindow(_ text: String, limit: Int) -> String {
@@ -187,7 +187,7 @@ struct AIResponseLetterFlowView: View {
         if !activeText.isEmpty {
             if !settledParagraphs.isEmpty { attributed.append(AttributedString("\n\n")) }
             var activeRun = AttributedString(activeText)
-            activeRun.foregroundColor = tint.opacity(0.88)
+            activeRun.foregroundColor = AgentPalette.ink.opacity(0.94)
             attributed.append(activeRun)
         }
 
@@ -204,7 +204,7 @@ struct AIResponseLetterFlowView: View {
                                 .foregroundStyle(AgentPalette.ink.opacity(0.94))
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        AIResponseActivePhraseLetterFlow(text: activeText, tint: tint)
+                        AIResponseActivePhraseDustFlow(text: activeText, tint: tint)
                     }
                 } else {
                     fallbackText
@@ -232,44 +232,229 @@ struct AIResponseLetterFlowView: View {
     }
 }
 
-private struct AIResponseActivePhraseLetterFlow: View {
+private struct AIResponseActivePhraseDustFlow: View {
     let text: String
     let tint: Color
 
-    @State private var materialized = true
     @State private var signature = ""
+    @State private var visibleTokenCount = 0
+    @State private var sequenceTask: Task<Void, Never>?
+    @State private var sequenceStart = Date()
 
-    private var letters: [Character] { Array(text) }
+    private var tokens: [String] {
+        text
+            .replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+    }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            ForEach(Array(letters.enumerated()), id: \.offset) { index, character in
-                Text(String(character))
-                    .foregroundStyle(tint.opacity(character.isWhitespace ? 0.0 : 0.98))
-                    .opacity(materialized ? 1 : 0.18)
-                    .blur(radius: materialized ? 0 : 0.45)
-                    .offset(y: materialized ? 0 : 2.5)
-                    .animation(
-                        .easeOut(duration: 0.34).delay(min(Double(index) * 0.012, 0.32)),
-                        value: materialized
-                    )
+        AIResponseDustWrapLayout(horizontalSpacing: 4, verticalSpacing: 5) {
+            ForEach(Array(tokens.enumerated()), id: \.offset) { index, token in
+                let isVisible = index < visibleTokenCount
+                Text(token)
+                    .foregroundStyle(AgentPalette.ink.opacity(isVisible ? 0.97 : 0.24))
+                    .blur(radius: isVisible ? 0 : 4.8)
+                    .scaleEffect(isVisible ? 1.0 : 0.982, anchor: .center)
+                    .shadow(color: isVisible ? AgentPalette.ink.opacity(0.10) : AgentPalette.ink.opacity(0.26), radius: isVisible ? 4 : 12, x: 0, y: 0)
+                    .animation(.easeOut(duration: 0.34), value: isVisible)
             }
+        }
+        .overlay(alignment: .topLeading) {
+            AIResponseDustConstellation(
+                signature: signature,
+                tokenCount: tokens.count,
+                startDate: sequenceStart,
+                tint: tint,
+                enabled: !tokens.isEmpty
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityHidden(true)
-        .onAppear(perform: runFlowIfNeeded)
+        .onAppear(perform: restartSequenceIfNeeded)
         .onChange(of: text) { _, _ in
-            runFlowIfNeeded()
+            restartSequenceIfNeeded()
+        }
+        .onDisappear {
+            sequenceTask?.cancel()
+            sequenceTask = nil
         }
     }
 
-    private func runFlowIfNeeded() {
+    private func restartSequenceIfNeeded() {
         guard signature != text else { return }
+        let previousSignature = signature
+        let previousVisibleCount = visibleTokenCount
+        let nextTokenCount = tokens.count
+        let preservedTokenCount: Int
+        if !previousSignature.isEmpty, text.hasPrefix(previousSignature) {
+            let previousTokenCount = previousSignature
+                .replacingOccurrences(of: "\n", with: " ")
+                .split(whereSeparator: { $0.isWhitespace })
+                .count
+            preservedTokenCount = min(nextTokenCount, max(previousVisibleCount, previousTokenCount))
+        } else {
+            preservedTokenCount = 0
+        }
+
         signature = text
-        materialized = false
-        DispatchQueue.main.async {
-            guard signature == text else { return }
-            materialized = true
+        sequenceTask?.cancel()
+        visibleTokenCount = preservedTokenCount
+        sequenceStart = Date()
+        guard nextTokenCount > preservedTokenCount else { return }
+        sequenceTask = Task { @MainActor in
+            for index in (preservedTokenCount + 1)...nextTokenCount {
+                if Task.isCancelled { return }
+                try? await Task.sleep(for: .milliseconds(index == preservedTokenCount + 1 ? 42 : 76))
+                if Task.isCancelled { return }
+                withAnimation(.easeOut(duration: 0.34)) {
+                    visibleTokenCount = index
+                }
+            }
+        }
+    }
+}
+
+private struct AIResponseDustWrapLayout: Layout {
+    var horizontalSpacing: CGFloat = 4
+    var verticalSpacing: CGFloat = 5
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
+        let maxWidth = max(1, proposal.width ?? 312)
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var measuredWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > 0, currentX + size.width > maxWidth {
+                currentX = 0
+                currentY += lineHeight + verticalSpacing
+                lineHeight = 0
+            }
+            measuredWidth = max(measuredWidth, currentX + size.width)
+            currentX += size.width + horizontalSpacing
+            lineHeight = max(lineHeight, size.height)
+        }
+
+        return CGSize(width: min(maxWidth, max(measuredWidth, 1)), height: currentY + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
+        let maxWidth = max(1, bounds.width)
+        var currentX = bounds.minX
+        var currentY = bounds.minY
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > bounds.minX, currentX + size.width > bounds.minX + maxWidth {
+                currentX = bounds.minX
+                currentY += lineHeight + verticalSpacing
+                lineHeight = 0
+            }
+            subview.place(
+                at: CGPoint(x: currentX, y: currentY),
+                proposal: ProposedViewSize(width: size.width, height: size.height)
+            )
+            currentX += size.width + horizontalSpacing
+            lineHeight = max(lineHeight, size.height)
+        }
+    }
+}
+
+private struct AIResponseDustConstellation: View {
+    let signature: String
+    let tokenCount: Int
+    let startDate: Date
+    let tint: Color
+    let enabled: Bool
+
+    var body: some View {
+        if enabled && tokenCount > 0 && !AgentPerformance.prefersReducedVisualEffects {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                Canvas { context, size in
+                    let elapsed = max(0, timeline.date.timeIntervalSince(startDate))
+                    let particles = AIResponseDustSeed.particles(signature: signature, tokenCount: tokenCount)
+                    for particle in particles {
+                        let cycle = particle.duration + particle.rest
+                        let phaseAge = (elapsed + particle.delay).truncatingRemainder(dividingBy: cycle)
+                        guard phaseAge < particle.duration else { continue }
+                        let localAge = max(0, min(1, phaseAge / particle.duration))
+                        let ease = 1 - pow(1 - localAge, 3)
+                        let target = CGPoint(x: size.width * particle.targetX, y: max(4, size.height * particle.targetY))
+                        let origin = CGPoint(x: target.x + particle.driftX, y: target.y + particle.driftY)
+                        let x = origin.x + (target.x - origin.x) * CGFloat(ease)
+                        let y = origin.y + (target.y - origin.y) * CGFloat(ease)
+                        let sparkle = sin(localAge * .pi)
+                        var particleContext = context
+                        particleContext.opacity = particle.opacity * sparkle
+                        let rect = CGRect(x: x, y: y, width: particle.size, height: particle.size)
+                        particleContext.addFilter(.blur(radius: particle.blur))
+                        particleContext.fill(
+                            Path(ellipseIn: rect),
+                            with: .color(particle.isWarm ? AgentPalette.ink.opacity(0.96) : tint.opacity(0.82))
+                        )
+                        if particle.sparkle {
+                            particleContext.opacity = particle.opacity * sparkle * 0.55
+                            let horizontalRect = CGRect(x: x - particle.size * 0.85, y: y + particle.size * 0.42, width: particle.size * 2.3, height: 0.65)
+                            let verticalRect = CGRect(x: x + particle.size * 0.42, y: y - particle.size * 0.85, width: 0.65, height: particle.size * 2.3)
+                            var horizontalPath = Path()
+                            horizontalPath.addRect(horizontalRect)
+                            var verticalPath = Path()
+                            verticalPath.addRect(verticalRect)
+                            particleContext.fill(horizontalPath, with: .color(AgentPalette.ink.opacity(0.80)))
+                            particleContext.fill(verticalPath, with: .color(AgentPalette.ink.opacity(0.72)))
+                        }
+                    }
+                }
+                .blendMode(.screen)
+            }
+            .id(signature)
+        }
+    }
+}
+
+private struct AIResponseDustParticleSeed {
+    let targetX: CGFloat
+    let targetY: CGFloat
+    let driftX: CGFloat
+    let driftY: CGFloat
+    let size: CGFloat
+    let delay: TimeInterval
+    let duration: TimeInterval
+    let rest: TimeInterval
+    let opacity: Double
+    let isWarm: Bool
+    let blur: CGFloat
+    let sparkle: Bool
+}
+
+private enum AIResponseDustSeed {
+    static func particles(signature: String, tokenCount: Int) -> [AIResponseDustParticleSeed] {
+        let unicodeSeed = signature.unicodeScalars.prefix(24).reduce(0) { $0 &+ Int($1.value) }
+        let count = min(118, max(36, tokenCount * 7))
+        return (0..<count).map { index in
+            let value = abs(unicodeSeed &+ index * 97 &+ tokenCount * 43)
+            let row = CGFloat((value / 11) % 4)
+            let column = CGFloat((value * 37) % 100) / 100
+            return AIResponseDustParticleSeed(
+                targetX: min(0.98, max(0.02, column)),
+                targetY: min(0.94, 0.16 + row * 0.22 + CGFloat((value * 19) % 12) / 100),
+                driftX: CGFloat(-34 + (value * 13) % 69),
+                driftY: CGFloat(16 + (value * 17) % 44),
+                size: CGFloat(1.9 + Double((value * 23) % 32) / 10.0),
+                delay: Double(index % max(tokenCount, 1)) * 0.082 + Double((value * 7) % 12) / 100.0,
+                duration: 0.92 + Double((value * 5) % 42) / 100.0,
+                rest: 0.28 + Double((value * 3) % 22) / 100.0,
+                opacity: 0.48 + Double((value * 29) % 42) / 100.0,
+                isWarm: index % 5 != 0,
+                blur: CGFloat(Double((value * 31) % 10) / 10.0),
+                sparkle: index.isMultiple(of: 6)
+            )
         }
     }
 }
