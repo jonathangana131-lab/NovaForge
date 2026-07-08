@@ -1254,7 +1254,14 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         let liveResponse = liveStreamingReadableContent(in: app)
         XCTAssertTrue(liveResponse.waitForExistence(timeout: 8))
-        XCTAssertTrue(liveResponse.label.contains("queued"), "Stress stream should expose queued word-tree backlog instead of dumping the full response instantly.")
+        XCTAssertTrue(
+            liveResponse.label.contains("Writing answer") || liveResponse.label.contains("Catching up"),
+            "Stress stream should use human live-response copy instead of debug renderer labels; got '\(liveResponse.label)'."
+        )
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("word tree"))
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("queued"))
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("renderer"))
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("normalizing chunk"))
         let firstCharacterCount = liveStreamingCharacterCount(in: app)
         XCTAssertGreaterThan(firstCharacterCount, 0, "Live feed should reveal an initial readable frame.")
         let secondCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: firstCharacterCount, timeout: 4)
@@ -1265,6 +1272,10 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
+        let liveStatus = app.staticTexts["liveStreamingStatusText"]
+        XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Streaming bubble should expose one readable human status footer.")
+        XCTAssertGreaterThanOrEqual(liveStatus.frame.minY, liveBubble.frame.minY + 8, "Streaming status footer should not clip into the live message top chrome.")
+        XCTAssertLessThanOrEqual(liveStatus.frame.maxY, liveBubble.frame.maxY - 8, "Streaming status footer should have enough bottom padding and never clip against the live bubble edge.")
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the run/composer stack.")
         XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The live bubble itself should not continue behind the run/composer stack.")
         capture("23-streaming-bottom-pinned", app: app)
@@ -1275,13 +1286,14 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run Control"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Running Tool"].waitForExistence(timeout: 5))
-        let status = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Word tree")).firstMatch
-        XCTAssertTrue(status.waitForExistence(timeout: 5), "Live feed should expose the new word-tree status line while streaming.")
-        let activeToolDetail = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Normalizing chunk")).firstMatch
-        XCTAssertTrue(activeToolDetail.waitForExistence(timeout: 5), "Expanded progress should resize with and expose the current word-tree streaming detail.")
+        let status = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR label CONTAINS %@", "Writing answer", "Catching up")).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5), "Live feed should expose human streaming status while preserving hidden metrics.")
+        let activeToolDetail = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Organizing the response")).firstMatch
+        XCTAssertTrue(activeToolDetail.waitForExistence(timeout: 5), "Expanded progress should expose the humanized live-response detail.")
         let latestTrace = app.staticTexts["latestTraceEventTitle"]
         XCTAssertTrue(latestTrace.waitForExistence(timeout: 5), "Expanded progress should expose a stable newest trace row for UI tests and VoiceOver.")
-        XCTAssertTrue(latestTrace.label.contains("Word-tree"), "Expanded progress should show the growing word-tree trace as the newest row; got '\(latestTrace.label)'.")
+        XCTAssertFalse(latestTrace.label.localizedCaseInsensitiveContains("word-tree"), "Expanded progress should hide debug renderer labels; got '\(latestTrace.label)'.")
+        XCTAssertTrue(latestTrace.label.contains("Writing answer") || latestTrace.label.contains("Live response"), "Expanded progress should show a human live-response trace; got '\(latestTrace.label)'.")
         capture("24-streaming-tool-trace-growth", app: app)
     }
 

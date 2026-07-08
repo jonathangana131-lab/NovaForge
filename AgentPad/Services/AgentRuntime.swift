@@ -81,13 +81,15 @@ final class LiveStreamBuffer: ObservableObject {
     private var activeRevealFrameInterval: Duration {
         // Normal use feels lively; profiling uses a calmer cadence so the gate
         // measures sustained scroll/render health instead of stress-test packet spam.
-        AgentPerformance.shouldProfileFrameRate ? .milliseconds(140) : .milliseconds(50)
+        AgentPerformance.shouldProfileFrameRate ? .milliseconds(300) : .milliseconds(50)
     }
 
     // Keep the live bubble as a rolling, readable window. The final durable
     // assistant message still contains the full response after handoff; during
     // streaming this avoids re-laying out a giant wall of text on every frame.
-    private let maximumDisplayedCharacters = 760
+    private var maximumDisplayedCharacters: Int {
+        AgentPerformance.shouldProfileFrameRate ? 520 : 760
+    }
     @Published private var frame = ForgeLiveFeedFrame.empty
     @ObservationIgnored private var feedEngine = ForgeLiveFeedEngine()
     @ObservationIgnored private var revealTask: Task<Void, Never>?
@@ -451,9 +453,9 @@ final class AgentRuntime {
         wasInterrupted = false
         liveStream.reset()
         traceEvents = []
-        updateActiveTool(name: "word tree renderer", detail: "Preparing ragged provider chunks")
-        setActivity("Forge live feed lab", detail: "Streaming through the semantic word-tree renderer.")
-        pushTrace("Word-tree stream started", detail: "Ragged chunks, steady display frames, and bottom-pin proof.", status: .thinking)
+        updateActiveTool(name: "response renderer", detail: "Preparing a readable live answer")
+        setActivity("Forge live response", detail: "Writing with a steady, readable cadence.")
+        pushTrace("Live response started", detail: "The incoming response is being smoothed into readable phrases.", status: .thinking)
 
         let script = Array(repeating: Self.forgeLiveFeedStressScript, count: 16).joined(separator: "\n\n")
         let chunks = Self.raggedProviderChunks(from: script)
@@ -465,19 +467,19 @@ final class AgentRuntime {
                 guard !Task.isCancelled, !self.stopRequested else { return }
                 let index = offset + 1
                 if index == 1 || index.isMultiple(of: 44) {
-                    self.updateActiveTool(name: "word tree renderer", detail: "Normalizing chunk \(index) of \(chunks.count)")
+                    self.updateActiveTool(name: "response renderer", detail: "Organizing the response")
                 }
                 self.liveStream.append(chunk)
                 if index == 1 || index.isMultiple(of: 88) {
-                    self.pushTrace("Word-tree chunk \(index)", detail: "Semantic reveal backlog: \(self.liveStream.revealBacklog) characters.", status: .thinking)
+                    self.pushTrace("Live response progress", detail: "Keeping the live response readable.", status: .thinking)
                 }
                 try? await Task.sleep(for: .milliseconds(index.isMultiple(of: 9) ? 34 : 16))
             }
 
             guard !Task.isCancelled, !self.stopRequested else { return }
             self.liveStream.finishHandoff(to: UUID())
-            self.setActivity("Word-tree fixture complete", detail: "The engineered live feed rendered all ragged chunks.")
-            self.pushTrace("Word-tree stream complete", detail: "\(chunks.count) provider chunks normalized into smooth reveal frames.", status: .success)
+            self.setActivity("Live response complete", detail: "The full answer is ready to review.")
+            self.pushTrace("Live response complete", detail: "\(chunks.count) provider chunks became readable live frames.", status: .success)
             self.runState = .completed
             self.isWorking = false
             self.clearActiveTool()
@@ -487,9 +489,9 @@ final class AgentRuntime {
     private static let forgeLiveFeedStressScript = """
     NovaForge is speaking through the new Forge live feed. The provider can send half words, weird punctuation, dense technical notes, and sudden pauses, but the phone should only see calm semantic phrases.
 
-    First the engine builds a word tree. Then it reveals stable atoms on a display-paced clock. Old text becomes settled ink, the active phrase glows softly, and the transcript keeps the bottom response readable above the composer.
+    First the engine groups the response into readable phrases. Then it reveals stable milestones on a display-paced clock. Old text becomes settled ink, the active phrase glows softly, and the transcript keeps the bottom response readable above the composer.
 
-    This fixture intentionally uses jagged chunks so the renderer proves it can smooth the roughest AI stream without jitter, duplicate bubbles, or sudden jumps.
+    This fixture intentionally uses jagged chunks so the live answer stays smooth through the roughest AI stream without jitter, duplicate bubbles, or sudden jumps.
     """
 
     private static func raggedProviderChunks(from text: String) -> [String] {

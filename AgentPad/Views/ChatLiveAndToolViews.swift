@@ -536,6 +536,10 @@ private struct NovaLiveActivityPulse: View {
 
     var body: some View {
         if let toolName = runtime.activeToolName {
+            let presentation = LiveChatSessionReducer.presentation(
+                forToolName: toolName,
+                detail: runtime.activeToolDetail
+            )
             HStack {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -543,7 +547,7 @@ private struct NovaLiveActivityPulse: View {
                         .tint(AgentPalette.primaryAccent)
 
                     LiveShimmerText(
-                        text: plainToolName(toolName),
+                        text: presentation.title,
                         baseColor: AgentPalette.secondaryText,
                         highlightColor: AgentPalette.ink,
                         font: .system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign)
@@ -561,7 +565,7 @@ private struct NovaLiveActivityPulse: View {
             }
             .padding(.horizontal, 18)
             .transition(.opacity)
-            .accessibilityLabel("Running \(plainToolName(toolName))")
+            .accessibilityLabel("Running \(presentation.title)")
             .accessibilityIdentifier("liveToolPulse")
         }
     }
@@ -638,28 +642,36 @@ private struct StreamingBubble: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    HStack(spacing: 7) {
-                        Text(displayFrame.statusLine)
-                            .font(.system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.tertiaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.76)
-                            .accessibilityIdentifier("liveStreamingStatusText")
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Text(displayFrame.statusLine)
+                                .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(AgentPalette.tertiaryText)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("liveStreamingStatusText")
+
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: 16, alignment: .center)
 
                         Capsule(style: .continuous)
-                            .fill(AgentPalette.primaryAccent.opacity(0.28))
-                            .frame(height: 1)
+                            .fill(AgentPalette.primaryAccent.opacity(0.22))
+                            .frame(height: 2)
                             .overlay(alignment: .leading) {
                                 Capsule(style: .continuous)
-                                    .fill(AgentPalette.primaryAccent.opacity(allowsMotion ? 0.80 : 0.45))
-                                    .frame(width: allowsMotion ? 54 : 28)
-                                    .offset(x: allowsMotion ? (statusFlow ? 62 : -54) : 0)
+                                    .fill(AgentPalette.primaryAccent.opacity(allowsMotion ? 0.82 : 0.46))
+                                    .frame(width: allowsMotion ? 58 : 30)
+                                    .offset(x: allowsMotion ? (statusFlow ? 78 : -58) : 0)
                                     .animation(
                                         allowsMotion ? .easeInOut(duration: 1.55).repeatForever(autoreverses: true) : nil,
                                         value: statusFlow
                                     )
                             }
                     }
+                    .padding(.top, 2)
+                    .padding(.bottom, 4)
                     .accessibilityHidden(false)
                 }
             }
@@ -693,10 +705,14 @@ private struct StreamingTextView: View {
         guard !frame.displayText.isEmpty else {
             return Text(" ").foregroundColor(AgentPalette.ink)
         }
-        guard !frame.activeTail.isEmpty else {
+        guard !AgentPerformance.prefersReducedVisualEffects,
+              !frame.activeTail.isEmpty,
+              frame.displayText.hasSuffix(frame.activeTail) else {
             return Text(frame.displayText).foregroundColor(AgentPalette.ink)
         }
-        var attributed = AttributedString(frame.settledText)
+        let settledEnd = frame.displayText.index(frame.displayText.endIndex, offsetBy: -frame.activeTail.count)
+        let settledPrefix = String(frame.displayText[..<settledEnd])
+        var attributed = AttributedString(settledPrefix)
         attributed.foregroundColor = AgentPalette.ink
         var highlightedTail = AttributedString(frame.activeTail)
         highlightedTail.foregroundColor = AgentPalette.primaryAccent.opacity(allowsMotion ? 0.98 : 0.82)

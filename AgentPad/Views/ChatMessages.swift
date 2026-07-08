@@ -1425,6 +1425,10 @@ extension View {
 /// Human-readable name for a sandbox tool, shared by chat messages and the
 /// progress drawer. Module-scope so both ChatView and ChatMessages can call it.
 func plainToolName(_ toolName: String) -> String {
+    let lower = toolName.lowercased()
+    if lower.contains("word tree") || lower.contains("live feed") || lower.contains("response renderer") {
+        return "Writing Answer"
+    }
     switch toolName {
     case "read_file": return "Read File"
     case "read_file_range": return "Read Range"

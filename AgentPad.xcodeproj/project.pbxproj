@@ -10,10 +10,12 @@
 		AA0000000000000000000100 /* AgentTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000000 /* AgentTheme.swift */; };
 		AA0000000000000000000101 /* AgentPadApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000001 /* AgentPadApp.swift */; };
 		AA0000000000000000000102 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000002 /* Models.swift */; };
+		AE1000000000000000000101 /* LiveChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000001 /* LiveChatSession.swift */; };
 		AA0000000000000000000103 /* GlassDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000003 /* GlassDesign.swift */; };
 		AA0000000000000000000104 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000004 /* KeychainStore.swift */; };
 		AA0000000000000000000105 /* OpenAIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000005 /* OpenAIClient.swift */; };
 		AA0000000000000000000106 /* AgentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000006 /* AgentRuntime.swift */; };
+		AE1000000000000000000102 /* LiveChatSessionReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000002 /* LiveChatSessionReducer.swift */; };
 		AD1000000000000000000101 /* ForgeLiveFeedEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000001 /* ForgeLiveFeedEngine.swift */; };
 		AA0000000000000000000107 /* SandboxWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000007 /* SandboxWorkspace.swift */; };
 		AA0000000000000000000108 /* CommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000008 /* CommandRunner.swift */; };
@@ -51,6 +53,7 @@
 		AA0000000000000000000208 /* WorkspaceArtifactTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000024 /* WorkspaceArtifactTests.swift */; };
 		AA0000000000000000000209 /* ProviderMessageSanitizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000025 /* ProviderMessageSanitizerTests.swift */; };
 		AA0000000000000000000210 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000002 /* Models.swift */; };
+		AE2000000000000000000201 /* LiveChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000001 /* LiveChatSession.swift */; };
 		AA0000000000000000000211 /* ProviderMessageSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* ProviderMessageSanitizer.swift */; };
 		AA0000000000000000000212 /* AIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* AIProvider.swift */; };
 		AA0000000000000000000213 /* GlassDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000003 /* GlassDesign.swift */; };
@@ -59,6 +62,7 @@
 		AA0000000000000000000216 /* LocalAgentPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000046 /* LocalAgentPlanner.swift */; };
 		AA0000000000000000000217 /* AgentRuntimeLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000027 /* AgentRuntimeLifecycleTests.swift */; };
 		AA0000000000000000000218 /* AgentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000006 /* AgentRuntime.swift */; };
+		AE2000000000000000000202 /* LiveChatSessionReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000002 /* LiveChatSessionReducer.swift */; };
 		AA0000000000000000000219 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000004 /* KeychainStore.swift */; };
 		AA0000000000000000000220 /* OpenAIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000005 /* OpenAIClient.swift */; };
 		AA0000000000000000000221 /* LocalModelRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000045 /* LocalModelRuntime.swift */; };
@@ -66,6 +70,7 @@
 		AA0000000000000000000223 /* FilesWorkspacePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000029 /* FilesWorkspacePersistenceTests.swift */; };
 		AD2000000000000000000201 /* ForgeLiveFeedEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000001 /* ForgeLiveFeedEngine.swift */; };
 		AD2000000000000000000202 /* ForgeLiveFeedEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000002 /* ForgeLiveFeedEngineTests.swift */; };
+		AE2000000000000000000203 /* LiveChatSessionReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000003 /* LiveChatSessionReducerTests.swift */; };
 		AA0000000000000000000301 /* AgentPadUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000031 /* AgentPadUITests.swift */; };
 		AB1000000000000000000001 /* ChatSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000001 /* ChatSupportViews.swift */; };
 		AB1000000000000000000002 /* ChatComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000002 /* ChatComposer.swift */; };
@@ -150,10 +155,12 @@
 		AA0000000000000000000000 /* AgentTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTheme.swift; sourceTree = "<group>"; };
 		AA0000000000000000000001 /* AgentPadApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPadApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AE0000000000000000000001 /* LiveChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveChatSession.swift; sourceTree = "<group>"; };
 		AA0000000000000000000003 /* GlassDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassDesign.swift; sourceTree = "<group>"; };
 		AA0000000000000000000004 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		AA0000000000000000000005 /* OpenAIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIClient.swift; sourceTree = "<group>"; };
 		AA0000000000000000000006 /* AgentRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRuntime.swift; sourceTree = "<group>"; };
+		AE0000000000000000000002 /* LiveChatSessionReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveChatSessionReducer.swift; sourceTree = "<group>"; };
 		AD0000000000000000000001 /* ForgeLiveFeedEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeLiveFeedEngine.swift; sourceTree = "<group>"; };
 		AA0000000000000000000007 /* SandboxWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SandboxWorkspace.swift; sourceTree = "<group>"; };
 		AA0000000000000000000008 /* CommandRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRunner.swift; sourceTree = "<group>"; };
@@ -183,6 +190,7 @@
 		AA0000000000000000000028 /* OpenAIClientStreamingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIClientStreamingTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000029 /* FilesWorkspacePersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesWorkspacePersistenceTests.swift; sourceTree = "<group>"; };
 		AD0000000000000000000002 /* ForgeLiveFeedEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeLiveFeedEngineTests.swift; sourceTree = "<group>"; };
+		AE0000000000000000000003 /* LiveChatSessionReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveChatSessionReducerTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000031 /* AgentPadUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPadUITests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000040 /* CodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000041 /* TerminalConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalConsoleView.swift; sourceTree = "<group>"; };
@@ -311,6 +319,7 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000002 /* Models.swift */,
+				AE0000000000000000000001 /* LiveChatSession.swift */,
 				AB0000000000000000000006 /* AppLaunchPersistence.swift */,
 				AB0000000000000000000007 /* ProjectOSEngine.swift */,
 				AB0000000000000000000008 /* ProjectSummary.swift */,
@@ -325,6 +334,7 @@
 				AA0000000000000000000004 /* KeychainStore.swift */,
 				AA0000000000000000000005 /* OpenAIClient.swift */,
 				AA0000000000000000000006 /* AgentRuntime.swift */,
+				AE0000000000000000000002 /* LiveChatSessionReducer.swift */,
 				AD0000000000000000000001 /* ForgeLiveFeedEngine.swift */,
 				AA0000000000000000000016 /* AIProvider.swift */,
 				AA0000000000000000000045 /* LocalModelRuntime.swift */,
@@ -399,6 +409,7 @@
 				AA0000000000000000000028 /* OpenAIClientStreamingTests.swift */,
 				AA0000000000000000000029 /* FilesWorkspacePersistenceTests.swift */,
 				AD0000000000000000000002 /* ForgeLiveFeedEngineTests.swift */,
+				AE0000000000000000000003 /* LiveChatSessionReducerTests.swift */,
 			);
 			path = AgentPadTests;
 			sourceTree = "<group>";
@@ -599,11 +610,13 @@
 				AA0000000000000000000101 /* AgentPadApp.swift in Sources */,
 				AA0000000000000000000120 /* NovaForgeShortcuts.swift in Sources */,
 				AA0000000000000000000102 /* Models.swift in Sources */,
+				AE1000000000000000000101 /* LiveChatSession.swift in Sources */,
 				AA0000000000000000000103 /* GlassDesign.swift in Sources */,
 				AA0000000000000000000100 /* AgentTheme.swift in Sources */,
 				AA0000000000000000000104 /* KeychainStore.swift in Sources */,
 				AA0000000000000000000105 /* OpenAIClient.swift in Sources */,
 				AA0000000000000000000106 /* AgentRuntime.swift in Sources */,
+				AE1000000000000000000102 /* LiveChatSessionReducer.swift in Sources */,
 				AD1000000000000000000101 /* ForgeLiveFeedEngine.swift in Sources */,
 				AA0000000000000000000116 /* AIProvider.swift in Sources */,
 				AA0000000000000000000118 /* ProviderMessageSanitizer.swift in Sources */,
@@ -671,6 +684,7 @@
 				AA0000000000000000000208 /* WorkspaceArtifactTests.swift in Sources */,
 				AA0000000000000000000209 /* ProviderMessageSanitizerTests.swift in Sources */,
 				AA0000000000000000000210 /* Models.swift in Sources */,
+				AE2000000000000000000201 /* LiveChatSession.swift in Sources */,
 				AA0000000000000000000211 /* ProviderMessageSanitizer.swift in Sources */,
 				AA0000000000000000000212 /* AIProvider.swift in Sources */,
 				AA0000000000000000000213 /* GlassDesign.swift in Sources */,
@@ -679,6 +693,7 @@
 				AA0000000000000000000216 /* LocalAgentPlanner.swift in Sources */,
 				AA0000000000000000000217 /* AgentRuntimeLifecycleTests.swift in Sources */,
 				AA0000000000000000000218 /* AgentRuntime.swift in Sources */,
+				AE2000000000000000000202 /* LiveChatSessionReducer.swift in Sources */,
 				AD2000000000000000000201 /* ForgeLiveFeedEngine.swift in Sources */,
 				AB2000000000000000000023 /* RunActivityController.swift in Sources */,
 				AC2000000000000000000105 /* NovaForgeSharedActivity.swift in Sources */,
@@ -688,6 +703,7 @@
 				AA0000000000000000000222 /* OpenAIClientStreamingTests.swift in Sources */,
 				AA0000000000000000000223 /* FilesWorkspacePersistenceTests.swift in Sources */,
 				AD2000000000000000000202 /* ForgeLiveFeedEngineTests.swift in Sources */,
+				AE2000000000000000000203 /* LiveChatSessionReducerTests.swift in Sources */,
 				AB2000000000000000000006 /* AppLaunchPersistence.swift in Sources */,
 				AB2000000000000000000007 /* ProjectOSEngine.swift in Sources */,
 				AB2000000000000000000008 /* ProjectSummary.swift in Sources */,

@@ -30,6 +30,10 @@ final class ForgeLiveFeedEngineTests: XCTestCase {
         XCTAssertNotNil(second)
         XCTAssertGreaterThan(second?.characterCount ?? 0, first?.characterCount ?? 0)
         XCTAssertGreaterThan(second?.revision ?? 0, first?.revision ?? 0)
+        XCTAssertTrue(
+            ["Writing answer…", "Catching up…"].contains(first?.statusLine ?? ""),
+            "Visible streaming status should be human-facing while backlog metrics remain hidden for tests; got '\(first?.statusLine ?? "nil")'."
+        )
     }
 
     func testWindowedFramePreservesReadableTail() {

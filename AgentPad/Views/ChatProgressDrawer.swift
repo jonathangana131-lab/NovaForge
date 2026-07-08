@@ -388,7 +388,10 @@ struct AgentProgressDrawer: View {
     }
 
     private var activeToolPanel: some View {
-        HStack(alignment: .top, spacing: 10) {
+        let presentation = runtime.activeToolName.map {
+            LiveChatSessionReducer.presentation(forToolName: $0, detail: runtime.activeToolDetail)
+        }
+        return HStack(alignment: .top, spacing: 10) {
             ZStack {
                 Circle()
                     .fill(AgentPalette.cyan.opacity(0.16))
@@ -400,12 +403,12 @@ struct AgentProgressDrawer: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 ProgressDrawerLabel(text: "Running Tool", symbol: "wrench.and.screwdriver.fill", tint: AgentPalette.cyan)
-                Text(runtime.activeToolName ?? "Tool")
+                Text(presentation?.title ?? "Working")
                     .font(.system(size: 13, weight: .heavy, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.ink)
                     .lineLimit(1)
-                if !runtime.activeToolDetail.isEmpty {
-                    Text(runtime.activeToolDetail)
+                if let detail = presentation?.target, !detail.isEmpty {
+                    Text(detail)
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(AgentPalette.secondaryText)
                         .lineLimit(3)
@@ -918,6 +921,10 @@ struct AgentTraceRow: View {
 
     private var displayTitle: String {
         let title = event.title
+        let lower = title.lowercased()
+        if lower.contains("word-tree") || lower.contains("word tree") {
+            return "Writing answer"
+        }
         for prefix in ["Finished", "Running", "Queued", "Approved", "Rejected"] {
             let marker = prefix + " "
             guard title.hasPrefix(marker) else { continue }
@@ -943,6 +950,9 @@ struct AgentTraceRow: View {
     private var displayDetail: String {
         let cleaned = event.detail.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return "" }
+        if let humanDetail = LiveChatSessionReducer.humanizedVisibleDetail(cleaned) {
+            return humanDetail
+        }
         if let summary = jsonArgumentSummary(from: cleaned) {
             return summary
         }
@@ -986,7 +996,11 @@ struct AgentTraceRow: View {
     }
 
     private func plainToolName(_ toolName: String) -> String {
-        toolName
+        let lower = toolName.lowercased()
+        if lower.contains("word tree") || lower.contains("live feed") || lower.contains("response renderer") {
+            return "Writing Answer"
+        }
+        return toolName
             .replacingOccurrences(of: "_", with: " ")
             .capitalized
     }

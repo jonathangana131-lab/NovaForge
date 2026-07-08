@@ -50,10 +50,13 @@ struct ForgeLiveFeedFrame: Equatable, Sendable {
     var isShowingTail: Bool
 
     var statusLine: String {
-        if backlogCharacters > 0 {
-            "Word tree · \(cadence.label) · \(backlogCharacters) queued"
-        } else {
-            "Word tree · \(cadence.label)"
+        switch cadence {
+        case .idle:
+            "Preparing response"
+        case .reading:
+            "Writing answer…"
+        case .catchingUp, .burst:
+            "Catching up…"
         }
     }
 
