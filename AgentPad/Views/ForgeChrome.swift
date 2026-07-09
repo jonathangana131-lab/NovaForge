@@ -23,7 +23,6 @@
 
 import SwiftData
 import SwiftUI
-import UIKit
 
 // MARK: - Forge header
 
@@ -106,39 +105,81 @@ struct ForgeHeader: View {
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Forge Header Body")
-        HStack(alignment: .center, spacing: 11) {
-            chromeButton(
-                symbol: "bubble.left.and.bubble.right",
-                tint: chromeTint,
-                label: "Open Forge threads",
-                identifier: "forgeChatsButton",
-                action: openChatDrawer
-            )
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 11) {
+                chromeButton(
+                    symbol: "bubble.left.and.bubble.right",
+                    tint: chromeTint,
+                    label: "Open Forge threads",
+                    identifier: "forgeChatsButton",
+                    action: openChatDrawer
+                )
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(sessionTitle)
-                        .font(NovaType.title)
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityIdentifier("currentChatTitle")
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(sessionTitle)
+                            .font(NovaType.title)
+                            .foregroundStyle(AgentPalette.ink)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .accessibilityIdentifier("currentChatTitle")
 
-                    StatusDot(text: statusText, symbol: statusSymbol, tint: statusTint)
+                        StatusDot(text: statusText, symbol: statusSymbol, tint: statusTint)
+                    }
+
+                    contextLine
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                contextLine
+                chromeButton(
+                    symbol: "square.and.pencil",
+                    tint: AgentPalette.lilac,
+                    label: "New mission",
+                    identifier: "forgeNewChatButton",
+                    action: newChat
+                )
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            chromeButton(
-                symbol: "square.and.pencil",
-                tint: AgentPalette.lilac,
-                label: "New mission",
-                identifier: "forgeNewChatButton",
-                action: newChat
-            )
+            forgeSurfaceMap
         }
+    }
+
+    private var forgeSurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Forge loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Brief",
+                    detail: scopeTitle,
+                    symbol: scopedProject == nil ? "folder.fill" : "shippingbox.fill",
+                    tint: scopeTint,
+                    isActive: scopedProject != nil
+                ),
+                NovaSurfaceMapNode(
+                    title: "Run",
+                    detail: statusText,
+                    symbol: statusSymbol,
+                    tint: statusTint,
+                    isActive: ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil)
+                ),
+                NovaSurfaceMapNode(
+                    title: "Proof",
+                    detail: "\(artifacts.count) artifacts",
+                    symbol: "checkmark.seal.fill",
+                    tint: AgentPalette.green,
+                    isActive: !artifacts.isEmpty
+                ),
+                NovaSurfaceMapNode(
+                    title: "Queue",
+                    detail: durableSnapshot.pendingApprovalCount > 0 ? "\(durableSnapshot.pendingApprovalCount) approvals" : "\(runtime.queuedPromptCount) queued",
+                    symbol: durableSnapshot.pendingApprovalCount > 0 ? "checkmark.shield.fill" : "tray.full.fill",
+                    tint: durableSnapshot.pendingApprovalCount > 0 ? AgentPalette.cyan : AgentPalette.lilac,
+                    isActive: durableSnapshot.pendingApprovalCount > 0 || runtime.queuedPromptCount > 0
+                )
+            ],
+            tint: chromeTint
+        )
+        .accessibilityIdentifier("forgeSurfaceMap")
     }
 
     /// Second deck: the scope pill plus at most ONE prioritized signal.
@@ -248,7 +289,7 @@ struct ForgeHeader: View {
     }
 
     private func activate(_ signal: ForgeSignal) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        NovaHaptics.tick()
         switch signal.destination {
         case .tab(let tab):
             openWorkspaceSurface(tab)

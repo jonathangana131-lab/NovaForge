@@ -2,7 +2,9 @@ import Foundation
 import Combine
 import Observation
 import SwiftData
+#if canImport(UIKit)
 import UIKit
+#endif
 
 enum AgentTraceStatus: String, Hashable {
     case queued
@@ -737,11 +739,15 @@ final class AgentRuntime {
             if let activeConversationID, activeConversationID != conversation.id {
                 let title = activeConversationTitle?.isEmpty == false ? activeConversationTitle! : "another chat"
                 presentToast("A response is already running in \(title). Open that chat to queue a follow-up.", tone: .info)
+#if canImport(UIKit)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+#endif
                 return
             }
             if queueFollowUp(prompt, conversation: conversation, context: context, project: project ?? conversation.project) {
+#if canImport(UIKit)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+#endif
             }
             return
         }
@@ -805,7 +811,9 @@ final class AgentRuntime {
                         setActivity("Cancellation Not Saved", detail: "NovaForge kept the approval open because the cancellation could not be saved. Try again after storage recovers.")
                     }
                     pushTrace("Cancellation not saved", detail: message, status: .failed)
+#if canImport(UIKit)
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+#endif
                     return
                 }
             }
@@ -849,7 +857,9 @@ final class AgentRuntime {
             )
             saveCompactedIfPossible(context)
         }
+#if canImport(UIKit)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+#endif
     }
 
     // MARK: - Transient Toast Feedback

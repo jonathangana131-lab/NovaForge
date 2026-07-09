@@ -71,6 +71,7 @@ extension ProjectDashboardView {
             }
 
             projectOSIntelligenceTelemetry
+            projectOSSurfaceMap
             projectOSIntelligenceSignalGrid
 
             Rectangle()
@@ -108,6 +109,44 @@ extension ProjectDashboardView {
                 .strokeBorder(tintForIntelligenceTelemetry.opacity(0.16), lineWidth: 0.55)
         )
         .accessibilityIdentifier("projectOSIntelligenceTelemetry")
+    }
+
+    var projectOSSurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Mission loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Brief",
+                    detail: dashboardExecutionState.shortTitle,
+                    symbol: dashboardExecutionState.symbolName,
+                    tint: dashboardExecutionTint(dashboardExecutionState),
+                    isActive: runtimeStatus.isWorking
+                ),
+                NovaSurfaceMapNode(
+                    title: "Plan",
+                    detail: "\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1)) steps",
+                    symbol: "list.bullet.clipboard.fill",
+                    tint: AgentPalette.cyan,
+                    isActive: selectedDetailScope == .plan
+                ),
+                NovaSurfaceMapNode(
+                    title: "Proof",
+                    detail: "\(projectOSEvidenceMetricCount) items",
+                    symbol: "checkmark.seal.fill",
+                    tint: trustTint,
+                    isActive: selectedDetailScope == .evidence || projectOSEvidenceMetricCount > 0
+                ),
+                NovaSurfaceMapNode(
+                    title: "Gates",
+                    detail: projectOSGateMetricText,
+                    symbol: projectOSGateMetricCount == 0 ? "lock.open.fill" : "exclamationmark.triangle.fill",
+                    tint: projectOSGateMetricTint,
+                    isActive: projectOSGateMetricCount > 0
+                )
+            ],
+            tint: projectOSTint
+        )
+        .accessibilityIdentifier("projectOSSurfaceMap")
     }
 
     var projectOSIntelligenceSignalGrid: some View {
@@ -462,7 +501,7 @@ extension ProjectDashboardView {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            NovaHaptics.tick()
             action()
         } label: {
             Label(title, systemImage: symbol)

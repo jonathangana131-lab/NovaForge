@@ -799,6 +799,8 @@ struct RunsView: View {
                         runsScreenHeader
                             .padding(.bottom, 2)
 
+                        historySurfaceMap
+
                         if cachedStats.total > 0 {
                             historyVaultSummary
                         }
@@ -1044,7 +1046,7 @@ struct RunsView: View {
         } catch {
             modelContext.rollback()
             runDeleteError = "Could not delete this history receipt. \(error.localizedDescription)"
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            NovaHaptics.runFailed()
         }
     }
 
@@ -1090,6 +1092,44 @@ struct RunsView: View {
             matchingCount: cachedMatchingRunCount,
             hasOffscreenRuns: hasOffscreenRuns
         )
+    }
+
+    var historySurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Proof loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Receipts",
+                    detail: "\(cachedStats.total) logged",
+                    symbol: "waveform.path.ecg",
+                    tint: AgentPalette.lilac,
+                    isActive: activeFilterType == .all
+                ),
+                NovaSurfaceMapNode(
+                    title: "Writes",
+                    detail: "\(cachedStats.mutations) changes",
+                    symbol: "square.and.pencil",
+                    tint: AgentPalette.cyan,
+                    isActive: activeFilterType == .writes
+                ),
+                NovaSurfaceMapNode(
+                    title: "Failures",
+                    detail: "\(cachedStats.failures) to review",
+                    symbol: "exclamationmark.triangle.fill",
+                    tint: cachedStats.failures > 0 ? AgentPalette.rose : AgentPalette.green,
+                    isActive: activeFilterType == .failures || cachedStats.failures > 0
+                ),
+                NovaSurfaceMapNode(
+                    title: "Replay",
+                    detail: hasOffscreenRuns ? "\(cachedFilteredRuns.count) shown" : "Ready",
+                    symbol: "play.rectangle.fill",
+                    tint: AgentPalette.primaryAccent,
+                    isActive: replayTarget != nil
+                )
+            ],
+            tint: AgentPalette.lilac
+        )
+        .accessibilityIdentifier("historySurfaceMap")
     }
 
     var shouldShowHistoryMissionStrip: Bool {
@@ -1439,7 +1479,7 @@ private struct HistoryRuntimeReceiptBanner: View {
 
     private func runtimeButton(_ title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            NovaHaptics.tick()
             action()
         } label: {
             Label(title, systemImage: symbol)

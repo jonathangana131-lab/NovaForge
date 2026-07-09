@@ -17,7 +17,6 @@
 //
 
 import SwiftUI
-import UIKit
 
 // MARK: - Typographic ramp
 
@@ -299,6 +298,92 @@ struct NovaTelemetryStrip: View {
         .animation(.snappy(duration: 0.3), value: items)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(items.map { "\($0.label): \($0.value)" }.joined(separator: ", "))
+    }
+}
+
+// MARK: - Surface map
+
+struct NovaSurfaceMapNode: Identifiable {
+    let title: String
+    let detail: String
+    let symbol: String
+    var tint: Color = AgentPalette.accent
+    var isActive = false
+
+    var id: String { title }
+}
+
+/// A compact cockpit rail that makes every major menu feel connected to the
+/// same mission loop: brief, workspace, proof, and control. Use it once per
+/// surface with surface-specific signals instead of repeating generic stat cards.
+struct NovaSurfaceMap: View {
+    let title: String
+    let nodes: [NovaSurfaceMapNode]
+    var tint: Color = AgentPalette.accent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 7) {
+                NovaKicker(text: title, tint: tint)
+                Spacer(minLength: 0)
+                Text("Surface map")
+                    .novaLabel(AgentPalette.quaternaryText)
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(nodes) { node in
+                    NovaSurfaceMapNodeView(node: node)
+                }
+            }
+        }
+        .padding(12)
+        .agentSurface(radius: 18, tint: tint.opacity(0.07))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(tint.opacity(0.15), lineWidth: 0.7)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        ([title] + nodes.map { "\($0.title): \($0.detail)" }).joined(separator: ", ")
+    }
+}
+
+private struct NovaSurfaceMapNodeView: View {
+    let node: NovaSurfaceMapNode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: node.symbol)
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(node.tint)
+                Spacer(minLength: 0)
+                Circle()
+                    .fill(node.isActive ? node.tint : AgentPalette.divider)
+                    .frame(width: 6, height: 6)
+            }
+
+            Text(node.title)
+                .novaLabel(node.isActive ? node.tint : AgentPalette.tertiaryText)
+                .minimumScaleFactor(0.72)
+
+            Text(node.detail)
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
+        .padding(9)
+        .background(node.tint.opacity(node.isActive ? 0.12 : 0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(node.tint.opacity(node.isActive ? 0.24 : 0.10), lineWidth: 0.7)
+        )
     }
 }
 
@@ -616,20 +701,6 @@ struct NovaSectionMark: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(detail == nil ? title : "\(title). \(detail ?? "")")
-    }
-}
-
-// MARK: - Haptics vocabulary extension
-
-extension NovaHaptics {
-    /// Lens/filter change — the light ratchet click.
-    static func lensChanged() {
-        UISelectionFeedbackGenerator().selectionChanged()
-    }
-
-    /// A sheet or drawer surfacing.
-    static func surfaceRevealed() {
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.8)
     }
 }
 
