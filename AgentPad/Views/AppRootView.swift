@@ -82,10 +82,10 @@ enum AppTab: String, CaseIterable, Identifiable {
     static func resolve(_ rawValue: String) -> AppTab? {
         if let tab = AppTab(rawValue: rawValue) { return tab }
         switch rawValue {
-        case "project", "chat": return .forge
-        case "files", "terminal": return .workspace
-        case "runs": return .history
-        case "settings": return .control
+        case "project", "chat", "forge": return .forge
+        case "files", "terminal", "workspace": return .workspace
+        case "runs", "history": return .history
+        case "settings", "control": return .control
         default: return nil
         }
     }
@@ -3724,18 +3724,14 @@ struct AppRootView: View {
 
     private func applyDebugLaunchTabArgument() {
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("--open-project") {
+        if arguments.contains("--open-forge") || arguments.contains("--open-project") || arguments.contains("--open-chat") {
             selectedTab = .forge
-        } else if arguments.contains("--open-files") {
+        } else if arguments.contains("--open-workspace") || arguments.contains("--open-files") || arguments.contains("--open-terminal") {
             selectedTab = .workspace
-        } else if arguments.contains("--open-terminal") {
+        } else if arguments.contains("--open-history") || arguments.contains("--open-runs") {
             selectedTab = .history
-        } else if arguments.contains("--open-runs") {
-            selectedTab = .history
-        } else if arguments.contains("--open-settings") {
+        } else if arguments.contains("--open-control") || arguments.contains("--open-settings") {
             selectedTab = .control
-        } else if arguments.contains("--open-chat") {
-            selectedTab = .forge
         }
         // Sheets that used to hang off the Project tab now live on the
         // mission dossier cover — mount it so their demo flags can fire.
@@ -3752,13 +3748,13 @@ struct AppRootView: View {
 
     private static func initialDebugLaunchTab() -> AppTab {
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("--open-files") {
+        if arguments.contains("--open-workspace") || arguments.contains("--open-files") || arguments.contains("--open-terminal") {
             return .workspace
         }
-        if arguments.contains("--open-terminal") || arguments.contains("--open-runs") {
+        if arguments.contains("--open-history") || arguments.contains("--open-runs") {
             return .history
         }
-        if arguments.contains("--open-settings") {
+        if arguments.contains("--open-control") || arguments.contains("--open-settings") {
             return .control
         }
         return .forge
@@ -3768,13 +3764,13 @@ struct AppRootView: View {
     #if !DEBUG && !targetEnvironment(simulator)
     private static func initialDebugLaunchTab() -> AppTab {
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("--open-files") {
+        if arguments.contains("--open-workspace") || arguments.contains("--open-files") || arguments.contains("--open-terminal") {
             return .workspace
         }
-        if arguments.contains("--open-terminal") || arguments.contains("--open-runs") {
+        if arguments.contains("--open-history") || arguments.contains("--open-runs") {
             return .history
         }
-        if arguments.contains("--open-settings") {
+        if arguments.contains("--open-control") || arguments.contains("--open-settings") {
             return .control
         }
         return .forge

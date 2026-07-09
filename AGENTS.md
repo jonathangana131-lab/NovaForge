@@ -30,27 +30,34 @@ Run focused tests:
 xcodebuild -project AgentPad.xcodeproj -scheme AgentPad -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO test
 ```
 
-Build, install, launch, and capture one smoke screenshot:
+Run the canonical fast trust gate before release-hardening changes:
 
 ```sh
-BUILD_FIRST=1 scripts/codex-sim-smoke.sh
+scripts/codex-focused-tests.sh
+scripts/codex-performance-gate.sh
+WAIT_SECONDS=1 BUILD_FIRST=1 CONFIGURATION=Release SHUTDOWN_SIMULATOR_AFTER_TOUR=1 scripts/codex-sim-tour.sh
+scripts/codex-sim-clean-check.sh
 ```
 
-Capture the primary NovaForge surface tour:
+Capture a quick single-screen proof when a full tour is unnecessary:
 
 ```sh
-BUILD_FIRST=1 scripts/codex-sim-tour.sh
+WAIT_SECONDS=1 SHUTDOWN_SIMULATOR_AFTER_CAPTURE=1 scripts/codex-fast-screenshot.sh --open-forge
 ```
 
 Useful launch arguments already supported by the smoke/tour scripts:
 
 - `--reset-ui`
-- `--open-chat` (lands on Forge)
-- `--open-project` (lands on Forge; mission state on the strip)
-- `--open-files` (lands on Workspace)
-- `--open-runs` (lands on History)
-- `--open-terminal` (debug terminal surface)
-- `--open-settings` (lands on Control)
+- `--open-forge` (canonical Forge entry)
+- `--open-workspace` (canonical Workspace entry)
+- `--open-history` (canonical History entry)
+- `--open-control` (canonical Control entry)
+- `--open-chat` (legacy alias; lands on Forge)
+- `--open-project` (legacy alias; lands on Forge with mission state on the strip)
+- `--open-files` (legacy alias; lands on Workspace)
+- `--open-runs` (legacy alias; lands on History)
+- `--open-terminal` (legacy alias; opens the Workspace terminal proof console)
+- `--open-settings` (legacy alias; lands on Control)
 - `--first-run-local-model-missing`
 - `--settings-local-model-ready`
 - `--pending-approval-demo`
@@ -59,7 +66,8 @@ Useful launch arguments already supported by the smoke/tour scripts:
 
 - Tabs: **Forge** (chat + live mission strip + inline approvals — the loop),
   **Workspace** (files, artifact shelf, terminal), **History** (run
-  receipts), **Control** (settings).
+  receipts), **Control** (settings). The current app plan and release scope
+  live in [docs/release-plan.md](docs/release-plan.md).
 - Projects are a context, not a tab: the scope pill in the Forge header
   switches projects; the full project dashboard presents as the modal
   "mission dossier" (`MissionDossierCover` in `ForgeChrome.swift`,

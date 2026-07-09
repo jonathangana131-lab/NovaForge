@@ -8,16 +8,16 @@ The preferred path is the guarded fast screenshot script. It reuses the newest b
 
 ## Fast Single-Screen Proof
 
-Fast Project screenshot from the newest Release app:
+Fast Forge mission screenshot from the newest Release app:
 
 ```sh
-WAIT_SECONDS=1 SHUTDOWN_SIMULATOR_AFTER_CAPTURE=1 scripts/codex-fast-screenshot.sh --open-project
+WAIT_SECONDS=1 SHUTDOWN_SIMULATOR_AFTER_CAPTURE=1 scripts/codex-fast-screenshot.sh --open-forge
 ```
 
 Rebuild once before capture:
 
 ```sh
-BUILD_FIRST=1 CONFIGURATION=Release scripts/codex-sim-tour.sh
+BUILD_FIRST=1 CONFIGURATION=Release WAIT_SECONDS=1 SHUTDOWN_SIMULATOR_AFTER_CAPTURE=1 scripts/codex-sim-smoke.sh --open-forge
 ```
 
 Capture another entry point:
@@ -66,19 +66,36 @@ Verifier output includes `tour-verification-summary.txt` inside the tour folder 
 
 Tour fixture matrix:
 
+The launch arguments still use compatibility aliases because older fixtures, Siri intents, and scripts route through `AppTab.resolve(_:)`. New scripts should prefer canonical `--open-forge`, `--open-workspace`, `--open-history`, and `--open-control`; the tour keeps the compatibility names below to avoid churn in existing screenshot filenames. The expected user-facing surfaces are Forge, Workspace, History, and Control.
+
+Before editing this matrix, run the static manifest guard so the runner and verifier stay aligned:
+
+```sh
+TOUR_MANIFEST_CHECK=1 scripts/codex-tour-verify.sh
+```
+
 | Step | Launch args | Proves |
 | --- | --- | --- |
-| `01-chat-default-clean` | `--reset-ui --open-chat` | Cold launch defaults to clean Chat, without the old project-launch card or duplicate Project Status board. |
-| `02-project-idle` | `--reset-ui --open-project` | Project OS idle command center, one Run action, chosen next step, reason, proof, and approval expectation. |
-| `03-project-running` | `--reset-ui --project-running-demo --open-project` | Project Run active/loading state and live structured progress outside Chat. |
-| `04-project-approval` | `--reset-ui --pending-approval-demo --open-project` | Project OS waiting/approval state with paused tool context. |
-| `05-project-blocked` | `--reset-ui --project-blocked-demo --open-project` | True blocker state with failed run, terminal evidence, and recovery next step. |
-| `06-project-proof` | `--reset-ui --project-proof-demo --open-project` | Completed/proof state with artifact, file change, terminal record, timeline, and proof checkpoint linked. |
-| `07-runs-proof` | `--reset-ui --project-proof-demo --open-runs` | Runs surface agrees with Project proof/run records. |
-| `08-files-proof` | `--reset-ui --project-proof-demo --open-files` | Files surface can show proof artifacts without deleting durable evidence. |
-| `09-terminal-live-record` | `--reset-ui --terminal-live-record-demo --open-terminal` | Terminal proof surface and command record state. |
-| `10-settings-local-ready` | `--reset-ui --settings-local-model-ready --open-settings` | Settings surface with deterministic local model ready state. |
-| `11-chat-pending-approval` | `--reset-ui --pending-approval-demo --open-chat` | Chat remains conversation-first while approval state belongs to the correct run. |
+| `01-chat-default-clean` | `--reset-ui --open-chat` | Compatibility name; proves cold launch defaults to clean Forge without the pre-redesign project-launch card or duplicate mission status board. |
+| `02-project-idle` | `--reset-ui --open-project` | Compatibility name; proves Forge mission command state, one Run action, chosen next step, reason, proof, and approval expectation. |
+| `03-project-running` | `--reset-ui --project-running-demo --open-project` | Compatibility name; proves project run active/loading state and live structured progress outside the conversation. |
+| `04-project-approval` | `--reset-ui --project-waiting-demo --open-project` | Compatibility name; proves Forge pauses a project mission at an approval gate with pending mutating tool context. |
+| `05-project-waiting` | `--reset-ui --project-waiting-demo --open-project` | Compatibility name; intentionally replays the same approval-gate fixture as a stability frame while the verifier still rejects unexpected repeated frames elsewhere. |
+| `06-project-blocked` | `--reset-ui --project-blocked-demo --open-project` | Compatibility name; proves true blocker state with failed run, terminal evidence, and recovery next step. |
+| `07-project-proof` | `--reset-ui --project-proof-demo --open-project` | Compatibility name; proves completed/proof state with artifact, file change, terminal record, timeline, and proof checkpoint linked. |
+| `08-project-resume` | `--reset-ui --project-resume-demo --open-project` | Compatibility name; proves Forge can resume an interrupted project run with the right context. |
+| `09-project-auto-continue-countdown` | `--reset-ui --auto-continue-countdown-demo --open-project` | Compatibility name; proves the auto-continue countdown state. |
+| `10-runs-proof` | `--reset-ui --project-proof-demo --open-runs` | Compatibility name; proves History agrees with Forge proof/run records. |
+| `11-files-proof` | `--reset-ui --project-proof-demo --open-files` | Compatibility name; proves Workspace shows proof artifacts without deleting durable evidence. |
+| `12-terminal-live-record` | `--reset-ui --terminal-live-record-demo --open-terminal` | Compatibility name; proves the Workspace terminal proof console and command record state. |
+| `13-settings-local-ready` | `--reset-ui --settings-local-model-ready --open-settings` | Compatibility name; proves Control with deterministic local model ready state. |
+| `14-chat-pending-approval` | `--reset-ui --pending-approval-demo --open-chat` | Compatibility name; proves Forge keeps approval context attached to the active conversation. |
+| `15-theme-matrix-project-running` | `--reset-ui --theme-world=matrixRain --project-running-demo --open-project` | Compatibility name; proves Matrix Rain keeps active Forge mission state legible. |
+| `16-theme-midnight-chat-general` | `--reset-ui --theme-world=midnightBlack --open-chat` | Compatibility name; proves Midnight Black keeps the general Forge conversation legible. |
+| `17-theme-whitegold-settings` | `--reset-ui --theme-world=whiteGold --settings-local-model-ready --open-settings` | Compatibility name; proves White Gold keeps Control/model readiness legible. |
+| `18-theme-arctic-runs-proof` | `--reset-ui --theme-world=arcticGlass --project-proof-demo --open-runs` | Compatibility name; proves Arctic Glass keeps History proof receipts legible. |
+| `19-theme-ember-terminal-proof` | `--reset-ui --theme-world=emberCore --terminal-live-record-demo --open-terminal` | Compatibility name; proves Ember Core keeps Workspace terminal proof legible. |
+| `20-project-intake-brief` | `--reset-ui --open-project --project-intake-demo` | Compatibility name; proves the mission dossier intake brief can open from Forge. |
 
 ## Ten-Minute Trust Gate
 
@@ -95,7 +112,7 @@ Expected proof:
 
 - `scripts/codex-focused-tests.sh` prints `Focused tests passed` and leaves logs in `QA/codex-focused-tests-<timestamp>/`.
 - `scripts/codex-performance-gate.sh` reuses the focused `.xctestrun`, prints `Performance budgets passed`, and leaves `performance-summary.txt` plus raw OSLog output in `QA/codex-performance-gate-<timestamp>/`.
-- `scripts/codex-sim-tour.sh` prints `Tour passed`, leaves eleven required screenshots in `NovaForgeScreenshots/codex-tour-<timestamp>/`, and writes `tour-verification-summary.txt`.
+- `scripts/codex-sim-tour.sh` prints `Tour passed`, leaves twenty required screenshots in `NovaForgeScreenshots/codex-tour-<timestamp>/`, and writes `tour-verification-summary.txt`.
 - `scripts/codex-sim-clean-check.sh` reports the proof simulator is shutdown and no NovaForge, `xcodebuild`, `simctl`, fast screenshot, or tour helper is lingering.
 
 ## Focused Code Proof
@@ -126,20 +143,22 @@ scripts/codex-timeout-runner.pl 240 QA/manual-CommandRunnerTests.log xcodebuild 
 scripts/codex-timeout-runner.pl 240 QA/manual-FilesWorkspacePersistenceTests.log xcodebuild -xctestrun "$XCTESTRUN_PATH" -destination 'id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' test-without-building -only-testing:AgentPadTests/FilesWorkspacePersistenceTests
 ```
 
+`ProjectFoundationTests` is currently a focused test class inside `AgentRuntimeLifecycleTests.swift`, not a separate source file. Keep the `-only-testing:AgentPadTests/ProjectFoundationTests` selector because Xcode addresses test classes by test bundle/class name.
+
 Coverage map:
 
 | Area | Primary proof |
 | --- | --- |
 | Launch recovery | `AgentRuntimeLifecycleTests` launch selection and interrupted tool recovery tests. |
-| Approval gating | `AgentRuntimeLifecycleTests` approve/reject/stop pending approval tests plus tour steps `04-project-approval` and `11-chat-pending-approval`. |
-| Approved tool state | `ProjectFoundationTests/testProjectSummaryTreatsApprovedRunAsRunningNotPendingApproval`. |
-| Project OS source of truth | `ProjectFoundationTests` launch repair/project scoping tests plus `testProjectLatestProofPrefersNewerFailedRunOverOlderArtifact`. |
-| Files workspace state | `FilesWorkspacePersistenceTests` project/settings/active-project workspace save and rollback tests plus tour step `08-files-proof`. |
-| Run history correctness | `ProjectFoundationTests/testDeletingRunLogDetachesProofProvenanceWithoutDeletingProof`. |
-| Artifacts and proof ledger | `WorkspaceArtifactTests` plus `ProjectFoundationTests/testProofLedgerDerivesFromArtifactsRunsFilesTerminalAndEvents`. |
-| Terminal records | `CommandRunnerTests` terminal merge/filter tests plus `ProjectFoundationTests/testTerminalMutationFileChangeLinksToTerminalCommand`. |
-| Local model state | `AgentRuntimeLifecycleTests` local model fixture/status/download preservation tests plus tour step `10-settings-local-ready`. |
-| Project continuation | `LocalAgentPlannerTests` continuation tests plus `ProjectFoundationTests/testProjectContinuationRuntimeCreatesActiveProjectEvidenceOnly`. |
+| Approval gating | `AgentRuntimeLifecycleTests` approve/reject/stop pending approval tests plus tour step `04-project-approval`. |
+| Approved tool state | `ProjectFoundationTests/testProjectSummaryTreatsApprovedRunAsRunningNotPendingApproval` inside `AgentRuntimeLifecycleTests.swift`. |
+| Project source of truth | `ProjectFoundationTests` launch repair/project scoping tests plus `testProjectLatestProofPrefersNewerFailedRunOverOlderArtifact`, currently inside `AgentRuntimeLifecycleTests.swift`. |
+| Files workspace state | `FilesWorkspacePersistenceTests` project/settings/active-project workspace save and rollback tests plus tour step `11-files-proof`. |
+| Run history correctness | `ProjectFoundationTests/testDeletingRunLogDetachesProofProvenanceWithoutDeletingProof` inside `AgentRuntimeLifecycleTests.swift`. |
+| Artifacts and proof ledger | Focused gate covers `ProjectFoundationTests/testProofLedgerDerivesFromArtifactsRunsFilesTerminalAndEvents`, currently inside `AgentRuntimeLifecycleTests.swift`; `WorkspaceArtifactTests` is adjacent deeper proof outside the default focused helper. |
+| Terminal records | `CommandRunnerTests` terminal merge/filter tests plus `ProjectFoundationTests/testTerminalMutationFileChangeLinksToTerminalCommand`, currently inside `AgentRuntimeLifecycleTests.swift`. |
+| Local model state | `AgentRuntimeLifecycleTests` local model fixture/status/download preservation tests plus tour step `13-settings-local-ready`. |
+| Project continuation | Focused gate covers `ProjectFoundationTests/testProjectContinuationRuntimeCreatesActiveProjectEvidenceOnly`, currently inside `AgentRuntimeLifecycleTests.swift`; `LocalAgentPlannerTests` is adjacent deeper proof outside the default focused helper. |
 
 ## Performance Budget Proof
 
@@ -150,7 +169,7 @@ scripts/codex-performance-gate.sh
 ```
 
 The gate runs `AgentPadUITests/testProjectLiquidGlassPerformanceTraceFlow` with `--profile-frame-rate`, `--profile-events`, and deterministic project auto-scroll, captures NovaForge performance OSLog output, then fails if any required metric is missing or above/below budget.
-It ignores the first tab-switch timing sample by default (`IGNORE_INITIAL_TAB_SWITCH_SAMPLES=1`) because launch arguments route the app from its default Chat tab to the requested opening tab before the user-tab-switch loop begins.
+It ignores the first tab-switch timing sample by default (`IGNORE_INITIAL_TAB_SWITCH_SAMPLES=1`) because launch arguments route the app from its default Forge surface to the requested opening surface before the user-tab-switch loop begins.
 
 Default budgets:
 

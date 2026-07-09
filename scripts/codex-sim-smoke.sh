@@ -16,6 +16,7 @@ BUILD_SDK="${BUILD_SDK:-iphonesimulator}"
 INSTALL_APP="${INSTALL_APP:-1}"
 LAUNCH_APP="${LAUNCH_APP:-1}"
 CAPTURE_SCREENSHOT="${CAPTURE_SCREENSHOT:-1}"
+ALLOW_MISSING_LAUNCH_PID="${ALLOW_MISSING_LAUNCH_PID:-0}"
 SIMCTL_TIMEOUT="${SIMCTL_TIMEOUT:-90}"
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-600}"
 CHECK_SIMULATOR_HEALTH="${CHECK_SIMULATOR_HEALTH:-1}"
@@ -225,8 +226,17 @@ LAUNCHED_APP_PID="$(grep -E "^${BUNDLE_ID}: " "$LAUNCH_LOG" | tail -n 1 | cut -d
 
 sleep "$WAIT_SECONDS"
 
-if [[ "$CAPTURE_SCREENSHOT" == "1" && -n "$LAUNCHED_APP_PID" ]]; then
-  if ! kill -0 "$LAUNCHED_APP_PID" >/dev/null 2>&1; then
+if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
+  if [[ -z "$LAUNCHED_APP_PID" ]]; then
+    echo "Unable to read launched app PID from $LAUNCH_LOG. Refusing to capture SpringBoard/Home Screen as proof." >&2
+    echo "Last 80 lines from $LAUNCH_LOG:" >&2
+    tail -n 80 "$LAUNCH_LOG" >&2
+    if [[ "$ALLOW_MISSING_LAUNCH_PID" == "1" ]]; then
+      echo "ALLOW_MISSING_LAUNCH_PID=1 set; continuing with screenshot capture." >&2
+    else
+      exit 1
+    fi
+  elif ! kill -0 "$LAUNCHED_APP_PID" >/dev/null 2>&1; then
     echo "Launched app exited before screenshot (pid $LAUNCHED_APP_PID). Refusing to capture SpringBoard/Home Screen as proof." >&2
     echo "Last 80 lines from $LAUNCH_LOG:" >&2
     tail -n 80 "$LAUNCH_LOG" >&2

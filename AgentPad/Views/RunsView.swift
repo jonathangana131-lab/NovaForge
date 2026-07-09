@@ -821,7 +821,7 @@ struct RunsView: View {
             updateCachedData()
         }
         .alert(
-            "Run Log Error",
+            "History Receipt Error",
             isPresented: Binding(
                 get: { runDeleteError != nil },
                 set: { if !$0 { runDeleteError = nil } }
@@ -829,7 +829,7 @@ struct RunsView: View {
         ) {
             Button("OK", role: .cancel) { runDeleteError = nil }
         } message: {
-            Text(runDeleteError ?? "NovaForge could not save that run log change.")
+            Text(runDeleteError ?? "NovaForge could not save that receipt change.")
         }
     }
 
@@ -908,7 +908,7 @@ struct RunsView: View {
             updateCachedData()
         } catch {
             modelContext.rollback()
-            runDeleteError = "Could not delete this run log. \(error.localizedDescription)"
+            runDeleteError = "Could not delete this history receipt. \(error.localizedDescription)"
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }
@@ -919,14 +919,14 @@ struct RunsView: View {
     }
 
     var emptyRunsTitle: String {
-        cachedStats.total == 0 ? "No runs yet" : "No matching run events"
+        cachedStats.total == 0 ? "No receipts yet" : "No matching history receipts"
     }
 
     var emptyRunsDetail: String {
         if cachedStats.total == 0 {
-            return "Tool calls, approvals, and terminal proof will appear here after NovaForge acts."
+            return "Tool calls, approvals, and terminal proof become receipts after NovaForge acts."
         }
-        return "Adjust the search or filter to review more run evidence."
+        return "Adjust the search or filter to review more receipt evidence."
     }
 
     var emptyRunsSymbol: String {
@@ -965,7 +965,7 @@ struct RunsView: View {
 
     var historyToolbar: some View {
         VStack(alignment: .leading, spacing: 13) {
-            NovaSectionMark(title: "Run Log", detail: auditSectionDetail, tint: AgentPalette.lilac)
+            NovaSectionMark(title: "Receipts", detail: auditSectionDetail, tint: AgentPalette.lilac)
 
             if needsLogTools {
                 searchField
@@ -1012,7 +1012,7 @@ struct RunsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Clear run search")
+                    .accessibilityLabel("Clear receipt search")
                     .accessibilityIdentifier("runsSearchClearButton")
                 }
             }
@@ -1057,7 +1057,7 @@ struct RunsView: View {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Show \(filter.rawValue.lowercased()) runs")
+                .accessibilityLabel("Show \(filter.rawValue.lowercased()) receipts")
                 .accessibilityIdentifier("runsFilter-\(filter.rawValue)")
             }
         }

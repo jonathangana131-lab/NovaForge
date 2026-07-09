@@ -109,7 +109,7 @@ struct ForgeHeader: View {
             chromeButton(
                 symbol: "bubble.left.and.bubble.right",
                 tint: chromeTint,
-                label: "Open chats",
+                label: "Open Forge threads",
                 identifier: "forgeChatsButton",
                 action: openChatDrawer
             )
@@ -133,7 +133,7 @@ struct ForgeHeader: View {
             chromeButton(
                 symbol: "square.and.pencil",
                 tint: AgentPalette.lilac,
-                label: "New chat",
+                label: "New mission",
                 identifier: "forgeNewChatButton",
                 action: newChat
             )

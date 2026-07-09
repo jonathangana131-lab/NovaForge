@@ -512,7 +512,7 @@ extension ProjectDashboardView {
 
     var projectCommandCenter: some View {
         sectionShell(
-            title: "Command Center",
+            title: "Mission Control",
             subtitle: commandReadout,
             symbol: "command",
             tint: commandTint(for: selectedCommandIntent)
@@ -700,9 +700,9 @@ extension ProjectDashboardView {
 
     var commandSurfaceLinks: some View {
         HStack(spacing: 8) {
-            commandSurfaceLink(title: "Chat", symbol: "sparkles", tab: .chat, tint: AgentPalette.cyan)
-            commandSurfaceLink(title: "Files", symbol: "folder.fill", tab: .files, tint: AgentPalette.storageAccent)
-            commandSurfaceLink(title: "History", symbol: "waveform.path.ecg", tab: .runs, tint: AgentPalette.lilac)
+            commandSurfaceLink(title: "Forge", symbol: "sparkles", tab: .forge, tint: AgentPalette.cyan)
+            commandSurfaceLink(title: "Workspace", symbol: "folder.fill", tab: .workspace, tint: AgentPalette.storageAccent)
+            commandSurfaceLink(title: "History", symbol: "waveform.path.ecg", tab: .history, tint: AgentPalette.lilac)
         }
     }
 
@@ -972,7 +972,7 @@ extension ProjectDashboardView {
             return "\(summary.pendingApprovalCount) pending"
         }
         guard let latest = projectRuns.first else {
-            return "No runs yet"
+            return "No receipts yet"
         }
         return "\(runStatusText(latest.status)) · \(latest.name)"
     }

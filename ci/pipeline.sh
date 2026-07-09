@@ -1,7 +1,7 @@
 #!/bin/bash
 # NovaForge CI pipeline - runs on a macOS GitHub Actions runner.
-# Builds the app for the iPhone simulator, restores the binary app icon if
-# missing, walks every app surface via launch arguments, captures screenshots
+# Builds the app for the iPhone simulator, verifies required source assets are
+# present, walks every app surface via launch arguments, captures screenshots
 # and a matrix-rain video, and force-pushes all captures to the `ci-shots`
 # branch (fetchable as public raw URLs). Build logs are published even when
 # the build fails.
@@ -14,10 +14,6 @@ exec > >(tee -a pipeline.log) 2>&1
 
 BUNDLE="com.joey.NovaForge"
 ICON="AgentPad/App/Assets.xcassets/AppIcon.appiconset/icon_1024.png"
-IMPORT_TARBALL_URL="https://pub.hyperagent.com/api/published/pbf01KWKBBTZB_0ZV3WMJ212R4ZGSN/novaforge-import.tar.gz"
-# Facelift arc-reactor icon (binary assets can't ride the text-only git
-# bridge, so the build fetches it — same trust path as the import tarball).
-FACELIFT_ICON_URL="https://pub.hyperagent.com/api/published/pbf01KWNCR2ZQ_1N7M4RF7JH7D9EVH/icon_new.png"
 APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/NovaForge.app"
 
 # ---------------------------------------------------------------------------
@@ -61,27 +57,13 @@ sudo xcode-select -s "$NEWEST/Contents/Developer"
 xcodebuild -version
 
 # ---------------------------------------------------------------------------
-echo "==> Ensuring binary app icon"
-if [ ! -f "$ICON" ]; then
-  echo "icon missing - restoring from import archive"
-  curl -fsSL "$IMPORT_TARBALL_URL" -o /tmp/novaforge-import.tar.gz
-  mkdir -p /tmp/novaforge-import
-  tar -xzf /tmp/novaforge-import.tar.gz -C /tmp/novaforge-import
-  cp "/tmp/novaforge-import/$ICON" "$ICON"
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git add "$ICON"
-  git commit -m "chore: restore binary app icon from import archive [skip ci]"
-  git push origin "HEAD:${GITHUB_REF_NAME:-main}" || echo "WARN: icon push failed, continuing with local copy"
+echo "==> Verifying required source assets"
+if [ ! -s "$ICON" ]; then
+  echo "ERROR: required app icon is missing or empty: $ICON" >&2
+  echo "CI no longer downloads or commits source assets during release proof." >&2
+  exit 64
 fi
-
-echo "==> Applying facelift app icon"
-if curl -fsSL "$FACELIFT_ICON_URL" -o /tmp/facelift-icon.png && [ -s /tmp/facelift-icon.png ]; then
-  cp /tmp/facelift-icon.png "$ICON"
-  echo "facelift icon applied ($(wc -c < "$ICON") bytes)"
-else
-  echo "WARN: facelift icon fetch failed — building with repo icon"
-fi
+echo "app icon present ($(wc -c < "$ICON") bytes)"
 
 # ---------------------------------------------------------------------------
 # Watchdog: runs 30/31 sat in_progress for 36-45+ min against a 15-24 min

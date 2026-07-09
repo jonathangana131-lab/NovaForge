@@ -24,6 +24,7 @@ CAPTURE_STDIO="${CAPTURE_STDIO:-0}"
 TERMINATE_AFTER_CAPTURE="${TERMINATE_AFTER_CAPTURE:-1}"
 BOOT_SIMULATOR="${BOOT_SIMULATOR:-1}"
 SHUTDOWN_SIMULATOR_AFTER_CAPTURE="${SHUTDOWN_SIMULATOR_AFTER_CAPTURE:-0}"
+ALLOW_MISSING_LAUNCH_PID="${ALLOW_MISSING_LAUNCH_PID:-0}"
 DERIVED_DATA_ROOT="${DERIVED_DATA_ROOT:-$HOME/Library/Developer/Xcode/DerivedData}"
 SCREENSHOT_DIR="${SCREENSHOT_DIR:-$ROOT_DIR/NovaForgeScreenshots}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/QA/codex-fast-screenshot}"
@@ -186,8 +187,14 @@ record_launched_app_pid() {
 assert_launched_app_is_alive() {
   record_launched_app_pid
   if [[ -z "$LAUNCHED_APP_PID" ]]; then
-    echo "Warning: unable to read launched app PID from $LAUNCH_LOG; continuing with screenshot capture." >&2
-    return
+    echo "Unable to read launched app PID from $LAUNCH_LOG. Refusing to capture SpringBoard/Home Screen as proof." >&2
+    echo "Last 60 lines from $LAUNCH_LOG:" >&2
+    tail -n 60 "$LAUNCH_LOG" >&2
+    if [[ "$ALLOW_MISSING_LAUNCH_PID" == "1" ]]; then
+      echo "ALLOW_MISSING_LAUNCH_PID=1 set; continuing with screenshot capture." >&2
+      return
+    fi
+    exit 1
   fi
 
   if ! kill -0 "$LAUNCHED_APP_PID" >/dev/null 2>&1; then
