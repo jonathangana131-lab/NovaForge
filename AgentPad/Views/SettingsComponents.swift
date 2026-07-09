@@ -9,22 +9,238 @@ import SwiftUI
 
 struct SettingsHero: View {
     let projectName: String
-    let providerName: String
-    let modelName: String
-    /// One readiness statement, folded into the header — replaces the old
-    /// SYSTEMS GO hero card and quick rail that restated provider/model a
-    /// second and third time below the title.
-    let readiness: String
+    let subtitle: String
     let tint: Color
 
     var body: some View {
         NovaScreenHeader(
             kicker: "Control // \(projectName)",
             title: "Control",
-            subtitle: "\(providerName) · \(modelName) · \(readiness)",
+            subtitle: subtitle,
             symbol: "slider.horizontal.3",
             tint: tint
         )
+    }
+}
+
+struct SettingsCommandDeck: View {
+    let readinessTitle: String
+    let readinessDetail: String
+    let readinessSymbol: String
+    let readinessTint: Color
+    let providerName: String
+    let providerSymbol: String
+    let providerTint: Color
+    let modelName: String
+    let modelDetail: String
+    let safetyTitle: String
+    let safetyDetail: String
+    let safetyTint: Color
+    let buildLabel: String
+    let buildDetail: String
+    let theme: AgentTheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: readinessSymbol)
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(readinessTint)
+                    .frame(width: 48, height: 48)
+                    .agentControlSurface(radius: 15, tint: readinessTint.opacity(0.14), selected: true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Nova status")
+                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .textCase(.uppercase)
+                    Text(readinessTitle)
+                        .font(.system(size: 24, weight: .black, design: AgentPalette.displayFontDesign))
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(readinessDetail)
+                        .font(.system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            SettingsCommandDeckBuildPill(label: buildLabel, detail: buildDetail)
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 8),
+                    GridItem(.flexible(), spacing: 8)
+                ],
+                spacing: 8
+            ) {
+                SettingsCommandDeckTile(
+                    title: "Provider",
+                    value: providerName,
+                    detail: "Route",
+                    symbol: providerSymbol,
+                    tint: providerTint
+                )
+
+                SettingsCommandDeckTile(
+                    title: "Model",
+                    value: modelName,
+                    detail: modelDetail,
+                    symbol: "cpu",
+                    tint: readinessTint
+                )
+
+                SettingsCommandDeckTile(
+                    title: "Safety",
+                    value: safetyTitle,
+                    detail: safetyDetail,
+                    symbol: safetyTitle == "Review first" ? "checkmark.shield.fill" : "bolt.badge.checkmark.fill",
+                    tint: safetyTint
+                )
+
+                SettingsCommandDeckThemeTile(theme: theme)
+            }
+        }
+        .padding(12)
+        .agentSurface(radius: 20, tint: readinessTint.opacity(0.08))
+    }
+}
+
+private struct SettingsCommandDeckBuildPill: View {
+    let label: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "iphone.gen3")
+                .font(.system(size: 11, weight: .black))
+                .foregroundStyle(AgentPalette.cyan)
+                .frame(width: 24, height: 24)
+                .agentControlSurface(radius: 8, tint: AgentPalette.cyan.opacity(0.12), selected: false)
+
+            Text("App build")
+                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.tertiaryText)
+                .textCase(.uppercase)
+
+            Text(label)
+                .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+
+            Spacer(minLength: 4)
+
+            Text(detail)
+                .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(.horizontal, 10)
+        .frame(minHeight: 38)
+        .agentRowSurface(radius: 13, tint: AgentPalette.cyan.opacity(0.06))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settingsBuildPill")
+    }
+}
+
+private struct SettingsCommandDeckTile: View {
+    let title: String
+    let value: String
+    let detail: String
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(tint)
+                    .frame(width: 24, height: 24)
+                    .agentControlSurface(radius: 8, tint: tint.opacity(0.12), selected: false)
+                Text(title)
+                    .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .textCase(.uppercase)
+                    .lineLimit(1)
+            }
+
+            Text(value)
+                .font(.system(size: 15, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+
+            Text(detail)
+                .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+        }
+        .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+        .padding(10)
+        .agentRowSurface(radius: 15, tint: tint.opacity(0.06))
+    }
+}
+
+private struct SettingsCommandDeckThemeTile: View {
+    let theme: AgentTheme
+
+    private var palette: AgentThemePalette { theme.palette }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [palette.backgroundA, palette.backgroundB, palette.backgroundC],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Circle()
+                        .fill(palette.primaryAccent)
+                        .frame(width: 8, height: 8)
+                }
+                .frame(width: 24, height: 24)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(palette.glassStroke, lineWidth: 0.8)
+                )
+
+                Text("Theme")
+                    .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .textCase(.uppercase)
+                    .lineLimit(1)
+            }
+
+            Text(theme.title)
+                .font(.system(size: 15, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+
+            HStack(spacing: 4) {
+                Circle().fill(palette.primaryAccent).frame(width: 8, height: 8)
+                Circle().fill(palette.secondaryAccent).frame(width: 8, height: 8)
+                Circle().fill(palette.semanticSuccess).frame(width: 8, height: 8)
+                Text("Selected")
+                    .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+        .padding(10)
+        .agentRowSurface(radius: 15, tint: palette.primaryAccent.opacity(0.06))
     }
 }
 
@@ -120,6 +336,8 @@ struct SettingsStatusTile: View {
 struct SettingsProviderRow: View {
     let provider: AIProvider
     let selected: Bool
+    let status: String
+    let statusTint: Color
     let action: () -> Void
 
     var body: some View {
@@ -127,47 +345,268 @@ struct SettingsProviderRow: View {
             NovaHaptics.lensChanged()
             action()
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: provider.symbol)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(provider.tint)
-                    .frame(width: 18)
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 8) {
+                    Image(systemName: provider.symbol)
+                        .font(.system(size: 14, weight: .black))
+                        .foregroundStyle(provider.tint)
+                        .frame(width: 30, height: 30)
+                        .agentControlSurface(radius: 10, tint: provider.tint.opacity(0.13), selected: selected)
 
-                Text(provider.displayName)
-                    .font(NovaType.headline)
-                    .foregroundStyle(selected ? AgentPalette.ink : AgentPalette.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.74)
+                    Spacer(minLength: 0)
 
-                Spacer(minLength: 0)
-
-                ZStack {
-                    Circle()
-                        .strokeBorder(selected ? provider.tint : AgentPalette.quaternaryText.opacity(0.6), lineWidth: 1.3)
-                        .frame(width: 16, height: 16)
-                    if selected {
+                    ZStack {
                         Circle()
-                            .fill(provider.tint)
-                            .frame(width: 8, height: 8)
+                            .strokeBorder(selected ? provider.tint : AgentPalette.quaternaryText.opacity(0.6), lineWidth: 1.3)
+                            .frame(width: 16, height: 16)
+                        if selected {
+                            Circle()
+                                .fill(provider.tint)
+                                .frame(width: 8, height: 8)
+                        }
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(provider.displayName)
+                        .font(.system(size: 15, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(selected ? AgentPalette.ink : AgentPalette.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.70)
+                    Text(provider.subtitle)
+                        .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.78)
+                }
+
+                Text(status)
+                    .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(statusTint)
+                    .lineLimit(1)
+                    .padding(.horizontal, 7)
+                    .frame(height: 19)
+                    .agentControlSurface(radius: 7, tint: statusTint.opacity(0.11), selected: selected)
             }
-            .padding(.horizontal, 13)
-            .frame(height: 48)
-            .contentShape(Capsule())
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("settingsProvider-\(provider.rawValue)")
         .background(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(selected ? provider.tint.opacity(0.13) : AgentPalette.controlFill.opacity(0.38))
         )
         .overlay(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
                     selected ? provider.tint.opacity(0.44) : AgentPalette.controlBorder.opacity(0.5),
                     lineWidth: 0.9
                 )
         )
+    }
+}
+
+struct SettingsMiniStat: Identifiable {
+    let id: String
+    let label: String
+    let value: String
+
+    init(label: String, value: String) {
+        self.id = label
+        self.label = label
+        self.value = value
+    }
+}
+
+struct SettingsModelReadinessPanel: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let tint: Color
+    let stats: [SettingsMiniStat]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 16, weight: .black))
+                    .foregroundStyle(tint)
+                    .frame(width: 38, height: 38)
+                    .agentControlSurface(radius: 12, tint: tint.opacity(0.13), selected: true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Active model")
+                        .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .textCase(.uppercase)
+                    Text(title)
+                        .font(.system(size: 18, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(detail)
+                        .font(.system(size: 11, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(stats) { stat in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(stat.label)
+                            .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
+                            .foregroundStyle(AgentPalette.tertiaryText)
+                            .textCase(.uppercase)
+                            .lineLimit(1)
+                        Text(stat.value)
+                            .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
+                            .foregroundStyle(AgentPalette.ink)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.62)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .agentControlSurface(radius: 10, tint: tint.opacity(0.07), selected: false)
+                }
+            }
+        }
+        .padding(12)
+        .agentSurface(radius: 17, tint: tint.opacity(0.08))
+        .accessibilityIdentifier("settingsModelReadinessPanel")
+    }
+}
+
+struct SettingsSafetyModePicker: View {
+    let autoApproveWrites: Bool
+    let setMode: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                safetyButton(
+                    title: "Review first",
+                    detail: "Ask before writes, commands, or deletes",
+                    symbol: "checkmark.shield.fill",
+                    tint: AgentPalette.green,
+                    selected: !autoApproveWrites,
+                    value: false
+                )
+                safetyButton(
+                    title: "Auto-approve",
+                    detail: "Mutating sandbox tools skip prompts",
+                    symbol: "bolt.badge.checkmark.fill",
+                    tint: AgentPalette.warning,
+                    selected: autoApproveWrites,
+                    value: true
+                )
+            }
+
+            Label(autoApproveWrites ? "Auto mode still records receipts, but file changes can happen without another stop." : "Review mode pauses before workspace mutations and keeps every decision recoverable.", systemImage: autoApproveWrites ? "exclamationmark.triangle.fill" : "lock.shield.fill")
+                .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(autoApproveWrites ? AgentPalette.warning : AgentPalette.secondaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("settingsSafetyModePicker")
+    }
+
+    private func safetyButton(
+        title: String,
+        detail: String,
+        symbol: String,
+        tint: Color,
+        selected: Bool,
+        value: Bool
+    ) -> some View {
+        Button {
+            NovaHaptics.lensChanged()
+            setMode(value)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 7) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(tint)
+                    Spacer(minLength: 0)
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .black))
+                            .foregroundStyle(tint)
+                    }
+                }
+                Text(title)
+                    .font(.system(size: 14, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.70)
+                Text(detail)
+                    .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 86, alignment: .topLeading)
+            .padding(10)
+            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .agentRowSurface(radius: 15, tint: tint.opacity(selected ? 0.13 : 0.05), selected: selected)
+    }
+}
+
+struct SettingsDiagnosticItem: Identifiable {
+    let id: String
+    let title: String
+    let value: String
+    let detail: String
+    let symbol: String
+    let tint: Color
+}
+
+struct SettingsDiagnosticsPanel: View {
+    let items: [SettingsDiagnosticItem]
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(items) { item in
+                HStack(spacing: 10) {
+                    Image(systemName: item.symbol)
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(item.tint)
+                        .frame(width: 32, height: 32)
+                        .agentControlSurface(radius: 10, tint: item.tint.opacity(0.12), selected: false)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(item.title)
+                                .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(AgentPalette.ink)
+                                .lineLimit(1)
+                            Text(item.value)
+                                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(item.tint)
+                                .lineLimit(1)
+                                .padding(.horizontal, 6)
+                                .frame(height: 17)
+                                .agentControlSurface(radius: 6, tint: item.tint.opacity(0.10), selected: false)
+                        }
+                        Text(item.detail)
+                            .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .agentRowSurface(radius: 14, tint: item.tint.opacity(0.05))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("settingsDiagnostic-\(item.id)")
+            }
+        }
+        .accessibilityIdentifier("settingsDiagnosticsPanel")
     }
 }
 
@@ -1002,6 +1441,141 @@ struct SettingsThemeRow: View {
         }
         .frame(width: 62, height: 48)
         .accessibilityHidden(true)
+    }
+}
+
+struct SettingsThemeStudioCard: View {
+    let theme: AgentTheme
+    let selected: Bool
+    let action: () -> Void
+
+    private var palette: AgentThemePalette { theme.palette }
+
+    var body: some View {
+        Button {
+            NovaHaptics.lensChanged()
+            action()
+        } label: {
+            VStack(alignment: .leading, spacing: 9) {
+                studioPreview
+
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(theme.title)
+                        .font(.system(size: 14, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.70)
+
+                    Spacer(minLength: 0)
+
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .black))
+                            .foregroundStyle(palette.primaryAccent)
+                    }
+                }
+
+                Text(theme.subtitle)
+                    .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 5) {
+                    swatch(palette.primaryAccent)
+                    swatch(palette.secondaryAccent)
+                    swatch(palette.semanticSuccess)
+                    swatch(palette.semanticWarning)
+                    Spacer(minLength: 0)
+                    Text(selected ? "Active" : "Preview")
+                        .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(selected ? palette.primaryAccent : AgentPalette.tertiaryText)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 184, alignment: .topLeading)
+            .padding(10)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(selected ? palette.primaryAccent.opacity(0.10) : AgentPalette.controlFill.opacity(0.30))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    selected ? palette.primaryAccent.opacity(0.46) : AgentPalette.controlBorder.opacity(0.45),
+                    lineWidth: 0.9
+                )
+        )
+        .shadow(color: selected ? palette.glow.opacity(0.20) : .clear, radius: 12, x: 0, y: 6)
+        .accessibilityIdentifier("settingsThemeStudioCard-\(theme.rawValue)")
+    }
+
+    private var studioPreview: some View {
+        ZStack(alignment: .bottomLeading) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [palette.backgroundA, palette.backgroundB, palette.backgroundC, palette.backgroundD],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            Circle()
+                .fill(palette.glow)
+                .frame(width: 56, height: 56)
+                .blur(radius: 14)
+                .offset(x: 82, y: -32)
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top) {
+                    Text("Aa")
+                        .font(.system(size: 24, weight: .heavy, design: palette.typography.displayDesign))
+                        .foregroundStyle(palette.textPrimary)
+                    Spacer(minLength: 0)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(palette.primaryAccent)
+                        .frame(width: 26, height: 9)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(palette.textSecondary.opacity(0.78))
+                        .frame(width: 76, height: 5)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(palette.textTertiary.opacity(0.64))
+                        .frame(width: 52, height: 5)
+                }
+
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(palette.surface.opacity(0.88))
+                        .frame(height: 16)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(palette.controlFillSelected.opacity(0.90))
+                        .frame(width: 34, height: 16)
+                }
+            }
+            .padding(10)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 96)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(palette.glassStroke, lineWidth: 0.9)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityHidden(true)
+    }
+
+    private func swatch(_ color: Color) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 9, height: 9)
+            .overlay(Circle().strokeBorder(AgentPalette.border.opacity(0.45), lineWidth: 0.5))
     }
 }
 

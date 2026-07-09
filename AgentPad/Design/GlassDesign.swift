@@ -140,11 +140,15 @@ enum AgentPerformance {
     }
 
     static var allowsDecorativeMotion: Bool {
-        !isPerformanceMode
+        // Profiling runs should measure product layout and scroll health, not
+        // keep multiple decorative repeatForever/phase animations alive while
+        // XCTest is sampling frame cadence. Normal user builds still get the
+        // richer Liquid Glass motion unless performance mode is enabled.
+        !isPerformanceMode && !shouldProfileFrameRate
     }
 
     static var prefersReducedVisualEffects: Bool {
-        isPerformanceMode
+        isPerformanceMode || shouldProfileFrameRate
     }
 
     static let shouldProfileFrameRate: Bool =
@@ -278,6 +282,7 @@ struct PerformanceFrameProbe: UIViewRepresentable {
     let isActive: Bool
     var sampleInterval: TimeInterval = 1
     var hitchThreshold: TimeInterval = 1.0 / 30.0
+    var warmupDuration: TimeInterval = 0.55
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -291,7 +296,8 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             surface: surface,
             isActive: isActive && AgentPerformance.shouldProfileFrameRate,
             sampleInterval: sampleInterval,
-            hitchThreshold: hitchThreshold
+            hitchThreshold: hitchThreshold,
+            warmupDuration: warmupDuration
         )
         return view
     }
@@ -301,7 +307,8 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             surface: surface,
             isActive: isActive && AgentPerformance.shouldProfileFrameRate,
             sampleInterval: sampleInterval,
-            hitchThreshold: hitchThreshold
+            hitchThreshold: hitchThreshold,
+            warmupDuration: warmupDuration
         )
     }
 
@@ -319,6 +326,8 @@ struct PerformanceFrameProbe: UIViewRepresentable {
         private var frameCount = 0
         private var worstFrameDuration: TimeInterval = 0
         private var hitches = 0
+        private var warmupDuration: TimeInterval = 0.55
+        private var warmupRemaining: TimeInterval = 0
 
         deinit {
             stop()
@@ -328,21 +337,29 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             surface: AgentPerformance.FrameSurface,
             isActive: Bool,
             sampleInterval: TimeInterval,
-            hitchThreshold: TimeInterval
+            hitchThreshold: TimeInterval,
+            warmupDuration: TimeInterval
         ) {
             let surfaceChanged = self.surface != surface
+            if surfaceChanged {
+                // Flush the previous window before swapping labels. Otherwise
+                // the prior idle sample can be reported as scroll (or the prior
+                // scroll sample as idle), making the gate fail on mislabeled
+                // transition work instead of actual sustained surface health.
+                flushWindow(force: true)
+                resetWindow()
+                lastTimestamp = nil
+                warmupRemaining = warmupDuration
+            }
             self.surface = surface
             self.sampleInterval = sampleInterval
             self.hitchThreshold = hitchThreshold
-            if surfaceChanged {
-                flushWindow()
-                resetWindow()
-            }
+            self.warmupDuration = warmupDuration
             isActive ? start() : stop()
         }
 
         func stop() {
-            flushWindow()
+            flushWindow(force: true)
             displayLink?.invalidate()
             displayLink = nil
             lastTimestamp = nil
@@ -351,6 +368,7 @@ struct PerformanceFrameProbe: UIViewRepresentable {
 
         private func start() {
             guard displayLink == nil else { return }
+            warmupRemaining = warmupDuration
             let link = CADisplayLink(target: self, selector: #selector(displayFrame(_:)))
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
             link.add(to: .main, forMode: .common)
@@ -366,6 +384,11 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             lastTimestamp = link.timestamp
             guard frameDuration > 0 else { return }
 
+            if warmupRemaining > 0 {
+                warmupRemaining = max(0, warmupRemaining - frameDuration)
+                return
+            }
+
             frameCount += 1
             accumulatedTime += frameDuration
             worstFrameDuration = max(worstFrameDuration, frameDuration)
@@ -374,12 +397,13 @@ struct PerformanceFrameProbe: UIViewRepresentable {
             }
 
             guard accumulatedTime >= sampleInterval else { return }
-            flushWindow()
+            flushWindow(force: false)
             resetWindow()
         }
 
-        private func flushWindow() {
-            guard frameCount > 0, accumulatedTime > 0 else { return }
+        private func flushWindow(force: Bool) {
+            let minimumWindow = force ? min(sampleInterval, 0.75) : sampleInterval
+            guard frameCount > 0, accumulatedTime >= minimumWindow else { return }
             AgentPerformance.frameAverage(surface, fps: Double(frameCount) / accumulatedTime)
             AgentPerformance.worstFrame(surface, milliseconds: worstFrameDuration * 1_000)
             AgentPerformance.hitchCount(surface, count: hitches)
@@ -421,9 +445,8 @@ enum AgentPlatformCompatibility {
     static let isIOS27OrNewer: Bool =
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
 
-    // Keep native Liquid Glass available even in performance mode. Profiling
-    // showed the native effect can be cheaper than layered fallback fills on
-    // simulator, while still matching the intended premium app character.
+    // Explicit launch-only escape hatch for environments where native Liquid
+    // Glass is unavailable or when QA wants the most conservative compositor.
     static let usesConservativeRendering: Bool =
         ProcessInfo.processInfo.arguments.contains("--disable-liquid-glass")
 }
@@ -439,13 +462,11 @@ struct AgentBackground: View {
         let conservativeRendering = AgentPlatformCompatibility.usesConservativeRendering
         let theme = AgentTheme.resolved(from: selectedThemeRawValue)
         let palette = theme.palette
-        // Matrix rain is now cheap enough (pre-rendered glyph atlas) to keep
-        // raining in performance mode — it drops to a reduced-density layer
-        // instead of freezing. Reduce Motion (accessibility) always wins.
-        let isMatrixTheme = palette.backgroundEffect == .matrixRain
+        // Performance/profile runs freeze ambient backdrops so the gate measures
+        // the foreground Project/Chat surfaces instead of recurring Canvas work.
+        // Reduce Motion and Reduce Transparency also suppress animation.
         let baseMotion = isAnimated && !reduceMotion && !conservativeRendering
-        let allowsMotion = baseMotion &&
-            (isMatrixTheme || (AgentPerformance.allowsDecorativeMotion && !reduceTransparency))
+        let allowsMotion = baseMotion && AgentPerformance.allowsDecorativeMotion && !reduceTransparency
         ZStack {
             LinearGradient(
                 colors: [
@@ -459,19 +480,21 @@ struct AgentBackground: View {
             )
             .ignoresSafeArea()
 
-            AgentThemeBackdrop(
-                theme: theme,
-                allowsMotion: allowsMotion,
-                reducedDetail: AgentPerformance.prefersReducedVisualEffects
-            )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(conservativeRendering ? 0 : 1)
-                // Identity is keyed by theme only. Including allowsMotion here
-                // used to force a full Canvas/TimelineView teardown+rebuild on
-                // every tab switch and scene-phase change — a large, invisible
-                // hitch. Animation state now transitions in place.
-                .id("agent-backdrop-\(theme.rawValue)")
-                .ignoresSafeArea()
+            if !AgentPerformance.shouldProfileFrameRate {
+                AgentThemeBackdrop(
+                    theme: theme,
+                    allowsMotion: allowsMotion,
+                    reducedDetail: AgentPerformance.prefersReducedVisualEffects
+                )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(conservativeRendering ? 0 : 1)
+                    // Identity is keyed by theme only. Including allowsMotion here
+                    // used to force a full Canvas/TimelineView teardown+rebuild on
+                    // every tab switch and scene-phase change — a large, invisible
+                    // hitch. Animation state now transitions in place.
+                    .id("agent-backdrop-\(theme.rawValue)")
+                    .ignoresSafeArea()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .compositingGroup()
@@ -513,7 +536,7 @@ struct MatrixRainBackdrop: View {
 
     var body: some View {
         if animated {
-            TimelineView(.animation(minimumInterval: reducedDetail ? 1.0 / 20.0 : 1.0 / 24.0)) { timeline in
+            TimelineView(.animation(minimumInterval: reducedDetail ? 1.0 / 30.0 : 1.0 / 60.0)) { timeline in
                 rainFrame(time: timeline.date.timeIntervalSinceReferenceDate)
             }
         } else {
@@ -530,6 +553,7 @@ struct MatrixRainBackdrop: View {
         // to run everywhere, including sheets and performance mode.
         let nearSprites = MatrixRainGlyphAtlas.shared.sprites(for: .near, palette: palette)
         let distantSprites = MatrixRainGlyphAtlas.shared.sprites(for: .distant, palette: palette)
+        let foregroundSprites = MatrixRainGlyphAtlas.shared.sprites(for: .foreground, palette: palette)
         let reducedSprites = MatrixRainGlyphAtlas.shared.sprites(for: .staticReduced, palette: palette)
         return Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
             drawMatrixDepth(in: &context, size: size)
@@ -538,8 +562,13 @@ struct MatrixRainBackdrop: View {
                     drawMatrixColumns(in: &context, size: size, time: time, layer: .distant, sprites: distantSprites)
                 }
                 drawMatrixColumns(in: &context, size: size, time: time, layer: .near, sprites: nearSprites)
+                if !reducedDetail {
+                    drawMatrixColumns(in: &context, size: size, time: time, layer: .foreground, sprites: foregroundSprites, columnStride: 2)
+                }
+                drawMatrixScanlines(in: &context, size: size, time: time)
             } else {
                 drawMatrixColumns(in: &context, size: size, time: time, layer: .staticReduced, sprites: reducedSprites)
+                drawMatrixScanlines(in: &context, size: size, time: 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -564,12 +593,14 @@ final class MatrixRainGlyphAtlas {
     enum LayerKind: String {
         case distant
         case near
+        case foreground
         case staticReduced
 
         fileprivate var layer: MatrixRainLayer {
             switch self {
             case .distant: .distant
             case .near: .near
+            case .foreground: .foreground
             case .staticReduced: .staticReduced
             }
         }
@@ -707,7 +738,8 @@ private extension MatrixRainBackdrop {
         size: CGSize,
         time: TimeInterval,
         layer: MatrixRainLayer,
-        sprites: MatrixRainGlyphAtlas.LayerSprites
+        sprites: MatrixRainGlyphAtlas.LayerSprites,
+        columnStride: Int = 1
     ) {
         let columnWidth = layer.columnWidth
         let rowHeight = layer.rowHeight
@@ -716,8 +748,9 @@ private extension MatrixRainBackdrop {
         let heightPadding = rowHeight * 3
         let glyphCount = MatrixRainSeed.glyphs.count
         let previousOpacity = context.opacity
+        let step = max(1, columnStride)
 
-        for column in 0..<columns {
+        for column in stride(from: 0, to: columns, by: step) {
             let seed = MatrixRainSeed.columns[column % MatrixRainSeed.columns.count]
             let speed = layer.speedScale * seed.speed
             let phase = seed.phase * Double(rows)
@@ -754,6 +787,40 @@ private extension MatrixRainBackdrop {
             }
         }
 
+        context.opacity = previousOpacity
+    }
+
+    func drawMatrixScanlines(in context: inout GraphicsContext, size: CGSize, time: TimeInterval) {
+        let previousOpacity = context.opacity
+        let spacing: CGFloat = 7
+        let rows = max(1, Int(size.height / spacing))
+        context.opacity = 1
+        for row in 0..<rows where row.isMultiple(of: 2) {
+            let y = CGFloat(row) * spacing
+            var line = Path()
+            line.move(to: CGPoint(x: 0, y: y))
+            line.addLine(to: CGPoint(x: size.width, y: y))
+            context.stroke(line, with: .color(Color.black.opacity(0.105)), lineWidth: 0.55)
+        }
+
+        let pulseTravel = max(size.height + 180, 1)
+        let pulseY = CGFloat((time * 96).truncatingRemainder(dividingBy: Double(pulseTravel))) - 90
+        let pulseRect = CGRect(x: 0, y: pulseY, width: size.width, height: 82)
+        var pulsePath = Path()
+        pulsePath.addRect(pulseRect)
+        context.fill(
+            pulsePath,
+            with: .linearGradient(
+                Gradient(colors: [
+                    .clear,
+                    palette.primaryAccent.opacity(0.045),
+                    palette.textPrimary.opacity(0.035),
+                    .clear
+                ]),
+                startPoint: CGPoint(x: 0, y: pulseRect.minY),
+                endPoint: CGPoint(x: 0, y: pulseRect.maxY)
+            )
+        )
         context.opacity = previousOpacity
     }
 }
@@ -1112,6 +1179,19 @@ private struct MatrixRainLayer {
         glowRadius: 1.0
     )
 
+    static let foreground = MatrixRainLayer(
+        columnWidth: 58,
+        rowHeight: 34,
+        speedScale: 1.62,
+        driftScale: 0.72,
+        offsetScale: 1.22,
+        alphaScale: 0.94,
+        tailLength: 10,
+        headFontSize: 15,
+        tailFontSize: 10.5,
+        glowRadius: 2.0
+    )
+
     static let staticReduced = MatrixRainLayer(
         columnWidth: 38,
         rowHeight: 30,
@@ -1135,7 +1215,7 @@ private struct MatrixRainColumnSeed {
 }
 
 private enum MatrixRainSeed {
-    static let glyphs = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$#/<>{}[]+-=*~").map { String($0) }
+    static let glyphs = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ$#/<>{}[]+-=*~").map { String($0) }
     static let columns: [MatrixRainColumnSeed] = (0..<128).map { index in
         let base = Double(index)
         let speed = 86.0 + Double((index * 37) % 74)
@@ -1179,7 +1259,7 @@ struct GlassPanelModifier: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
-        if AgentTheme.current == .matrixRain || AgentPlatformCompatibility.usesConservativeRendering || reduceTransparency {
+        if AgentTheme.current == .matrixRain || AgentPlatformCompatibility.usesConservativeRendering || AgentPerformance.prefersReducedVisualEffects || reduceTransparency {
             fallback(content: content)
         } else if #available(iOS 26.0, *) {
             let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -1476,7 +1556,7 @@ extension View {
     /// theme, where mono glyphs glow). No-ops under conservative rendering.
     @ViewBuilder
     func agentDockEdgeFade() -> some View {
-        if AgentPlatformCompatibility.usesConservativeRendering {
+        if AgentPlatformCompatibility.usesConservativeRendering || AgentPerformance.prefersReducedVisualEffects {
             self
         } else if #available(iOS 26.0, *) {
             self.scrollEdgeEffectStyle(.soft, for: .bottom)

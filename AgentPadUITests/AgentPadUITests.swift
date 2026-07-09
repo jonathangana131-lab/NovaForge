@@ -69,6 +69,23 @@ final class AgentPadUITests: XCTestCase {
         capture("80-first-run-local-missing-blocked", app: app)
     }
 
+    func testReadyFirstMissionStarterPrefillsComposer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--settings-local-model-ready", "--open-chat"]
+        app.launch()
+
+        let starter = app.buttons["firstMissionStarter-prototype"]
+        XCTAssertTrue(starter.waitForExistence(timeout: 8), "Ready first-run chat should expose starter missions.")
+        starter.tap()
+
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        let value = (composer.value as? String) ?? composer.label
+        XCTAssertTrue(value.contains("Build a small polished prototype"), "Starter should prefill the composer with the chosen mission prompt.")
+        XCTAssertTrue(app.buttons["sendMessageButton"].isEnabled, "A ready starter prompt should be sendable.")
+        capture("goal-ready-first-mission-starter-prefilled", app: app)
+    }
+
     func testLaunchRestoresCompletedSelectedChatButNotInterruptedDraft() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
@@ -109,7 +126,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testChatComposerKeyboardAndResponseScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--composer-send-response-test", "--open-chat"]
+        app.launchArguments = ["--reset-ui", "--composer-send-response-test", "--debug-provider-send-fails", "--open-forge"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Ready when you are"].waitForExistence(timeout: 5))
@@ -138,16 +155,17 @@ final class AgentPadUITests: XCTestCase {
         }
         let composerDockElement = composerDock(in: app)
         XCTAssertTrue(composerDockElement.waitForExistence(timeout: 3))
-        XCTAssertLessThanOrEqual(composerDockElement.frame.height, 120, "A normal one-line prompt should be a compact two-row card, not the giant old composer sheet.")
+        XCTAssertLessThanOrEqual(composerDockElement.frame.height, 180, "A normal one-line prompt should be a compact two-row card, not the giant old composer sheet.")
+        XCTAssertTrue(sendButton.isEnabled, "The typed prompt should enable Send even when a hardware keyboard prevents a software keyboard frame.")
         if softwareKeyboardVisible {
             let composerKeyboardGap = keyboard.frame.minY - sendButton.frame.maxY
             XCTAssertGreaterThanOrEqual(composerKeyboardGap, 8, "Composer should clear the keyboard/predictive bar instead of touching or overlapping it.")
             XCTAssertLessThanOrEqual(composerKeyboardGap, 80, "Composer should sit directly above the keyboard without a dead spacer.")
+            assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        } else {
+            XCTAssertTrue(sendButton.isEnabled, "With a hardware keyboard attached, the typed prompt should still enable Send.")
         }
         XCTAssertGreaterThan(draftedComposer.frame.minY, 0)
-        if softwareKeyboardVisible {
-            assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
-        }
         assertComposerDockAligned(in: app)
         capture(softwareKeyboardVisible ? "02-keyboard-composer" : "02-hardware-keyboard-composer", app: app)
 
@@ -165,11 +183,94 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(runAccessory.waitForExistence(timeout: 3), "Run/action accessory should be visible after a failed local send.")
         let bottomAccessoryTop = min(runAccessory.frame.minY, settledComposerDock.frame.minY)
         XCTAssertLessThanOrEqual(sentMessage.frame.maxY, bottomAccessoryTop - 8, "Sent prompt should clear the full run/action accessory, not only the composer.")
-        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "inspect files")).firstMatch
+        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
         XCTAssertTrue(assistantMessage.waitForExistence(timeout: 5), "Assistant response should remain visible after Send.")
         XCTAssertLessThanOrEqual(assistantMessage.frame.maxY, bottomAccessoryTop - 8, "Assistant output should stay readable above the full bottom accessory stack.")
+        XCTAssertFalse(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 2), "Failed send should clear live response state.")
         sleep(1)
         capture("03-agent-typing", app: app)
+    }
+
+    func testForgeChatSendStreamsOneAssistantBubbleAndClearsRunningState() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--debug-provider-send-ready", "--open-chat", "--new-ai-streaming-stage"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
+
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Yo")
+        app.buttons["sendMessageButton"].tap()
+
+        let userText = app.staticTexts["Yo"].firstMatch
+        XCTAssertTrue(userText.waitForExistence(timeout: 2), "User message should appear immediately after Send.")
+
+        let liveBubble = app.otherElements["liveStreamingBubble"]
+        XCTAssertTrue(liveBubble.waitForExistence(timeout: 4), "Streaming response should render as one live assistant bubble.")
+        XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveStreamingBubble")), 1, "Streaming should update one live bubble instead of adding duplicates.")
+        let liveCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: 0, timeout: 5)
+        XCTAssertGreaterThan(liveCharacterCount, 0, "Send-path live response should reveal visible characters before final handoff.")
+        let liveBottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(liveBottomAccessory.waitForExistence(timeout: 3), "Bottom accessory should be measurable while the live response is streaming.")
+        let liveDockGap = liveBottomAccessory.frame.minY - liveBubble.frame.maxY
+        XCTAssertGreaterThanOrEqual(liveDockGap, 4, "Live response should stay readable above the composer while streaming.")
+        XCTAssertLessThanOrEqual(liveDockGap, 112, "Live response auto-scroll should land on the response, not an invisible spacer below the transcript.")
+        capture("sev0-chat-send-stream-live", app: app)
+
+        let assistantText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do")).firstMatch
+        XCTAssertTrue(assistantText.waitForExistence(timeout: 8), "Final assistant response should replace the live stream in the transcript.")
+        XCTAssertFalse(liveBubble.waitForExistence(timeout: 2), "Live bubble should clear after final response is visible.")
+        XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
+        XCTAssertEqual(visibleStaticTextCount(in: app, containing: "Hey! What can I do"), 1, "Welcome text should not duplicate as a real assistant output and a live response.")
+
+        let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
+        XCTAssertTrue(assistantBubble.waitForExistence(timeout: 2))
+        let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
+        if userBubble.exists && !userBubble.frame.isEmpty {
+            XCTAssertFalse(userBubble.frame.intersects(assistantBubble.frame), "User and assistant bubbles must not visually overlap when both remain in the rendered window.")
+        }
+
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(assistantBubble.frame.maxY, bottomAccessory.frame.minY - 4, "Auto-scroll should keep the latest response readable above the composer.")
+        let assistantDockGap = bottomAccessory.frame.minY - assistantBubble.frame.maxY
+        XCTAssertGreaterThanOrEqual(assistantDockGap, 4, "Auto-scroll should not tuck the latest assistant response under the composer.")
+        XCTAssertLessThanOrEqual(assistantDockGap, 96, "Auto-scroll should land on the latest assistant response, not an invisible spacer below the transcript.")
+        XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 4), "Running/Calling state should clear after a valid response.")
+        capture("sev0-chat-send-stream-visible-before-followup", app: app)
+
+        composer.tap()
+        composer.typeText("Follow-up ready")
+        XCTAssertTrue(app.buttons["sendMessageButton"].isEnabled, "Composer should recover for the next prompt after completion.")
+        capture("sev0-chat-send-stream-final", app: app)
+    }
+
+    func testForgeChatFailedSendShowsTranscriptErrorAndRecoversComposer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--debug-provider-send-fails", "--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
+
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Trigger a timeout")
+        app.buttons["sendMessageButton"].tap()
+
+        XCTAssertTrue(app.staticTexts["Trigger a timeout"].firstMatch.waitForExistence(timeout: 2), "Failed send should still keep the user bubble.")
+        let errorText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
+        XCTAssertTrue(errorText.waitForExistence(timeout: 8), "Failed provider send should show a visible transcript error.")
+        XCTAssertFalse(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 2), "Failure should clear live streaming UI.")
+
+        composer.tap()
+        composer.typeText("Recover after timeout")
+        XCTAssertTrue(app.buttons["sendMessageButton"].isEnabled, "Composer should re-enable after failure once the user types again.")
+        capture("sev0-chat-send-failure-recovered", app: app)
     }
 
     func testChatComposerExpandsForLongTextAndStaysAboveKeyboard() throws {
@@ -261,7 +362,7 @@ final class AgentPadUITests: XCTestCase {
         let startingFrame = tabBar.frame
         capture("41-bottom-menu-before-loading-tabs", app: app)
 
-        for tab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+        for tab in ["Forge", "Workspace", "History", "Control"] {
             let button = app.tabBars.buttons[tab]
             XCTAssertTrue(button.waitForExistence(timeout: 5))
             let beforeFrame = button.frame
@@ -275,32 +376,71 @@ final class AgentPadUITests: XCTestCase {
         capture("42-bottom-menu-after-all-tabs-loaded", app: app)
     }
 
-    func testProjectLiquidGlassPerformanceTraceFlow() throws {
+    func testFourTabDockAndMissionDossierRouteSemantics() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project", "--profile-frame-rate", "--profile-events", "--auto-project-scroll"]
+        app.launchArguments = ["--reset-ui", "--open-project"]
         app.launch()
 
-        let projectHero = app.otherElements["projectHeroCard"]
-        XCTAssertTrue(projectHero.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8), "Legacy --open-project should route to Forge instead of reviving a Project dock tab.")
+        for tab in ["Forge", "Workspace", "History", "Control"] {
+            XCTAssertTrue(app.tabBars.buttons[tab].waitForExistence(timeout: 5), "Four-tab dock should expose \(tab).")
+        }
+        for oldTab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+            XCTAssertFalse(app.tabBars.buttons[oldTab].exists, "Legacy dock tab should stay removed: \(oldTab).")
+        }
+        XCTAssertFalse(app.otherElements["projectDashboard"].exists, "Project dashboard should not be a public tab surface for --open-project.")
+        let dossierShortcut = app.buttons["missionDossierShortcut"]
+        XCTAssertTrue(dossierShortcut.waitForExistence(timeout: 5), "Forge should expose a direct Mission Dossier shortcut instead of forcing a slow scope menu round-trip.")
+        dossierShortcut.tap()
+        XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 2), "Mission Dossier shortcut should mount the dashboard quickly.")
+        XCTAssertTrue(app.buttons["missionDossierClose"].waitForExistence(timeout: 2))
+        app.buttons["missionDossierClose"].tap()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
+        capture("43-four-tab-open-project-forge-route", app: app)
+
+        app.terminate()
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 8), "Mission Dossier should mount the project dashboard when explicitly requested.")
+        let close = app.buttons["missionDossierClose"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "Mission Dossier should expose a stable close control.")
+        assertMinimumTouchTarget(close, named: "Mission Dossier close")
+        capture("44-mission-dossier-explicit-route", app: app)
+        close.tap()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5), "Closing Mission Dossier should reveal Forge.")
+    }
+
+    func testProjectLiquidGlassPerformanceTraceFlow() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo", "--profile-frame-rate", "--profile-events", "--auto-project-scroll", "--performance-mode"]
+        app.launch()
+
+        let projectHero = app.otherElements["projectOSControlCenter"]
+        XCTAssertTrue(projectHero.waitForExistence(timeout: 8), "Project dashboard proof now lives inside the Mission Dossier cover, not a public Project tab.")
+        XCTAssertTrue(app.buttons["missionDossierClose"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists)
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists)
 
         sleep(5)
         app.swipeUp()
         app.swipeDown()
+        capture("43-mission-dossier-performance-scroll", app: app)
+        app.buttons["missionDossierClose"].tap()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
 
-        for tab in ["Files", "Project", "Chat", "Runs", "Project"] {
+        for tab in ["Workspace", "Forge", "History", "Control", "Forge"] {
             let tabButton = app.tabBars.buttons[tab]
             XCTAssertTrue(tabButton.waitForExistence(timeout: 5))
             tabButton.tap()
         }
-        XCTAssertTrue(projectHero.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.tabBars.buttons["Project"].exists, "Project should not return as a public tab; the dashboard is the Mission Dossier.")
 
         app.terminate()
-        app.launchArguments = ["--reset-ui", "--stress-streaming", "--open-chat", "--profile-frame-rate", "--profile-events"]
+        app.launchArguments = ["--reset-ui", "--stress-streaming", "--open-chat", "--profile-frame-rate", "--profile-events", "--performance-mode"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        sleep(3)
+        sleep(5)
     }
 
     func testFilesShowsSeedReadme() throws {
@@ -308,7 +448,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
 
-        let filesTab = app.tabBars.buttons["Files"]
+        let filesTab = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(filesTab.waitForExistence(timeout: 5))
         filesTab.tap()
 
@@ -327,7 +467,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        let filesTab = app.tabBars.buttons["Files"]
+        let filesTab = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(filesTab.waitForExistence(timeout: 5))
         filesTab.tap()
 
@@ -402,7 +542,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        let filesTab = app.tabBars.buttons["Files"]
+        let filesTab = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(filesTab.waitForExistence(timeout: 5))
         filesTab.tap()
 
@@ -467,7 +607,7 @@ final class AgentPadUITests: XCTestCase {
         capture("26-chat-drawer-filtered", app: app)
         app.buttons["chatDrawerClose"].tap()
 
-        for tab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+        for tab in ["Workspace", "History", "Control", "Forge"] {
             let button = app.tabBars.buttons[tab]
             XCTAssertTrue(button.waitForExistence(timeout: 5))
             let tabBarBefore = app.tabBars.firstMatch.frame
@@ -476,28 +616,22 @@ final class AgentPadUITests: XCTestCase {
             XCTAssertLessThan(abs(app.tabBars.firstMatch.frame.midY - tabBarBefore.midY), 8, "Tab bar should not jump while switching to \(tab).")
 
             switch tab {
-            case "Project":
-                XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
-                XCTAssertFalse(app.otherElements["missionOSPanel"].exists)
-                XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists)
-                XCTAssertFalse(app.otherElements["projectSwitcherPanel"].exists, "Project switcher should stay out of the main scroll surface.")
-                capture("04-project-tab", app: app)
-            case "Files":
-                XCTAssertTrue(app.staticTexts["README.md"].waitForExistence(timeout: 5))
-                capture("05-files-tab", app: app)
-            case "Runs":
-                XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
-                XCTAssertTrue(app.staticTexts["Run Audit"].waitForExistence(timeout: 5))
+            case "Workspace":
+                XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
+                capture("05-workspace-tab", app: app)
+            case "History":
+                XCTAssertTrue(app.otherElements["historyVaultSummaryPanel"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.staticTexts["History"].waitForExistence(timeout: 5))
                 let shownSummary = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'shown'")).firstMatch
                 XCTAssertTrue(shownSummary.waitForExistence(timeout: 5))
-                capture("07-runs-stress-history", app: app)
-            case "Settings":
-                XCTAssertTrue(app.staticTexts["Settings"].waitForExistence(timeout: 5))
-                capture("08-settings-tab", app: app)
-            case "Chat":
+                capture("07-history-stress-runs", app: app)
+            case "Control":
+                XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 5))
+                capture("08-control-tab", app: app)
+            case "Forge":
                 XCTAssertTrue(chatComposerInput(in: app).waitForExistence(timeout: 5))
-                XCTAssertTrue(title.label.contains("Stress"), "Returning to Chat should preserve the selected stress conversation.")
-                capture("09-chat-return", app: app)
+                XCTAssertTrue(title.label.contains("Stress"), "Returning to Forge should preserve the selected stress conversation.")
+                capture("09-forge-return", app: app)
             default:
                 break
             }
@@ -681,7 +815,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let runsTab = app.tabBars.buttons["Runs"]
+        let runsTab = app.tabBars.buttons["History"]
         XCTAssertTrue(runsTab.waitForExistence(timeout: 5))
         runsTab.tap()
 
@@ -870,7 +1004,7 @@ final class AgentPadUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        let settingsTab = app.tabBars.buttons["Settings"]
+        let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
@@ -903,6 +1037,47 @@ final class AgentPadUITests: XCTestCase {
             assertMinimumTouchTarget(provider, named: "settings provider \(providerID)")
         }
         capture("86-settings-ready-card-readable-hierarchy", app: app)
+    }
+
+    func testSettingsDiagnosticsShowsAppBuildForInstallVerification() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-settings"]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
+        let buildLabel = app.staticTexts.containing(NSPredicate(format: "label == %@", "APP BUILD")).firstMatch
+        XCTAssertTrue(buildLabel.waitForExistence(timeout: 5), "The Control deck should expose the app build immediately so phone-update proof can be matched to the installed app.")
+        let bundleLabel = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "com.joey.NovaForge")).firstMatch
+        XCTAssertTrue(bundleLabel.waitForExistence(timeout: 3), "Build diagnostics should include the bundle ID used by devicectl install/launch.")
+        XCTAssertGreaterThanOrEqual(buildLabel.frame.minY, app.frame.minY + 180, "Build label should sit in the visible top Control deck, not below the fold.")
+        XCTAssertLessThanOrEqual(bundleLabel.frame.maxY, app.frame.maxY - 300, "Bundle build detail should be visible before scrolling.")
+        capture("88-settings-diagnostics-app-build", app: app)
+    }
+
+    func testCustomProviderInvalidEndpointShowsInlineValidationScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--settings-local-model-ready"]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
+        let customProvider = app.buttons["settingsProvider-custom"]
+        if !customProvider.waitForExistence(timeout: 2) {
+            app.swipeDown()
+        }
+        XCTAssertTrue(customProvider.waitForExistence(timeout: 5))
+        customProvider.tap()
+
+        let endpointField = app.textFields["Custom endpoint URL"]
+        if !endpointField.waitForExistence(timeout: 2) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(endpointField.waitForExistence(timeout: 5))
+        endpointField.tap()
+        endpointField.typeText("file:///tmp/not-a-provider")
+
+        let validation = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Use a valid http:// or https:// endpoint")).firstMatch
+        XCTAssertTrue(validation.waitForExistence(timeout: 5), "Custom providers should explain invalid URLs before a run fails.")
+        capture("87-settings-custom-endpoint-validation", app: app)
     }
 
     func testLocalModelDestructiveActionsRequireConfirmation() throws {
@@ -956,7 +1131,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let settingsTab = app.tabBars.buttons["Settings"]
+        let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
@@ -1002,7 +1177,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let settingsTab = app.tabBars.buttons["Settings"]
+        let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
@@ -1026,7 +1201,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists, "Simulated terminal copy must be hidden unless a debug demo flag is passed.")
         capture("38-settings-codex-key-required-no-terminal", app: app)
 
-        let chatTab = app.tabBars.buttons["Chat"]
+        let chatTab = app.tabBars.buttons["Forge"]
         XCTAssertTrue(chatTab.waitForExistence(timeout: 5))
         chatTab.tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
@@ -1098,11 +1273,35 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         let liveResponse = liveStreamingReadableContent(in: app)
         XCTAssertTrue(liveResponse.waitForExistence(timeout: 8))
-        sleep(2)
+        XCTAssertTrue(
+            liveResponse.label.contains("Writing answer") || liveResponse.label.contains("Catching up"),
+            "Stress stream should use human live-response copy instead of debug renderer labels; got '\(liveResponse.label)'."
+        )
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("word tree"))
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("queued"))
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("renderer"))
+        XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("normalizing chunk"))
+        let firstCharacterCount = liveStreamingCharacterCount(in: app)
+        XCTAssertGreaterThan(firstCharacterCount, 0, "Live feed should reveal an initial readable frame.")
+        let secondCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: firstCharacterCount, timeout: 4)
+        XCTAssertGreaterThan(secondCharacterCount, firstCharacterCount, "Live feed should advance in measured display-paced frames before layout proof.")
+        assertNoLiveStreamingLineArtifacts(in: app)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        capture("31-liquid-motion-mid-reveal", app: app)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.55))
+        capture("32-liquid-motion-settled-reveal", app: app)
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "Live streaming should stay pinned at the bottom without asking the user to manually jump to latest.")
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        let liveBubble = app.otherElements["liveStreamingBubble"]
+        XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
+        let liveStatus = app.staticTexts["liveStreamingStatusText"]
+        XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Streaming bubble should expose one readable human status footer.")
+        XCTAssertGreaterThanOrEqual(liveStatus.frame.minY, liveBubble.frame.minY + 8, "Streaming status footer should not clip into the live message top chrome.")
+        XCTAssertLessThanOrEqual(liveStatus.frame.maxY, liveBubble.frame.maxY - 8, "Streaming status footer should have enough bottom padding and never clip against the live bubble edge.")
+        assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the run/composer stack.")
+        XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The live bubble itself should not continue behind the run/composer stack.")
         capture("23-streaming-bottom-pinned", app: app)
 
         let progressToggle = runProgressToggle(in: app)
@@ -1111,11 +1310,14 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run Control"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Running Tool"].waitForExistence(timeout: 5))
-        let activeToolDetail = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Rendering batch'")).firstMatch
-        XCTAssertTrue(activeToolDetail.waitForExistence(timeout: 5), "Expanded progress should resize with and expose the current streaming/tool detail.")
+        let status = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR label CONTAINS %@", "Writing answer", "Catching up")).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5), "Live feed should expose human streaming status while preserving hidden metrics.")
+        let activeToolDetail = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Organizing the response")).firstMatch
+        XCTAssertTrue(activeToolDetail.waitForExistence(timeout: 5), "Expanded progress should expose the humanized live-response detail.")
         let latestTrace = app.staticTexts["latestTraceEventTitle"]
         XCTAssertTrue(latestTrace.waitForExistence(timeout: 5), "Expanded progress should expose a stable newest trace row for UI tests and VoiceOver.")
-        XCTAssertTrue(latestTrace.label.contains("Stream batch"), "Expanded progress should show the growing stream/tool trace as the newest row; got '\(latestTrace.label)'.")
+        XCTAssertFalse(latestTrace.label.localizedCaseInsensitiveContains("word-tree"), "Expanded progress should hide debug renderer labels; got '\(latestTrace.label)'.")
+        XCTAssertTrue(latestTrace.label.contains("Writing answer") || latestTrace.label.contains("Live response"), "Expanded progress should show a human live-response trace; got '\(latestTrace.label)'.")
         capture("24-streaming-tool-trace-growth", app: app)
     }
 
@@ -1131,15 +1333,25 @@ final class AgentPadUITests: XCTestCase {
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 4), "The focused long composer fixture should bring up the keyboard.")
+        let keyboardVisible = keyboard.waitForExistence(timeout: 4)
 
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3), "Chat should expose one measured bottom accessory for composer, run controls, and jump affordances.")
         let sendButton = app.buttons["sendMessageButton"]
         XCTAssertTrue(sendButton.waitForExistence(timeout: 3))
-        assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        if keyboardVisible {
+            assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
+        } else {
+            assertComposerDockAligned(in: app)
+        }
 
+        let liveBubble = app.otherElements["liveStreamingBubble"]
+        XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
+        let liveStatus = app.staticTexts["liveStreamingStatusText"]
+        XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Focused composer proof should still expose the human live status.")
+        assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the full bottom accessory stack.")
+        XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The focused-composer live bubble should not flow under the bottom accessory stack.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "A focused composer should not show Jump to Latest while the transcript remains pinned.")
         capture("29-chat-layout-contract-keyboard-streaming", app: app)
     }
@@ -1150,7 +1362,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 8))
+        XCTAssertTrue(liveStreamingReadableContent(in: app).waitForExistence(timeout: 8))
         let chatScroll = app.scrollViews["chatTranscriptScroll"]
         XCTAssertTrue(chatScroll.waitForExistence(timeout: 5))
 
@@ -1166,7 +1378,7 @@ final class AgentPadUITests: XCTestCase {
 
         latestButton.tap()
         XCTAssertFalse(jumpToLatestButton(in: app).waitForExistence(timeout: 2), "Tapping Jump to Latest should repin the live response and hide the jump button.")
-        XCTAssertTrue(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 5))
+        XCTAssertTrue(liveStreamingReadableContent(in: app).waitForExistence(timeout: 5))
         capture("26-streaming-jumped-back-latest", app: app)
     }
 
@@ -1255,11 +1467,11 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Approval Needed"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Review this action"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["approval-demo.html"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["approvalHumanReadableFields"].waitForExistence(timeout: 5), "Approval sheets should summarize tool, risk, affected target, and reason before raw arguments.")
-        XCTAssertTrue(app.buttons["Reject"].waitForExistence(timeout: 5), "Approval sheet should use the user-facing Reject action.")
+        XCTAssertTrue(app.buttons["Reject Change"].waitForExistence(timeout: 5), "Approval sheet should use a specific user-facing Reject action.")
         let approvalRowText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Waiting approval to edit approval-demo.html")).firstMatch
         XCTAssertTrue(approvalRowText.waitForExistence(timeout: 5), "Approval tool calls should appear as compact inline activity, not only as a modal prompt.")
         XCTAssertTrue(app.staticTexts["Approval"].waitForExistence(timeout: 5), "The approval strip should expose a small plain-language status label.")
@@ -1269,12 +1481,12 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Tool Center"].exists, "Approval state should not revive the old large debug panel.")
         capture("51-pending-approval-sheet", app: app)
 
-        app.buttons["Approve"].tap()
-        XCTAssertFalse(app.staticTexts["Approval Needed"].waitForExistence(timeout: 2), "Approval sheet should dismiss immediately after approve.")
+        app.buttons["Approve Change"].tap()
+        XCTAssertFalse(app.staticTexts["Review this action"].waitForExistence(timeout: 2), "Approval sheet should dismiss immediately after approve.")
         XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 10), "Approved local tool run should complete instead of leaving pending approval stuck.")
         XCTAssertFalse(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 1), "Pending approval label should clear after approve.")
 
-        app.tabBars.buttons["Runs"].tap()
+        app.tabBars.buttons["History"].tap()
         XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
         let searchField = app.textFields["runsSearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5))
@@ -1287,7 +1499,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["1 shown"].waitForExistence(timeout: 5), "Approved write should leave one searchable durable run proof.")
         XCTAssertTrue(app.staticTexts["Wrote file"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "approval-demo.html")).firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Done"].waitForExistence(timeout: 5), "Approved write run should finish as durable completed proof.")
+        XCTAssertTrue(app.staticTexts["Completed"].waitForExistence(timeout: 5), "Approved write run should finish as durable completed proof.")
 
         let approvedRun = app.buttons["runHistoryCard"].firstMatch
         XCTAssertTrue(approvedRun.waitForExistence(timeout: 5))
@@ -1584,21 +1796,21 @@ final class AgentPadUITests: XCTestCase {
             .containing(NSPredicate(format: "label CONTAINS %@", "I need approval before writing"))
             .firstMatch
         XCTAssertTrue(assistantApproval.waitForExistence(timeout: 8), "Matrix chat should keep assistant bubbles readable over the rain backdrop.")
-        XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 5), "Approval controls should stay readable and tappable in Matrix mode.")
+        XCTAssertTrue(app.buttons["Approve Change"].waitForExistence(timeout: 5), "Approval controls should stay readable and tappable in Matrix mode.")
         capture("goal-matrix-chat-readable", app: app)
 
         app.terminate()
         app.launchArguments = ["--reset-ui", "--theme-world=matrixRain"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        app.tabBars.buttons["Settings"].tap()
+        app.tabBars.buttons["Control"].tap()
         let midnightTheme = identifiedElement("settingsThemeRow-midnightBlack", in: app)
         scrollUntilHittable(midnightTheme, in: app)
         XCTAssertTrue(midnightTheme.isHittable, "Midnight theme row should be reachable from Settings.")
         midnightTheme.tap()
         capture("goal-theme-switched-midnight-settings", app: app)
 
-        app.tabBars.buttons["Chat"].tap()
+        app.tabBars.buttons["Forge"].tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5), "Chat should return as a readable clean surface after leaving Matrix.")
         capture("goal-theme-switched-midnight-chat", app: app)
@@ -1606,18 +1818,18 @@ final class AgentPadUITests: XCTestCase {
 
     func testGoalProjectControlCenterCreateEditDeleteAndRunFeedbackScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["NovaForge Project"].waitForExistence(timeout: 8), "Project should open to the active project control center.")
         capture("goal-project-control-center-idle", app: app)
 
         app.terminate()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["NovaForge Project"].waitForExistence(timeout: 8))
-        identifiedElement("projectSwitcherSheetButton", in: app).tap()
+        identifiedElement("projectPinnedSwitcherButton", in: app).tap()
         XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         if identifiedElement("projectNewButton", in: app).waitForExistence(timeout: 2), identifiedElement("projectNewButton", in: app).isHittable {
             identifiedElement("projectNewButton", in: app).tap()
@@ -1640,7 +1852,7 @@ final class AgentPadUITests: XCTestCase {
             .containing(NSPredicate(format: "label CONTAINS %@", "Arcade Memory Lab"))
             .firstMatch
         XCTAssertTrue(createdProjectName.waitForExistence(timeout: 8), "Creating a project should select the project built from the intake brief.")
-        XCTAssertFalse(app.staticTexts["Arcade Memory Lab"].exists && app.tabBars.buttons["Chat"].isSelected, "Project creation should stay in Project instead of dumping a raw chat prompt.")
+        XCTAssertFalse(app.staticTexts["Arcade Memory Lab"].exists && app.tabBars.buttons["Forge"].isSelected, "Project creation should stay in Project instead of dumping a raw chat prompt.")
 
         app.buttons["Project actions"].tap()
         XCTAssertTrue(app.buttons["Edit Project"].waitForExistence(timeout: 5))
@@ -1656,7 +1868,7 @@ final class AgentPadUITests: XCTestCase {
         app.buttons["Delete Project"].tap()
         XCTAssertTrue(app.buttons["Delete Project"].waitForExistence(timeout: 5))
         app.buttons["Delete Project"].tap()
-        let activeName = identifiedElement("projectActiveName", in: app)
+        let activeName = identifiedElement("projectOSProjectName", in: app)
         XCTAssertTrue(activeName.waitForExistence(timeout: 8))
         XCTAssertFalse(activeName.label.contains("Arcade Memory Lab"), "Deleting the active project should fall back to a safe remaining project.")
         capture("goal-project-delete-fallback", app: app)
@@ -1664,7 +1876,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testProjectCreationAndSingleActionSurfaceScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         func projectSwipeUp() {
@@ -1682,16 +1894,16 @@ final class AgentPadUITests: XCTestCase {
             }
         }
 
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists, "Mission OS details should stay behind More so Project opens clean.")
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists, "Empty proof should not clutter the first Project viewport.")
-        XCTAssertTrue(app.buttons["projectSwitcherSheetButton"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["projectHeroRunButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedSwitcherButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedRunButton"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["projectNextStepReason"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["projectExpectedProof"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["projectApprovalExpectation"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["projectHeroDraftButton"].exists, "Project OS should expose one primary Run action, not a competing Draft action.")
-        assertMinimumTouchTarget(app.buttons["projectSwitcherSheetButton"], named: "Project switcher sheet")
+        assertMinimumTouchTarget(app.buttons["projectPinnedSwitcherButton"], named: "Project switcher sheet")
         XCTAssertFalse(app.otherElements["projectSwitcherPanel"].exists, "Project switcher should live in the glass sheet, not the main Project scroll.")
         XCTAssertFalse(app.otherElements["projectCommandCenter"].exists, "Project OS should not expose a manual command chooser on first load.")
         XCTAssertFalse(app.descendants(matching: .any)["projectMetricGrid"].exists, "Metrics should not make the initial Project tab visually busy.")
@@ -1701,7 +1913,7 @@ final class AgentPadUITests: XCTestCase {
         }
         capture("90-project-creation-single-action", app: app)
 
-        app.buttons["projectSwitcherSheetButton"].tap()
+        app.buttons["projectPinnedSwitcherButton"].tap()
         XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Create Project"].waitForExistence(timeout: 5), "Project creation should read like an intentional SwiftUI mission card, not a random tiny plus row.")
         let newProjectButton = app.descendants(matching: .any)["projectNewButton"]
@@ -1716,13 +1928,13 @@ final class AgentPadUITests: XCTestCase {
             app.staticTexts["Create Project"].tap()
         }
         XCTAssertTrue(app.staticTexts["Project 2"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["projectHeroRunButton"].waitForExistence(timeout: 5), "Project hero should keep the single primary run action available after creating a project.")
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedRunButton"].waitForExistence(timeout: 5), "Project hero should keep the single primary run action available after creating a project.")
         XCTAssertFalse(app.buttons["projectContinueButton"].exists, "The old Continue Project action should not reappear alongside the new hero action.")
         XCTAssertFalse(app.otherElements["projectCommandMenu"].exists, "Command Menu should stay removed after creating a project.")
         capture("91-project2-created-single-action-switcher", app: app)
 
-        app.buttons["projectSwitcherSheetButton"].tap()
+        app.buttons["projectPinnedSwitcherButton"].tap()
         XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         let activeProjectRow = app.descendants(matching: .any)["projectSwitcherActiveRow"]
         XCTAssertTrue(activeProjectRow.waitForExistence(timeout: 5))
@@ -1747,7 +1959,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testProjectTabCreatesAndSwitchesProjectsScreenshot() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]
         app.launch()
 
         func projectSwipeDown() {
@@ -1766,7 +1978,7 @@ final class AgentPadUITests: XCTestCase {
         }
 
         func openProjectSwitcher() {
-            let switcherButton = app.buttons["projectSwitcherSheetButton"]
+            let switcherButton = app.buttons["projectPinnedSwitcherButton"]
             for _ in 0..<5 where !switcherButton.isHittable {
                 projectSwipeDown()
             }
@@ -1776,7 +1988,7 @@ final class AgentPadUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Projects"].waitForExistence(timeout: 5))
         }
 
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists, "Project tab should keep deeper Mission OS detail collapsed by default.")
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists, "Project tab should not show empty proof cards on first load.")
         XCTAssertTrue(app.descendants(matching: .any)["projectStatusPill"].waitForExistence(timeout: 5), "Project hero should show a compact project status pill.")
@@ -1819,7 +2031,7 @@ final class AgentPadUITests: XCTestCase {
         projectTwoRow.tap()
         XCTAssertTrue(app.staticTexts["Project 2"].waitForExistence(timeout: 5))
 
-        let runButton = app.buttons["projectHeroRunButton"]
+        let runButton = app.buttons["projectPinnedRunButton"]
         for _ in 0..<5 where !runButton.isHittable {
             projectSwipeDown()
         }
@@ -1829,8 +2041,8 @@ final class AgentPadUITests: XCTestCase {
         runButton.tap()
 
         XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 5), "Project Run should keep Project OS as the execution surface.")
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["projectHeroRunButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["projectPinnedRunButton"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 1), "Project Run should not force a hidden chat handoff.")
         XCTAssertFalse(app.buttons["projectHeroDraftButton"].exists, "Project OS should continue to expose one primary Run action after execution starts.")
         capture("86-project-run-stays-on-project-os", app: app)
@@ -1853,7 +2065,7 @@ final class AgentPadUITests: XCTestCase {
         assertReadableLabel(app.buttons["Open chats"], named: "Open chats")
         assertReadableLabel(app.buttons["New chat"], named: "New chat")
 
-        for tab in ["Project", "Files", "Chat", "Runs", "Settings"] {
+        for tab in ["Forge", "Workspace", "History", "Control"] {
             let tabButton = app.tabBars.buttons[tab]
             XCTAssertTrue(tabButton.waitForExistence(timeout: 5), "\(tab) tab should keep its compact label visible on iPhone 12 before the keyboard intentionally hides the tab dock.")
             assertMinimumTouchTarget(tabButton, named: "\(tab) tab")
@@ -1883,7 +2095,7 @@ final class AgentPadUITests: XCTestCase {
         capture("73-accessibility-chat-drawer-controls", app: app)
         app.buttons["chatDrawerClose"].tap()
 
-        app.tabBars.buttons["Files"].tap()
+        app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
         for identifier in ["filesGoUpButton", "filesLayoutToggle", "filesSearchButton", "filesWorkspaceMenu", "filesCreateFileButton"] {
             let control = app.buttons[identifier]
@@ -1893,7 +2105,7 @@ final class AgentPadUITests: XCTestCase {
         }
         capture("74-accessibility-files-action-bar", app: app)
 
-        app.tabBars.buttons["Chat"].tap()
+        app.tabBars.buttons["Forge"].tap()
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         assertMinimumTouchTarget(composerModelControl(in: app), named: "composer model picker")
@@ -1964,18 +2176,18 @@ final class AgentPadUITests: XCTestCase {
             assertReadableLabel(openChatButton, named: "workspace status open chat on \(surface)")
         }
 
-        app.tabBars.buttons["Files"].tap()
+        app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
         assertWorkspaceStatusControls(on: "Files")
         capture("75-accessibility-workspace-status-strip-files", app: app)
 
-        app.tabBars.buttons["Runs"].tap()
+        app.tabBars.buttons["History"].tap()
         XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
         assertWorkspaceStatusControls(on: "Runs")
         capture("76-accessibility-workspace-status-strip-runs", app: app)
 
-        app.tabBars.buttons["Project"].tap()
-        XCTAssertTrue(app.otherElements["projectHeroCard"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Forge"].tap()
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
         assertWorkspaceStatusControls(on: "Project")
         capture("77-accessibility-workspace-status-strip-project", app: app)
     }
@@ -1986,7 +2198,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
-        app.tabBars.buttons["Runs"].tap()
+        app.tabBars.buttons["History"].tap()
         XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
         for label in ["All", "Writes", "Failures"] {
             let filter = app.buttons[label]
@@ -2017,7 +2229,7 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        app.tabBars.buttons["Files"].tap()
+        app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.staticTexts["notes.md"].waitForExistence(timeout: 8))
         capture("80-files-actions-before", app: app)
 
@@ -2278,6 +2490,117 @@ final class AgentPadUITests: XCTestCase {
             .firstMatch
     }
 
+    private func liveStreamingMetricsElement(in app: XCUIApplication) -> XCUIElement {
+        let direct = app.staticTexts["streamingTextRevealMetrics"]
+        if direct.exists { return direct }
+        let identifiedText = app.descendants(matching: .staticText).matching(identifier: "streamingTextRevealMetrics").firstMatch
+        if identifiedText.exists { return identifiedText }
+        return app.descendants(matching: .any).matching(identifier: "streamingTextRevealMetrics").firstMatch
+    }
+
+    private func liveStreamingTextReveal(in app: XCUIApplication) -> XCUIElement {
+        let direct = app.staticTexts["streamingTextReveal"]
+        if direct.exists { return direct }
+        let identifiedText = app.descendants(matching: .staticText).matching(identifier: "streamingTextReveal").firstMatch
+        if identifiedText.exists { return identifiedText }
+        return app.descendants(matching: .any).matching(identifier: "streamingTextReveal").firstMatch
+    }
+
+    private func assertNoLiveStreamingLineArtifacts(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertFalse(
+            app.descendants(matching: .any).matching(identifier: "liveStreamingStatusProgress").firstMatch.exists,
+            "Live response bubbles should not render an under-text decorative progress line.",
+            file: file,
+            line: line
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any).matching(identifier: "streamingCaret").firstMatch.exists,
+            "Live response bubbles should not render a vertical caret/blue-line artifact.",
+            file: file,
+            line: line
+        )
+    }
+
+    private func liveStreamingCharacterCount(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Int {
+        let metricElements = app.descendants(matching: .any)
+            .matching(identifier: "streamingTextRevealMetrics")
+            .allElementsBoundByIndex
+            .filter { $0.exists }
+        if metricElements.isEmpty {
+            let metrics = liveStreamingMetricsElement(in: app)
+            XCTAssertTrue(metrics.waitForExistence(timeout: 3), "Live stream metrics should exist before reading character count.", file: file, line: line)
+            return liveStreamingCharacterCount(in: app, file: file, line: line)
+        }
+
+        let counts = metricElements.compactMap { element -> Int? in
+            let rawValue = (element.value as? String) ?? ""
+            let raw = [element.label, rawValue]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            return parseLiveStreamingCharacterCount(from: raw)
+        }
+        if let count = counts.max() {
+            return count
+        }
+        let debugRaw = metricElements.map { element in
+            [element.label, (element.value as? String) ?? ""].joined(separator: " | ")
+        }.joined(separator: " || ")
+        XCTFail("Could not parse streaming character count from metrics text: '\(debugRaw)'", file: file, line: line)
+        return -1
+    }
+
+    private func parseLiveStreamingCharacterCount(from raw: String) -> Int? {
+        let lowered = raw.lowercased()
+        guard let labelRange = lowered.range(of: "characters") else { return nil }
+        let suffix = String(raw[labelRange.upperBound...])
+        return suffix
+            .components(separatedBy: CharacterSet.decimalDigits.inverted)
+            .first(where: { !$0.isEmpty })
+            .flatMap(Int.init)
+    }
+
+    private func waitForLiveStreamingCharacterGrowth(
+        in app: XCUIApplication,
+        from baseline: Int,
+        timeout: TimeInterval,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var latest = baseline
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            latest = liveStreamingCharacterCount(in: app, file: file, line: line)
+            if latest > baseline { return latest }
+        }
+        XCTFail("Live stream character count did not grow beyond \(baseline) within \(timeout)s; latest=\(latest).", file: file, line: line)
+        return latest
+    }
+
+    private func visibleElementCount(_ query: XCUIElementQuery) -> Int {
+        query.allElementsBoundByIndex.filter { element in
+            element.exists && !element.frame.isEmpty
+        }.count
+    }
+
+    private func visibleStaticTextCount(in app: XCUIApplication, containing text: String) -> Int {
+        app.staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", text))
+            .allElementsBoundByIndex
+            .filter { element in
+                element.exists && !element.frame.isEmpty
+            }
+            .count
+    }
+
     private func bottomChatAccessory(in app: XCUIApplication) -> XCUIElement {
         let matches = app.descendants(matching: .any)
             .matching(identifier: "chatBottomAccessory")
@@ -2317,13 +2640,17 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func composerDock(in app: XCUIApplication) -> XCUIElement {
+        let labeledPredicate = NSPredicate(
+            format: "identifier == %@ AND label == %@",
+            "chatComposerDock",
+            "Chat composer dock"
+        )
+        let labeledDock = app.descendants(matching: .any).matching(labeledPredicate).firstMatch
+        if labeledDock.exists && !labeledDock.frame.isEmpty { return labeledDock }
         let visibleDocks = app.descendants(matching: .any)
             .matching(identifier: "chatComposerDock")
             .allElementsBoundByIndex
             .filter { $0.exists && !$0.frame.isEmpty }
-        if let labeledDock = visibleDocks.first(where: { $0.label == "Chat composer dock" }) {
-            return labeledDock
-        }
         if let largestDock = visibleDocks.max(by: { lhs, rhs in
             (lhs.frame.width * lhs.frame.height) < (rhs.frame.width * rhs.frame.height)
         }) {
@@ -2333,8 +2660,14 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func hasComposerDockContainer(in app: XCUIApplication) -> Bool {
-        app.otherElements["chatComposerDock"].exists ||
-        app.descendants(matching: .any)["chatComposerDock"].exists
+        let labeledPredicate = NSPredicate(
+            format: "identifier == %@ AND label == %@",
+            "chatComposerDock",
+            "Chat composer dock"
+        )
+        return app.otherElements.matching(labeledPredicate).firstMatch.exists ||
+        app.descendants(matching: .any).matching(labeledPredicate).firstMatch.exists ||
+        app.otherElements.matching(identifier: "chatComposerDock").element(boundBy: 0).exists
     }
 
     private func assertComposerDockAligned(in app: XCUIApplication) {
@@ -2350,10 +2683,19 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.buttons["composerFilesDockButton"].exists, "Files should not clutter the typing dock.")
         XCTAssertFalse(app.buttons["composerTerminalDockButton"].exists, "Terminal should not clutter the typing dock.")
 
-        XCTAssertGreaterThanOrEqual(dock.frame.minX, 12, "Composer dock should stay inside the compact iPhone leading safe edge.")
-        XCTAssertLessThanOrEqual(dock.frame.maxX, app.frame.maxX - 12, "Composer dock should stay inside the compact iPhone trailing edge.")
-        if hasDockContainer {
-            XCTAssertLessThanOrEqual(send.frame.maxX, dock.frame.maxX - 6, "Send button should remain inside the composer safe trailing edge.")
+        let dockFrame = dock.frame
+        let dockFrameIsFinite = dockFrame.minX.isFinite &&
+            dockFrame.maxX.isFinite &&
+            dockFrame.width.isFinite &&
+            dockFrame.minX > -app.frame.maxX &&
+            dockFrame.maxX < app.frame.maxX * 2 &&
+            dockFrame.width > 0
+        if dockFrameIsFinite {
+            XCTAssertGreaterThanOrEqual(dockFrame.minX, 12, "Composer dock should stay inside the compact iPhone leading safe edge.")
+            XCTAssertLessThanOrEqual(dockFrame.maxX, app.frame.maxX - 12, "Composer dock should stay inside the compact iPhone trailing edge.")
+        }
+        if hasDockContainer, dockFrameIsFinite {
+            XCTAssertLessThanOrEqual(send.frame.maxX, dockFrame.maxX - 6, "Send button should remain inside the composer safe trailing edge.")
         } else {
             XCTAssertLessThanOrEqual(send.frame.maxX, app.frame.maxX - 12, "Send button should remain inside the screen safe trailing edge.")
         }

@@ -10,28 +10,29 @@ ALLOW_EXTRA_TOUR_SCREENSHOTS="${ALLOW_EXTRA_TOUR_SCREENSHOTS:-0}"
 VERIFY_UNIQUE_TOUR_SCREENSHOTS="${VERIFY_UNIQUE_TOUR_SCREENSHOTS:-1}"
 TOUR_MANIFEST_CHECK="${TOUR_MANIFEST_CHECK:-0}"
 TOUR_SCRIPT="${TOUR_SCRIPT:-$ROOT_DIR/scripts/codex-sim-tour.sh}"
+VERIFY_TOUR_SEMANTICS="${VERIFY_TOUR_SEMANTICS:-1}"
 
 expected=(
   "01-chat-default-clean.png"
-  "02-project-idle.png"
-  "03-project-running.png"
-  "04-project-approval.png"
-  "05-project-waiting.png"
-  "06-project-blocked.png"
-  "07-project-proof.png"
-  "08-project-resume.png"
-  "09-project-auto-continue-countdown.png"
+  "02-mission-dossier-idle.png"
+  "03-mission-dossier-running.png"
+  "04-mission-dossier-approval.png"
+  "05-mission-dossier-waiting.png"
+  "06-mission-dossier-blocked.png"
+  "07-mission-dossier-proof.png"
+  "08-mission-dossier-resume.png"
+  "09-mission-dossier-auto-continue-countdown.png"
   "10-runs-proof.png"
   "11-files-proof.png"
   "12-terminal-live-record.png"
   "13-settings-local-ready.png"
   "14-chat-pending-approval.png"
-  "15-theme-matrix-project-running.png"
+  "15-theme-matrix-mission-dossier-running.png"
   "16-theme-midnight-chat-general.png"
   "17-theme-whitegold-settings.png"
   "18-theme-arctic-runs-proof.png"
   "19-theme-ember-terminal-proof.png"
-  "20-project-intake-brief.png"
+  "20-mission-dossier-intake-brief.png"
 )
 
 check_tour_manifest() {
@@ -83,6 +84,115 @@ if [[ -z "$TOUR_DIR" || ! -d "$TOUR_DIR" ]]; then
 fi
 
 TOUR_VERIFY_SUMMARY_PATH="${TOUR_VERIFY_SUMMARY_PATH:-$TOUR_DIR/tour-verification-summary.txt}"
+OCR_SWIFT_SCRIPT=""
+
+cleanup_ocr_script() {
+  if [[ -n "$OCR_SWIFT_SCRIPT" && -f "$OCR_SWIFT_SCRIPT" ]]; then
+    rm -f "$OCR_SWIFT_SCRIPT"
+  fi
+}
+trap cleanup_ocr_script EXIT
+
+ocr_text_for_screenshot() {
+  local screenshot_path="$1"
+  if [[ -z "$OCR_SWIFT_SCRIPT" ]]; then
+    OCR_SWIFT_SCRIPT="$(mktemp -t novaforge-tour-ocr.XXXXXX.swift)"
+    cat > "$OCR_SWIFT_SCRIPT" <<'SWIFT'
+import Foundation
+import Vision
+import AppKit
+
+let args = CommandLine.arguments
+if args.count < 2 {
+    fputs("usage: ocr <image>\n", stderr)
+    exit(64)
+}
+let url = URL(fileURLWithPath: args[1])
+guard let image = NSImage(contentsOf: url),
+      let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    fputs("Could not read image: \(args[1])\n", stderr)
+    exit(65)
+}
+let request = VNRecognizeTextRequest { request, error in
+    if let error {
+        fputs("OCR failed: \(error.localizedDescription)\n", stderr)
+        exit(66)
+    }
+    let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
+    for observation in observations {
+        if let text = observation.topCandidates(1).first?.string {
+            print(text)
+        }
+    }
+}
+request.recognitionLevel = .accurate
+request.usesLanguageCorrection = true
+request.minimumTextHeight = 0.012
+let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+do {
+    try handler.perform([request])
+} catch {
+    fputs("OCR perform failed: \(error.localizedDescription)\n", stderr)
+    exit(67)
+}
+SWIFT
+  fi
+  xcrun swift "$OCR_SWIFT_SCRIPT" "$screenshot_path"
+}
+
+assert_semantic_tokens() {
+  local name="$1"
+  local screenshot_path="$2"
+  local token_list="$3"
+  [[ "$VERIFY_TOUR_SEMANTICS" == "1" ]] || return 0
+  [[ -n "$token_list" ]] || return 0
+
+  local ocr_text
+  if ! ocr_text="$(ocr_text_for_screenshot "$screenshot_path")"; then
+    echo "Could not OCR tour screenshot for semantic verification: $name" >&2
+    exit 1
+  fi
+
+  local lower_ocr="${ocr_text:l}"
+  local token
+  for token in ${(s:;:)token_list}; do
+    token="${token##[[:space:]]}"
+    token="${token%%[[:space:]]}"
+    [[ -n "$token" ]] || continue
+    if [[ "$lower_ocr" != *"${token:l}"* ]]; then
+      echo "Tour screenshot failed semantic check: $name" >&2
+      echo "Missing OCR token: $token" >&2
+      echo "OCR excerpt:" >&2
+      print -r -- "$ocr_text" | head -40 >&2
+      exit 1
+    fi
+  done
+
+  echo "semantic ok $name tokens=$token_list"
+  echo "semantic ok $name tokens=$token_list" >> "$TOUR_VERIFY_SUMMARY_PATH"
+}
+
+typeset -A semantic_checks
+semantic_checks["01-chat-default-clean.png"]="NovaForge;Forge;Workspace;History;Control"
+semantic_checks["02-mission-dossier-idle.png"]="Mission;Overview;Plan;Proof;Activity"
+semantic_checks["03-mission-dossier-running.png"]="Running;Mission;Overview;Plan;Proof"
+semantic_checks["04-mission-dossier-approval.png"]="Mission;Overview;Plan;Proof"
+semantic_checks["05-mission-dossier-waiting.png"]="Mission;Overview;Plan;Proof"
+semantic_checks["06-mission-dossier-blocked.png"]="Blocked;Mission;Overview;Plan;Proof"
+semantic_checks["07-mission-dossier-proof.png"]="Proof;Mission;Overview;Activity"
+semantic_checks["08-mission-dossier-resume.png"]="Mission;Overview;Plan;Proof"
+semantic_checks["09-mission-dossier-auto-continue-countdown.png"]="Mission;Overview;Plan;Proof"
+semantic_checks["10-runs-proof.png"]="History"
+semantic_checks["11-files-proof.png"]="Workspace"
+semantic_checks["12-terminal-live-record.png"]="Terminal"
+semantic_checks["13-settings-local-ready.png"]="Control"
+semantic_checks["14-chat-pending-approval.png"]="NovaForge;Forge"
+semantic_checks["15-theme-matrix-mission-dossier-running.png"]="Running;Mission"
+semantic_checks["16-theme-midnight-chat-general.png"]="NovaForge;Forge"
+semantic_checks["17-theme-whitegold-settings.png"]="Control"
+semantic_checks["18-theme-arctic-runs-proof.png"]="History"
+semantic_checks["19-theme-ember-terminal-proof.png"]="Terminal"
+semantic_checks["20-mission-dossier-intake-brief.png"]="Project;Create"
 
 echo "Verifying tour screenshots: $TOUR_DIR"
 {
@@ -90,6 +200,7 @@ echo "Verifying tour screenshots: $TOUR_DIR"
   echo "Tour directory: $TOUR_DIR"
   echo "Minimum screenshot bytes: $MIN_SCREENSHOT_BYTES"
   echo "Unique screenshot guard: $VERIFY_UNIQUE_TOUR_SCREENSHOTS"
+  echo "Semantic OCR guard: $VERIFY_TOUR_SEMANTICS"
   echo
 } > "$TOUR_VERIFY_SUMMARY_PATH"
 
@@ -120,7 +231,7 @@ for name in "${expected[@]}"; do
   screenshot_hash="$(shasum -a 256 "$screenshot_path" | awk '{ print $1 }')"
   if [[ -n "${screenshot_hashes[$screenshot_hash]-}" ]]; then
     previous_name="${screenshot_hashes[$screenshot_hash]}"
-    if [[ "$previous_name" == "04-project-approval.png" && "$name" == "05-project-waiting.png" ]]; then
+    if [[ "$previous_name" == "04-mission-dossier-approval.png" && "$name" == "05-mission-dossier-waiting.png" ]]; then
       echo "ok $name intentionally repeats $previous_name"
     else
       duplicate_screenshots+=("$name duplicates $previous_name")
@@ -131,6 +242,7 @@ for name in "${expected[@]}"; do
 
   echo "ok $name ${bytes}B ${width}x${height} sha256=$screenshot_hash"
   echo "$name ${bytes}B ${width}x${height} sha256=$screenshot_hash" >> "$TOUR_VERIFY_SUMMARY_PATH"
+  assert_semantic_tokens "$name" "$screenshot_path" "${semantic_checks[$name]-}"
 done
 
 if [[ "$ALLOW_EXTRA_TOUR_SCREENSHOTS" != "1" ]]; then

@@ -152,25 +152,25 @@ run_step() {
 }
 
 run_step "01-chat-default-clean" 1 0 --reset-ui --open-chat
-run_step "02-project-idle" 0 0 --reset-ui --open-project
-run_step "03-project-running" 0 0 --reset-ui --project-running-demo --open-project
-run_step "04-project-approval" 0 0 --reset-ui --project-waiting-demo --open-project
-run_step "05-project-waiting" 0 0 --reset-ui --project-waiting-demo --open-project
-run_step "06-project-blocked" 0 0 --reset-ui --project-blocked-demo --open-project
-run_step "07-project-proof" 0 0 --reset-ui --project-proof-demo --open-project
-run_step "08-project-resume" 0 0 --reset-ui --project-resume-demo --open-project
-WAIT_SECONDS=1 run_step "09-project-auto-continue-countdown" 0 0 --reset-ui --auto-continue-countdown-demo --open-project
+run_step "02-mission-dossier-idle" 0 0 --reset-ui --open-project --open-mission-dossier-demo
+run_step "03-mission-dossier-running" 0 0 --reset-ui --project-running-demo --open-project --open-mission-dossier-demo
+run_step "04-mission-dossier-approval" 0 0 --reset-ui --project-waiting-demo --open-project --open-mission-dossier-demo
+run_step "05-mission-dossier-waiting" 0 0 --reset-ui --project-waiting-demo --open-project --open-mission-dossier-demo
+run_step "06-mission-dossier-blocked" 0 0 --reset-ui --project-blocked-demo --open-project --open-mission-dossier-demo
+run_step "07-mission-dossier-proof" 0 0 --reset-ui --project-proof-demo --open-project --open-mission-dossier-demo
+run_step "08-mission-dossier-resume" 0 0 --reset-ui --project-resume-demo --open-project --open-mission-dossier-demo
+WAIT_SECONDS=1 run_step "09-mission-dossier-auto-continue-countdown" 0 0 --reset-ui --auto-continue-countdown-demo --open-project --open-mission-dossier-demo
 run_step "10-runs-proof" 0 0 --reset-ui --project-proof-demo --open-runs
 run_step "11-files-proof" 0 0 --reset-ui --project-proof-demo --open-files
 run_step "12-terminal-live-record" 0 0 --reset-ui --terminal-live-record-demo --open-terminal
 run_step "13-settings-local-ready" 0 0 --reset-ui --settings-local-model-ready --open-settings
 run_step "14-chat-pending-approval" 0 0 --reset-ui --pending-approval-demo --open-chat
-run_step "15-theme-matrix-project-running" 0 0 --reset-ui --theme-world=matrixRain --project-running-demo --open-project
+run_step "15-theme-matrix-mission-dossier-running" 0 0 --reset-ui --theme-world=matrixRain --project-running-demo --open-project --open-mission-dossier-demo
 run_step "16-theme-midnight-chat-general" 0 0 --reset-ui --theme-world=midnightBlack --open-chat
 run_step "17-theme-whitegold-settings" 0 0 --reset-ui --theme-world=whiteGold --settings-local-model-ready --open-settings
 run_step "18-theme-arctic-runs-proof" 0 0 --reset-ui --theme-world=arcticGlass --project-proof-demo --open-runs
 run_step "19-theme-ember-terminal-proof" 0 0 --reset-ui --theme-world=emberCore --terminal-live-record-demo --open-terminal
-run_step "20-project-intake-brief" 0 0 --reset-ui --open-project --project-intake-demo
+run_step "20-mission-dossier-intake-brief" 0 0 --reset-ui --open-project --open-mission-dossier-demo --project-intake-demo
 
 if [[ "$VERIFY_TOUR_SCREENSHOTS" == "1" ]]; then
   MIN_SCREENSHOT_BYTES="${MIN_SCREENSHOT_BYTES:-120000}" "$TOUR_VERIFY_SCRIPT" "$TOUR_DIR"

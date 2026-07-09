@@ -215,6 +215,8 @@ extension FilesView {
                                             .frame(height: 16)
                                             .agentControlSurface(radius: 5, tint: AgentPalette.green.opacity(0.12), selected: true)
                                     }
+
+                                    fileEvidenceBadge(for: row.item)
                                 }
                             }
 
@@ -238,6 +240,42 @@ extension FilesView {
             }
         }
         .padding(.horizontal)
+    }
+
+    var fileBrowserSectionHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            NovaSectionMark(
+                title: "Files",
+                detail: browserSectionDetail,
+                tint: AgentPalette.cyan
+            )
+
+            Spacer(minLength: 0)
+
+            if cachedStats.previewableCount > 0 {
+                Label("\(cachedStats.previewableCount) previews", systemImage: "play.rectangle.fill")
+                    .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.green)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .agentControlSurface(radius: 8, tint: AgentPalette.green.opacity(0.10), selected: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("filesBrowserSectionHeader")
+    }
+
+    var browserSectionDetail: String {
+        var parts: [String] = []
+        parts.append("\(items.count) item\(items.count == 1 ? "" : "s")")
+        if cachedStats.recentCount > 0 {
+            parts.append("\(cachedStats.recentCount) fresh")
+        }
+        if !currentPath.isEmpty {
+            parts.append(currentPath)
+        }
+        return parts.joined(separator: " / ")
     }
 
     var gridLayout: some View {
@@ -281,6 +319,8 @@ extension FilesView {
                                 .frame(height: 18)
                                 .agentControlSurface(radius: 6, tint: (row.isPreviewable ? AgentPalette.green : AgentPalette.cyan).opacity(0.12), selected: true)
                         }
+
+                        fileEvidenceBadge(for: row.item)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -297,6 +337,37 @@ extension FilesView {
             }
         }
         .padding(.horizontal)
+    }
+
+    @ViewBuilder
+    func fileEvidenceBadge(for item: FileItem) -> some View {
+        if let badge = fileEvidenceBadgeData(for: item) {
+            Label(badge.title, systemImage: badge.symbol)
+                .font(.system(size: 7.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(badge.tint)
+                .labelStyle(.titleAndIcon)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 5)
+                .frame(height: 16)
+                .agentControlSurface(radius: 5, tint: badge.tint.opacity(0.12), selected: true)
+        }
+    }
+
+    func fileEvidenceBadgeData(for item: FileItem) -> (title: String, symbol: String, tint: Color)? {
+        let path = item.relativePath
+        if project.fileChanges.contains(where: { change in
+            change.path == path || change.path.components(separatedBy: " -> ").contains(path)
+        }) {
+            return ("Changed", "plus.forwardslash.minus", AgentPalette.cyan)
+        }
+        if project.artifacts.contains(where: { $0.path == path }) || isGeneratedPath(path) {
+            return ("Artifact", "shippingbox.fill", AgentPalette.green)
+        }
+        if isVerificationPath(path) || isScreenshotPath(path) {
+            return ("Proof", "checkmark.seal.fill", AgentPalette.green)
+        }
+        return nil
     }
 
     func fileActionMenu(for item: FileItem) -> some View {

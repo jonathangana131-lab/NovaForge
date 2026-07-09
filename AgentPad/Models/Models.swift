@@ -1603,13 +1603,14 @@ final class ChatMessage {
     }
 
     init(
+        id: UUID = UUID(),
         role: ChatRole,
         content: String,
         toolCallID: String? = nil,
         toolCallsJSON: String? = nil,
         conversation: Conversation? = nil
     ) {
-        self.id = UUID()
+        self.id = id
         self.roleRawValue = role.rawValue
         self.content = PersistedPayloadBudget.compactMessageContent(content, role: role)
         self.toolCallID = toolCallID

@@ -19,6 +19,7 @@ struct RunCard: View {
     let openProject: () -> Void
     let approvePendingTool: () -> Void
     let rejectPendingTool: () -> Void
+    let openChat: () -> Void
     let dismissSearch: () -> Void
     let revealCard: (UnitPoint) -> Void
     var openReplay: (() -> Void)?
@@ -27,24 +28,7 @@ struct RunCard: View {
     @State private var confirmingDelete = false
 
     var statusColor: Color {
-        switch row.status {
-        case .completed: AgentPalette.green
-        case .failed, .rejected: AgentPalette.rose
-        case .pendingApproval: AgentPalette.cyan
-        case .approved: AgentPalette.cyan
-        }
-    }
-
-    private var runOutcomeTitle: String {
-        row.phaseTitle
-    }
-
-    private var runOutcomeDetail: String {
-        row.phaseDetail
-    }
-
-    private var runNextAction: String {
-        row.nextActionDetail
+        row.status.tint
     }
 
     var body: some View {
@@ -69,21 +53,28 @@ struct RunCard: View {
                         .agentControlSurface(radius: 10, tint: row.isMutating ? AgentPalette.cyan : AgentPalette.cyan, selected: true)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(row.displayName)
+                        Text(row.receiptTitle)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AgentPalette.ink)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        if let argumentSummary = row.argumentSummary {
-                            Text(argumentSummary)
-                                .font(.caption2)
-                                .foregroundStyle(AgentPalette.secondaryText)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
+                        Text(row.requestLine)
+                            .font(.caption2)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                         
                         HStack(spacing: 6) {
+                            Text(row.displayName)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(AgentPalette.tertiaryText)
+                                .lineLimit(1)
+
+                            Text("•")
+                                .font(.caption2)
+                                .foregroundStyle(AgentPalette.tertiaryText)
+
                             Text(row.createdTimeText)
                                 .font(.caption2)
                                 .foregroundStyle(AgentPalette.secondaryText)
@@ -144,6 +135,8 @@ struct RunCard: View {
             .accessibilityLabel("\(row.name), \(row.status.displayTitle)")
             .accessibilityIdentifier("runHistoryCard")
 
+            RunReceiptStatement(row: row, tint: statusColor)
+
             RunCommandStrip(row: row, tint: statusColor)
 
             RunTimelineStrip(phases: row.timelinePhases, tint: statusColor)
@@ -158,17 +151,11 @@ struct RunCard: View {
                 )
             }
 
-            RunOutcomeBrief(
-                title: runOutcomeTitle,
-                detail: runOutcomeDetail,
-                nextAction: runNextAction,
-                tint: statusColor
-            )
-
             RunNextActionBar(
                 row: row,
                 tint: statusColor,
                 openProject: openProject,
+                openChat: openChat,
                 openArtifact: openArtifact,
                 openTerminalRecord: openTerminalRecord
             )
@@ -364,15 +351,94 @@ struct RunCard: View {
 
 }
 
+struct RunReceiptStatement: View {
+    let row: RunsView.RunRowData
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            RunReceiptFactRow(
+                label: "Asked",
+                value: row.requestLine,
+                symbol: "text.bubble.fill",
+                tint: AgentPalette.cyan
+            )
+            RunReceiptFactRow(
+                label: "Outcome",
+                value: row.outcomeLine,
+                symbol: row.status.symbol,
+                tint: tint
+            )
+            RunReceiptFactRow(
+                label: "Proof",
+                value: row.proofLine,
+                detail: row.proofDetail,
+                symbol: "checkmark.seal.fill",
+                tint: AgentPalette.green
+            )
+        }
+        .padding(10)
+        .background(tint.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(tint.opacity(0.13), lineWidth: 0.6)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("runReceiptStatement")
+    }
+}
+
+struct RunReceiptFactRow: View {
+    let label: String
+    let value: String
+    var detail: String?
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 9.5, weight: .black))
+                .foregroundStyle(tint)
+                .frame(width: 22, height: 22)
+                .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.system(size: 7.8, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .textCase(.uppercase)
+                    .lineLimit(1)
+                Text(value)
+                    .font(.system(size: 10.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.82)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(detail == nil ? "\(label): \(value)" : "\(label): \(value). \(detail ?? "")")
+    }
+}
+
 struct RunCommandStrip: View {
     let row: RunsView.RunRowData
     let tint: Color
 
     var body: some View {
         HStack(spacing: 7) {
-            RunCommandDatum(title: "Current", value: row.phaseTitle, symbol: row.status.symbol, tint: tint)
+            RunCommandDatum(title: "Tool", value: row.displayName, symbol: row.isMutating ? "pencil.and.outline" : "eye", tint: AgentPalette.cyan)
             RunCommandDatum(title: "Elapsed", value: row.elapsedText, symbol: "timer", tint: AgentPalette.lilac)
-            RunCommandDatum(title: "Evidence", value: row.evidenceSummary, symbol: "checkmark.seal.fill", tint: AgentPalette.green)
+            RunCommandDatum(title: "State", value: row.status.displayTitle, symbol: row.status.symbol, tint: tint)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("runCommandStrip")
@@ -575,6 +641,7 @@ struct RunNextActionBar: View {
     let row: RunsView.RunRowData
     let tint: Color
     let openProject: () -> Void
+    let openChat: () -> Void
     let openArtifact: (WorkspaceArtifact) -> Void
     let openTerminalRecord: (UUID, String, String) -> Void
 
@@ -615,14 +682,16 @@ struct RunNextActionBar: View {
     private var primaryActionTitle: String {
         if row.artifact != nil { return "Open" }
         if row.terminalProof?.canOpenTerminalRecord == true { return "Terminal" }
-        if row.status == .failed || row.status == .rejected || row.status == .pendingApproval { return "ProjectOS" }
+        if row.status == .failed { return "Retry" }
+        if row.status == .rejected { return "Resume" }
+        if row.status == .pendingApproval { return "Decide" }
         return "ProjectOS"
     }
 
     private var primaryActionSymbol: String {
         if row.artifact != nil { return "arrow.up.right.square.fill" }
         if row.terminalProof?.canOpenTerminalRecord == true { return "terminal.fill" }
-        if row.status == .failed || row.status == .rejected { return "wrench.and.screwdriver.fill" }
+        if row.status == .failed || row.status == .rejected { return "arrow.clockwise" }
         if row.status == .pendingApproval { return "checkmark.shield.fill" }
         return "scope"
     }
@@ -633,6 +702,8 @@ struct RunNextActionBar: View {
             openArtifact(artifact)
         } else if let proof = row.terminalProof, proof.canOpenTerminalRecord {
             openTerminalRecord(proof.id, proof.command, proof.terminalFocusQuery)
+        } else if row.status == .failed || row.status == .rejected {
+            openChat()
         } else {
             openProject()
         }
@@ -1148,21 +1219,34 @@ struct RunStatusBadge: View {
 extension ToolRunStatus {
     var displayTitle: String {
         switch self {
-        case .pendingApproval: "Needs approval"
-        case .approved: "Running approved"
-        case .completed: "Done"
+        case .pendingApproval: "Approval"
+        case .approved: "Running"
+        case .completed: "Completed"
         case .failed: "Failed"
-        case .rejected: "Rejected"
+        case .rejected: "Cancelled"
         }
     }
 
     var symbol: String {
         switch self {
         case .pendingApproval: "shield.lefthalf.filled"
-        case .approved: "checkmark.shield.fill"
-        case .completed: "checkmark"
-        case .failed: "exclamationmark"
-        case .rejected: "xmark"
+        case .approved: "play.circle.fill"
+        case .completed: "checkmark.seal.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .rejected: "xmark.octagon.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .completed:
+            return AgentPalette.green
+        case .failed, .rejected:
+            return AgentPalette.rose
+        case .pendingApproval:
+            return AgentPalette.cyan
+        case .approved:
+            return AgentPalette.lilac
         }
     }
 }

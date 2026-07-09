@@ -45,6 +45,7 @@ struct ForgeHeader: View {
     let createProject: () -> Void
     let openWorkspaceSurface: (AppTab) -> Void
     let openArtifact: (WorkspaceArtifact) -> Void
+    let openMissionDossier: () -> Void
     let openChatDrawer: () -> Void
 
     private var chromeTint: Color { AgentPalette.primaryAccent }
@@ -146,6 +147,8 @@ struct ForgeHeader: View {
         HStack(spacing: 7) {
             scopeMenu
 
+            dossierShortcut
+
             if let signal {
                 Text("·")
                     .font(NovaType.caption)
@@ -202,6 +205,36 @@ struct ForgeHeader: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chatProjectScopeMenu")
+    }
+
+    private var dossierShortcut: some View {
+        Button {
+            openMissionDossier()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(AgentPalette.primaryAccent)
+                Text("Dossier")
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.primaryAccent)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(AgentPalette.primaryAccent.opacity(0.08))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(AgentPalette.primaryAccent.opacity(0.18), lineWidth: 0.7)
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open Mission Dossier")
+        .accessibilityIdentifier("missionDossierShortcut")
     }
 
     private var scopeTitle: String {
@@ -560,7 +593,12 @@ struct ForgeMissionStrip: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .agentGlass(radius: AgentDesign.rowRadius, tint: tint)
+        .modifier(
+            ForgeMissionStripSurface(
+                tint: tint,
+                usesSafetySurface: status.tone == .approval && !autoContinue.isCountingDown
+            )
+        )
         .animation(.snappy(duration: 0.3), value: status)
         .animation(.snappy(duration: 0.3), value: autoContinue)
     }
@@ -632,6 +670,40 @@ struct ForgeMissionStrip: View {
     }
 }
 
+private struct ForgeMissionStripSurface: ViewModifier {
+    let tint: Color
+    let usesSafetySurface: Bool
+
+    func body(content: Content) -> some View {
+        if usesSafetySurface {
+            let shape = RoundedRectangle(cornerRadius: AgentDesign.rowRadius, style: .continuous)
+            content
+                .background(
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                AgentPalette.surfaceElevated.opacity(0.96),
+                                AgentPalette.surface.opacity(0.92),
+                                tint.opacity(0.10)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                )
+                .overlay(shape.strokeBorder(tint.opacity(0.36), lineWidth: 0.85))
+                .overlay(alignment: .leading) {
+                    UnevenRoundedRectangle(topLeadingRadius: AgentDesign.rowRadius, bottomLeadingRadius: AgentDesign.rowRadius)
+                        .fill(tint.opacity(0.86))
+                        .frame(width: 3)
+                }
+                .shadow(color: AgentPalette.shadow.opacity(0.08), radius: 10, x: 0, y: 5)
+        } else {
+            content.agentGlass(radius: AgentDesign.rowRadius, tint: tint)
+        }
+    }
+}
+
 // MARK: - Mission dossier cover
 
 /// Hosts the full project dashboard as a modal dossier: the deep dive
@@ -652,16 +724,19 @@ struct MissionDossierCover<Dashboard: View>: View {
                 NovaHaptics.surfaceRevealed()
                 close()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(AgentPalette.ink.opacity(0.08)))
-                    .overlay(Circle().strokeBorder(AgentPalette.divider.opacity(0.7), lineWidth: 0.8))
-                    .contentShape(Circle())
+                ZStack {
+                    Color.clear
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                }
+                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                .background(Circle().fill(AgentPalette.ink.opacity(0.08)))
+                .overlay(Circle().strokeBorder(AgentPalette.divider.opacity(0.7), lineWidth: 0.8))
+                .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .padding(.trailing, 16)
+            .padding(.trailing, 12)
             .padding(.top, 8)
             .accessibilityLabel("Close mission dossier")
             .accessibilityIdentifier("missionDossierClose")

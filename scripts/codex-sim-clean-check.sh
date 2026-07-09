@@ -25,8 +25,8 @@ lingering="$(
     pgrep -fl 'NovaForge\.app/NovaForge' || true
     pgrep -fl '[c]odex-fast-screenshot\.sh' || true
     pgrep -fl '[c]odex-sim-tour\.sh' || true
-    pgrep -fl '[x]codebuild' || true
-    pgrep -fl '[s]imctl' || true
+    pgrep -xl 'xcodebuild' || true
+    pgrep -xl 'simctl' || true
   } | sort -u
 )"
 

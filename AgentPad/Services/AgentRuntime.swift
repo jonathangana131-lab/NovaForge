@@ -74,92 +74,199 @@ struct AgentTraceEvent: Identifiable, Hashable {
 
 @MainActor
 final class LiveStreamBuffer: ObservableObject {
-    private let minimumDisplayInterval: Duration = .milliseconds(110)
-    private let minimumInitialDisplayCharacters = 1
-    private let maximumPendingCharacters = 180
-    @Published private var frame = LiveStreamFrame()
-    @ObservationIgnored private var visibleText = ""
-    @ObservationIgnored private var pendingText = ""
-    @ObservationIgnored private var flushTask: Task<Void, Never>?
-    @ObservationIgnored private var lastDisplayUpdate = ContinuousClock.now
+    /// Provider chunks can arrive in ragged half-words. The Forge engine first
+    /// builds a semantic word tree, then reveals whole word/phrase frames on a
+    /// steady display cadence so the AI feels like it is speaking instead of
+    /// resizing text on every network packet.
+    private var activeRevealFrameInterval: Duration {
+        // Normal use feels lively; profiling uses a calmer cadence so the gate
+        // measures sustained scroll/render health instead of stress-test packet spam.
+        AgentPerformance.shouldProfileFrameRate ? .milliseconds(300) : .milliseconds(50)
+    }
 
-    var displayText: String { frame.displayText }
+    // Keep the live bubble as a rolling, readable window. The final durable
+    // assistant message still contains the full response after handoff; during
+    // streaming this avoids re-laying out a giant wall of text on every frame.
+    private var maximumDisplayedCharacters: Int {
+        // Keep the live response as a premium rolling window on iPhone 12.
+        // The durable assistant message keeps the complete text after handoff;
+        // during streaming we prioritize a fully readable glass card that does
+        // not slide under the header or composer chrome.
+        AgentPerformance.shouldProfileFrameRate ? 200 : 220
+    }
+    @Published private var frame = ForgeLiveFeedFrame.empty
+    @Published private var semanticDocument = AIStreamDocument.empty
+    @ObservationIgnored private var feedEngine = ForgeLiveFeedEngine()
+    @ObservationIgnored private var semanticEngine = AIStreamDisplayEngine()
+    @ObservationIgnored private var revealTask: Task<Void, Never>?
+    @ObservationIgnored private var punctuationPauseFrames = 0
+    @ObservationIgnored private var pendingHandoffClearMessageID: UUID?
+    @ObservationIgnored private var revealMetricTickCounter = 0
+    @Published private(set) var responseID = UUID()
+    @Published private(set) var handoffMessageID: UUID?
+
+    var displayFrame: ForgeLiveFeedFrame {
+        frame.windowed(maxCharacters: maximumDisplayedCharacters)
+    }
+
+    var responseDocument: AIStreamDocument { semanticDocument }
+    var shouldUseResponseStage: Bool { AIStreamFeatureFlags.responseStageEnabled }
+
+    var displayText: String { displayFrame.displayText }
     var characterCount: Int { frame.characterCount }
     var revision: Int { frame.revision }
     var isEmpty: Bool { frame.characterCount == 0 }
-    /// The live bubble no longer truncates to a tail window; the transcript is
-    /// bottom-anchored at the layout level instead, so the full streamed text
-    /// is always the display text.
-    var isShowingTail: Bool { false }
+    var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
+    var isShowingTail: Bool { displayFrame.isShowingTail }
+    var revealBacklog: Int { frame.backlogCharacters }
 
     func reset() {
-        flushTask?.cancel()
-        flushTask = nil
-        pendingText = ""
-        visibleText = ""
-        frame = LiveStreamFrame()
-        lastDisplayUpdate = .now
+        revealTask?.cancel()
+        revealTask = nil
+        feedEngine.reset()
+        semanticEngine = AIStreamDisplayEngine(configuration: semanticConfiguration)
+        semanticDocument = .empty
+        punctuationPauseFrames = 0
+        pendingHandoffClearMessageID = nil
+        revealMetricTickCounter = 0
+        responseID = UUID()
+        handoffMessageID = nil
+        frame = .empty
     }
 
     func append(_ delta: String) {
         guard !delta.isEmpty else { return }
-        pendingText += delta
-
-        if visibleText.isEmpty && pendingText.count < minimumInitialDisplayCharacters {
-            scheduleFlush()
-        } else if visibleText.isEmpty || pendingText.count >= maximumPendingCharacters {
-            flushPending()
-        } else {
-            scheduleFlush()
+        feedEngine.ingest(delta)
+        if shouldPublishSemanticStream {
+            publishSemanticUpdate(semanticEngine.consume(AIStreamEvent(kind: .textDelta(delta))), reason: nil)
         }
+
+        if frame.characterCount == 0 {
+            revealNextFrame(forceMinimum: true)
+        }
+        startRevealLoopIfNeeded()
     }
 
+    /// Legacy/testing escape hatch: reveal everything now. Normal provider
+    /// completion uses finishHandoff(to:) so the final saved message does not
+    /// pop in before the live reveal catches up.
     func flushPending() {
-        flushTask?.cancel()
-        flushTask = nil
-        guard !pendingText.isEmpty else { return }
-
-        let delta = pendingText
-        pendingText.removeAll(keepingCapacity: true)
-        let updatedCharacterCount = frame.characterCount + delta.count
-        visibleText += delta
-        frame = LiveStreamFrame(
-            displayText: visibleText,
-            characterCount: updatedCharacterCount,
-            revision: frame.revision + 1
-        )
-        AgentPerformance.event("Live Stream Flush")
-        AgentPerformance.value("Live Stream Flush Characters", Double(delta.count))
-        AgentPerformance.value("Live Stream Visible Characters", Double(visibleText.count))
-        lastDisplayUpdate = .now
+        revealTask?.cancel()
+        revealTask = nil
+        if let next = feedEngine.flush() {
+            publish(next, reason: "Live Stream Flush")
+        }
+        if shouldPublishSemanticStream {
+            publishSemanticUpdate(semanticEngine.flush(), reason: "AI Stream Flush")
+        }
+        punctuationPauseFrames = 0
+        completeHandoffIfReady()
     }
 
-    private func scheduleFlush() {
-        let elapsed = lastDisplayUpdate.duration(to: .now)
-        if elapsed >= minimumDisplayInterval {
-            flushPending()
-            return
+    func finishHandoff(to messageID: UUID) {
+        handoffMessageID = messageID
+        frame = feedEngine.currentFrame(profileMode: AgentPerformance.shouldProfileFrameRate)
+        if shouldPublishSemanticStream {
+            publishSemanticUpdate(semanticEngine.consume(AIStreamEvent(kind: .completed)), reason: "AI Stream Completed")
+            publishSemanticUpdate(semanticEngine.flush(), reason: nil)
         }
+        if feedEngine.hasPendingReveal {
+            startRevealLoopIfNeeded()
+        } else {
+            completeHandoffIfReady()
+        }
+    }
 
-        guard flushTask == nil else { return }
-        let delay = minimumDisplayInterval - elapsed
-        flushTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: delay)
-            } catch {
-                return
+    func clearHandoffIfRendered(messageID: UUID) {
+        guard handoffMessageID == messageID else { return }
+        pendingHandoffClearMessageID = messageID
+        if !feedEngine.hasPendingReveal {
+            reset()
+        } else {
+            startRevealLoopIfNeeded()
+        }
+    }
+
+    private func startRevealLoopIfNeeded() {
+        guard revealTask == nil, feedEngine.hasPendingReveal else { return }
+        revealTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled, self.feedEngine.hasPendingReveal {
+                do {
+                    try await Task.sleep(for: self.activeRevealFrameInterval)
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled else { break }
+                if self.punctuationPauseFrames > 0 {
+                    self.punctuationPauseFrames -= 1
+                } else {
+                    self.revealNextFrame(forceMinimum: false)
+                    if self.shouldPublishSemanticStream {
+                        self.publishSemanticUpdate(self.semanticEngine.tick(), reason: nil)
+                    }
+                }
             }
-            guard !Task.isCancelled else { return }
-            self?.flushPending()
+            self?.revealTask = nil
+            self?.completeHandoffIfReady()
         }
     }
 
-}
+    private func revealNextFrame(forceMinimum: Bool) {
+        guard let next = feedEngine.revealNextFrame(
+            forceMinimum: forceMinimum,
+            profileMode: AgentPerformance.shouldProfileFrameRate
+        ) else { return }
+        punctuationPauseFrames = next.suggestedPauseFrames
+        publish(next, reason: nil)
+    }
 
-fileprivate struct LiveStreamFrame: Equatable {
-    var displayText = ""
-    var characterCount = 0
-    var revision = 0
+    private func publish(_ next: ForgeLiveFeedFrame, reason: StaticString?) {
+        frame = next
+        revealMetricTickCounter += 1
+        if let reason {
+            AgentPerformance.event(reason)
+        }
+        if revealMetricTickCounter.isMultiple(of: 8) || next.backlogCharacters == 0 {
+            AgentPerformance.event("Live Feed Word Tree Tick")
+            AgentPerformance.value("Live Feed Visible Characters", Double(next.characterCount))
+            AgentPerformance.value("Live Feed Visible Atoms", Double(next.visibleAtomCount))
+            AgentPerformance.value("Live Feed Backlog Characters", Double(next.backlogCharacters))
+        }
+    }
+
+    private var semanticConfiguration: AIStreamDisplayEngine.Configuration {
+        AIStreamDisplayEngine.Configuration(
+            minimumUpdateInterval: AgentPerformance.shouldProfileFrameRate ? 0.18 : 1.0 / 18.0,
+            reducedMotion: !AgentPerformance.allowsDecorativeMotion,
+            performanceMode: AgentPerformance.shouldProfileFrameRate,
+            maxAnimatedGlyphs: AgentPerformance.shouldProfileFrameRate ? 48 : 96
+        )
+    }
+
+    private var shouldPublishSemanticStream: Bool {
+        AIStreamFeatureFlags.semanticStreamEnabled && !AgentPerformance.shouldProfileFrameRate
+    }
+
+    private func publishSemanticUpdate(_ update: AIStreamDisplayUpdate?, reason: StaticString?) {
+        guard let update else { return }
+        semanticDocument = update.document
+        if let reason {
+            AgentPerformance.event(reason)
+        }
+        if update.metrics.emittedSnapshotCount.isMultiple(of: 8) || update.document.isComplete {
+            AgentPerformance.event("AI Stream Semantic Tick")
+            AgentPerformance.value("AI Stream Characters", Double(update.document.characterCount))
+            AgentPerformance.value("AI Stream Suppressed Updates", Double(update.metrics.suppressedUpdateCount))
+        }
+    }
+
+    private func completeHandoffIfReady() {
+        guard let messageID = pendingHandoffClearMessageID,
+              handoffMessageID == messageID,
+              !feedEngine.hasPendingReveal else { return }
+        reset()
+    }
+
 }
 
 @MainActor
@@ -225,6 +332,7 @@ final class AgentRuntime {
     var outgoingProviderRoleLog = ""
     var lastRunDuration: TimeInterval?
     var wasInterrupted = false
+    private(set) var queuedFollowUpMessageIDs: Set<UUID> = []
     let localModels = LocalModelManager()
     /// Transient in-app feedback queue (saves, copies, recoverable failures).
     /// Surfaces through AgentToastView so user-facing operations no longer fail
@@ -253,12 +361,15 @@ final class AgentRuntime {
     private var didInjectRecoverableFailureFixture = false
     private var debugCompactedSaveOverride: ((ModelContext) throws -> Void)?
     private var debugProviderResponses: [ProviderResponse] = []
+    private var debugProviderFailure: Error?
+    private var debugProviderCredentialOverride = false
     #endif
 
     private struct QueuedPrompt: Identifiable {
         let id = UUID()
         let text: String
         let conversation: Conversation
+        let visibleMessageID: UUID?
         let createdAt = Date()
     }
 
@@ -346,7 +457,13 @@ final class AgentRuntime {
     }
 
     func debugInstallProviderResponses(_ responses: [ProviderResponse]) {
+        debugProviderCredentialOverride = true
         debugProviderResponses = responses
+    }
+
+    func debugInstallProviderFailure(_ error: Error) {
+        debugProviderCredentialOverride = true
+        debugProviderFailure = error
     }
 
     func debugSimulateActiveStatusStripRun(conversation: Conversation? = nil) {
@@ -386,36 +503,60 @@ final class AgentRuntime {
         wasInterrupted = false
         liveStream.reset()
         traceEvents = []
-        updateActiveTool(name: "stream renderer", detail: "Preparing batch 0 of 600")
-        setActivity("Streaming stress test", detail: "Rendering a deterministic long response.")
-        pushTrace("Streaming fixture started", detail: "600 bounded UI batches.", status: .thinking)
+        updateActiveTool(name: "response renderer", detail: "Preparing a readable live answer")
+        setActivity("Forge live response", detail: "Writing with a steady, readable cadence.")
+        pushTrace("Live response started", detail: "The incoming response is being smoothed into readable phrases.", status: .thinking)
 
+        let script = Array(repeating: Self.forgeLiveFeedStressScript, count: 16).joined(separator: "\n\n")
+        let chunks = Self.raggedProviderChunks(from: script)
         let runID = beginRunIdentity()
         currentTask = Task { [weak self] in
             guard let self else { return }
             defer { self.clearCurrentTaskIfActive(runID) }
-            for index in 1...600 {
+            for (offset, chunk) in chunks.enumerated() {
                 guard !Task.isCancelled, !self.stopRequested else { return }
-                if index == 1 || index % 60 == 0 {
-                    self.updateActiveTool(name: "stream renderer", detail: "Rendering batch \(index) of 600")
+                let index = offset + 1
+                if index == 1 || index.isMultiple(of: 44) {
+                    self.updateActiveTool(name: "response renderer", detail: "Organizing the response")
                 }
-                self.liveStream.append(
-                    "Batch \(index): NovaForge keeps network parsing off the main actor and updates only the live response island. "
-                )
-                if index == 1 || index % 120 == 0 {
-                    self.pushTrace("Stream batch \(index)", detail: "Live response and progress trace grew without losing the bottom pin.", status: .thinking)
+                self.liveStream.append(chunk)
+                if index == 1 || index.isMultiple(of: 88) {
+                    self.pushTrace("Live response progress", detail: "Keeping the live response readable.", status: .thinking)
                 }
-                try? await Task.sleep(for: .milliseconds(220))
+                try? await Task.sleep(for: .milliseconds(index.isMultiple(of: 9) ? 34 : 16))
             }
 
             guard !Task.isCancelled, !self.stopRequested else { return }
-            self.liveStream.flushPending()
-            self.setActivity("Streaming fixture complete", detail: "The full bounded stream rendered successfully.")
-            self.pushTrace("Streaming fixture complete", detail: "600 batches delivered.", status: .success)
+            self.liveStream.finishHandoff(to: UUID())
+            self.setActivity("Live response complete", detail: "The full answer is ready to review.")
+            self.pushTrace("Live response complete", detail: "\(chunks.count) provider chunks became readable live frames.", status: .success)
             self.runState = .completed
             self.isWorking = false
             self.clearActiveTool()
         }
+    }
+
+    private static let forgeLiveFeedStressScript = """
+    NovaForge is speaking through the new Forge live feed. The provider can send half words, weird punctuation, dense technical notes, and sudden pauses, but the phone should only see calm semantic phrases.
+
+    First the engine groups the response into readable phrases. Then it reveals stable milestones on a display-paced clock. Old text becomes settled ink, the active phrase glows softly, and the transcript keeps the bottom response readable above the composer.
+
+    This fixture intentionally uses jagged chunks so the live answer stays smooth through the roughest AI stream without jitter, duplicate bubbles, or sudden jumps.
+    """
+
+    private static func raggedProviderChunks(from text: String) -> [String] {
+        let pattern = [3, 1, 9, 2, 17, 4, 6, 1, 23, 5, 8, 2, 14, 7]
+        var chunks: [String] = []
+        var index = text.startIndex
+        var patternIndex = 0
+        while index < text.endIndex {
+            let length = pattern[patternIndex % pattern.count]
+            let end = text.index(index, offsetBy: length, limitedBy: text.endIndex) ?? text.endIndex
+            chunks.append(String(text[index..<end]))
+            index = end
+            patternIndex += 1
+        }
+        return chunks
     }
 
     func debugSimulateDelayedCompletionForActiveRun(delayMilliseconds: UInt64 = 120) {
@@ -576,6 +717,9 @@ final class AgentRuntime {
 
     func hasUsableProviderCredential(settings: AgentSettings) -> Bool {
         if settings.provider == .local { return true }
+        #if DEBUG || targetEnvironment(simulator)
+        if debugProviderCredentialOverride || !debugProviderResponses.isEmpty || debugProviderFailure != nil { return true }
+        #endif
         return !apiKey(for: settings.provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -596,18 +740,7 @@ final class AgentRuntime {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 return
             }
-            if queueFollowUp(prompt, conversation: conversation) {
-                ProjectEventRecorder.record(
-                    project: project ?? conversation.project,
-                    kind: .promptQueued,
-                    title: "Follow-up queued",
-                    detail: prompt,
-                    severity: .running,
-                    sourceType: .conversation,
-                    sourceID: conversation.id,
-                    context: context
-                )
-                saveCompactedIfPossible(context)
+            if queueFollowUp(prompt, conversation: conversation, context: context, project: project ?? conversation.project) {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
             return
@@ -691,7 +824,7 @@ final class AgentRuntime {
         }
         pendingTool = nil
         pendingApprovalRun = nil
-        discardQueuedPrompts()
+        discardQueuedPrompts(context: context)
         isWorking = false
         runState = .cancelled
         wasInterrupted = true
@@ -897,6 +1030,7 @@ final class AgentRuntime {
         traceEvents = []
         plannedProgressSteps = []
         currentArtifacts = []
+        queuedFollowUpMessageIDs.removeAll()
         discardQueuedPrompts()
         outgoingProviderRoleLog = ""
         lastRunDuration = nil
@@ -915,8 +1049,32 @@ final class AgentRuntime {
         origin: AgentRunOrigin = .manual,
         visiblePrompt: String? = nil
     ) {
+        startPrompt(
+            prompt,
+            conversation: conversation,
+            settings: settings,
+            context: context,
+            project: project,
+            clearsStaleQueuedFollowUps: clearsStaleQueuedFollowUps,
+            origin: origin,
+            visiblePrompt: visiblePrompt,
+            existingVisibleUserMessageID: nil
+        )
+    }
+
+    private func startPrompt(
+        _ prompt: String,
+        conversation: Conversation,
+        settings: AgentSettings,
+        context: ModelContext,
+        project: Project?,
+        clearsStaleQueuedFollowUps: Bool,
+        origin: AgentRunOrigin,
+        visiblePrompt: String?,
+        existingVisibleUserMessageID: UUID?
+    ) {
         if clearsStaleQueuedFollowUps {
-            discardQueuedPrompts()
+            discardQueuedPrompts(context: context)
         }
 
         let activeProject = project ?? conversation.project
@@ -930,20 +1088,31 @@ final class AgentRuntime {
             context: context
         )
         let displayedPrompt = visiblePrompt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? visiblePrompt! : prompt
-        let userMessage = ChatMessage(role: .user, content: displayedPrompt, conversation: conversation)
-        conversation.appendMessage(userMessage)
-        context.insert(userMessage)
-        ProjectEventRecorder.record(
-            project: activeProject,
-            kind: .promptQueued,
-            title: origin == .autoContinued ? "Auto-continued prompt queued" : "Prompt queued",
-            detail: displayedPrompt,
-            severity: .running,
-            sourceType: .conversation,
-            sourceID: conversation.id,
-            metadata: ["origin": origin.rawValue],
-            context: context
-        )
+        let visibleUserMessage: ChatMessage
+        if let existingVisibleUserMessageID,
+           let existing = conversation.messages.first(where: { $0.id == existingVisibleUserMessageID }) {
+            existing.content = PersistedPayloadBudget.compactMessageContent(displayedPrompt, role: .user)
+            existing.conversation = conversation
+            visibleUserMessage = existing
+            queuedFollowUpMessageIDs.remove(existingVisibleUserMessageID)
+            conversation.refreshMessageMetadata(updateTimestamp: Date())
+        } else {
+            let userMessage = ChatMessage(role: .user, content: displayedPrompt, conversation: conversation)
+            conversation.appendMessage(userMessage)
+            context.insert(userMessage)
+            visibleUserMessage = userMessage
+            ProjectEventRecorder.record(
+                project: activeProject,
+                kind: .promptQueued,
+                title: origin == .autoContinued ? "Auto-continued prompt queued" : "Prompt queued",
+                detail: displayedPrompt,
+                severity: .running,
+                sourceType: .conversation,
+                sourceID: conversation.id,
+                metadata: ["origin": origin.rawValue],
+                context: context
+            )
+        }
 
         isWorking = true
         runState = .running
@@ -1001,6 +1170,13 @@ final class AgentRuntime {
                 currentPrompt = nil
                 isWorking = false
                 runState = .failed(message)
+                appendVisibleErrorMessage(
+                    "I hit an error before NovaForge could send: \(message)",
+                    conversation: conversation,
+                    context: context,
+                    project: activeProject,
+                    sourceID: visibleUserMessage.id
+                )
                 ProjectEventRecorder.record(
                     project: activeProject,
                     kind: .runFailed,
@@ -1126,7 +1302,7 @@ final class AgentRuntime {
                     let message = friendlyError(error)
                     lastError = message
                     lastFailedPrompt = latestUserPrompt(in: targetConversation)
-                    discardQueuedPrompts()
+                    discardQueuedPrompts(context: context)
                     isWorking = false
                     runState = .failed(message)
                     setActivity(
@@ -1282,16 +1458,23 @@ final class AgentRuntime {
             )
 
             #if DEBUG || targetEnvironment(simulator)
-            let hasDebugProviderResponses = !debugProviderResponses.isEmpty
+            let hasDebugProviderOverride = !debugProviderResponses.isEmpty || debugProviderFailure != nil
             #else
-            let hasDebugProviderResponses = false
+            let hasDebugProviderOverride = false
             #endif
-            if runProvider != .local && providerConfiguration.apiKey.isEmpty && !hasDebugProviderResponses {
+            if runProvider != .local && providerConfiguration.apiKey.isEmpty && !hasDebugProviderOverride {
                 let message = "\(runProvider.missingCredentialMessage) NovaForge did not fake a provider response."
                 lastError = message
                 lastFailedPrompt = currentPrompt
                 setActivity("Provider setup needed", detail: message)
                 pushTrace("Provider key missing", detail: "No request was sent to \(runProvider.displayName).", status: .failed)
+                let assistant = ChatMessage(
+                    role: .assistant,
+                    content: "I hit an error: \(message)",
+                    conversation: conversation
+                )
+                conversation.appendMessage(assistant)
+                context.insert(assistant)
                 ProjectEventRecorder.record(
                     project: activeProject,
                     kind: .runFailed,
@@ -1307,7 +1490,7 @@ final class AgentRuntime {
                 runState = .failed(message)
                 activeToolName = nil
                 activeToolDetail = ""
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
                 runStartedAt = nil
                 currentPrompt = nil
                 try saveCompacted(context)
@@ -1328,7 +1511,7 @@ final class AgentRuntime {
                 if completedLocalPlan {
                     drainQueueIfPossible(conversation: conversation, settings: settings, context: context)
                 } else {
-                    discardQueuedPrompts()
+                    discardQueuedPrompts(context: context)
                 }
                 return
             }
@@ -1339,7 +1522,7 @@ final class AgentRuntime {
                 setActivity("Local mode is safe", detail: "Short local fallback keeps iPhone 12 responsive.")
                 await showImmediateResponse(responseText)
                 guard isActiveRun(runID) else { return }
-                let assistant = ChatMessage(role: .assistant, content: responseText, conversation: conversation)
+                let assistant = ChatMessage(id: liveStream.responseID, role: .assistant, content: responseText, conversation: conversation)
                 conversation.appendMessage(assistant)
                 context.insert(assistant)
                 ProjectEventRecorder.record(
@@ -1368,7 +1551,7 @@ final class AgentRuntime {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     throw error
                 }
-                liveStream.reset()
+                liveStream.finishHandoff(to: assistant.id)
                 pushTrace("Local safe response", detail: "Skipped unstable local generation for this prompt.", status: .success)
                 isWorking = false
                 runState = .completed
@@ -1451,6 +1634,7 @@ final class AgentRuntime {
                     let toolCallsJSON = (try? encoder.encode(effectiveToolCalls)).flatMap { String(data: $0, encoding: .utf8) }
 
                     let assistant = ChatMessage(
+                        id: liveStream.responseID,
                         role: .assistant,
                         content: response.content ?? "",
                         toolCallsJSON: toolCallsJSON,
@@ -1486,6 +1670,7 @@ final class AgentRuntime {
                         context: context
                     )
                     try saveCompacted(context)
+                    liveStream.finishHandoff(to: assistant.id)
 
                     var pausedForApproval = false
                     var toolMessages: [ChatMessage] = []
@@ -1590,7 +1775,7 @@ final class AgentRuntime {
                         let message = friendlyError(error)
                         lastError = message
                         lastFailedPrompt = latestUserPrompt(in: conversation)
-                        discardQueuedPrompts()
+                        discardQueuedPrompts(context: context)
                         isWorking = false
                         runState = .failed(message)
                         activeToolName = nil
@@ -1607,6 +1792,7 @@ final class AgentRuntime {
                         pushTrace("Tool results not saved", detail: message, status: .failed)
                         return
                     }
+                    liveStream.finishHandoff(to: assistant.id)
                     activeToolName = nil
                     activeToolDetail = ""
                     setActivity("Reading tool output", detail: "Sending results back to the model.")
@@ -1619,6 +1805,7 @@ final class AgentRuntime {
                 setActivity("Finalizing response", detail: "Saving the live model output to the chat.")
 
                 let assistant = ChatMessage(
+                    id: liveStream.responseID,
                     role: .assistant,
                     content: text,
                     conversation: conversation
@@ -1641,7 +1828,7 @@ final class AgentRuntime {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     throw error
                 }
-                liveStream.reset()
+                liveStream.finishHandoff(to: assistant.id)
                 pushTrace("Response complete", detail: "\(text.count) characters delivered.", status: .success)
                 ProjectEventRecorder.record(
                     project: activeProject,
@@ -1691,7 +1878,7 @@ final class AgentRuntime {
                     context: context
                 )
                 runState = .cancelled
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
             } else if case AgentRuntimeError.tooManyToolRounds = error {
                 let message = "Paused after \(maxToolRoundCount) tool rounds. NovaForge saved the project run so you can continue without restarting completed work."
                 lastError = nil
@@ -1721,7 +1908,7 @@ final class AgentRuntime {
                 conversation.appendMessage(assistant)
                 context.insert(assistant)
                 runState = .cancelled
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
                 do {
                     try saveCompacted(context)
                 } catch {
@@ -1749,7 +1936,7 @@ final class AgentRuntime {
                     context: context
                 )
                 runState = .failed(message)
-                discardQueuedPrompts()
+                discardQueuedPrompts(context: context)
                 let assistant = ChatMessage(
                     role: .assistant,
                     content: "I hit an error: \(message)",
@@ -1775,7 +1962,9 @@ final class AgentRuntime {
 
         guard isActiveRun(runID) else { return }
         isWorking = false
-        liveStream.reset()
+        if !liveStream.isHandoffActive {
+            liveStream.reset()
+        }
         activeToolName = nil
         activeToolDetail = ""
         if let runStartedAt {
@@ -2364,7 +2553,41 @@ final class AgentRuntime {
     private func saveCompactedIfPossible(_ context: ModelContext?) {
         guard let context else { return }
         PersistedPayloadBudget.compactBeforeSave(in: context)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            let message = friendlyError(error)
+            presentToast("NovaForge could not save the latest run state: \(message)", tone: .error)
+            pushTrace("Run state save failed", detail: message, status: .failed)
+        }
+    }
+
+    private func appendVisibleErrorMessage(
+        _ text: String,
+        conversation: Conversation,
+        context: ModelContext,
+        project: Project?,
+        sourceID: UUID?
+    ) {
+        let assistant = ChatMessage(role: .assistant, content: text, conversation: conversation)
+        conversation.appendMessage(assistant)
+        context.insert(assistant)
+        ProjectEventRecorder.record(
+            project: project,
+            kind: .runFailed,
+            title: "Error shown in transcript",
+            detail: text,
+            severity: .failure,
+            sourceType: .message,
+            sourceID: sourceID ?? assistant.id,
+            context: context
+        )
+        do {
+            try saveCompacted(context)
+        } catch {
+            rollbackUnsavedMessage(assistant, from: conversation, context: context)
+            presentToast("NovaForge could not save the error transcript: \(friendlyError(error))", tone: .error)
+        }
     }
 
     private func localAnswer(for prompt: String) -> String {
@@ -2466,7 +2689,12 @@ final class AgentRuntime {
         conversation.refreshMessageMetadata()
     }
 
-    private func queueFollowUp(_ prompt: String, conversation: Conversation) -> Bool {
+    private func queueFollowUp(
+        _ prompt: String,
+        conversation: Conversation,
+        context: ModelContext? = nil,
+        project: Project? = nil
+    ) -> Bool {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         queuedPromptCount = queuedPrompts.count
@@ -2481,7 +2709,33 @@ final class AgentRuntime {
             return false
         }
 
-        queuedPrompts.append(QueuedPrompt(text: prompt, conversation: conversation))
+        var visibleMessageID: UUID?
+        if let context {
+            let userMessage = ChatMessage(role: .user, content: prompt, conversation: conversation)
+            conversation.appendMessage(userMessage)
+            context.insert(userMessage)
+            visibleMessageID = userMessage.id
+            queuedFollowUpMessageIDs.insert(userMessage.id)
+            ProjectEventRecorder.record(
+                project: project ?? conversation.project,
+                kind: .promptQueued,
+                title: "Follow-up queued",
+                detail: prompt,
+                severity: .running,
+                sourceType: .conversation,
+                sourceID: conversation.id,
+                context: context
+            )
+            do {
+                try saveCompacted(context)
+            } catch {
+                let message = friendlyError(error)
+                presentToast("Follow-up is visible but was not saved yet: \(message)", tone: .error)
+                pushTrace("Follow-up save delayed", detail: message, status: .failed)
+            }
+        }
+
+        queuedPrompts.append(QueuedPrompt(text: prompt, conversation: conversation, visibleMessageID: visibleMessageID))
         queuedPromptCount = queuedPrompts.count
         setActivity("Prompt queued", detail: "\(queuedPromptCount) follow-up\(queuedPromptCount == 1 ? "" : "s") waiting.")
         pushTrace("Follow-up queued", detail: "Waiting for the current run to finish.", status: .queued)
@@ -2499,12 +2753,22 @@ final class AgentRuntime {
             settings: settings,
             context: context,
             project: next.conversation.project ?? conversation.project,
-            clearsStaleQueuedFollowUps: false
+            clearsStaleQueuedFollowUps: false,
+            origin: .manual,
+            visiblePrompt: nil,
+            existingVisibleUserMessageID: next.visibleMessageID
         )
     }
 
-    private func discardQueuedPrompts() {
+    private func discardQueuedPrompts(context: ModelContext? = nil) {
         guard !queuedPrompts.isEmpty || queuedPromptCount != 0 else { return }
+        for prompt in queuedPrompts {
+            guard let messageID = prompt.visibleMessageID else { continue }
+            queuedFollowUpMessageIDs.remove(messageID)
+            guard let context,
+                  let message = prompt.conversation.messages.first(where: { $0.id == messageID }) else { continue }
+            rollbackUnsavedMessage(message, from: prompt.conversation, context: context)
+        }
         queuedPrompts.removeAll()
         queuedPromptCount = 0
     }
@@ -2520,8 +2784,21 @@ final class AgentRuntime {
         onContentBatch: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> ProviderResponse {
         #if DEBUG || targetEnvironment(simulator)
+        if let debugProviderFailure {
+            self.debugProviderFailure = nil
+            try await streamDebugProviderText(
+                "Preparing deterministic failure...",
+                onContentBatch: onContentBatch
+            )
+            throw debugProviderFailure
+        }
         if !debugProviderResponses.isEmpty {
-            return debugProviderResponses.removeFirst()
+            let response = debugProviderResponses.removeFirst()
+            if let content = response.message.content,
+               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try await streamDebugProviderText(content, onContentBatch: onContentBatch)
+            }
+            return response
         }
         #endif
         var attempt = 0
@@ -2547,6 +2824,24 @@ final class AgentRuntime {
         }
     }
 
+    #if DEBUG || targetEnvironment(simulator)
+    private func streamDebugProviderText(
+        _ text: String,
+        onContentBatch: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws {
+        var index = text.startIndex
+        while index < text.endIndex {
+            try Task.checkCancellation()
+            let end = text.index(index, offsetBy: 24, limitedBy: text.endIndex) ?? text.endIndex
+            onContentBatch(String(text[index..<end]))
+            index = end
+            if index < text.endIndex {
+                try await Task.sleep(for: .milliseconds(160))
+            }
+        }
+    }
+    #endif
+
     private func isRecoverableNetworkError(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
         return [.networkConnectionLost, .notConnectedToInternet, .timedOut, .cannotConnectToHost, .dnsLookupFailed]
@@ -2554,7 +2849,9 @@ final class AgentRuntime {
     }
 
     private func providerHistory(for conversation: Conversation, limit: Int) -> [ProviderMessageInput] {
-        var inputs = recentMessages(for: conversation, limit: limit).map(\.providerInput)
+        var inputs = recentMessages(for: conversation, limit: limit)
+            .filter { !queuedFollowUpMessageIDs.contains($0.id) }
+            .map(\.providerInput)
         guard let currentPrompt,
               activeConversationID == conversation.id,
               let latestUserIndex = inputs.lastIndex(where: { $0.role == .user }) else {

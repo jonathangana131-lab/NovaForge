@@ -354,28 +354,11 @@ struct UserMessageBubble: View {
                 .padding(.horizontal, 15)
                 .padding(.vertical, 13)
                 .frame(maxWidth: 324, alignment: .leading)
-                .background(
-                    LinearGradient(
-                        colors: [
-                            AgentPalette.accent.opacity(0.18),
-                            AgentPalette.lilac.opacity(0.11),
-                            AgentPalette.surface
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    in: RoundedRectangle(cornerRadius: 19, style: .continuous)
-                )
-                .overlay(alignment: .topLeading) {
-                    Capsule()
-                        .fill(AgentPalette.glassStroke.opacity(0.45))
-                        .frame(width: 46, height: 1)
-                        .padding(.leading, 16)
-                        .padding(.top, 1)
-                }
-                .agentSurface(radius: 22, tint: AgentPalette.accent.opacity(0.08))
+                .chatMessageSurface(radius: 22, tint: AgentPalette.accent, emphasis: .user)
         }
         .padding(.horizontal, 18)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatUserMessageBubble")
     }
 }
 
@@ -388,11 +371,8 @@ struct AssistantMessageBubble: View {
     var body: some View {
         HStack {
             HStack(alignment: .top, spacing: 11) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundStyle(tint)
-                    .frame(width: 26, height: 26)
-                    .agentControlSurface(radius: 9, tint: tint.opacity(0.10), selected: true)
+                NovaReticleGlyph(symbol: "sparkles", tint: tint, size: 30)
+                    .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 10) {
                     if blocks.isEmpty {
@@ -415,10 +395,12 @@ struct AssistantMessageBubble: View {
             }
             .padding(13)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .assistantResponseSurface(tint: tint)
+            .chatMessageSurface(radius: 20, tint: tint, emphasis: .assistant)
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatAssistantMessageBubble")
     }
 }
 
@@ -534,22 +516,60 @@ struct AssistantTextBlockView: View {
     }
 }
 
-struct AssistantResponseSurfaceModifier: ViewModifier {
-    let tint: Color
+enum ChatMessageSurfaceEmphasis {
+    case assistant
+    case user
+    case live
+}
 
+struct ChatMessageSurfaceModifier: ViewModifier {
+    let radius: CGFloat
+    let tint: Color
+    let emphasis: ChatMessageSurfaceEmphasis
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        if reduceTransparency || AgentTheme.current == .matrixRain || AgentPlatformCompatibility.usesConservativeRendering {
+            fallback(content: content)
+        } else {
+            glass(content: content)
+        }
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+    }
+
+    private var tintOpacity: Double {
         let isLight = AgentPalette.isLight
-        let topSurfaceOpacity = isLight ? 0.96 : 0.82
-        let bottomSurfaceOpacity = isLight ? 0.98 : 0.88
-        let tintOpacity = isLight ? 0.08 : 0.035
-        content
+        switch emphasis {
+        case .assistant: return isLight ? 0.08 : 0.055
+        case .user: return isLight ? 0.13 : 0.095
+        case .live: return isLight ? 0.11 : 0.075
+        }
+    }
+
+    private var strokeOpacity: Double {
+        let isLight = AgentPalette.isLight
+        switch emphasis {
+        case .assistant: return isLight ? 0.30 : 0.22
+        case .user: return isLight ? 0.38 : 0.30
+        case .live: return isLight ? 0.24 : 0.16
+        }
+    }
+
+    private func decorated(_ content: Content, includeSurfaceFill: Bool) -> some View {
+        let isLight = AgentPalette.isLight
+        let topSurfaceOpacity = isLight ? 0.95 : 0.78
+        let bottomSurfaceOpacity = isLight ? 0.98 : 0.86
+        return content
             .background {
                 shape
                     .fill(
                         LinearGradient(
                             colors: [
-                                AgentPalette.surfaceElevated.opacity(topSurfaceOpacity),
+                                includeSurfaceFill ? AgentPalette.surfaceElevated.opacity(topSurfaceOpacity) : Color.clear,
                                 AgentPalette.surface.opacity(bottomSurfaceOpacity),
                                 tint.opacity(tintOpacity)
                             ],
@@ -563,24 +583,41 @@ struct AssistantResponseSurfaceModifier: ViewModifier {
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                AgentPalette.glassStroke.opacity(isLight ? 0.42 : 0.34),
-                                tint.opacity(isLight ? 0.20 : 0.14),
-                                AgentPalette.border.opacity(isLight ? 0.42 : 0.36)
+                                AgentPalette.glassStroke.opacity(isLight ? 0.42 : 0.30),
+                                tint.opacity(strokeOpacity),
+                                AgentPalette.border.opacity(isLight ? 0.36 : 0.28)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 0.65
+                        lineWidth: emphasis == .live ? 0.48 : 0.65
                     )
                     .allowsHitTesting(false)
             }
-            .shadow(color: AgentPalette.shadow.opacity(0.08), radius: 8, x: 0, y: 3)
+            .shadow(color: AgentPalette.shadow.opacity(AgentPerformance.prefersReducedVisualEffects ? 0.0 : 0.055), radius: 7, x: 0, y: 2)
+    }
+
+    private func fallback(content: Content) -> some View {
+        decorated(content, includeSurfaceFill: true)
+    }
+
+    private func glass(content: Content) -> some View {
+        decorated(content, includeSurfaceFill: false)
+            .agentGlass(radius: radius, interactive: emphasis == .user, tint: tint.opacity(tintOpacity))
     }
 }
 
 extension View {
     func assistantResponseSurface(tint: Color = AgentPalette.cyan) -> some View {
-        modifier(AssistantResponseSurfaceModifier(tint: tint))
+        chatMessageSurface(radius: 20, tint: tint, emphasis: .assistant)
+    }
+
+    func chatMessageSurface(
+        radius: CGFloat,
+        tint: Color = AgentPalette.cyan,
+        emphasis: ChatMessageSurfaceEmphasis = .assistant
+    ) -> some View {
+        modifier(ChatMessageSurfaceModifier(radius: radius, tint: tint, emphasis: emphasis))
     }
 }
 
@@ -680,8 +717,14 @@ private func makeMarkdownBlock(isCode: Bool, language: String?, content: String,
         collapsed = content
         summary = ""
     }
+    let stableContentID = stableMarkdownBlockID(
+        index: index,
+        kind: kind,
+        language: language,
+        content: content
+    )
     return MarkdownBlock(
-        id: "\(index)-\(kind)-\(language ?? "plain")-\(content.hashValue)",
+        id: stableContentID,
         isCode: isCode,
         language: language,
         content: content,
@@ -690,6 +733,21 @@ private func makeMarkdownBlock(isCode: Bool, language: String?, content: String,
         collapsedContent: collapsed,
         hiddenSummary: summary
     )
+}
+
+private func stableMarkdownBlockID(index: Int, kind: String, language: String?, content: String) -> String {
+    var hash: UInt64 = 0xcbf29ce484222325
+    let prime: UInt64 = 0x100000001b3
+    let seed = "\(index)|\(kind)|\(language ?? "plain")|"
+    for byte in seed.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= prime
+    }
+    for byte in content.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= prime
+    }
+    return "\(index)-\(kind)-\(language ?? "plain")-\(String(hash, radix: 16))"
 }
 
 struct CodeBlockView: View {
@@ -994,6 +1052,113 @@ struct ToolMessageBubble: View {
     }
 }
 
+struct ApprovalSafetySummary: Hashable {
+    let actionName: String
+    let headline: String
+    let riskLabel: String
+    let riskDetail: String
+    let affectedSummary: String
+    let reasonSummary: String
+    let approveConsequence: String
+    let rejectConsequence: String
+    let approveButtonTitle: String
+    let rejectButtonTitle: String
+    let badgeSymbol: String
+    let isMutating: Bool
+
+    init(request: ToolRequest) {
+        actionName = plainToolName(request.name)
+        isMutating = request.isMutating
+        affectedSummary = Self.affectedSummary(for: request)
+        reasonSummary = Self.reasonSummary(for: request)
+
+        switch request.name {
+        case "delete_path":
+            headline = "Deletes a sandbox path"
+            riskLabel = "High risk"
+            riskDetail = "This can remove a file or folder from the workspace."
+            approveConsequence = "NovaForge will delete the target path and save a receipt."
+            rejectConsequence = "Nothing is deleted; the run receives a rejection message."
+            badgeSymbol = "trash.fill"
+        case "move_path":
+            headline = "Moves a sandbox path"
+            riskLabel = "High risk"
+            riskDetail = "This can relocate a file or folder and change project structure."
+            approveConsequence = "NovaForge will move the path and record the source and destination."
+            rejectConsequence = "The path stays where it is; the run can choose another plan."
+            badgeSymbol = "arrow.triangle.swap"
+        case "run_command":
+            headline = request.isMutating ? "Runs a mutating command" : "Runs a read-only command"
+            riskLabel = request.isMutating ? "Command risk" : "Read only"
+            riskDetail = request.isMutating
+                ? "This command can change sandbox files. Shell operators are still blocked."
+                : "This command reads or validates workspace state with output limits."
+            approveConsequence = request.isMutating
+                ? "NovaForge will run the command in the sandbox and save terminal proof."
+                : "NovaForge will run the read-only command and save terminal proof."
+            rejectConsequence = "The command will not run; the agent gets a rejection message."
+            badgeSymbol = "terminal.fill"
+        case "write_file", "append_file", "replace_text", "make_directory", "copy_path":
+            headline = "Changes workspace files"
+            riskLabel = "Needs approval"
+            riskDetail = "This can create, overwrite, copy, or edit files inside the sandbox."
+            approveConsequence = "NovaForge will make the file change and save a receipt."
+            rejectConsequence = "No file changes; the run can revise the plan."
+            badgeSymbol = "pencil.and.outline"
+        default:
+            headline = request.isMutating ? "Changes workspace state" : "Inspects workspace state"
+            riskLabel = request.isMutating ? "Needs approval" : "Read only"
+            riskDetail = request.isMutating
+                ? "This action can modify the sandbox or project state."
+                : "This action gathers context without changing files."
+            approveConsequence = request.isMutating
+                ? "NovaForge will perform the action and keep durable proof."
+                : "NovaForge will continue with this read-only action."
+            rejectConsequence = "NovaForge will not perform this action."
+            badgeSymbol = request.isMutating ? "exclamationmark.shield.fill" : "eye.fill"
+        }
+
+        approveButtonTitle = request.isMutating ? "Approve Change" : "Approve"
+        rejectButtonTitle = request.isMutating ? "Reject Change" : "Reject"
+    }
+
+    var shortAffectedSummary: String {
+        affectedSummary.count > 120 ? String(affectedSummary.prefix(120)) + "..." : affectedSummary
+    }
+
+    private static func affectedSummary(for request: ToolRequest) -> String {
+        let from = oneLine(request.arguments["from"] ?? "")
+        let to = oneLine(request.arguments["to"] ?? "")
+        if !from.isEmpty && !to.isEmpty { return "\(from) -> \(to)" }
+
+        for key in ["path", "command", "query", "name"] {
+            let value = oneLine(request.arguments[key] ?? "")
+            guard !value.isEmpty else { continue }
+            return value.count > 160 ? String(value.prefix(160)) + "..." : value
+        }
+
+        return request.isMutating ? "Workspace target not specified." : "Current workspace context."
+    }
+
+    private static func reasonSummary(for request: ToolRequest) -> String {
+        for key in ["reason", "description", "purpose"] {
+            let value = oneLine(request.arguments[key] ?? "")
+            guard !value.isEmpty else { continue }
+            return value.count > 160 ? String(value.prefix(160)) + "..." : value
+        }
+
+        return request.isMutating
+            ? "Needed to continue the current run; review the target before approving."
+            : "Needed to gather context for the current run."
+    }
+
+    private static func oneLine(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 struct ApprovalSheet: View {
     let request: ToolRequest
     let approve: () -> Void
@@ -1007,6 +1172,10 @@ struct ApprovalSheet: View {
         request.isMutating ? AgentPalette.warning : AgentPalette.green
     }
 
+    private var safety: ApprovalSafetySummary {
+        ApprovalSafetySummary(request: request)
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             AgentBackground()
@@ -1014,12 +1183,12 @@ struct ApprovalSheet: View {
                 HStack(alignment: .center, spacing: 14) {
                     VStack(alignment: .leading, spacing: 4) {
                         NovaKicker(text: "Security Gate", tint: gateTint)
-                        Text("Approval needed")
+                        Text("Review this action")
                             .font(NovaType.hero)
                             .foregroundStyle(AgentPalette.ink)
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
-                        Text("\(plainToolName(request.name)) · \(argumentSummary)")
+                        Text("\(safety.actionName) · \(safety.shortAffectedSummary)")
                             .font(NovaType.caption)
                             .foregroundStyle(AgentPalette.secondaryText)
                             .lineLimit(1)
@@ -1029,7 +1198,7 @@ struct ApprovalSheet: View {
                     .layoutPriority(1)
 
                     NovaReticleGlyph(
-                        symbol: request.isMutating ? "exclamationmark.shield.fill" : "checkmark.shield.fill",
+                        symbol: request.isMutating ? "exclamationmark.shield.fill" : safety.badgeSymbol,
                         tint: gateTint,
                         size: 54,
                         isActive: true
@@ -1039,15 +1208,27 @@ struct ApprovalSheet: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: request.isMutating ? "pencil.and.outline" : "eye.fill")
+                            Image(systemName: safety.badgeSymbol)
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundStyle(gateTint)
                                 .padding(.top, 1)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(request.isMutating ? "This tool can change files or run commands" : "Read-only workspace inspection")
-                                    .font(NovaType.headline)
-                                    .foregroundStyle(AgentPalette.ink)
-                                Text(riskSummary)
+                                HStack(spacing: 7) {
+                                    Text(safety.headline)
+                                        .font(NovaType.headline)
+                                        .foregroundStyle(AgentPalette.ink)
+                                    Text(safety.riskLabel)
+                                        .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                        .foregroundStyle(gateTint)
+                                        .textCase(.uppercase)
+                                        .padding(.horizontal, 7)
+                                        .frame(height: 20)
+                                        .agentControlSurface(radius: 7, tint: gateTint.opacity(0.12), selected: true)
+                                }
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+
+                                Text(safety.riskDetail)
                                     .font(NovaType.caption)
                                     .foregroundStyle(AgentPalette.secondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -1117,7 +1298,7 @@ struct ApprovalSheet: View {
                         reject()
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     } label: {
-                        Label("Reject", systemImage: "xmark")
+                        Label(safety.rejectButtonTitle, systemImage: "xmark")
                             .font(NovaType.headline)
                             .foregroundStyle(AgentPalette.rose)
                             .frame(maxWidth: .infinity)
@@ -1132,7 +1313,7 @@ struct ApprovalSheet: View {
                         approve()
                         NovaHaptics.runSucceeded()
                     } label: {
-                        Label("Approve", systemImage: "checkmark")
+                        Label(safety.approveButtonTitle, systemImage: "checkmark")
                             .font(NovaType.headline)
                             .frame(maxWidth: .infinity)
                             .frame(height: AgentDesign.minimumTouchTarget + 4)
@@ -1175,12 +1356,12 @@ struct ApprovalSheet: View {
     }
 
     private var approvalFieldList: some View {
-        // Risk lives in the tinted band above — repeating it here read as
-        // filler in the run-34 capture.
         VStack(spacing: 7) {
-            approvalField(title: "Tool", value: plainToolName(request.name), symbol: "wrench.and.screwdriver.fill", tint: AgentPalette.cyan)
-            approvalField(title: "Affected", value: affectedSummary, symbol: "scope", tint: AgentPalette.lilac)
-            approvalField(title: "Reason", value: reasonSummary, symbol: "text.bubble.fill", tint: AgentPalette.cyan)
+            approvalField(title: "Action", value: safety.actionName, symbol: "wrench.and.screwdriver.fill", tint: AgentPalette.cyan)
+            approvalField(title: "Target", value: safety.affectedSummary, symbol: "scope", tint: AgentPalette.lilac)
+            approvalField(title: "Why", value: safety.reasonSummary, symbol: "text.bubble.fill", tint: AgentPalette.cyan)
+            approvalField(title: "Approve means", value: safety.approveConsequence, symbol: "checkmark.seal.fill", tint: AgentPalette.green)
+            approvalField(title: "Reject means", value: safety.rejectConsequence, symbol: "xmark.octagon.fill", tint: AgentPalette.rose)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("approvalHumanReadableFields")
@@ -1223,29 +1404,6 @@ struct ApprovalSheet: View {
         return "\(request.arguments.count) argument\(request.arguments.count == 1 ? "" : "s") ready to review."
     }
 
-    private var riskSummary: String {
-        request.isMutating ? "Can change workspace files, run a command, or alter project state." : "Read-only workspace inspection."
-    }
-
-    private var affectedSummary: String {
-        let from = request.arguments["from"].map { oneLine($0) } ?? ""
-        let to = request.arguments["to"].map { oneLine($0) } ?? ""
-        if !from.isEmpty && !to.isEmpty { return "\(from) -> \(to)" }
-        for key in ["path", "command", "query"] {
-            guard let value = request.arguments[key].map({ oneLine($0) }), !value.isEmpty else { continue }
-            return value.count > 140 ? String(value.prefix(140)) + "..." : value
-        }
-        return request.isMutating ? "Workspace target not specified." : "Current workspace context."
-    }
-
-    private var reasonSummary: String {
-        for key in ["reason", "description", "purpose"] {
-            guard let value = request.arguments[key].map({ oneLine($0) }), !value.isEmpty else { continue }
-            return value.count > 140 ? String(value.prefix(140)) + "..." : value
-        }
-        return request.isMutating ? "Needed to continue the current run; review the target before approving." : "Needed to gather context for the current run."
-    }
-
     private func oneLine(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\n", with: " ")
@@ -1267,6 +1425,10 @@ extension View {
 /// Human-readable name for a sandbox tool, shared by chat messages and the
 /// progress drawer. Module-scope so both ChatView and ChatMessages can call it.
 func plainToolName(_ toolName: String) -> String {
+    let lower = toolName.lowercased()
+    if lower.contains("word tree") || lower.contains("live feed") || lower.contains("response renderer") {
+        return "Writing Answer"
+    }
     switch toolName {
     case "read_file": return "Read File"
     case "read_file_range": return "Read Range"

@@ -238,12 +238,15 @@ struct ProviderConfiguration: Equatable, Sendable {
             trimmed.removeLast()
         }
         guard var components = URLComponents(string: trimmed),
-              components.scheme?.lowercased() == "https",
-              components.host?.isEmpty == false else { return nil }
+              let rawScheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(rawScheme),
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil else { return nil }
 
-        components.scheme = "https"
+        components.scheme = rawScheme
         components.path = Self.normalizedCustomChatPath(components.path)
-        return components.url.flatMap { Self.isSecureEndpoint($0) ? $0 : nil }
+        return components.url.flatMap { Self.isAllowedCustomEndpoint($0) ? $0 : nil }
     }
 
     private static func secureEndpointURL(from raw: String) -> URL? {
@@ -252,7 +255,53 @@ struct ProviderConfiguration: Equatable, Sendable {
     }
 
     private static func isSecureEndpoint(_ url: URL) -> Bool {
-        url.scheme?.lowercased() == "https" && !(url.host(percentEncoded: false)?.isEmpty ?? true)
+        url.scheme?.lowercased() == "https" &&
+            endpointHost(url) != nil &&
+            url.user(percentEncoded: false) == nil &&
+            url.password(percentEncoded: false) == nil
+    }
+
+    private static func isAllowedCustomEndpoint(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = endpointHost(url),
+              url.user(percentEncoded: false) == nil,
+              url.password(percentEncoded: false) == nil else { return false }
+
+        if scheme == "https" { return true }
+        if scheme == "http" { return isLocalNetworkHost(host) }
+        return false
+    }
+
+    private static func endpointHost(_ url: URL) -> String? {
+        let host = (url.host(percentEncoded: false) ?? url.host ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return host.isEmpty ? nil : host.lowercased()
+    }
+
+    private static func isLocalNetworkHost(_ rawHost: String) -> Bool {
+        let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") {
+            return true
+        }
+        if host == "::1" { return true }
+        if host.contains(":") {
+            return host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd")
+        }
+
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+        switch parts[0] {
+        case 10, 127:
+            return true
+        case 169:
+            return parts[1] == 254
+        case 172:
+            return (16...31).contains(parts[1])
+        case 192:
+            return parts[1] == 168
+        default:
+            return false
+        }
     }
 
     private static func normalizedCustomChatPath(_ rawPath: String) -> String {
@@ -271,7 +320,7 @@ struct ProviderConfiguration: Equatable, Sendable {
 
     private static func customModelsURL(from chatURL: URL) -> URL? {
         guard var components = URLComponents(url: chatURL, resolvingAgainstBaseURL: false),
-              isSecureEndpoint(chatURL) else { return nil }
+              isAllowedCustomEndpoint(chatURL) else { return nil }
 
         let chatPath = normalizedCustomChatPath(components.path)
         guard chatPath.hasSuffix("/chat/completions") else { return nil }
@@ -279,6 +328,7 @@ struct ProviderConfiguration: Equatable, Sendable {
         components.path = String(chatPath.dropLast("/chat/completions".count)) + "/models"
         components.query = nil
         components.fragment = nil
-        return components.url.flatMap { isSecureEndpoint($0) ? $0 : nil }
+        return components.url.flatMap { isAllowedCustomEndpoint($0) ? $0 : nil }
     }
+
 }

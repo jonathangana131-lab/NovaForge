@@ -527,6 +527,12 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
         let artifactCount = runtime.currentArtifacts.count
         let firstArtifactTitle = runtime.currentArtifacts.first?.title
         let pendingToolName = runtime.pendingTool?.name
+        let pendingToolSummary = runtime.pendingTool.map {
+            LiveChatSessionReducer.presentation(forToolName: $0.name, arguments: $0.arguments).title
+        }
+        let activeToolSummary = runtime.activeToolName.map {
+            LiveChatSessionReducer.presentation(forToolName: $0, detail: runtime.activeToolDetail)
+        }
         let hasStartingPlannedProgress = !runtime.plannedProgressSteps.isEmpty &&
             !runtime.isWorking &&
             runtime.lastRunDuration == nil &&
@@ -545,12 +551,12 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
         blocksCommand = pendingToolName != nil || runtime.isWorking || hasStartingPlannedProgress
         isWorking = runtime.isWorking || hasStartingPlannedProgress
 
-        if let pendingToolName {
-            title = "\(pendingToolName) needs approval"
+        if let pendingToolSummary {
+            title = "\(pendingToolSummary) needs approval"
         } else if hasStartingPlannedProgress {
-            title = runtime.activityTitle
+            title = LiveChatSessionReducer.humanizedVisibleText(runtime.activityTitle, fallback: "Getting ready")
         } else if runtime.isWorking {
-            title = runtime.activeToolName.map { "Running \($0)" } ?? runtime.activityTitle
+            title = activeToolSummary.map { "Running \($0.title)" } ?? LiveChatSessionReducer.humanizedVisibleText(runtime.activityTitle, fallback: "Working")
         } else if runtime.wasInterrupted {
             title = "Run paused"
         } else if runtime.lastError != nil {
@@ -562,7 +568,7 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
         }
 
         if hasStartingPlannedProgress || runtime.isWorking || runtime.wasInterrupted || runtime.lastError != nil || pendingToolName != nil {
-            detail = runtime.activityDetail
+            detail = activeToolSummary?.target ?? LiveChatSessionReducer.humanizedVisibleText(runtime.activityDetail, fallback: "Working on the current run.")
         } else if let firstArtifactTitle {
             let extraCount = artifactCount - 1
             detail = extraCount > 0 ? "\(firstArtifactTitle) and \(extraCount) more changed" : "\(firstArtifactTitle) changed"
@@ -652,11 +658,18 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
             runtime.activityTitle.localizedCaseInsensitiveContains("finalizing")
         let didUseTools = latestTool != nil ||
             traces.contains { $0.title.localizedCaseInsensitiveContains("tool") || $0.title.localizedCaseInsensitiveContains("command") }
+        let activeToolSummary = runtime.activeToolName.map {
+            LiveChatSessionReducer.presentation(forToolName: $0, detail: runtime.activeToolDetail)
+        }
+        let activeToolDetail = activeToolSummary.map { summary in
+            [summary.title, summary.target].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ": ")
+        }
 
         func compact(_ text: String?, fallback: String) -> String {
             let value = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if value.isEmpty { return fallback }
-            return value.count > 86 ? String(value.prefix(85)) + "..." : value
+            let humanValue = LiveChatSessionReducer.humanizedVisibleDetail(value) ?? LiveChatSessionReducer.humanizedVisibleText(value, fallback: fallback)
+            return humanValue.count > 86 ? String(humanValue.prefix(85)) + "..." : humanValue
         }
 
         if !runtime.plannedProgressSteps.isEmpty {
@@ -703,7 +716,7 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
             WorkspaceProgressStep(
                 id: "tools",
                 title: "Using tools",
-                detail: runtime.activeToolName.map { "\($0): \(runtime.activeToolDetail)" } ?? compact(latestTool?.title, fallback: "No active tool."),
+                detail: activeToolDetail ?? compact(latestTool?.title, fallback: "No active tool."),
                 symbolName: "wrench.and.screwdriver.fill",
                 state: runtime.activeToolName != nil && pendingToolName == nil ? .current : (didUseTools ? .done : .pending)
             ),
@@ -785,6 +798,9 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
         guard !steps.isEmpty else { return [] }
 
         let traceCount = runtime.traceEvents.count
+        let activeToolSummary = runtime.activeToolName.map {
+            LiveChatSessionReducer.presentation(forToolName: $0, detail: runtime.activeToolDetail)
+        }
         let activeIndex: Int
         if hasCompletion {
             activeIndex = steps.count
@@ -863,8 +879,8 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
         } else if runtime.isWorking {
             steps.append(WorkspaceProgressStep(
                 id: "planned-running",
-                title: runtime.activeToolName.map { "Running \($0)" } ?? runtime.activityTitle,
-                detail: runtime.activeToolName.map { _ in runtime.activeToolDetail } ?? runtime.activityDetail,
+                title: activeToolSummary.map { "Running \($0.title)" } ?? LiveChatSessionReducer.humanizedVisibleText(runtime.activityTitle, fallback: "Working"),
+                detail: activeToolSummary?.target ?? LiveChatSessionReducer.humanizedVisibleText(runtime.activityDetail, fallback: "Working on the current run."),
                 symbolName: "waveform",
                 state: .current
             ))
