@@ -101,11 +101,14 @@ struct ChatView: View {
         let handoffMessageID = runtime.liveStream.handoffMessageID
         rows.removeAll { row in
             guard let messageID = row.messageID else { return false }
-            return messageID == liveResponseID || messageID == handoffMessageID
+            return messageID == liveResponseID && messageID != handoffMessageID
         }
 
         let liveRow = ChatTranscriptRow.live(responseID: liveResponseID)
-        if let firstQueuedFollowUpIndex = rows.firstIndex(where: { row in
+        if let handoffMessageID,
+           let handoffIndex = rows.firstIndex(where: { $0.messageID == handoffMessageID }) {
+            rows.insert(liveRow, at: handoffIndex)
+        } else if let firstQueuedFollowUpIndex = rows.firstIndex(where: { row in
             guard let messageID = row.messageID else { return false }
             return runtime.queuedFollowUpMessageIDs.contains(messageID)
         }) {
@@ -556,10 +559,6 @@ struct ChatView: View {
             cachedMessages = snapshots
             cachedSourceMessageCount = sources.count
             updateCachedArtifacts(from: snapshots, runtimeArtifacts: runtimeArtifacts)
-            if let handoffMessageID = runtime.liveStream.handoffMessageID,
-               snapshots.contains(where: { $0.id == handoffMessageID }) {
-                runtime.liveStream.clearHandoffIfRendered(messageID: handoffMessageID)
-            }
         }
     }
 
@@ -1173,6 +1172,9 @@ struct ChatView: View {
         .id(message.id)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityIdentifier(for: message))
+        .onAppear {
+            runtime.liveStream.clearHandoffIfRendered(messageID: message.id)
+        }
     }
 
     private func accessibilityIdentifier(for message: ChatMessageSnapshot) -> String {
