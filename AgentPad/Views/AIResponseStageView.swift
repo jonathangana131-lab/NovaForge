@@ -34,9 +34,6 @@ struct AIResponseStageView: View {
         if let activeToolPresentation {
             return .usingTool(activeToolPresentation.title)
         }
-        if isHandoffActive {
-            return .finalizing
-        }
         if frame.displayText.isEmpty {
             return .connecting("NovaForge")
         }
