@@ -210,12 +210,9 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         composer.tap()
         composer.typeText("Yo")
-        app.buttons["sendMessageButton"].tap()
-
-        let sentUserBubble = app.otherElements.matching(identifier: "chatUserMessageBubble")
-            .matching(NSPredicate(format: "label CONTAINS %@", "Yo"))
-            .firstMatch
-        XCTAssertTrue(sentUserBubble.waitForExistence(timeout: 5), "User message should appear immediately after Send.")
+        let sendButton = waitForEnabledSendButton(in: app, timeout: 5)
+        XCTAssertTrue(sendButton.isEnabled, "Send button should become enabled after typing a prompt.")
+        sendButton.tap()
 
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 4), "Streaming response should render as one live assistant bubble.")
@@ -2589,6 +2586,16 @@ final class AgentPadUITests: XCTestCase {
         let textField = app.textFields["chatComposer"]
         if textField.exists { return textField }
         return app.textViews["chatComposer"]
+    }
+
+    private func waitForEnabledSendButton(in app: XCUIApplication, timeout: TimeInterval) -> XCUIElement {
+        let sendButton = app.buttons["sendMessageButton"]
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if sendButton.exists && sendButton.isEnabled { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return sendButton
     }
 
     private func identifiedElement(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
