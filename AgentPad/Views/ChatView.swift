@@ -254,6 +254,7 @@ struct ChatView: View {
 
     private var shouldShowLiveResponseIsland: Bool {
         ownsActiveRunState &&
+            !hasRenderedLiveHandoff &&
             (runtime.isWorking || runtime.liveStream.isHandoffActive)
     }
 

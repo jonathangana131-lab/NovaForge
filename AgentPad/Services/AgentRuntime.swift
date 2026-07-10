@@ -153,6 +153,7 @@ final class LiveStreamBuffer: ObservableObject {
     @ObservationIgnored private var semanticEngine = AIStreamDisplayEngine()
     @ObservationIgnored private var revealTask: Task<Void, Never>?
     @ObservationIgnored private var punctuationPauseFrames = 0
+    @ObservationIgnored private var pendingHandoffClearMessageID: UUID?
     @ObservationIgnored private var revealMetricTickCounter = 0
     @Published private(set) var responseID = UUID()
     @Published private(set) var handoffMessageID: UUID?
@@ -179,6 +180,7 @@ final class LiveStreamBuffer: ObservableObject {
         semanticEngine = AIStreamDisplayEngine(configuration: semanticConfiguration)
         semanticDocument = .empty
         punctuationPauseFrames = 0
+        pendingHandoffClearMessageID = nil
         revealMetricTickCounter = 0
         responseID = UUID()
         handoffMessageID = nil
@@ -211,6 +213,7 @@ final class LiveStreamBuffer: ObservableObject {
             publishSemanticUpdate(semanticEngine.flush(), reason: "AI Stream Flush")
         }
         punctuationPauseFrames = 0
+        completeHandoffIfReady()
     }
 
     func finishHandoff(to messageID: UUID) {
@@ -222,12 +225,19 @@ final class LiveStreamBuffer: ObservableObject {
         }
         if feedEngine.hasPendingReveal {
             startRevealLoopIfNeeded()
+        } else {
+            completeHandoffIfReady()
         }
     }
 
     func clearHandoffIfRendered(messageID: UUID) {
         guard handoffMessageID == messageID else { return }
-        reset()
+        pendingHandoffClearMessageID = messageID
+        if !feedEngine.hasPendingReveal {
+            reset()
+        } else {
+            startRevealLoopIfNeeded()
+        }
     }
 
     private func startRevealLoopIfNeeded() {
@@ -250,6 +260,7 @@ final class LiveStreamBuffer: ObservableObject {
                 }
             }
             self?.revealTask = nil
+            self?.completeHandoffIfReady()
         }
     }
 
@@ -282,6 +293,13 @@ final class LiveStreamBuffer: ObservableObject {
     private func replaceFrame(_ next: ForgeLiveFeedFrame) {
         cachedDisplayFrame = next.windowed(maxCharacters: maximumDisplayedCharacters)
         frame = next
+    }
+
+    private func completeHandoffIfReady() {
+        guard let messageID = pendingHandoffClearMessageID,
+              handoffMessageID == messageID,
+              !feedEngine.hasPendingReveal else { return }
+        reset()
     }
 
     private var semanticConfiguration: AIStreamDisplayEngine.Configuration {
