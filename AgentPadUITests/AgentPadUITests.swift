@@ -230,7 +230,7 @@ final class AgentPadUITests: XCTestCase {
 
         let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
         XCTAssertTrue(assistantBubble.waitForExistence(timeout: 90), "Final assistant response should replace the deliberately paced live stream in the transcript.")
-        XCTAssertFalse(liveBubble.exists, "Live bubble should clear as soon as the final response is visible.")
+        XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "liveStreamingBubble")), 0, "Live bubble should clear as soon as the final response is visible.")
         XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
         let assistantText = assistantBubble.staticTexts
             .containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do"))
