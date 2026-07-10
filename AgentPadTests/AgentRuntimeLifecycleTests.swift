@@ -50,20 +50,20 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(stream.revealBacklog, 0)
     }
 
-    func testLiveStreamHandoffWaitsForRevealBeforeClearingLiveBubble() {
+    func testLiveStreamHandoffClearsImmediatelyOnceFinalMessageIsRendered() async throws {
         let stream = LiveStreamBuffer()
         let messageID = UUID()
-        let text = String(repeating: "handoff should wait for the live reveal to catch up before final text replaces it. ", count: 6)
+        let text = String(repeating: "handoff should replace the live response as soon as the final message is rendered. ", count: 6)
 
         stream.append(text)
         stream.finishHandoff(to: messageID)
+        let characterCountAtFinish = stream.characterCount
+        try await Task.sleep(for: .milliseconds(140))
+        XCTAssertEqual(stream.characterCount, characterCountAtFinish, "Provider completion should freeze the live response instead of replaying its reveal backlog.")
+
         stream.clearHandoffIfRendered(messageID: messageID)
 
-        XCTAssertTrue(stream.isHandoffActive, "Final message rendering should not clear the live island while reveal backlog remains.")
-        XCTAssertGreaterThan(stream.revealBacklog, 0)
-
-        stream.flushPending()
-        XCTAssertTrue(stream.isEmpty)
+        XCTAssertTrue(stream.isEmpty, "The live island should disappear immediately once the durable assistant bubble is ready.")
         XCTAssertNil(stream.handoffMessageID)
     }
 

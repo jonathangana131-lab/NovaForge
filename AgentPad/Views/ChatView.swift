@@ -930,7 +930,7 @@ struct ChatView: View {
                                 requestJumpToLatest(animated: true, delay: .milliseconds(80))
                             } else {
                                 forceScrollToBottom = false
-                                settleLiveStreamHandoff(animated: true)
+                                settleLiveStreamHandoff(animated: false)
                             }
                         }
                         .onChange(of: runtime.runState) { _, newState in
@@ -1733,10 +1733,10 @@ struct ChatView: View {
     }
 
     private func handleRunStateChange(_ state: AgentRunState) {
-        settleLiveStreamHandoff(animated: state != .waitingForApproval)
+        settleLiveStreamHandoff(animated: state == .waitingForApproval)
         switch state {
         case .completed, .cancelled, .failed(_):
-            keepLatestReadableAfterAccessoryResize()
+            keepLatestReadableAfterAccessoryResize(animated: false)
         case .waitingForApproval:
             if shouldKeepTranscriptPinned {
                 scrollAttachment = .restoring
@@ -1755,10 +1755,10 @@ struct ChatView: View {
         requestJumpToLatest(animated: animated, delay: .milliseconds(60))
     }
 
-    private func keepLatestReadableAfterAccessoryResize() {
+    private func keepLatestReadableAfterAccessoryResize(animated: Bool = true) {
         guard shouldKeepTranscriptPinned else { return }
         scrollAttachment = .restoring
-        requestJumpToLatest(animated: true)
+        requestJumpToLatest(animated: animated)
         transient.accessoryResizeFollowUpTask?.cancel()
         transient.accessoryResizeFollowUpTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(180))

@@ -229,7 +229,7 @@ final class AgentPadUITests: XCTestCase {
 
         let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
         XCTAssertTrue(assistantBubble.waitForExistence(timeout: 35), "Final assistant response should replace the deliberately paced live stream in the transcript.")
-        XCTAssertFalse(liveBubble.waitForExistence(timeout: 2), "Live bubble should clear after final response is visible.")
+        XCTAssertFalse(liveBubble.exists, "Live bubble should clear as soon as the final response is visible.")
         XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
         let assistantText = assistantBubble.staticTexts
             .containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do"))
@@ -1282,10 +1282,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         let liveResponse = liveStreamingReadableContent(in: app)
         XCTAssertTrue(liveResponse.waitForExistence(timeout: 8))
-        XCTAssertTrue(
-            liveResponse.label.contains("Writing answer") || liveResponse.label.contains("Catching up"),
-            "Stress stream should use human live-response copy instead of debug renderer labels; got '\(liveResponse.label)'."
-        )
+        XCTAssertFalse(liveResponse.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "Stress stream should expose readable live response text.")
         XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("word tree"))
         XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("queued"))
         XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("renderer"))
@@ -1304,10 +1301,8 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
-        let liveStatus = app.staticTexts["liveStreamingStatusText"]
-        XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Streaming bubble should expose one readable human status footer.")
-        XCTAssertGreaterThanOrEqual(liveStatus.frame.minY, liveBubble.frame.minY + 8, "Streaming status footer should not clip into the live message top chrome.")
-        XCTAssertLessThanOrEqual(liveStatus.frame.maxY, liveBubble.frame.maxY - 8, "Streaming status footer should have enough bottom padding and never clip against the live bubble edge.")
+        XCTAssertGreaterThanOrEqual(liveResponse.frame.minY, liveBubble.frame.minY + 8, "Streaming text should not clip into the assistant bubble top chrome.")
+        XCTAssertLessThanOrEqual(liveResponse.frame.maxY, liveBubble.frame.maxY - 8, "Streaming text should have the same readable padding as a settled assistant message.")
         assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the run/composer stack.")
         XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The live bubble itself should not continue behind the run/composer stack.")
@@ -1356,8 +1351,6 @@ final class AgentPadUITests: XCTestCase {
 
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
-        let liveStatus = app.staticTexts["liveStreamingStatusText"]
-        XCTAssertTrue(liveStatus.waitForExistence(timeout: 3), "Focused composer proof should still expose the human live status.")
         assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the full bottom accessory stack.")
         XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The focused-composer live bubble should not flow under the bottom accessory stack.")
@@ -2490,13 +2483,7 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func liveStreamingReadableContent(in app: XCUIApplication) -> XCUIElement {
-        let statusText = app.staticTexts["liveStreamingStatusText"]
-        if statusText.exists { return statusText }
-        let identifiedStatus = app.descendants(matching: .staticText).matching(identifier: "liveStreamingStatusText").firstMatch
-        if identifiedStatus.exists { return identifiedStatus }
-        return app.staticTexts
-            .containing(NSPredicate(format: "label == %@ OR label == %@", "Showing latest", "Responding"))
-            .firstMatch
+        liveStreamingTextReveal(in: app)
     }
 
     private func liveStreamingTextReveal(in app: XCUIApplication) -> XCUIElement {

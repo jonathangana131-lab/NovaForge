@@ -153,7 +153,6 @@ final class LiveStreamBuffer: ObservableObject {
     @ObservationIgnored private var semanticEngine = AIStreamDisplayEngine()
     @ObservationIgnored private var revealTask: Task<Void, Never>?
     @ObservationIgnored private var punctuationPauseFrames = 0
-    @ObservationIgnored private var pendingHandoffClearMessageID: UUID?
     @ObservationIgnored private var revealMetricTickCounter = 0
     @Published private(set) var responseID = UUID()
     @Published private(set) var handoffMessageID: UUID?
@@ -169,9 +168,7 @@ final class LiveStreamBuffer: ObservableObject {
     var characterCount: Int { frame.characterCount }
     var revision: Int { frame.revision }
     var isEmpty: Bool { frame.characterCount == 0 }
-    var isHandoffActive: Bool {
-        handoffMessageID != nil && (pendingHandoffClearMessageID == nil || feedEngine.hasPendingReveal)
-    }
+    var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
     var isShowingTail: Bool { displayFrame.isShowingTail }
     var revealBacklog: Int { frame.backlogCharacters }
 
@@ -182,7 +179,6 @@ final class LiveStreamBuffer: ObservableObject {
         semanticEngine = AIStreamDisplayEngine(configuration: semanticConfiguration)
         semanticDocument = .empty
         punctuationPauseFrames = 0
-        pendingHandoffClearMessageID = nil
         revealMetricTickCounter = 0
         responseID = UUID()
         handoffMessageID = nil
@@ -202,9 +198,7 @@ final class LiveStreamBuffer: ObservableObject {
         startRevealLoopIfNeeded()
     }
 
-    /// Legacy/testing escape hatch: reveal everything now. Normal provider
-    /// completion uses finishHandoff(to:) so the live bubble stays up until the
-    /// final saved message is ready to render.
+    /// Legacy/testing escape hatch: reveal everything now.
     func flushPending() {
         revealTask?.cancel()
         revealTask = nil
@@ -215,31 +209,27 @@ final class LiveStreamBuffer: ObservableObject {
             publishSemanticUpdate(semanticEngine.flush(), reason: "AI Stream Flush")
         }
         punctuationPauseFrames = 0
-        completeHandoffIfReady()
     }
 
     func finishHandoff(to messageID: UUID) {
+        // The provider is done. Freeze the live surface at its last delivered
+        // frame and let the durable assistant message replace it as soon as it
+        // is rendered. Continuing the reveal loop here used to create a
+        // visible "Finishing response" phase that replayed text the user had
+        // already watched arrive.
+        revealTask?.cancel()
+        revealTask = nil
+        punctuationPauseFrames = 0
         handoffMessageID = messageID
-        replaceFrame(feedEngine.currentFrame(profileMode: AgentPerformance.shouldProfileFrameRate))
         if shouldPublishSemanticStream {
             publishSemanticUpdate(semanticEngine.consume(AIStreamEvent(kind: .completed)), reason: "AI Stream Completed")
             publishSemanticUpdate(semanticEngine.flush(), reason: nil)
-        }
-        if feedEngine.hasPendingReveal {
-            startRevealLoopIfNeeded()
-        } else {
-            completeHandoffIfReady()
         }
     }
 
     func clearHandoffIfRendered(messageID: UUID) {
         guard handoffMessageID == messageID else { return }
-        pendingHandoffClearMessageID = messageID
-        if !feedEngine.hasPendingReveal {
-            reset()
-        } else {
-            startRevealLoopIfNeeded()
-        }
+        reset()
     }
 
     private func startRevealLoopIfNeeded() {
@@ -262,7 +252,6 @@ final class LiveStreamBuffer: ObservableObject {
                 }
             }
             self?.revealTask = nil
-            self?.completeHandoffIfReady()
         }
     }
 
@@ -295,13 +284,6 @@ final class LiveStreamBuffer: ObservableObject {
     private func replaceFrame(_ next: ForgeLiveFeedFrame) {
         cachedDisplayFrame = next.windowed(maxCharacters: maximumDisplayedCharacters)
         frame = next
-    }
-
-    private func completeHandoffIfReady() {
-        guard let messageID = pendingHandoffClearMessageID,
-              handoffMessageID == messageID,
-              !feedEngine.hasPendingReveal else { return }
-        reset()
     }
 
     private var semanticConfiguration: AIStreamDisplayEngine.Configuration {
@@ -3835,7 +3817,10 @@ final class AgentRuntime {
         // observable cadence without changing real provider streaming or the
         // faster debug fixtures used elsewhere.
         let observableUITestStream = ProcessInfo.processInfo.arguments.contains("--ui-test-observable-stream")
-        let batchLength = observableUITestStream ? 48 : 24
+        // Keep enough delay for the live bubble to be observable, while
+        // bounding the fixture so the final durable message arrives under
+        // slow CI simulator conditions.
+        let batchLength = observableUITestStream ? 96 : 24
         let batchDelay = observableUITestStream ? Duration.seconds(1) : .milliseconds(160)
         var index = text.startIndex
         while index < text.endIndex {
