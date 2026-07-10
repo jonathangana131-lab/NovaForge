@@ -186,7 +186,14 @@ final class AgentPadUITests: XCTestCase {
 
     func testForgeChatSendStreamsOneAssistantBubbleAndClearsRunningState() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--debug-provider-send-ready", "--open-chat", "--new-ai-streaming-stage"]
+        app.launchArguments = [
+            "--reset-ui",
+            "--debug-provider-send-ready",
+            "--open-chat",
+            "--new-ai-streaming-stage",
+            "--ui-test-observable-stream",
+            "--performance-mode"
+        ]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
@@ -213,14 +220,16 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertLessThanOrEqual(liveDockGap, 112, "Live response auto-scroll should land on the response, not an invisible spacer below the transcript.")
         capture("sev0-chat-send-stream-live", app: app)
 
-        let assistantText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do")).firstMatch
-        XCTAssertTrue(assistantText.waitForExistence(timeout: 8), "Final assistant response should replace the live stream in the transcript.")
+        let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
+        XCTAssertTrue(assistantBubble.waitForExistence(timeout: 35), "Final assistant response should replace the deliberately paced live stream in the transcript.")
         XCTAssertFalse(liveBubble.waitForExistence(timeout: 2), "Live bubble should clear after final response is visible.")
         XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
+        let assistantText = assistantBubble.staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do"))
+            .firstMatch
+        XCTAssertTrue(assistantText.waitForExistence(timeout: 2), "Completed assistant bubble should contain the provider response, not only live-stream text.")
         XCTAssertEqual(visibleStaticTextCount(in: app, containing: "Hey! What can I do"), 1, "Welcome text should not duplicate as a real assistant output and a live response.")
 
-        let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
-        XCTAssertTrue(assistantBubble.waitForExistence(timeout: 2))
         let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
         if userBubble.exists && !userBubble.frame.isEmpty {
             XCTAssertFalse(userBubble.frame.intersects(assistantBubble.frame), "User and assistant bubbles must not visually overlap when both remain in the rendered window.")

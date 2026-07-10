@@ -97,14 +97,17 @@ struct AIResponseStageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .chatMessageSurface(radius: 22, tint: AgentPalette.primaryAccent, emphasis: .live)
                 .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("liveStreamingBubble")
+                .accessibilityIdentifier("aiResponseStage")
 
                 Spacer(minLength: 36)
             }
             .padding(.horizontal, 18)
             .liquidResponseEntrance(enabled: NovaMotion.enabled(reduceMotion: reduceMotion))
             .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("aiResponseStage")
+            // Keep one stable, exposed live-bubble identity across both the
+            // response-stage and compatibility renderers. Nested SwiftUI
+            // accessibility containers do not expose the inner identifier.
+            .accessibilityIdentifier("liveStreamingBubble")
         }
     }
 }

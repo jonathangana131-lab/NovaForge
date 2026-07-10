@@ -3818,14 +3818,21 @@ final class AgentRuntime {
         _ text: String,
         onContentBatch: @escaping @MainActor @Sendable (String) -> Void
     ) async throws {
+        // XCUI waits for a stable accessibility snapshot before querying a
+        // rapidly changing hierarchy. Give the send-path UI fixture a calm,
+        // observable cadence without changing real provider streaming or the
+        // faster debug fixtures used elsewhere.
+        let observableUITestStream = ProcessInfo.processInfo.arguments.contains("--ui-test-observable-stream")
+        let batchLength = observableUITestStream ? 48 : 24
+        let batchDelay = observableUITestStream ? Duration.seconds(1) : .milliseconds(160)
         var index = text.startIndex
         while index < text.endIndex {
             try Task.checkCancellation()
-            let end = text.index(index, offsetBy: 24, limitedBy: text.endIndex) ?? text.endIndex
+            let end = text.index(index, offsetBy: batchLength, limitedBy: text.endIndex) ?? text.endIndex
             onContentBatch(String(text[index..<end]))
             index = end
             if index < text.endIndex {
-                try await Task.sleep(for: .milliseconds(160))
+                try await Task.sleep(for: batchDelay)
             }
         }
     }
