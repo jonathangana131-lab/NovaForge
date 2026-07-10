@@ -3823,7 +3823,10 @@ final class AgentRuntime {
         // observable cadence without changing real provider streaming or the
         // faster debug fixtures used elsewhere.
         let observableUITestStream = ProcessInfo.processInfo.arguments.contains("--ui-test-observable-stream")
-        let batchLength = observableUITestStream ? 48 : 24
+        // Keep enough delay for the live bubble to be observable, while
+        // bounding the fixture so the final durable message arrives under
+        // slow CI simulator conditions.
+        let batchLength = observableUITestStream ? 96 : 24
         let batchDelay = observableUITestStream ? Duration.seconds(1) : .milliseconds(160)
         var index = text.startIndex
         while index < text.endIndex {
