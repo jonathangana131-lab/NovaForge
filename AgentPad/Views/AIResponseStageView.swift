@@ -55,6 +55,7 @@ struct AIResponseStageView: View {
             // response-stage and compatibility renderers. Nested SwiftUI
             // accessibility containers do not expose the inner identifier.
             .accessibilityIdentifier("liveStreamingBubble")
+            .accessibilityValue("\(frame.characterCount) characters streamed")
         }
     }
 }

@@ -2519,7 +2519,7 @@ final class AgentPadUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> Int {
-        let response = liveStreamingTextReveal(in: app)
+        let response = liveStreamingReadableMetric(in: app)
         XCTAssertTrue(
             response.waitForExistence(timeout: 3),
             "Live response text should exist before measuring visible growth.",
@@ -2527,10 +2527,7 @@ final class AgentPadUITests: XCTestCase {
             line: line
         )
         let rawValue = (response.value as? String) ?? ""
-        let count = rawValue
-            .components(separatedBy: CharacterSet.decimalDigits.inverted)
-            .first(where: { !$0.isEmpty })
-            .flatMap(Int.init)
+        let count = liveStreamingCharacterCount(from: rawValue)
         XCTAssertNotNil(
             count,
             "Live response should expose its real streamed character count on the visible accessibility element; value='\(rawValue)'.",
@@ -2538,6 +2535,25 @@ final class AgentPadUITests: XCTestCase {
             line: line
         )
         return count ?? 0
+    }
+
+    private func liveStreamingCharacterCountIfAvailable(in app: XCUIApplication) -> Int? {
+        let response = liveStreamingReadableMetric(in: app)
+        guard response.exists else { return nil }
+        return liveStreamingCharacterCount(from: (response.value as? String) ?? "")
+    }
+
+    private func liveStreamingCharacterCount(from rawValue: String) -> Int? {
+        rawValue
+            .components(separatedBy: CharacterSet.decimalDigits.inverted)
+            .first(where: { !$0.isEmpty })
+            .flatMap(Int.init)
+    }
+
+    private func liveStreamingReadableMetric(in app: XCUIApplication) -> XCUIElement {
+        let bubble = app.otherElements["liveStreamingBubble"]
+        if bubble.exists { return bubble }
+        return liveStreamingTextReveal(in: app)
     }
 
     private func waitForLiveStreamingCharacterGrowth(
@@ -2550,9 +2566,14 @@ final class AgentPadUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         var latest = baseline
         while Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-            latest = liveStreamingCharacterCount(in: app, file: file, line: line)
-            if latest > baseline { return latest }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            if let count = liveStreamingCharacterCountIfAvailable(in: app) {
+                latest = count
+                if count > baseline { return count }
+            }
+            if app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch.exists {
+                break
+            }
         }
         XCTFail("Live stream character count did not grow beyond \(baseline) within \(timeout)s; latest=\(latest).", file: file, line: line)
         return latest
