@@ -1171,6 +1171,21 @@ struct ChatView: View {
         )
         .equatable()
         .id(message.id)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(accessibilityIdentifier(for: message))
+    }
+
+    private func accessibilityIdentifier(for message: ChatMessageSnapshot) -> String {
+        switch message.role {
+        case .user:
+            return "chatUserMessageBubble"
+        case .assistant:
+            return message.toolCalls.isEmpty ? "chatAssistantMessageBubble" : "chatAssistantToolCallBubble"
+        case .tool:
+            return "chatToolMessageBubble"
+        case .system:
+            return "chatSystemMessageBubble"
+        }
     }
 
     private func previewArtifact(_ artifact: WorkspaceArtifact) {
