@@ -186,7 +186,14 @@ final class AgentPadUITests: XCTestCase {
 
     func testForgeChatSendStreamsOneAssistantBubbleAndClearsRunningState() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--debug-provider-send-ready", "--open-chat", "--new-ai-streaming-stage"]
+        app.launchArguments = [
+            "--reset-ui",
+            "--debug-provider-send-ready",
+            "--open-chat",
+            "--new-ai-streaming-stage",
+            "--ui-test-observable-stream",
+            "--performance-mode"
+        ]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
@@ -213,14 +220,16 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertLessThanOrEqual(liveDockGap, 112, "Live response auto-scroll should land on the response, not an invisible spacer below the transcript.")
         capture("sev0-chat-send-stream-live", app: app)
 
-        let assistantText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do")).firstMatch
-        XCTAssertTrue(assistantText.waitForExistence(timeout: 8), "Final assistant response should replace the live stream in the transcript.")
+        let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
+        XCTAssertTrue(assistantBubble.waitForExistence(timeout: 35), "Final assistant response should replace the deliberately paced live stream in the transcript.")
         XCTAssertFalse(liveBubble.waitForExistence(timeout: 2), "Live bubble should clear after final response is visible.")
         XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
+        let assistantText = assistantBubble.staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do"))
+            .firstMatch
+        XCTAssertTrue(assistantText.waitForExistence(timeout: 2), "Completed assistant bubble should contain the provider response, not only live-stream text.")
         XCTAssertEqual(visibleStaticTextCount(in: app, containing: "Hey! What can I do"), 1, "Welcome text should not duplicate as a real assistant output and a live response.")
 
-        let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
-        XCTAssertTrue(assistantBubble.waitForExistence(timeout: 2))
         let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
         if userBubble.exists && !userBubble.frame.isEmpty {
             XCTAssertFalse(userBubble.frame.intersects(assistantBubble.frame), "User and assistant bubbles must not visually overlap when both remain in the rendered window.")
@@ -2433,14 +2442,6 @@ final class AgentPadUITests: XCTestCase {
             .firstMatch
     }
 
-    private func liveStreamingMetricsElement(in app: XCUIApplication) -> XCUIElement {
-        let direct = app.staticTexts["streamingTextRevealMetrics"]
-        if direct.exists { return direct }
-        let identifiedText = app.descendants(matching: .staticText).matching(identifier: "streamingTextRevealMetrics").firstMatch
-        if identifiedText.exists { return identifiedText }
-        return app.descendants(matching: .any).matching(identifier: "streamingTextRevealMetrics").firstMatch
-    }
-
     private func liveStreamingTextReveal(in app: XCUIApplication) -> XCUIElement {
         let direct = app.staticTexts["streamingTextReveal"]
         if direct.exists { return direct }
@@ -2473,41 +2474,25 @@ final class AgentPadUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> Int {
-        let metricElements = app.descendants(matching: .any)
-            .matching(identifier: "streamingTextRevealMetrics")
-            .allElementsBoundByIndex
-            .filter { $0.exists }
-        if metricElements.isEmpty {
-            let metrics = liveStreamingMetricsElement(in: app)
-            XCTAssertTrue(metrics.waitForExistence(timeout: 3), "Live stream metrics should exist before reading character count.", file: file, line: line)
-            return liveStreamingCharacterCount(in: app, file: file, line: line)
-        }
-
-        let counts = metricElements.compactMap { element -> Int? in
-            let rawValue = (element.value as? String) ?? ""
-            let raw = [element.label, rawValue]
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-            return parseLiveStreamingCharacterCount(from: raw)
-        }
-        if let count = counts.max() {
-            return count
-        }
-        let debugRaw = metricElements.map { element in
-            [element.label, (element.value as? String) ?? ""].joined(separator: " | ")
-        }.joined(separator: " || ")
-        XCTFail("Could not parse streaming character count from metrics text: '\(debugRaw)'", file: file, line: line)
-        return -1
-    }
-
-    private func parseLiveStreamingCharacterCount(from raw: String) -> Int? {
-        let lowered = raw.lowercased()
-        guard let labelRange = lowered.range(of: "characters") else { return nil }
-        let suffix = String(raw[labelRange.upperBound...])
-        return suffix
+        let response = liveStreamingTextReveal(in: app)
+        XCTAssertTrue(
+            response.waitForExistence(timeout: 3),
+            "Live response text should exist before measuring visible growth.",
+            file: file,
+            line: line
+        )
+        let rawValue = (response.value as? String) ?? ""
+        let count = rawValue
             .components(separatedBy: CharacterSet.decimalDigits.inverted)
             .first(where: { !$0.isEmpty })
             .flatMap(Int.init)
+        XCTAssertNotNil(
+            count,
+            "Live response should expose its real streamed character count on the visible accessibility element; value='\(rawValue)'.",
+            file: file,
+            line: line
+        )
+        return count ?? 0
     }
 
     private func waitForLiveStreamingCharacterGrowth(

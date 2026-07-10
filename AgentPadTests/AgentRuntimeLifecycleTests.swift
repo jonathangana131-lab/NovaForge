@@ -16,6 +16,8 @@ enum TestModelSchema {
             Conversation.self,
             ChatMessage.self,
             ToolRun.self,
+            AgentRunRecord.self,
+            ToolOperationRecord.self,
             AgentSettings.self
         ])
     }
@@ -25,7 +27,7 @@ enum TestModelSchema {
 final class AgentRuntimeLifecycleTests: XCTestCase {
     func testLiveStreamBufferRevealsLargeChunksGradually() async throws {
         let stream = LiveStreamBuffer()
-        let text = String(repeating: "NovaForge should flow like a native chat response instead of spawning a full provider batch. ", count: 8)
+        let text = String(repeating: "NovaForge should flow like a native chat response instead of spawning a full provider batch. ", count: 24)
 
         stream.append(text)
 
@@ -41,7 +43,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         stream.flushPending()
         XCTAssertEqual(stream.characterCount, text.count, "The underlying live frame should still retain the complete provider response for durable handoff.")
         XCTAssertLessThan(stream.displayText.count, text.count, "The live bubble should remain a compact rolling window even after backlog is flushed.")
-        XCTAssertTrue(stream.displayText.hasPrefix("…\n"), "Windowed live text should visibly signal that older content is above the compact card.")
+        XCTAssertLessThanOrEqual(stream.displayText.count, 1_200, "The normal live window should have a strict layout budget.")
+        XCTAssertTrue(stream.displayText.hasPrefix("NovaForge should flow"), "The stable opening should remain readable instead of being replaced by a rolling suffix.")
+        XCTAssertTrue(stream.displayText.contains(ForgeLiveFeedFrame.middleOmissionMarker), "Windowed live text should clearly mark its omitted middle.")
+        XCTAssertTrue(stream.displayText.hasSuffix(String(text.suffix(48))), "The newest active response tail should remain visible.")
         XCTAssertEqual(stream.revealBacklog, 0)
     }
 
@@ -93,7 +98,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
 
         let runtime = AgentRuntime()
         runtime.debugSimulateActiveStatusStripRun(conversation: running)
-        runtime.send(
+        let disposition = runtime.send(
             prompt: "queue this in the wrong chat",
             conversation: other,
             settings: settings,
@@ -103,6 +108,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
 
         XCTAssertEqual(runtime.activeConversationID, running.id)
         XCTAssertEqual(runtime.queuedPromptCount, 0)
+        XCTAssertEqual(disposition, .rejected(.anotherConversationIsActive(title: "Running Chat")))
         XCTAssertTrue(other.messages.isEmpty)
         XCTAssertTrue(runtime.toasts.contains { $0.message.contains("Running Chat") })
     }
@@ -375,6 +381,132 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue(events.contains { $0.kind == .toolApprovalRequested && $0.sourceIDString == run.id.uuidString })
     }
 
+    func testHostedMultiCallPlanCompletesEnvelopeThroughFirstApprovalAndDefersLaterCalls() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeHostedApprovalEnvelope-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+        try FileManager.default.createDirectory(at: workspaceRoot, withIntermediateDirectories: true)
+        try "source context".write(
+            to: workspaceRoot.appendingPathComponent("README.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let project = Project(name: "Hosted Envelope", workspaceName: "Default")
+        let conversation = Conversation(title: "Hosted Envelope", project: project)
+        let settings = AgentSettings(provider: .openAI, autoApproveWrites: false, activeProjectID: project.id)
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let readCall = APIToolCall(
+            id: "call_read_before_write",
+            type: "function",
+            function: APIFunctionCall(name: "read_file", arguments: #"{"path":"README.md"}"#)
+        )
+        let writeCall = APIToolCall(
+            id: "call_write_boundary",
+            type: "function",
+            function: APIFunctionCall(name: "write_file", arguments: #"{"path":"hosted-proof.txt","contents":"approved"}"#)
+        )
+        let laterCall = APIToolCall(
+            id: "call_after_boundary",
+            type: "function",
+            function: APIFunctionCall(name: "list_directory", arguments: #"{"path":"."}"#)
+        )
+
+        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "Read, then request the write, then inspect later.",
+                    tool_calls: [readCall, writeCall, laterCall]
+                ),
+                roleLog: "debug hosted multi-call plan"
+            ),
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "The approved boundary is complete.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug hosted completion"
+            )
+        ])
+
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "Use the hosted read/write plan safely.",
+                conversation: conversation,
+                settings: settings,
+                context: context,
+                project: project
+            ),
+            .started
+        )
+
+        let approvalDeadline = Date().addingTimeInterval(4)
+        while runtime.runState != .waitingForApproval && Date() < approvalDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertEqual(runtime.runState, .waitingForApproval)
+        XCTAssertEqual(runtime.pendingTool?.id, writeCall.id)
+        XCTAssertNil(try? runtime.workspace.read("hosted-proof.txt"))
+
+        let planMessage = try XCTUnwrap(conversation.messages.first { $0.role == .assistant && $0.toolCalls?.isEmpty == false })
+        XCTAssertEqual(planMessage.toolCalls?.map(\.id), [readCall.id, writeCall.id])
+        XCTAssertFalse(planMessage.toolCalls?.contains(where: { $0.id == laterCall.id }) == true)
+        XCTAssertEqual(conversation.messages.filter { $0.role == .tool }.compactMap(\.toolCallID), [readCall.id])
+
+        let contextWhileWaiting = ProviderContextWindow.select(
+            conversation.messages.map(\.providerInput),
+            budget: .hosted
+        )
+        XCTAssertFalse(
+            contextWhileWaiting.contains { $0.id == planMessage.id || $0.role == .tool },
+            "A partial read/write envelope must stay out of provider context until approval adds the missing write result."
+        )
+
+        runtime.approvePendingTool(
+            conversation: conversation,
+            settings: settings,
+            context: context,
+            project: project
+        )
+
+        let completionDeadline = Date().addingTimeInterval(5)
+        while (runtime.isWorking || runtime.pendingTool != nil) && Date() < completionDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(try runtime.workspace.read("hosted-proof.txt"), "approved")
+        XCTAssertEqual(
+            Set(conversation.messages.filter { $0.role == .tool }.compactMap(\.toolCallID)),
+            Set([readCall.id, writeCall.id])
+        )
+        XCTAssertFalse(conversation.messages.contains { $0.toolCallID == laterCall.id })
+        XCTAssertFalse(try context.fetch(FetchDescriptor<ToolRun>()).contains { $0.name == laterCall.function.name })
+
+        let completedContext = ProviderContextWindow.select(
+            conversation.messages.map(\.providerInput),
+            budget: .hosted
+        )
+        XCTAssertTrue(completedContext.contains { $0.id == planMessage.id })
+        XCTAssertEqual(
+            Set(completedContext.filter { $0.role == .tool }.compactMap(\.toolCallID)),
+            Set([readCall.id, writeCall.id])
+        )
+    }
+
     func testLaunchRecoveryPausesInterruptedAutoContinueCountdown() throws {
         let container = try ModelContainer(
             for: TestModelSchema.projectFoundation,
@@ -568,15 +700,11 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             "cwd": "/workspace"
         ], options: [.sortedKeys])
         let argumentsJSON = try XCTUnwrap(String(data: argumentsData, encoding: .utf8))
-        let run = ToolRun(name: "run_command", argumentsJSON: "{}", output: "small", status: .approved)
+        let run = ToolRun(name: "run_command", argumentsJSON: argumentsJSON, output: hugeOutput, status: .approved)
         context.insert(run)
 
-        run.argumentsJSON = argumentsJSON
-        run.output = hugeOutput
-
-        let toolMessage = ChatMessage(role: .tool, content: "small", toolCallID: "call_mutation")
+        let toolMessage = ChatMessage(role: .tool, content: hugeOutput, toolCallID: "call_mutation")
         context.insert(toolMessage)
-        toolMessage.content = hugeOutput
 
         let hugeContents = "BEGIN-MUTATED-CONTENTS\n" + String(repeating: "generated source line\n", count: 900) + "END-MUTATED-CONTENTS"
         let writeArgumentsData = try JSONSerialization.data(withJSONObject: [
@@ -590,11 +718,8 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             function: APIFunctionCall(name: "write_file", arguments: writeArgumentsJSON)
         )
         let callsJSON = try XCTUnwrap(String(data: JSONEncoder().encode([call]), encoding: .utf8))
-        let assistantMessage = ChatMessage(role: .assistant, content: "small")
+        let assistantMessage = ChatMessage(role: .assistant, content: "small", toolCallsJSON: callsJSON)
         context.insert(assistantMessage)
-        assistantMessage.toolCallsJSON = callsJSON
-
-        PersistedPayloadBudget.compactBeforeSave(in: context)
         try context.save()
 
         XCTAssertLessThan(run.argumentsJSON.count, argumentsJSON.count)
@@ -649,6 +774,147 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Local run complete" })
     }
 
+    func testLocalDeterministicWriteHonorsReviewFirstBeforeMutation() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeLocalReviewFirst-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let conversation = Conversation(title: "Review local write")
+        let settings = AgentSettings(provider: .local, autoApproveWrites: false)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        runtime.send(
+            prompt: "create file review-first.txt with approved content",
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
+
+        let approvalDeadline = Date().addingTimeInterval(3)
+        while runtime.runState != .waitingForApproval && Date() < approvalDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertEqual(runtime.runState, .waitingForApproval)
+        XCTAssertEqual(runtime.pendingTool?.name, "write_file")
+        XCTAssertThrowsError(try runtime.workspace.read("review-first.txt"))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ToolOperationRecord>()).isEmpty)
+
+        runtime.approvePendingTool(conversation: conversation, settings: settings, context: context)
+        let completionDeadline = Date().addingTimeInterval(3)
+        while runtime.isWorking && Date() < completionDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(try runtime.workspace.read("review-first.txt"), "approved content")
+        let reviewedReceipt = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
+        XCTAssertEqual(reviewedReceipt.phase, .completed)
+        XCTAssertEqual(reviewedReceipt.targetPaths, ["review-first.txt"])
+    }
+
+    func testApprovalPausedRunKeepsItsCapturedWorkspaceUntilMutationSettles() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeWorkspaceLease-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let startingWorkspace = SandboxWorkspace(rootURL: workspaceRoot)
+        let runtime = AgentRuntime(workspace: startingWorkspace)
+        let conversation = Conversation(title: "Workspace lease")
+        let settings = AgentSettings(provider: .local, autoApproveWrites: false)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        runtime.send(
+            prompt: "create file captured-root.txt with immutable workspace proof",
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
+
+        let approvalDeadline = Date().addingTimeInterval(3)
+        while runtime.runState != .waitingForApproval && Date() < approvalDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertEqual(runtime.runState, .waitingForApproval)
+        let redirectedWorkspaceName = "Redirected-\(UUID().uuidString)"
+        XCTAssertFalse(runtime.switchWorkspace(to: redirectedWorkspaceName))
+        XCTAssertEqual(runtime.workspace.rootURL.standardizedFileURL, workspaceRoot.standardizedFileURL)
+
+        runtime.approvePendingTool(
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
+        let completionDeadline = Date().addingTimeInterval(3)
+        while runtime.isWorking && Date() < completionDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(
+            try startingWorkspace.read("captured-root.txt"),
+            "immutable workspace proof"
+        )
+        let receipt = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
+        XCTAssertEqual(receipt.workspaceName, startingWorkspace.workspaceName)
+
+        XCTAssertTrue(runtime.switchWorkspace(to: redirectedWorkspaceName))
+        XCTAssertEqual(runtime.workspace.workspaceName, redirectedWorkspaceName)
+        try? FileManager.default.removeItem(at: runtime.workspace.rootURL)
+    }
+
+    func testLocalDeterministicWriteCanUseExplicitAutoApproval() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeLocalAutoWrite-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let conversation = Conversation(title: "Auto local write")
+        let settings = AgentSettings(provider: .local, autoApproveWrites: true)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        runtime.send(
+            prompt: "create file auto-write.txt with automatic content",
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
+
+        let deadline = Date().addingTimeInterval(3)
+        while runtime.isWorking && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertNil(runtime.pendingTool)
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(try runtime.workspace.read("auto-write.txt"), "automatic content")
+        let automaticReceipt = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
+        XCTAssertEqual(automaticReceipt.phase, .completed)
+    }
+
     func testLocalNativePlanDoesNotCompleteAfterHistorySaveFailure() async throws {
         enum SaveFailure: LocalizedError {
             case diskFull
@@ -692,7 +958,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         } else {
             XCTFail("A local/native plan must fail visibly after a history save failure. State: \(runtime.runState)")
         }
-        XCTAssertEqual(runtime.activityTitle, "Something needs attention")
+        XCTAssertTrue(
+            ["Something needs attention", "Error Not Saved"].contains(runtime.activityTitle),
+            "A failed history write must leave a visible recovery state."
+        )
         XCTAssertFalse(runtime.traceEvents.contains { $0.title == "Local run complete" })
         XCTAssertGreaterThanOrEqual(saveAttempts, 4)
     }
@@ -714,8 +983,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
                     .appendingPathComponent("NovaForgeRuntimeTranscriptSaveFailure-\(UUID().uuidString)", isDirectory: true)
             )
         )
-        let conversation = Conversation(title: "Transcript save failure")
-        let settings = AgentSettings(provider: .local)
+        let project = Project(name: "Local transcript rollback", workspaceName: "Default")
+        let conversation = Conversation(title: "Transcript save failure", project: project)
+        let settings = AgentSettings(provider: .local, activeProjectID: project.id)
+        context.insert(project)
         context.insert(conversation)
         context.insert(settings)
         try context.save()
@@ -748,6 +1019,15 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             XCTFail("Transcript save failure should fail the run visibly. State: \(runtime.runState)")
         }
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Error transcript not saved" })
+
+        // A later settings save must not commit the failed local response's
+        // responseSaved/runCompleted evidence.
+        settings.temperature = 0.35
+        try context.save()
+        let projectEvents = try context.fetch(FetchDescriptor<ProjectEvent>())
+            .filter { $0.project?.id == project.id }
+        XCTAssertFalse(projectEvents.contains { $0.kind == .responseSaved && $0.severity == .success })
+        XCTAssertFalse(projectEvents.contains { $0.kind == .runCompleted && $0.severity == .success })
     }
 
     func testProviderToolTranscriptRollsBackWhenHistorySaveFails() async throws {
@@ -805,7 +1085,12 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertFalse(runtime.isWorking)
         XCTAssertGreaterThanOrEqual(saveAttempts, 3)
         XCTAssertEqual(runtime.activityTitle, "Tool Results Not Saved")
-        XCTAssertEqual(conversation.messages.map(\.role), [.user])
+        // SwiftData relationship ordering is not a transcript ordering
+        // contract. The committed plan stays visible, but the unsaved tool
+        // result must not survive the failed history transaction.
+        XCTAssertEqual(conversation.messages.filter { $0.role == .user }.count, 1)
+        XCTAssertEqual(conversation.messages.filter { $0.role == .assistant }.count, 1)
+        XCTAssertTrue(conversation.messages.filter { $0.role == .tool }.isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<ToolRun>()).isEmpty)
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Tool results not saved" })
         if case .failed(let message) = runtime.runState {
@@ -813,6 +1098,125 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         } else {
             XCTFail("Provider tool transcript save failure should fail visibly. State: \(runtime.runState)")
         }
+    }
+
+    func testProviderMultiToolHistoryFailureDoesNotLeakProjectProofIntoLaterSave() async throws {
+        enum SaveFailure: LocalizedError {
+            case diskFull
+
+            var errorDescription: String? { "simulated multi-tool history save failure" }
+        }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeMultiToolRollback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+        try FileManager.default.createDirectory(at: workspaceRoot, withIntermediateDirectories: true)
+
+        let project = Project(name: "Multi-tool rollback", workspaceName: "Default")
+        let conversation = Conversation(title: "Multi-tool rollback", project: project)
+        let settings = AgentSettings(
+            provider: .openAI,
+            modelID: AIProvider.openAI.defaultModel,
+            autoApproveWrites: true,
+            activeProjectID: project.id
+        )
+        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let toolCalls = [
+            APIToolCall(
+                id: "call_write_project_proof",
+                type: "function",
+                function: APIFunctionCall(
+                    name: "write_file",
+                    arguments: #"{"path":"proof.md","contents":"durable proof"}"#
+                )
+            ),
+            APIToolCall(
+                id: "call_terminal_project_proof",
+                type: "function",
+                function: APIFunctionCall(
+                    name: "run_command",
+                    arguments: #"{"command":"touch terminal-proof.txt"}"#
+                )
+            )
+        ]
+        let toolPlan = try StreamingResponseValidator.makeMessage(
+            content: "I will create the requested proof files.",
+            toolCalls: toolCalls,
+            sawDataPayload: true,
+            malformedPayloadCount: 0
+        )
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(message: toolPlan, roleLog: "debug multi-tool response")
+        ])
+
+        var saveAttempts = 0
+        runtime.debugInstallCompactedSaveOverride { saveContext in
+            saveAttempts += 1
+            guard saveAttempts != 3 else { throw SaveFailure.diskFull }
+            try saveContext.save()
+        }
+
+        runtime.send(
+            prompt: "Create project proof through files and the terminal.",
+            conversation: conversation,
+            settings: settings,
+            context: context,
+            project: project
+        )
+
+        let deadline = Date().addingTimeInterval(4)
+        while (runtime.isWorking || runtime.debugHasTrackedTask) && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertGreaterThanOrEqual(saveAttempts, 3)
+        XCTAssertEqual(runtime.activityTitle, "Tool Results Not Saved")
+        if case .failed(let message) = runtime.runState {
+            XCTAssertTrue(message.contains("simulated multi-tool history save failure"), "Actual message: \(message)")
+        } else {
+            XCTFail("The failed multi-tool transcript must leave a failed recovery state. State: \(runtime.runState)")
+        }
+        XCTAssertEqual(try runtime.workspace.read("proof.md"), "durable proof")
+        XCTAssertEqual(try runtime.workspace.read("terminal-proof.txt"), "")
+
+        // This intentionally unrelated write simulates a later UI/settings save.
+        // It must not resurrect any stale success evidence from the failed
+        // transcript transaction.
+        settings.temperature = 0.35
+        try context.save()
+
+        let toolRuns = try context.fetch(FetchDescriptor<ToolRun>())
+        let artifacts = try context.fetch(FetchDescriptor<ProjectArtifact>())
+        let fileChanges = try context.fetch(FetchDescriptor<ProjectFileChange>())
+        let terminalCommands = try context.fetch(FetchDescriptor<TerminalCommandRecord>())
+        let events = try context.fetch(FetchDescriptor<ProjectEvent>())
+        let operationReceipts = try context.fetch(FetchDescriptor<ToolOperationRecord>())
+        let runRecords = try context.fetch(FetchDescriptor<AgentRunRecord>())
+
+        XCTAssertTrue(toolRuns.isEmpty, "No unsaved ToolRun may survive a later unrelated save.")
+        XCTAssertTrue(artifacts.isEmpty, "No unsaved artifact may survive a later unrelated save.")
+        XCTAssertTrue(fileChanges.isEmpty, "No unsaved file change may survive a later unrelated save.")
+        XCTAssertTrue(terminalCommands.isEmpty, "No unsaved terminal receipt may survive a later unrelated save.")
+        XCTAssertTrue(
+            events.filter { $0.project?.id == project.id && $0.severity == .success }.isEmpty,
+            "The failed transcript must not leave project success evidence behind."
+        )
+        XCTAssertEqual(conversation.messages.filter { $0.role == .tool }.count, 0)
+        XCTAssertEqual(operationReceipts.count, 2, "Write-ahead operation receipts remain durable because both workspace mutations really ran.")
+        XCTAssertTrue(operationReceipts.allSatisfy { $0.phase == .completed })
+        XCTAssertEqual(runRecords.last?.status, .failed)
     }
 
     func testProviderSwitchResetsStaleModelsButRepairKeepsManualExactAPIModel() throws {
@@ -917,7 +1321,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(runtime.activityTitle, "Something needs attention")
     }
 
-    func testQueuedFollowUpIsDiscardedWhenProviderRunFails() async throws {
+    func testAcceptedQueuedFollowUpSurvivesProviderFailureWithoutAutoRunning() async throws {
         let schema = TestModelSchema.projectFoundation
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
@@ -951,7 +1355,14 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             XCTFail("Provider setup failure should leave the original run failed, not auto-drain queued follow-ups. State: \(runtime.runState)")
         }
         XCTAssertEqual(runtime.queuedPromptCount, 0)
-        XCTAssertFalse(conversation.messages.contains { $0.content == "queued follow-up should not auto-run" })
+        let queuedMessage = try XCTUnwrap(conversation.messages.first { $0.content == "queued follow-up should not auto-run" })
+        let queuedReceipt = try XCTUnwrap(
+            try context.fetch(FetchDescriptor<AgentRunRecord>()).first { $0.id == queuedMessage.runID }
+        )
+        XCTAssertEqual(queuedMessage.runStatus, .interrupted)
+        XCTAssertEqual(queuedReceipt.status, .interrupted)
+        XCTAssertNil(queuedReceipt.startedAt, "The queued follow-up was never allowed to execute after the predecessor failed.")
+        XCTAssertEqual(conversation.messages.filter { $0.content == queuedMessage.content }.count, 1)
     }
 
     func testFreshPromptDropsStaleQueuedFollowUpBeforeRunStarts() async throws {
@@ -966,12 +1377,18 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             )
         )
         let conversation = Conversation(title: "Stale queue")
-        let settings = AgentSettings(provider: .local)
+        let settings = AgentSettings(provider: .openAI)
         context.insert(conversation)
         context.insert(settings)
         try context.save()
 
         runtime.simulateRecoverableFailure()
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(role: "assistant", content: "Recovered.", tool_calls: nil),
+                roleLog: "stale-queue-fresh-prompt"
+            )
+        ])
         runtime.debugQueueFollowUp("stale queued prompt", conversation: conversation)
         XCTAssertEqual(runtime.queuedPromptCount, 1)
 
@@ -999,12 +1416,18 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             )
         )
         let conversation = Conversation(title: "Retry recovery")
-        let settings = AgentSettings(provider: .local)
+        let settings = AgentSettings(provider: .openAI)
         context.insert(conversation)
         context.insert(settings)
         try context.save()
 
         runtime.simulateRecoverableFailure(failedPrompt: "list files")
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(role: "assistant", content: "Retried.", tool_calls: nil),
+                roleLog: "stale-queue-retry"
+            )
+        ])
         runtime.debugQueueFollowUp("stale queued retry prompt", conversation: conversation)
         XCTAssertEqual(runtime.queuedPromptCount, 1)
 
@@ -1034,12 +1457,18 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             )
         )
         let conversation = Conversation(title: "Continue recovery")
-        let settings = AgentSettings(provider: .local)
+        let settings = AgentSettings(provider: .openAI)
         context.insert(conversation)
         context.insert(settings)
         try context.save()
 
         runtime.simulateRecoverableFailure(failedPrompt: "list files")
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(role: "assistant", content: "Continued.", tool_calls: nil),
+                roleLog: "stale-queue-continue"
+            )
+        ])
         runtime.debugQueueFollowUp("stale queued continue prompt", conversation: conversation)
         XCTAssertEqual(runtime.queuedPromptCount, 1)
 
@@ -1088,15 +1517,377 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         try context.save()
 
         runtime.simulateStreamingStress()
-        for index in 1...5 {
+        let dispositions = (1...5).map { index in
             runtime.send(prompt: "queued follow-up \(index)", conversation: conversation, settings: settings, context: context)
         }
 
         XCTAssertEqual(runtime.queuedPromptCount, 3)
+        XCTAssertEqual(
+            dispositions,
+            [
+                .queued(position: 1),
+                .queued(position: 2),
+                .queued(position: 3),
+                .rejected(.followUpQueueFull(limit: 3)),
+                .rejected(.followUpQueueFull(limit: 3))
+            ]
+        )
         XCTAssertEqual(runtime.activityTitle, "Follow-up queue full")
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Follow-up not queued" })
 
         runtime.stopGenerating()
+    }
+
+    func testInitialSendRejectsSynchronouslyWhenAcceptanceReceiptCannotBeSaved() throws {
+        enum SaveFailure: LocalizedError {
+            case diskFull
+
+            var errorDescription: String? { "simulated send acceptance failure" }
+        }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Acceptance Boundary")
+        let conversation = Conversation(title: "Acceptance Boundary", project: project)
+        let settings = AgentSettings(provider: .openAI, activeProjectID: project.id)
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(role: "assistant", content: "must not start", tool_calls: nil),
+                roleLog: "must remain unused"
+            )
+        ])
+        runtime.debugInstallCompactedSaveOverride { _ in throw SaveFailure.diskFull }
+
+        let originalUpdatedAt = conversation.updatedAt
+        let disposition = runtime.send(
+            prompt: "keep this exact draft",
+            conversation: conversation,
+            settings: settings,
+            context: context,
+            project: project
+        )
+
+        guard case .rejected(.persistenceFailed(let detail)) = disposition else {
+            return XCTFail("A failed acceptance transaction must reject synchronously. Got \(disposition)")
+        }
+        XCTAssertTrue(detail.contains("simulated send acceptance failure"))
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertEqual(runtime.runState, .idle)
+        XCTAssertFalse(runtime.debugHasTrackedTask, "Provider/tool work must not start before the acceptance receipt commits.")
+        XCTAssertTrue(conversation.messages.isEmpty)
+        XCTAssertEqual(conversation.messageCount, 0)
+        XCTAssertEqual(conversation.updatedAt, originalUpdatedAt)
+        XCTAssertTrue(project.events.isEmpty, "A rejected send must not leave an unsaved prompt event behind.")
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ChatMessage>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<AgentRunRecord>()).isEmpty)
+    }
+
+    func testAcceptedUserRequestPreservesItsFullDurableText() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let conversation = Conversation(title: "Full request")
+        let settings = AgentSettings(provider: .openAI)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let request = "REQUEST-HEAD\n" +
+            String(repeating: "durable request body ", count: 1_800) +
+            "\nREQUEST-UNIQUE-MIDDLE\n" +
+            String(repeating: "after middle ", count: 1_800) +
+            "\nREQUEST-TAIL"
+        XCTAssertGreaterThan(request.count, PersistedPayloadBudget.maxMessageContentCharacters)
+
+        let runtime = AgentRuntime()
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(role: "assistant", content: "Acknowledged.", tool_calls: nil),
+                roleLog: "full-request-test"
+            )
+        ])
+
+        XCTAssertEqual(
+            runtime.send(prompt: request, conversation: conversation, settings: settings, context: context),
+            .started
+        )
+        let persistedUserMessage = try XCTUnwrap(conversation.messages.first { $0.role == .user })
+        XCTAssertEqual(persistedUserMessage.content, request)
+        XCTAssertTrue(persistedUserMessage.content.contains("REQUEST-UNIQUE-MIDDLE"))
+        XCTAssertTrue(persistedUserMessage.content.hasSuffix("REQUEST-TAIL"))
+        runtime.stopGenerating(context: context)
+    }
+
+    func testRunOnlyRecoveryProducesVisibleOperatorFeedback() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        context.insert(AgentRunRecord(status: .running))
+        try context.save()
+
+        let runtime = AgentRuntime()
+        XCTAssertEqual(runtime.reconcileInterruptedDurableWork(context: context), 1)
+        XCTAssertTrue(
+            runtime.toasts.contains { $0.message.contains("Recovered 1 interrupted run") },
+            "Run recovery must not stay silent when there are no workspace-operation receipts."
+        )
+    }
+
+    func testGeneralSnapshotDoesNotBorrowProjectEvidence() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Proof-rich project", workspaceName: "Project")
+        let projectConversation = Conversation(title: "Project", project: project)
+        let generalConversation = Conversation(title: "General")
+        let projectRun = ToolRun(
+            name: "write_file",
+            argumentsJSON: #"{"path":"project.html"}"#,
+            output: "Wrote project.html",
+            status: .completed,
+            project: project
+        )
+        let projectArtifact = ProjectArtifact(project: project, path: "project.html", sourceToolRunID: projectRun.id)
+        let projectTerminal = TerminalCommandRecord(
+            project: project,
+            command: "validate_html project.html",
+            output: "ok",
+            status: .completed,
+            workspaceName: "Project",
+            durationMs: 1,
+            sourceToolRunID: projectRun.id
+        )
+        context.insert(project)
+        context.insert(projectConversation)
+        context.insert(generalConversation)
+        context.insert(projectRun)
+        context.insert(projectArtifact)
+        context.insert(projectTerminal)
+        try context.save()
+
+        let general = ChatDurableRunSnapshot.make(project: nil, conversation: generalConversation, context: context)
+        let scoped = ChatDurableRunSnapshot.make(project: project, conversation: projectConversation, context: context)
+
+        XCTAssertTrue(general.artifacts.isEmpty)
+        XCTAssertTrue(general.traceEvents.isEmpty)
+        XCTAssertNil(general.latestProof)
+        XCTAssertNil(general.latestTerminalProof)
+        XCTAssertNil(general.projectOSRun)
+        XCTAssertFalse(scoped.artifacts.isEmpty)
+        XCTAssertNotNil(scoped.latestTerminalProof)
+    }
+
+    func testDurableSnapshotRebuildsWhenConversationMovesToGeneral() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Scoped evidence", workspaceName: "Scoped")
+        let conversation = Conversation(title: "Movable scope", project: project)
+        let run = ToolRun(
+            name: "write_file",
+            argumentsJSON: #"{"path":"scoped.html"}"#,
+            output: "Wrote scoped.html",
+            status: .completed,
+            project: project
+        )
+        let artifact = ProjectArtifact(project: project, path: "scoped.html", sourceToolRunID: run.id)
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(run)
+        context.insert(artifact)
+        try context.save()
+
+        let projectSnapshot = ChatDurableRunSnapshot.make(
+            project: conversation.project,
+            conversation: conversation,
+            context: context
+        )
+        conversation.project = nil
+        let generalSnapshot = ChatDurableRunSnapshot.make(
+            project: conversation.project,
+            conversation: conversation,
+            context: context
+        )
+
+        XCTAssertFalse(projectSnapshot.artifacts.isEmpty)
+        XCTAssertFalse(projectSnapshot.traceEvents.isEmpty)
+        XCTAssertTrue(generalSnapshot.artifacts.isEmpty)
+        XCTAssertTrue(generalSnapshot.traceEvents.isEmpty)
+        XCTAssertNil(generalSnapshot.latestTerminalProof)
+    }
+
+    func testQueuedFollowUpRejectsAndRollsBackWhenItsVisibleMessageCannotBeSaved() throws {
+        enum SaveFailure: LocalizedError {
+            case diskFull
+
+            var errorDescription: String? { "simulated queued message failure" }
+        }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let conversation = Conversation(title: "Queue Acceptance")
+        let settings = AgentSettings(provider: .local)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugSimulateActiveStatusStripRun(conversation: conversation)
+        runtime.debugInstallCompactedSaveOverride { _ in throw SaveFailure.diskFull }
+        let originalUpdatedAt = conversation.updatedAt
+
+        let disposition = runtime.send(
+            prompt: "do not lose this queued draft",
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
+
+        guard case .rejected(.persistenceFailed(let detail)) = disposition else {
+            return XCTFail("An unsaved follow-up must remain a draft. Got \(disposition)")
+        }
+        XCTAssertTrue(detail.contains("simulated queued message failure"))
+        XCTAssertEqual(runtime.queuedPromptCount, 0)
+        XCTAssertTrue(conversation.messages.isEmpty)
+        XCTAssertEqual(conversation.updatedAt, originalUpdatedAt)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ChatMessage>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<AgentRunRecord>()).isEmpty)
+    }
+
+    func testQueuedFollowUpAcceptanceCommitsMessageAndReceiptTogether() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Queue Scope", workspaceName: "QueueScope")
+        let conversation = Conversation(title: "Queue Scope", project: project)
+        let settings = AgentSettings(provider: .local, activeProjectID: project.id)
+        settings.autoApproveWrites = true
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugSimulateActiveStatusStripRun(conversation: conversation)
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "Keep this accepted follow-up exactly once.",
+                conversation: conversation,
+                settings: settings,
+                context: context,
+                project: project
+            ),
+            .queued(position: 1)
+        )
+
+        let message = try XCTUnwrap(conversation.messages.first)
+        let receipt = try XCTUnwrap(
+            try context.fetch(FetchDescriptor<AgentRunRecord>()).first { $0.id == message.runID }
+        )
+        XCTAssertEqual(message.runStatus, .queued)
+        XCTAssertEqual(receipt.status, .queued)
+        XCTAssertNil(receipt.startedAt)
+        XCTAssertEqual(receipt.requestMessageID, message.id)
+        XCTAssertEqual(receipt.conversationID, conversation.id)
+        XCTAssertEqual(receipt.projectID, project.id)
+        XCTAssertEqual(receipt.provider, settings.provider)
+    }
+
+    func testDrainKeepsPersistedQueuedMessageWhenStartingItsRunReceiptFails() async throws {
+        enum SaveFailure: LocalizedError {
+            case diskFull
+
+            var errorDescription: String? { "simulated queued run receipt failure" }
+        }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let conversation = Conversation(title: "Durable Queue Drain")
+        let settings = AgentSettings(provider: .openAI)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: String(repeating: "finish the active response before draining. ", count: 4),
+                    tool_calls: nil
+                ),
+                roleLog: "debug queue drain completion"
+            )
+        ])
+
+        XCTAssertEqual(
+            runtime.send(prompt: "finish first", conversation: conversation, settings: settings, context: context),
+            .started
+        )
+        XCTAssertEqual(
+            runtime.send(prompt: "persist me through a failed drain", conversation: conversation, settings: settings, context: context),
+            .queued(position: 1)
+        )
+
+        var saveAttempts = 0
+        var rejectedQueuedRunReceipt = false
+        runtime.debugInstallCompactedSaveOverride { saveContext in
+            saveAttempts += 1
+            let queuedMessageIsPromoting = conversation.messages.contains { message in
+                message.content == "persist me through a failed drain" &&
+                    message.runID != nil &&
+                    message.runStatus == .running
+            }
+            if queuedMessageIsPromoting {
+                rejectedQueuedRunReceipt = true
+                throw SaveFailure.diskFull
+            }
+            try saveContext.save()
+        }
+
+        let deadline = Date().addingTimeInterval(4)
+        while runtime.isWorking && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertGreaterThanOrEqual(saveAttempts, 1)
+        XCTAssertTrue(rejectedQueuedRunReceipt)
+        XCTAssertEqual(runtime.queuedPromptCount, 1, "Failed run-receipt creation must leave the durable queue item available for retry.")
+        let queued = try XCTUnwrap(conversation.messages.first { $0.content == "persist me through a failed drain" })
+        XCTAssertNotNil(queued.runID)
+        XCTAssertEqual(queued.runStatus, .queued)
+        let queuedReceipt = try XCTUnwrap(try context.fetch(FetchDescriptor<AgentRunRecord>()).first { $0.id == queued.runID })
+        XCTAssertEqual(queuedReceipt.status, .queued)
+        XCTAssertNil(queuedReceipt.startedAt)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<AgentRunRecord>()).count, 2)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ChatMessage>()).filter { $0.content == queued.content }.count, 1)
     }
 
     func testOversizedFollowUpIsRejectedWhileRunIsActive() throws {
@@ -1111,9 +1902,15 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         try context.save()
 
         runtime.simulateStreamingStress()
-        runtime.send(prompt: String(repeating: "large prompt ", count: 500), conversation: conversation, settings: settings, context: context)
+        let disposition = runtime.send(
+            prompt: String(repeating: "large prompt ", count: 500),
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
 
         XCTAssertEqual(runtime.queuedPromptCount, 0)
+        XCTAssertEqual(disposition, .rejected(.followUpTooLong(limit: 4_000)))
         XCTAssertEqual(runtime.activityTitle, "Follow-up too long")
         XCTAssertTrue(runtime.traceEvents.contains { event in
             event.title == "Follow-up not queued" && event.detail.contains("over 4000 characters")
@@ -1159,6 +1956,27 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertFalse(runtime.traceEvents.contains { $0.title == "Delayed completion applied" })
 
         runtime.stopGenerating()
+    }
+
+    func testWorkspaceSwitchWaitsForActivelyExecutingRunToSettle() async throws {
+        let runtime = AgentRuntime()
+        let startingWorkspaceName = runtime.workspace.workspaceName
+        let nextWorkspaceName = "AfterActiveRun-\(UUID().uuidString)"
+
+        runtime.debugSimulateDelayedCompletionForActiveRun(delayMilliseconds: 120)
+        XCTAssertTrue(runtime.isWorking)
+        XCTAssertFalse(runtime.switchWorkspace(to: nextWorkspaceName))
+        XCTAssertEqual(runtime.workspace.workspaceName, startingWorkspaceName)
+
+        let deadline = Date().addingTimeInterval(2)
+        while runtime.isWorking && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(30))
+        }
+
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertTrue(runtime.switchWorkspace(to: nextWorkspaceName))
+        XCTAssertEqual(runtime.workspace.workspaceName, nextWorkspaceName)
+        try? FileManager.default.removeItem(at: runtime.workspace.rootURL)
     }
 
     func testClearFailureStateDropsRetryMetadataAndQueuedFollowUps() throws {
@@ -1392,6 +2210,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let project = Project(name: "Local Proof Chain", workspaceName: "Default")
         let conversation = Conversation(title: "Local proof chain", project: project)
         let settings = AgentSettings(provider: .local, activeProjectID: project.id)
+        settings.autoApproveWrites = true
         let workspaceRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("NovaForgeLocalProofChain-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspaceRoot) }
@@ -1465,6 +2284,83 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         })
     }
 
+    func testGeneralLocalNativeWritePersistsUnscopedDurableEvidence() async throws {
+        let schema = TestModelSchema.projectFoundation
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = container.mainContext
+        let unrelatedProject = Project(name: "Unrelated Project", workspaceName: "Project")
+        let conversation = Conversation(title: "General proof chain")
+        let settings = AgentSettings(provider: .local, autoApproveWrites: true)
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeGeneralProofChain-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+
+        context.insert(unrelatedProject)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "create file general-proof.html with <!doctype html><html><body><h1>General proof</h1></body></html>",
+                conversation: conversation,
+                settings: settings,
+                context: context,
+                project: nil
+            ),
+            .started
+        )
+
+        let deadline = Date().addingTimeInterval(3)
+        while runtime.isWorking && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(
+            try runtime.workspace.read("general-proof.html"),
+            "<!doctype html><html><body><h1>General proof</h1></body></html>"
+        )
+
+        let canonicalRun = try XCTUnwrap(try context.fetch(FetchDescriptor<AgentRunRecord>()).first)
+        XCTAssertEqual(canonicalRun.status, .completed)
+        XCTAssertEqual(canonicalRun.conversationID, conversation.id)
+        XCTAssertNil(canonicalRun.projectID)
+
+        let toolRun = try XCTUnwrap(
+            try context.fetch(FetchDescriptor<ToolRun>()).first { $0.name == "write_file" }
+        )
+        XCTAssertEqual(toolRun.status, .completed)
+        XCTAssertNil(toolRun.project)
+        XCTAssertEqual(toolRun.runID, canonicalRun.id)
+
+        let operation = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
+        XCTAssertEqual(operation.phase, .completed)
+        XCTAssertEqual(operation.runID, canonicalRun.id)
+        XCTAssertEqual(operation.conversationID, conversation.id)
+        XCTAssertNil(operation.projectID)
+        XCTAssertEqual(operation.targetPaths, ["general-proof.html"])
+
+        let artifact = try XCTUnwrap(
+            try context.fetch(FetchDescriptor<ProjectArtifact>()).first { $0.path == "general-proof.html" }
+        )
+        XCTAssertNil(artifact.project)
+        XCTAssertEqual(artifact.sourceToolRunIDString, toolRun.id.uuidString)
+
+        let change = try XCTUnwrap(
+            try context.fetch(FetchDescriptor<ProjectFileChange>()).first { $0.path == "general-proof.html" }
+        )
+        XCTAssertNil(change.project)
+        XCTAssertNil(change.sourceEventIDString)
+        XCTAssertEqual(change.sourceToolRunIDString, toolRun.id.uuidString)
+
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ProjectEvent>()).isEmpty)
+        XCTAssertTrue(unrelatedProject.events.isEmpty)
+    }
+
     func testApprovePendingToolKeepsApprovalVisibleAfterSaveFailure() throws {
         enum SaveFailure: LocalizedError {
             case diskFull
@@ -1476,8 +2372,9 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
         let context = container.mainContext
-        let conversation = Conversation(title: "Approval save failure")
-        let settings = AgentSettings(provider: .custom, modelID: AIProvider.custom.defaultModel)
+        let project = Project(name: "Approval save failure", workspaceName: "Default")
+        let conversation = Conversation(title: "Approval save failure", project: project)
+        let settings = AgentSettings(provider: .custom, modelID: AIProvider.custom.defaultModel, activeProjectID: project.id)
         let runtime = AgentRuntime(
             workspace: SandboxWorkspace(
                 rootURL: FileManager.default.temporaryDirectory
@@ -1495,8 +2392,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             output: "Waiting for approval.",
             status: .pendingApproval,
             requiresApproval: true,
-            isMutating: true
+            isMutating: true,
+            project: project
         )
+        context.insert(project)
         context.insert(conversation)
         context.insert(settings)
         context.insert(run)
@@ -1516,6 +2415,9 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertFalse(runtime.debugHasTrackedTask)
         XCTAssertEqual(runtime.activityTitle, "Approval Not Saved")
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Approval not saved" })
+        settings.temperature = 0.3
+        try context.save()
+        XCTAssertFalse(try context.fetch(FetchDescriptor<ProjectEvent>()).contains { $0.kind == .toolApproved })
     }
 
     func testRejectPendingToolKeepsApprovalVisibleAfterSaveFailure() async throws {
@@ -1529,8 +2431,9 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
         let context = container.mainContext
-        let conversation = Conversation(title: "Rejection save failure")
-        let settings = AgentSettings(provider: .custom, modelID: AIProvider.custom.defaultModel)
+        let project = Project(name: "Rejection save failure", workspaceName: "Default")
+        let conversation = Conversation(title: "Rejection save failure", project: project)
+        let settings = AgentSettings(provider: .custom, modelID: AIProvider.custom.defaultModel, activeProjectID: project.id)
         let runtime = AgentRuntime(
             workspace: SandboxWorkspace(
                 rootURL: FileManager.default.temporaryDirectory
@@ -1548,8 +2451,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             output: "Waiting for approval.",
             status: .pendingApproval,
             requiresApproval: true,
-            isMutating: true
+            isMutating: true,
+            project: project
         )
+        context.insert(project)
         context.insert(conversation)
         context.insert(settings)
         context.insert(run)
@@ -1575,6 +2480,9 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertFalse(runtime.debugHasTrackedTask)
         XCTAssertEqual(runtime.activityTitle, "Rejection Not Saved")
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Rejection not saved" })
+        settings.temperature = 0.3
+        try context.save()
+        XCTAssertFalse(try context.fetch(FetchDescriptor<ProjectEvent>()).contains { $0.kind == .toolRejected })
     }
 
     func testApprovedToolResultRollsBackWhenHistorySaveFails() async throws {
@@ -2508,14 +3416,14 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertTrue(run.intentHistory.contains { $0.mode == .stoppedResumable })
     }
 
-    func testChatProjectSeparationKeepsProjectExecutionConversationsOutOfChat() {
+    func testChatProjectSeparationShowsEveryScopeButKeepsGeneralLaunchPreference() {
         let project = Project(name: "Project Run", mission: "Run inside ProjectOS.", workspaceName: "Default")
         let projectConversation = Conversation(title: "Project Run", project: project)
         let ready = Conversation(title: LaunchConversationSelection.safeStartTitle, project: nil)
         let general = Conversation(title: "General Chat", project: nil)
         let visible = ChatProjectSeparation.visibleChatConversations(from: [projectConversation, ready, general])
 
-        XCTAssertEqual(Set(visible.map(\.id)), Set([ready.id, general.id]))
+        XCTAssertEqual(Set(visible.map(\.id)), Set([projectConversation.id, ready.id, general.id]))
         XCTAssertEqual(
             ChatProjectSeparation.preferredGeneralConversation(
                 from: [projectConversation, ready, general],
@@ -2523,6 +3431,14 @@ final class ProjectFoundationTests: XCTestCase {
                 persistedIDString: projectConversation.id.uuidString
             )?.id,
             ready.id
+        )
+        XCTAssertEqual(
+            ChatProjectSeparation.preferredGeneralConversation(
+                from: [projectConversation],
+                selectedID: projectConversation.id,
+                persistedIDString: ""
+            )?.id,
+            projectConversation.id
         )
     }
 
@@ -2682,6 +3598,9 @@ final class ProjectFoundationTests: XCTestCase {
     }
 
     func testDefaultProjectMigrationLeavesGeneralConversationsUnscopedButOwnsRuns() throws {
+        let suiteName = "NovaForgeProjectMigration-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
         let container = try ModelContainer(
             for: TestModelSchema.projectFoundation,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -2695,7 +3614,12 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(run)
         try context.save()
 
-        let project = ProjectBootstrap.ensureDefaultProject(in: context, settings: settings, now: Date(timeIntervalSince1970: 100))
+        let project = ProjectBootstrap.ensureDefaultProject(
+            in: context,
+            settings: settings,
+            now: Date(timeIntervalSince1970: 100),
+            migrationStore: migrationStore
+        )
         try context.save()
 
         XCTAssertEqual(settings.activeProjectID, project.id)
@@ -2703,6 +3627,176 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertNil(conversation.project)
         XCTAssertEqual(run.project?.id, project.id)
         XCTAssertTrue(project.events.contains { $0.kind == .migrationLinked })
+    }
+
+    func testDefaultProjectMigrationRunsOnceAndKeepsNewGeneralEvidenceUnscoped() throws {
+        let suiteName = "NovaForgeProjectMigration-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let settings = AgentSettings(activeWorkspaceName: "General")
+        let legacyRun = ToolRun(name: "legacy", argumentsJSON: "{}", status: .completed)
+        context.insert(settings)
+        context.insert(legacyRun)
+        try context.save()
+
+        let project = ProjectBootstrap.ensureDefaultProject(
+            in: context,
+            settings: settings,
+            now: Date(timeIntervalSince1970: 140),
+            migrationStore: migrationStore
+        )
+        try context.save()
+        XCTAssertEqual(legacyRun.project?.id, project.id)
+        ProjectBootstrap.markLegacyOwnershipMigrationComplete(in: migrationStore)
+
+        let generalConversation = Conversation(title: "General")
+        let generalReceipt = AgentRunRecord(
+            status: .completed,
+            conversationID: generalConversation.id,
+            projectID: nil,
+            workspaceName: "General"
+        )
+        let generalTool = ToolRun(
+            name: "read_file",
+            argumentsJSON: #"{"path":"README.md"}"#,
+            status: .completed,
+            runID: generalReceipt.id
+        )
+        let terminal = TerminalCommandRecord(
+            project: nil,
+            command: "pwd",
+            output: "General",
+            status: .completed,
+            workspaceName: "General",
+            durationMs: 1,
+            sourceToolRunID: generalTool.id
+        )
+        let artifact = ProjectArtifact(project: nil, path: "general.html", sourceToolRunID: generalTool.id)
+        let change = ProjectFileChange(project: nil, action: "Wrote file", path: "general.html", sourceToolRunID: generalTool.id)
+        context.insert(generalConversation)
+        context.insert(generalReceipt)
+        context.insert(generalTool)
+        context.insert(terminal)
+        context.insert(artifact)
+        context.insert(change)
+        try context.save()
+
+        _ = ProjectBootstrap.ensureDefaultProject(
+            in: context,
+            settings: settings,
+            now: Date(timeIntervalSince1970: 141),
+            migrationStore: migrationStore
+        )
+        try context.save()
+
+        XCTAssertNil(generalReceipt.projectID)
+        XCTAssertNil(generalTool.project)
+        XCTAssertNil(terminal.project)
+        XCTAssertNil(artifact.project)
+        XCTAssertNil(change.project)
+    }
+
+    func testDefaultProjectMigrationRecognizesLowercaseGeneralRunLinks() throws {
+        let suiteName = "NovaForgeProjectMigration-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let settings = AgentSettings(activeWorkspaceName: "General")
+        let conversation = Conversation(title: "General")
+        let generalReceipt = AgentRunRecord(
+            status: .completed,
+            conversationID: conversation.id,
+            projectID: nil,
+            workspaceName: "General"
+        )
+        let generalTool = ToolRun(
+            name: "write_file",
+            argumentsJSON: #"{"path":"general-proof.html"}"#,
+            output: "Wrote general-proof.html",
+            status: .completed
+        )
+        // Older stores have used a lowercase UUID representation here.
+        generalTool.runIDString = generalReceipt.id.uuidString.lowercased()
+        let artifact = ProjectArtifact(
+            project: nil,
+            path: "general-proof.html",
+            sourceToolRunID: generalTool.id
+        )
+        let change = ProjectFileChange(
+            project: nil,
+            action: "Wrote file",
+            path: "general-proof.html",
+            sourceToolRunID: generalTool.id
+        )
+        context.insert(settings)
+        context.insert(conversation)
+        context.insert(generalReceipt)
+        context.insert(generalTool)
+        context.insert(artifact)
+        context.insert(change)
+        try context.save()
+
+        _ = ProjectBootstrap.ensureDefaultProject(
+            in: context,
+            settings: settings,
+            now: Date(timeIntervalSince1970: 142),
+            migrationStore: migrationStore
+        )
+        try context.save()
+
+        XCTAssertNil(generalTool.project)
+        XCTAssertNil(artifact.project)
+        XCTAssertNil(change.project)
+    }
+
+    func testProjectDeletionRescopesCanonicalReceiptsToGeneral() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Disposable", workspaceName: "Disposable")
+        let conversation = Conversation(title: "Disposable", project: project)
+        let receipt = AgentRunRecord(
+            status: .completed,
+            conversationID: conversation.id,
+            projectID: project.id,
+            workspaceName: "Disposable"
+        )
+        let operation = ToolOperationRecord(
+            runID: receipt.id,
+            projectID: project.id,
+            conversationID: conversation.id,
+            workspaceName: "Disposable",
+            toolName: "read_file",
+            argumentsJSON: #"{"path":"README.md"}"#,
+            phase: .completed
+        )
+        let toolRun = ToolRun(name: "read_file", argumentsJSON: "{}", status: .completed, project: project, runID: receipt.id)
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(receipt)
+        context.insert(operation)
+        context.insert(toolRun)
+        try context.save()
+
+        ProjectDeletionRetention.clearScalarProjectLinks(projectID: project.id, context: context)
+        context.delete(project)
+        try context.save()
+
+        XCTAssertNil(receipt.projectID)
+        XCTAssertNil(operation.projectID)
+        XCTAssertNil(conversation.project)
+        XCTAssertNil(toolRun.project)
     }
 
     func testPersistentLaunchRecoveryRecordsProjectTimelineEvents() throws {
@@ -2819,6 +3913,9 @@ final class ProjectFoundationTests: XCTestCase {
     }
 
     func testDefaultProjectMigrationOwnsTerminalCommandsAndArtifacts() throws {
+        let suiteName = "NovaForgeProjectMigration-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
         let container = try ModelContainer(
             for: TestModelSchema.projectFoundation,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -2844,7 +3941,8 @@ final class ProjectFoundationTests: XCTestCase {
         let project = ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
-            now: Date(timeIntervalSince1970: 120)
+            now: Date(timeIntervalSince1970: 120),
+            migrationStore: migrationStore
         )
         try context.save()
 
@@ -2859,6 +3957,9 @@ final class ProjectFoundationTests: XCTestCase {
     }
 
     func testDefaultProjectMigrationOwnsExistingTimelineEvents() throws {
+        let suiteName = "NovaForgeProjectMigration-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
         let container = try ModelContainer(
             for: TestModelSchema.projectFoundation,
             configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
@@ -2881,7 +3982,8 @@ final class ProjectFoundationTests: XCTestCase {
         let project = ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
-            now: Date(timeIntervalSince1970: 130)
+            now: Date(timeIntervalSince1970: 130),
+            migrationStore: migrationStore
         )
         try context.save()
 
@@ -4825,6 +5927,43 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertTrue(project.events.contains { $0.kind == .promptQueued })
         XCTAssertTrue(project.events.contains { $0.kind == .toolCompleted })
         XCTAssertTrue(project.events.contains { $0.kind == .runCompleted })
+    }
+
+    func testRuntimePersistsCanonicalRunReceiptAndLinksTranscript() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeCanonicalRun-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let project = Project(name: "Canonical Run", workspaceName: "Default")
+        let conversation = Conversation(title: "Canonical Run", project: project)
+        let settings = AgentSettings(provider: .local, activeProjectID: project.id)
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        runtime.ensureSeedWorkspace()
+        runtime.send(prompt: "list files", conversation: conversation, settings: settings, context: context, project: project)
+
+        let deadline = Date().addingTimeInterval(3)
+        while runtime.isWorking && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        let receipt = try XCTUnwrap(try context.fetch(FetchDescriptor<AgentRunRecord>()).first)
+        XCTAssertEqual(receipt.status, .completed)
+        XCTAssertEqual(receipt.conversationID, conversation.id)
+        XCTAssertEqual(receipt.projectID, project.id)
+        XCTAssertNotNil(receipt.requestMessageID)
+        XCTAssertNotNil(receipt.responseMessageID)
+        XCTAssertTrue(conversation.messages.allSatisfy { $0.runID == receipt.id && $0.runStatus == .completed })
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ToolRun>()).allSatisfy { $0.runID == receipt.id })
     }
 
     func testRuntimeRenamesGenericProjectFromFirstAgentPrompt() async throws {

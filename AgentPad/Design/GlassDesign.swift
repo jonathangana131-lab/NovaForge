@@ -466,7 +466,13 @@ struct AgentBackground: View {
         // the foreground Project/Chat surfaces instead of recurring Canvas work.
         // Reduce Motion and Reduce Transparency also suppress animation.
         let baseMotion = isAnimated && !reduceMotion && !conservativeRendering
-        let allowsMotion = baseMotion && AgentPerformance.allowsDecorativeMotion && !reduceTransparency
+        // Streaming, tool execution, and approvals own the foreground frame
+        // budget. Freeze decorative ambience during active work so text layout
+        // and glass interaction remain fluid on older devices.
+        let allowsMotion = baseMotion &&
+            !isWorking &&
+            AgentPerformance.allowsDecorativeMotion &&
+            !reduceTransparency
         ZStack {
             LinearGradient(
                 colors: [
@@ -536,7 +542,10 @@ struct MatrixRainBackdrop: View {
 
     var body: some View {
         if animated {
-            TimelineView(.animation(minimumInterval: reducedDetail ? 1.0 / 30.0 : 1.0 / 60.0)) { timeline in
+            // The backdrop moves slowly and sits behind native glass. Thirty
+            // updates per second reads as continuous while leaving the 60/120Hz
+            // render budget to scrolling, text reveal, and touch interactions.
+            TimelineView(.animation(minimumInterval: reducedDetail ? 1.0 / 20.0 : 1.0 / 30.0)) { timeline in
                 rainFrame(time: timeline.date.timeIntervalSinceReferenceDate)
             }
         } else {
@@ -832,7 +841,7 @@ private struct AmbientThemeBackdrop: View {
 
     var body: some View {
         if animated {
-            TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 15.0)) { timeline in
                 ambientFrame(time: timeline.date.timeIntervalSinceReferenceDate)
             }
         } else {
@@ -1263,8 +1272,53 @@ struct GlassPanelModifier: ViewModifier {
             fallback(content: content)
         } else if #available(iOS 26.0, *) {
             let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+            let accent = tint ?? AgentPalette.glassTint
             content
+                .background(
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                accent.opacity(interactive ? 0.070 : 0.048),
+                                AgentPalette.surface.opacity(0.08),
+                                accent.opacity(0.020)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                )
                 .glassEffect(glass, in: shape)
+                .overlay {
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                AgentPalette.glassStroke.opacity(interactive ? 0.52 : 0.42),
+                                accent.opacity(interactive ? 0.30 : 0.20),
+                                AgentPalette.glassStroke.opacity(0.10)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.65
+                    )
+                }
+                .overlay(alignment: .top) {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    AgentPalette.glassStroke.opacity(interactive ? 0.60 : 0.46),
+                                    AgentPalette.glassStroke.opacity(0.08),
+                                    .clear
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(height: 1.1)
+                        .padding(.horizontal, max(9, radius * 0.52))
+                        .allowsHitTesting(false)
+                }
                 .shadow(
                     color: AgentPalette.shadow.opacity(interactive ? AgentDesign.softShadowOpacity : 0.035),
                     radius: interactive ? 7 : 2.5,
@@ -1323,11 +1377,41 @@ extension View {
         modifier(GlassPanelModifier(radius: radius, interactive: interactive, tint: tint))
     }
 
+    /// Associates a native glass surface with a stable identity so sibling
+    /// shapes inside `GlassGroup` can stretch and morph as controls appear or
+    /// disappear. Earlier systems and conservative rendering keep the same
+    /// view hierarchy without paying for the transition machinery.
     @ViewBuilder
-    func agentSurface(radius: CGFloat = AgentDesign.cardRadius, tint: Color? = nil) -> some View {
+    func agentGlassEffectID(
+        _ id: String?,
+        in namespace: Namespace.ID?
+    ) -> some View {
+        if #available(iOS 26.0, *),
+           !AgentPlatformCompatibility.usesConservativeRendering,
+           let id,
+           let namespace {
+            self.glassEffectID(id, in: namespace)
+        } else {
+            self
+        }
+    }
+
+    /// A scalable static surface for repeatable content such as transcript
+    /// cards, file rows, and code blocks. Native Liquid Glass is intentionally
+    /// opt-in: long collections can otherwise create dozens of independent
+    /// effects and spend the frame budget that scrolling and streaming need.
+    @ViewBuilder
+    func agentSurface(
+        radius: CGFloat = AgentDesign.cardRadius,
+        tint: Color? = nil,
+        nativeGlass: Bool = false
+    ) -> some View {
         let performanceMode = AgentPerformance.prefersReducedVisualEffects
         let isMatrix = AgentTheme.current == .matrixRain
-        let usesNativeGlass = !performanceMode && !isMatrix && !AgentPlatformCompatibility.usesConservativeRendering
+        let usesNativeGlass = nativeGlass &&
+            !performanceMode &&
+            !isMatrix &&
+            !AgentPlatformCompatibility.usesConservativeRendering
 
         if usesNativeGlass {
             self
@@ -1364,10 +1448,16 @@ extension View {
     }
 
     @ViewBuilder
-    func agentRowSurface(radius: CGFloat = AgentDesign.rowRadius, tint: Color? = nil, selected: Bool = false) -> some View {
+    func agentRowSurface(
+        radius: CGFloat = AgentDesign.rowRadius,
+        tint: Color? = nil,
+        selected: Bool = false,
+        nativeGlass: Bool = false
+    ) -> some View {
         let performanceMode = AgentPerformance.prefersReducedVisualEffects
         let isMatrix = AgentTheme.current == .matrixRain
-        let usesNativeGlass = selected &&
+        let usesNativeGlass = nativeGlass &&
+            selected &&
             !performanceMode &&
             !isMatrix &&
             !AgentPlatformCompatibility.usesConservativeRendering
@@ -1408,10 +1498,16 @@ extension View {
     }
 
     @ViewBuilder
-    func agentControlSurface(radius: CGFloat = AgentDesign.controlRadius, tint: Color? = nil, selected: Bool = false) -> some View {
+    func agentControlSurface(
+        radius: CGFloat = AgentDesign.controlRadius,
+        tint: Color? = nil,
+        selected: Bool = false,
+        nativeGlass: Bool = false
+    ) -> some View {
         let performanceMode = AgentPerformance.prefersReducedVisualEffects
         let isMatrix = AgentTheme.current == .matrixRain
-        let usesNativeGlass = selected &&
+        let usesNativeGlass = nativeGlass &&
+            selected &&
             !performanceMode &&
             !isMatrix &&
             !AgentPlatformCompatibility.usesConservativeRendering
@@ -1455,9 +1551,13 @@ extension View {
 struct GlassGroup<Content: View>: View {
     let spacing: CGFloat
     @ViewBuilder var content: Content
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        if AgentPlatformCompatibility.usesConservativeRendering {
+        if AgentPlatformCompatibility.usesConservativeRendering ||
+            AgentPerformance.prefersReducedVisualEffects ||
+            AgentTheme.current == .matrixRain ||
+            reduceTransparency {
             content
         } else if #available(iOS 26.0, *) {
             GlassEffectContainer(spacing: spacing) {

@@ -3,6 +3,7 @@ import SwiftData
 
 struct ChatDrawerOverlay: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let project: Project
     let conversations: [Conversation]
     let selectedConversationID: UUID
@@ -25,10 +26,6 @@ struct ChatDrawerOverlay: View {
 
     private let renderRowsLimit = 120
 
-    private var renderedRows: ArraySlice<ChatListRowData> {
-        visibleRows.prefix(renderRowsLimit)
-    }
-
     private var pinnedSearchRows: ArraySlice<ChatListRowData> {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? visibleRows.prefix(0) : visibleRows.prefix(1)
     }
@@ -36,6 +33,10 @@ struct ChatDrawerOverlay: View {
     private var renderedScrollableRows: ArraySlice<ChatListRowData> {
         let rows = visibleRows.prefix(renderRowsLimit)
         return pinnedSearchRows.isEmpty ? rows : rows.dropFirst(pinnedSearchRows.count)
+    }
+
+    private var renderedSections: [ChatDrawerSectionData] {
+        ChatDrawerSectionData.make(from: Array(renderedScrollableRows))
     }
 
     private var hiddenRenderedRowCount: Int {
@@ -49,16 +50,42 @@ struct ChatDrawerOverlay: View {
                 title: $0.title,
                 updatedAt: $0.updatedAt,
                 messageCount: $0.messageCount,
-                lastMessagePreview: $0.lastMessagePreview
+                lastMessagePreview: $0.lastMessagePreview,
+                projectID: $0.project?.id,
+                projectName: $0.project?.name
             )
         }
     }
 
     private var drawerSummaryText: String {
         let total = conversations.count
-        let base = "\(total) chat\(total == 1 ? "" : "s")"
+        let generalScopeCount = conversations.contains(where: { $0.project == nil }) ? 1 : 0
+        let projectScopeCount = Set(conversations.compactMap { $0.project?.id }).count
+        let scopeCount = generalScopeCount + projectScopeCount
+        let base = "\(total) chat\(total == 1 ? "" : "s") · \(scopeCount) scope\(scopeCount == 1 ? "" : "s")"
         guard visibleRows.count != total else { return base }
         return "\(base) · \(visibleRows.count) shown"
+    }
+
+    private var selectedScopeTitle: String {
+        guard let selected = conversations.first(where: { $0.id == selectedConversationID }),
+              let scopedProject = selected.project else {
+            return "General"
+        }
+        let trimmedName = scopedProject.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedName.isEmpty ? ProjectBootstrap.defaultProjectName : trimmedName
+    }
+
+    private var selectedScopeIsGeneral: Bool {
+        conversations.first(where: { $0.id == selectedConversationID })?.project == nil
+    }
+
+    private var selectedScopeSymbol: String {
+        selectedScopeIsGeneral ? "folder.fill" : "shippingbox.fill"
+    }
+
+    private var selectedScopeTint: Color {
+        selectedScopeIsGeneral ? AgentPalette.secondaryText : AgentPalette.cyan
     }
 
     private func rebuildRows() {
@@ -125,6 +152,36 @@ struct ChatDrawerOverlay: View {
                         .agentSurface(radius: 13)
                     }
 
+                    HStack(spacing: 8) {
+                        Image(systemName: selectedScopeSymbol)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(selectedScopeTint)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                Circle()
+                                    .fill(selectedScopeTint.opacity(0.10))
+                            )
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Current scope")
+                                .novaLabel()
+                            Text(selectedScopeTitle)
+                                .font(NovaType.caption)
+                                .foregroundStyle(AgentPalette.ink)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .agentControlSurface(radius: 11, tint: selectedScopeTint.opacity(0.10), selected: false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Current chat scope")
+                    .accessibilityValue(selectedScopeIsGeneral ? "General workspace" : "Project \(selectedScopeTitle)")
+                    .accessibilityIdentifier("chatDrawerCurrentScope")
+
                     Button {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         newChat()
@@ -137,13 +194,23 @@ struct ChatDrawerOverlay: View {
                             Text("New Chat")
                                 .font(.system(size: 12, weight: .bold, design: AgentPalette.interfaceFontDesign))
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("General")
+                                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(settings.provider.tint)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(settings.provider.tint.opacity(0.10))
+                                )
                         }
                         .padding(.horizontal, 12)
                         .frame(minHeight: AgentDesign.minimumTouchTarget)
                         .agentControlSurface(radius: 12, tint: settings.provider.tint, selected: true)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("New chat")
+                    .accessibilityLabel("New General chat")
+                    .accessibilityHint("Creates a chat in the General workspace")
                     .accessibilityIdentifier("chatDrawerNewChat")
 
                     HStack(spacing: 8) {
@@ -155,6 +222,7 @@ struct ChatDrawerOverlay: View {
                             .textFieldStyle(.plain)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.none)
+                            .accessibilityLabel("Search General and project chats")
                             .accessibilityIdentifier("chatSearch")
                         
                         if !searchText.isEmpty {
@@ -201,8 +269,14 @@ struct ChatDrawerOverlay: View {
                                     .foregroundStyle(AgentPalette.tertiaryText)
                                     .padding(.top, 24)
                             } else {
-                                ForEach(renderedScrollableRows) { row in
-                                    drawerRow(row)
+                                ForEach(renderedSections) { section in
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        ChatDrawerSectionHeader(section: section)
+
+                                        ForEach(section.rows) { row in
+                                            drawerRow(row)
+                                        }
+                                    }
                                 }
 
                                 if hiddenRenderedRowCount > 0 {
@@ -249,7 +323,7 @@ struct ChatDrawerOverlay: View {
         }
         .onAppear {
             rebuildRows()
-            withAnimation(.smooth(duration: 0.24)) {
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.24)) {
                 animateContent = true
             }
         }
@@ -270,7 +344,7 @@ struct ChatDrawerOverlay: View {
                         conversation.title = trimmed
                         conversation.updatedAt = Date()
                         ProjectEventRecorder.record(
-                            project: project,
+                            project: conversation.project,
                             kind: .conversationRenamed,
                             title: "Chat renamed",
                             detail: "\(previousTitle) -> \(trimmed)",
@@ -343,10 +417,10 @@ struct ChatDrawerOverlay: View {
     }
 
     private func dismiss() {
-        withAnimation(.easeOut(duration: 0.22)) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
             animateContent = false
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0 : 0.22)) {
             close()
         }
     }
@@ -370,7 +444,7 @@ struct ChatDrawerOverlay: View {
         impact.notificationOccurred(.success)
         let title = conversation.title.isEmpty ? "NovaForge Session" : conversation.title
         ProjectEventRecorder.record(
-            project: project,
+            project: conversation.project,
             kind: .conversationDeleted,
             title: "Chat deleted",
             detail: title,
@@ -418,6 +492,8 @@ private struct ChatListIdentity: Equatable {
     let updatedAt: Date
     let messageCount: Int
     let lastMessagePreview: String
+    let projectID: UUID?
+    let projectName: String?
 }
 
 private struct ChatListRowData: Identifiable, Equatable {
@@ -426,15 +502,34 @@ private struct ChatListRowData: Identifiable, Equatable {
     let preview: String
     let messageCount: Int
     let relativeDate: String
+    let projectID: UUID?
+    let scopeTitle: String
     let normalizedSearchText: String
+
+    var isGeneralScope: Bool {
+        projectID == nil
+    }
+
+    var scopeSymbol: String {
+        isGeneralScope ? "folder.fill" : "shippingbox.fill"
+    }
+
+    var accessibilityScopeLabel: String {
+        isGeneralScope ? "General workspace" : "Project \(scopeTitle)"
+    }
 
     init(_ conversation: Conversation) {
         id = conversation.id
         title = conversation.title.isEmpty ? "NovaForge Session" : conversation.title
         messageCount = conversation.messageCount
+        projectID = conversation.project?.id
+        let projectName = conversation.project?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        scopeTitle = projectID == nil
+            ? "General"
+            : (projectName.isEmpty ? ProjectBootstrap.defaultProjectName : projectName)
         let storedPreview = conversation.lastMessagePreview.trimmingCharacters(in: .whitespacesAndNewlines)
         preview = storedPreview.isEmpty ? "No messages yet" : storedPreview
-        normalizedSearchText = "\(title) \(preview)".normalizedForChatSearch
+        normalizedSearchText = "\(title) \(preview) \(scopeTitle)".normalizedForChatSearch
         relativeDate = Self.relativeDateFormatter.localizedString(
             for: conversation.updatedAt,
             relativeTo: Date()
@@ -448,6 +543,91 @@ private struct ChatListRowData: Identifiable, Equatable {
     }()
 }
 
+private struct ChatDrawerSectionData: Identifiable {
+    let id: String
+    let title: String
+    let projectID: UUID?
+    let rows: [ChatListRowData]
+
+    var isGeneralScope: Bool {
+        projectID == nil
+    }
+
+    static func make(from rows: [ChatListRowData]) -> [ChatDrawerSectionData] {
+        var sections: [ChatDrawerSectionData] = []
+        let generalRows = rows.filter(\.isGeneralScope)
+        if !generalRows.isEmpty {
+            sections.append(
+                ChatDrawerSectionData(
+                    id: "general",
+                    title: "General",
+                    projectID: nil,
+                    rows: generalRows
+                )
+            )
+        }
+
+        var orderedProjectIDs: [UUID] = []
+        for row in rows {
+            guard let projectID = row.projectID,
+                  !orderedProjectIDs.contains(projectID) else { continue }
+            orderedProjectIDs.append(projectID)
+        }
+
+        for projectID in orderedProjectIDs {
+            let projectRows = rows.filter { $0.projectID == projectID }
+            guard let first = projectRows.first else { continue }
+            sections.append(
+                ChatDrawerSectionData(
+                    id: "project-\(projectID.uuidString)",
+                    title: first.scopeTitle,
+                    projectID: projectID,
+                    rows: projectRows
+                )
+            )
+        }
+        return sections
+    }
+}
+
+private struct ChatDrawerSectionHeader: View {
+    let section: ChatDrawerSectionData
+
+    private var tint: Color {
+        section.isGeneralScope ? AgentPalette.secondaryText : AgentPalette.cyan
+    }
+
+    private var symbol: String {
+        section.isGeneralScope ? "folder.fill" : "shippingbox.fill"
+    }
+
+    private var accessibilityScope: String {
+        section.isGeneralScope ? "General workspace" : "Project \(section.title)"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tint)
+            Text(section.title)
+                .novaLabel(tint)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            Text("\(section.rows.count)")
+                .font(NovaType.readoutSmall)
+                .foregroundStyle(AgentPalette.tertiaryText)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(accessibilityScope) chats")
+        .accessibilityValue("\(section.rows.count) chat\(section.rows.count == 1 ? "" : "s")")
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
 private struct ChatDrawerRow: View {
     let row: ChatListRowData
     let isSelected: Bool
@@ -457,23 +637,40 @@ private struct ChatDrawerRow: View {
     let renameAction: () -> Void
     let action: () -> Void
 
+    private var rowTint: Color {
+        if isSelected { return activeColor }
+        return row.isGeneralScope ? AgentPalette.primaryAccent : AgentPalette.cyan
+    }
+
+    private var accessibilityValue: String {
+        var details = [row.preview]
+        if row.messageCount > 0 {
+            details.append("\(row.messageCount) message\(row.messageCount == 1 ? "" : "s")")
+        }
+        details.append(row.relativeDate)
+        if isSelected {
+            details.append("Selected")
+        }
+        return details.joined(separator: ", ")
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Button(action: action) {
                 HStack(spacing: 10) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "bubble.left.fill")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(isSelected ? activeColor : AgentPalette.cyan)
+                        .foregroundStyle(rowTint)
                         .frame(width: 28, height: 28)
                         .background(
                             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill((isSelected ? activeColor : AgentPalette.cyan).opacity(0.09))
+                                .fill(rowTint.opacity(0.09))
                         )
 
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(row.title)
-                                .font(.system(size: 13, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                                .font(NovaType.headline)
                                 .foregroundStyle(AgentPalette.ink)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -486,12 +683,27 @@ private struct ChatDrawerRow: View {
                                 .minimumScaleFactor(0.78)
                                 .layoutPriority(1)
                         }
-                        Text(row.preview)
-                            .font(.system(size: 12, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(AgentPalette.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .minimumScaleFactor(0.82)
+                        HStack(spacing: 5) {
+                            Image(systemName: row.scopeSymbol)
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(rowTint)
+                            Text(row.scopeTitle)
+                                .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                .foregroundStyle(rowTint)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: 80, alignment: .leading)
+                            Text("·")
+                                .font(NovaType.caption)
+                                .foregroundStyle(AgentPalette.quaternaryText)
+                            Text(row.preview)
+                                .font(NovaType.body)
+                                .foregroundStyle(AgentPalette.secondaryText)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .minimumScaleFactor(0.82)
+                                .layoutPriority(1)
+                        }
                     }
                     .layoutPriority(1)
                 }
@@ -499,6 +711,11 @@ private struct ChatDrawerRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(row.title), \(row.accessibilityScopeLabel) chat")
+            .accessibilityValue(accessibilityValue)
+            .accessibilityHint("Opens this conversation in \(row.accessibilityScopeLabel)")
+            .accessibilityIdentifier("chatDrawerRow-\(row.id.uuidString)")
 
             Spacer(minLength: 8)
 
@@ -522,12 +739,14 @@ private struct ChatDrawerRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Chat actions for \(row.title)")
+            .accessibilityLabel("Chat actions for \(row.title), \(row.accessibilityScopeLabel)")
+            .accessibilityHint("Rename or delete this scoped conversation")
             .accessibilityIdentifier("chatDrawerRowActions-\(row.id.uuidString)")
         }
         .padding(.horizontal, 10)
-        .frame(height: 56)
-        .agentRowSurface(radius: 14, tint: isSelected ? activeColor : AgentPalette.cyan, selected: isSelected)
+        .padding(.vertical, 7)
+        .frame(minHeight: 62)
+        .agentRowSurface(radius: 14, tint: rowTint, selected: isSelected)
         .contextMenu {
             Button(action: renameAction) {
                 Label("Rename", systemImage: "pencil")

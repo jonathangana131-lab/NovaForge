@@ -24,19 +24,7 @@ struct NovaForgeMainApp: App {
             try? FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
         }
 
-        let schema = Schema([
-            Project.self,
-            ProjectEvent.self,
-            ProjectArtifact.self,
-            TerminalCommandRecord.self,
-            ProjectFileChange.self,
-            ProjectOSRun.self,
-            ProjectOSStep.self,
-            Conversation.self,
-            ChatMessage.self,
-            ToolRun.self,
-            AgentSettings.self
-        ])
+        let schema = Schema(versionedSchema: NovaForgeSchemaV1.self)
 
         let storeURL = supportURL?.appendingPathComponent("NovaForge.store") ?? FileManager.default.temporaryDirectory.appendingPathComponent("NovaForge.store")
         let config = ModelConfiguration(url: storeURL)
@@ -136,7 +124,13 @@ struct NovaForgeMainApp: App {
         }
         #endif
 
-        try? context.save()
+        do {
+            try context.save()
+            ProjectBootstrap.markLegacyOwnershipMigrationComplete()
+        } catch {
+            // Leave the marker unset: a later launch can safely retry the
+            // legacy ownership migration after storage recovers.
+        }
     }
 
     var body: some Scene {
@@ -170,13 +164,21 @@ struct NovaForgeMainApp: App {
         supportURL: URL?
     ) -> ModelContainer {
         do {
-            return try ModelContainer(for: schema, configurations: [config])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: NovaForgeSchemaMigrationPlan.self,
+                configurations: [config]
+            )
         } catch {
             quarantinePersistentStore(at: supportURL, reason: error)
         }
 
         do {
-            return try ModelContainer(for: schema, configurations: [config])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: NovaForgeSchemaMigrationPlan.self,
+                configurations: [config]
+            )
         } catch {
             assertionFailure("NovaForge SwiftData store could not be created after recovering the damaged store: \(error)")
         }
@@ -184,13 +186,21 @@ struct NovaForgeMainApp: App {
         do {
             let fallbackURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("NovaForge-Recovered-\(UUID().uuidString).store")
-            return try ModelContainer(for: schema, configurations: [ModelConfiguration(url: fallbackURL)])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: NovaForgeSchemaMigrationPlan.self,
+                configurations: [ModelConfiguration(url: fallbackURL)]
+            )
         } catch {
             assertionFailure("NovaForge could not start a recovered SwiftData store on disk; falling back to an in-memory launch store: \(error)")
         }
 
         do {
-            return try ModelContainer(for: schema, configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: NovaForgeSchemaMigrationPlan.self,
+                configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+            )
         } catch {
             fatalError("NovaForge could not start even with an in-memory SwiftData store: \(error)")
         }

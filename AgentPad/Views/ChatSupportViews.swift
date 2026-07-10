@@ -269,7 +269,7 @@ struct ActiveResponseElsewhereDock: View {
                     .foregroundStyle(AgentPalette.cyan)
             }
             .padding(.horizontal, 11)
-            .frame(minHeight: 38)
+            .frame(minHeight: AgentDesign.minimumTouchTarget)
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
@@ -399,7 +399,9 @@ final class ChatKeyboardState: ObservableObject {
 
 struct JumpToLatestButton: View {
     let tint: Color
+    var glassNamespace: Namespace.ID? = nil
     let action: () -> Void
+    @Namespace private var localGlassNamespace
 
     var body: some View {
         Button {
@@ -416,6 +418,7 @@ struct JumpToLatestButton: View {
             .padding(.horizontal, 12)
             .frame(height: AgentDesign.minimumTouchTarget)
             .agentGlass(radius: 14, interactive: true, tint: tint.opacity(0.14))
+            .agentGlassEffectID("chat-latest", in: glassNamespace ?? localGlassNamespace)
             .shadow(color: tint.opacity(0.16), radius: 10, x: 0, y: 5)
         }
         .buttonStyle(.plain)

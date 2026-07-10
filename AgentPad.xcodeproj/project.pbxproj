@@ -89,6 +89,7 @@
 		AB1000000000000000000002 /* ChatComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000002 /* ChatComposer.swift */; };
 		AB1000000000000000000003 /* ChatHeaderStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000003 /* ChatHeaderStrip.swift */; };
 		AB1000000000000000000004 /* ChatRunSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000004 /* ChatRunSnapshots.swift */; };
+		AB2000000000000000000004 /* ChatRunSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000004 /* ChatRunSnapshots.swift */; };
 		AB1000000000000000000005 /* ChatProgressDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000005 /* ChatProgressDrawer.swift */; };
 		AB1000000000000000000006 /* AppLaunchPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000006 /* AppLaunchPersistence.swift */; };
 		AB1000000000000000000007 /* ProjectOSEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000007 /* ProjectOSEngine.swift */; };
@@ -124,6 +125,16 @@
 		AC2000000000000000000105 /* NovaForgeSharedActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000004 /* NovaForgeSharedActivity.swift */; };
 		AB1000000000000000000024 /* NovaFacelift.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000024 /* NovaFacelift.swift */; };
 		AB1000000000000000000025 /* ForgeChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000025 /* ForgeChrome.swift */; };
+		AB1000000000000000000026 /* AgentExecutionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000026 /* AgentExecutionCoordinator.swift */; };
+		AB1000000000000000000027 /* ProviderContextWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000027 /* ProviderContextWindow.swift */; };
+		AB2000000000000000000026 /* AgentExecutionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000026 /* AgentExecutionCoordinator.swift */; };
+		AB2000000000000000000027 /* ProviderContextWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000027 /* ProviderContextWindow.swift */; };
+		AB2000000000000000000028 /* AgentExecutionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000028 /* AgentExecutionCoordinatorTests.swift */; };
+		AB2000000000000000000029 /* AgentRunPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000029 /* AgentRunPersistenceTests.swift */; };
+		AB2000000000000000000030 /* ProviderContextWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000030 /* ProviderContextWindowTests.swift */; };
+		AB2000000000000000000031 /* HistoryWorkspacePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000031 /* HistoryWorkspacePresentationTests.swift */; };
+		AB1000000000000000000032 /* HistoryWorkspacePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000032 /* HistoryWorkspacePresentation.swift */; };
+		AB2000000000000000000032 /* HistoryWorkspacePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000032 /* HistoryWorkspacePresentation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -256,6 +267,13 @@
 		AB0000000000000000000023 /* RunActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunActivityController.swift; sourceTree = "<group>"; };
 		AB0000000000000000000024 /* NovaFacelift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaFacelift.swift; sourceTree = "<group>"; };
 		AB0000000000000000000025 /* ForgeChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeChrome.swift; sourceTree = "<group>"; };
+		AB0000000000000000000026 /* AgentExecutionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentExecutionCoordinator.swift; sourceTree = "<group>"; };
+		AB0000000000000000000027 /* ProviderContextWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderContextWindow.swift; sourceTree = "<group>"; };
+		AB0000000000000000000028 /* AgentExecutionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentExecutionCoordinatorTests.swift; sourceTree = "<group>"; };
+		AB0000000000000000000029 /* AgentRunPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRunPersistenceTests.swift; sourceTree = "<group>"; };
+		AB0000000000000000000030 /* ProviderContextWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderContextWindowTests.swift; sourceTree = "<group>"; };
+		AB0000000000000000000031 /* HistoryWorkspacePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryWorkspacePresentationTests.swift; sourceTree = "<group>"; };
+		AB0000000000000000000032 /* HistoryWorkspacePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryWorkspacePresentation.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -348,6 +366,7 @@
 				AB0000000000000000000007 /* ProjectOSEngine.swift */,
 				AB0000000000000000000008 /* ProjectSummary.swift */,
 				AB0000000000000000000009 /* ProjectNaming.swift */,
+							AB0000000000000000000032 /* HistoryWorkspacePresentation.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -368,6 +387,8 @@
 				AA0000000000000000000046 /* LocalAgentPlanner.swift */,
 				AA0000000000000000000019 /* ProviderMessageSanitizer.swift */,
 				AB0000000000000000000023 /* RunActivityController.swift */,
+							AB0000000000000000000026 /* AgentExecutionCoordinator.swift */,
+				AB0000000000000000000027 /* ProviderContextWindow.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -441,6 +462,10 @@
 				AE0000000000000000000003 /* LiveChatSessionReducerTests.swift */,
 				AG0000000000000000000001 /* AIStreamDocumentBuilderTests.swift */,
 				AG0000000000000000000004 /* AIStreamDisplayEngineTests.swift */,
+							AB0000000000000000000028 /* AgentExecutionCoordinatorTests.swift */,
+				AB0000000000000000000029 /* AgentRunPersistenceTests.swift */,
+				AB0000000000000000000030 /* ProviderContextWindowTests.swift */,
+							AB0000000000000000000031 /* HistoryWorkspacePresentationTests.swift */,
 			);
 			path = AgentPadTests;
 			sourceTree = "<group>";
@@ -705,6 +730,9 @@
 				AB1000000000000000000023 /* RunActivityController.swift in Sources */,
 							AB1000000000000000000024 /* NovaFacelift.swift in Sources */,
 							AB1000000000000000000025 /* ForgeChrome.swift in Sources */,
+							AB1000000000000000000026 /* AgentExecutionCoordinator.swift in Sources */,
+				AB1000000000000000000027 /* ProviderContextWindow.swift in Sources */,
+							AB1000000000000000000032 /* HistoryWorkspacePresentation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -749,11 +777,19 @@
 				AG2000000000000000000201 /* AIStreamDocumentBuilderTests.swift in Sources */,
 				AG2000000000000000000205 /* AIStreamDisplayEngineTests.swift in Sources */,
 				AB2000000000000000000006 /* AppLaunchPersistence.swift in Sources */,
+				AB2000000000000000000004 /* ChatRunSnapshots.swift in Sources */,
 				AB2000000000000000000007 /* ProjectOSEngine.swift in Sources */,
 				AB2000000000000000000008 /* ProjectSummary.swift in Sources */,
 				AB2000000000000000000009 /* ProjectNaming.swift in Sources */,
 				AB2000000000000000000019 /* DiffEngine.swift in Sources */,
 				AB2000000000000000000010 /* CodeHighlighter.swift in Sources */,
+							AB2000000000000000000026 /* AgentExecutionCoordinator.swift in Sources */,
+				AB2000000000000000000027 /* ProviderContextWindow.swift in Sources */,
+							AB2000000000000000000028 /* AgentExecutionCoordinatorTests.swift in Sources */,
+				AB2000000000000000000029 /* AgentRunPersistenceTests.swift in Sources */,
+				AB2000000000000000000030 /* ProviderContextWindowTests.swift in Sources */,
+							AB2000000000000000000031 /* HistoryWorkspacePresentationTests.swift in Sources */,
+							AB2000000000000000000032 /* HistoryWorkspacePresentation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

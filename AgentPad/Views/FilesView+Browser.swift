@@ -11,8 +11,15 @@ import UIKit
 
 extension FilesView {
     var actionBar: some View {
-        HStack(spacing: 8) {
-            IconGlassButton(symbol: "chevron.up", accessibilityLabel: "Go up", accessibilityIdentifier: "filesGoUpButton") {
+        GlassGroup(spacing: 10) {
+            HStack(spacing: 8) {
+            IconGlassButton(
+                symbol: "chevron.up",
+                accessibilityLabel: "Go up",
+                accessibilityIdentifier: "filesGoUpButton",
+                glassID: "workspace-up",
+                glassNamespace: workspaceGlassNamespace
+            ) {
                 goUp()
             }
             .disabled(currentPath.isEmpty)
@@ -20,7 +27,9 @@ extension FilesView {
             IconGlassButton(
                 symbol: isGridLayout ? "list.bullet" : "square.grid.2x2",
                 accessibilityLabel: "Toggle file layout",
-                accessibilityIdentifier: "filesLayoutToggle"
+                accessibilityIdentifier: "filesLayoutToggle",
+                glassID: "workspace-layout",
+                glassNamespace: workspaceGlassNamespace
             ) {
                 let impact = UIImpactFeedbackGenerator(style: .light)
                 impact.impactOccurred()
@@ -30,13 +39,19 @@ extension FilesView {
                 if items.count > 120 {
                     toggle()
                 } else {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7)) {
                         toggle()
                     }
                 }
             }
 
-            IconGlassButton(symbol: "magnifyingglass", accessibilityLabel: "Search files", accessibilityIdentifier: "filesSearchButton") {
+            IconGlassButton(
+                symbol: "magnifyingglass",
+                accessibilityLabel: "Search files",
+                accessibilityIdentifier: "filesSearchButton",
+                glassID: "workspace-search",
+                glassNamespace: workspaceGlassNamespace
+            ) {
                 showingSearch = true
             }
 
@@ -82,17 +97,30 @@ extension FilesView {
                 .foregroundStyle(AgentPalette.ink)
                 .padding(.horizontal, 14)
                 .frame(minHeight: AgentDesign.minimumTouchTarget)
-                .background(Capsule(style: .continuous).fill(AgentPalette.cyan.opacity(0.10)))
-                .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.cyan.opacity(0.26), lineWidth: 0.9))
                 .contentShape(Capsule())
             }
+            .agentInteractiveGlassButtonStyle(
+                radius: AgentDesign.minimumTouchTarget / 2,
+                tint: AgentPalette.cyan,
+                selected: true,
+                glassID: "workspace-selector",
+                in: workspaceGlassNamespace
+            )
             .accessibilityLabel("Switch workspace, \(runtime.workspace.workspaceName)")
             .accessibilityIdentifier("filesWorkspaceMenu")
 
             Spacer(minLength: 0)
 
-            IconGlassButton(symbol: "plus", accessibilityLabel: "Create file", accessibilityIdentifier: "filesCreateFileButton", tint: AgentPalette.green) {
+            IconGlassButton(
+                symbol: "plus",
+                accessibilityLabel: "Create file",
+                accessibilityIdentifier: "filesCreateFileButton",
+                tint: AgentPalette.green,
+                glassID: "workspace-create",
+                glassNamespace: workspaceGlassNamespace
+            ) {
                 showingCreate = true
+            }
             }
         }
     }
@@ -163,7 +191,7 @@ extension FilesView {
                                 .font(.title3)
                                 .foregroundStyle(row.visualKind.tint)
                                 .frame(width: 36, height: 36)
-                                .agentGlass(radius: 10, interactive: false, tint: row.visualKind.tint.opacity(0.12))
+                                .agentSurface(radius: 10, tint: row.visualKind.tint.opacity(0.12))
 
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 6) {
@@ -289,7 +317,7 @@ extension FilesView {
                             .font(.title2)
                             .foregroundStyle(row.visualKind.tint)
                             .frame(width: 44, height: 44)
-                            .agentGlass(radius: 13, interactive: false, tint: row.visualKind.tint.opacity(0.12))
+                            .agentSurface(radius: 13, tint: row.visualKind.tint.opacity(0.12))
                         
                         HStack(spacing: 4) {
                             Text(row.item.name)
@@ -356,12 +384,12 @@ extension FilesView {
 
     func fileEvidenceBadgeData(for item: FileItem) -> (title: String, symbol: String, tint: Color)? {
         let path = item.relativePath
-        if project.fileChanges.contains(where: { change in
+        if scopedFileChangeRecords.contains(where: { change in
             change.path == path || change.path.components(separatedBy: " -> ").contains(path)
         }) {
             return ("Changed", "plus.forwardslash.minus", AgentPalette.cyan)
         }
-        if project.artifacts.contains(where: { $0.path == path }) || isGeneratedPath(path) {
+        if scopedArtifactRecords.contains(where: { $0.path == path }) || isGeneratedPath(path) {
             return ("Artifact", "shippingbox.fill", AgentPalette.green)
         }
         if isVerificationPath(path) || isScreenshotPath(path) {
@@ -559,25 +587,29 @@ extension FilesView {
     }
 
     func addToProjectBrief(_ item: ProjectMemoryItem) {
+        guard let scopeProject else {
+            showTransientNotice("Choose a project scope to update its brief")
+            return
+        }
         let path = item.primaryPath
-        guard !project.mission.localizedCaseInsensitiveContains(path) else {
+        guard !scopeProject.mission.localizedCaseInsensitiveContains(path) else {
             showTransientNotice("Already in project brief")
             return
         }
 
         let line = "- \(item.title) (\(path)): \(item.detail)"
-        let trimmedMission = project.mission.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMission = scopeProject.mission.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedMission.localizedCaseInsensitiveContains("Project Memory:") {
-            project.mission = "\(trimmedMission)\n\(line)"
+            scopeProject.mission = "\(trimmedMission)\n\(line)"
         } else if trimmedMission.isEmpty {
-            project.mission = "Project Memory:\n\(line)"
+            scopeProject.mission = "Project Memory:\n\(line)"
         } else {
-            project.mission = "\(trimmedMission)\n\nProject Memory:\n\(line)"
+            scopeProject.mission = "\(trimmedMission)\n\nProject Memory:\n\(line)"
         }
-        project.updatedAt = Date()
-        project.lastActivityAt = Date()
+        scopeProject.updatedAt = Date()
+        scopeProject.lastActivityAt = Date()
         ProjectEventRecorder.record(
-            project: project,
+            project: scopeProject,
             kind: .agentProofCreated,
             title: "Project brief updated",
             detail: path,
@@ -647,7 +679,7 @@ extension FilesView {
     func revealRelatedContext(for item: ProjectMemoryItem) {
         if let idString = item.sourceToolRunIDString,
            let id = UUID(uuidString: idString),
-           let run = project.toolRuns.first(where: { $0.id == id }) {
+           let run = scopedToolRunRecords.first(where: { $0.id == id }) {
             relatedContextDraft = FileRelatedContextDraft(
                 title: run.name,
                 subtitle: "Tool run · \(run.status.rawValue)",
@@ -660,7 +692,7 @@ extension FilesView {
 
         if let idString = item.sourceTerminalCommandIDString,
            let id = UUID(uuidString: idString),
-           let command = project.terminalCommands.first(where: { $0.id == id }) {
+           let command = scopedTerminalCommandRecords.first(where: { $0.id == id }) {
             relatedContextDraft = FileRelatedContextDraft(
                 title: command.command,
                 subtitle: "Terminal command · \(command.status.rawValue)",
@@ -673,7 +705,7 @@ extension FilesView {
 
         if let idString = item.sourceEventIDString,
            let id = UUID(uuidString: idString),
-           let event = project.events.first(where: { $0.id == id }) {
+           let event = scopedEventRecords.first(where: { $0.id == id }) {
             relatedContextDraft = FileRelatedContextDraft(
                 title: event.title,
                 subtitle: "Project event · \(event.severity.rawValue)",
@@ -687,7 +719,7 @@ extension FilesView {
         relatedContextDraft = FileRelatedContextDraft(
             title: item.title,
             subtitle: "Related context unavailable",
-            detail: "The originating run or event was not found in current project memory.",
+            detail: "The originating run or event was not found in this workspace scope.",
             symbol: "questionmark.folder.fill",
             tint: AgentPalette.secondaryText
         )
@@ -701,13 +733,13 @@ extension FilesView {
     }
 
     func showTransientNotice(_ message: String) {
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
+        withAnimation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.78)) {
             transientNotice = message
         }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(1_600))
             guard transientNotice == message else { return }
-            withAnimation(.easeOut(duration: 0.18)) {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
                 transientNotice = nil
             }
         }
@@ -720,7 +752,7 @@ extension FilesView {
         let workspace = runtime.workspace
         let deletedKind = item.isDirectory ? "folder" : "file"
         let deletedPath = item.relativePath
-        withAnimation(.smooth(duration: 0.16)) {
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.16)) {
             items.removeAll { $0.item.relativePath == deletedPath }
         }
         fileActionTask = Task.detached(priority: .userInitiated) {
@@ -745,7 +777,7 @@ extension FilesView {
                 }
                 runtime.noteWorkspaceChanged()
                 ProjectEventRecorder.recordFileChange(
-                    project: project,
+                    project: scopeProject,
                     action: item.isDirectory ? "Deleted folder" : "Deleted file",
                     path: item.relativePath,
                     context: modelContext
@@ -790,7 +822,7 @@ extension FilesView {
                 }
                 runtime.noteWorkspaceChanged()
                 ProjectEventRecorder.recordFileChange(
-                    project: project,
+                    project: scopeProject,
                     action: "Duplicated file",
                     path: "\(path) -> \(destination)",
                     context: modelContext

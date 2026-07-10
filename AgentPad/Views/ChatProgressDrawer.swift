@@ -21,8 +21,11 @@ struct ChatContextBar: View {
     let stop: () -> Void
     let openWorkspaceSurface: (AppTab) -> Void
     let clear: () -> Void
+    var compact = false
+    var glassNamespace: Namespace.ID? = nil
     @Binding var expanded: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var localGlassNamespace
 
     private var primaryArtifact: WorkspaceArtifact? { artifacts.first }
     private var hasCompletedRunEvidence: Bool {
@@ -58,15 +61,19 @@ struct ChatContextBar: View {
                             .font(NovaType.headline)
                             .foregroundStyle(AgentPalette.ink)
                             .lineLimit(1)
-                        Text(subtitle)
-                            .font(NovaType.caption)
-                            .foregroundStyle(AgentPalette.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        if !compact {
+                            Text(subtitle)
+                                .font(NovaType.caption)
+                                .foregroundStyle(AgentPalette.secondaryText)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    statusPill
+                    if !compact {
+                        statusPill
+                    }
 
                     Image(systemName: "chevron.up")
                         .font(.system(size: 12, weight: .bold))
@@ -108,9 +115,10 @@ struct ChatContextBar: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity)
+        .padding(.vertical, compact ? 4 : 9)
+        .frame(maxWidth: compact ? 290 : .infinity)
         .runContextSurface(usesPolishedSurface: AgentPerformance.prefersReducedVisualEffects && runtime.isWorking && !expanded, tint: tint)
+        .agentGlassEffectID("chat-context", in: glassNamespace ?? localGlassNamespace)
     }
 
     @ViewBuilder

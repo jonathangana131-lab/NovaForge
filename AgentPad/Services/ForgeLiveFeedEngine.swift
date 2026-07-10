@@ -6,9 +6,12 @@ import Foundation
 /// directly makes SwiftUI reflow partial words and punctuation at unpredictable
 /// points, which reads as jitter on iPhone. This engine normalizes raw deltas
 /// into stable semantic atoms first, then publishes whole word/phrase frames on
-/// a steady cadence. The UI gets a settled prefix plus a small active tail, so
-/// only the currently spoken phrase feels live while earlier text stays calm.
+/// a steady cadence. The UI gets a stable opening, an explicit middle omission,
+/// and a small active tail, so the answer remains readable without continually
+/// laying out the complete in-flight transcript.
 struct ForgeLiveFeedFrame: Equatable, Sendable {
+    static let middleOmissionMarker = "\n\n⋯ middle omitted while response streams ⋯\n\n"
+
     enum Cadence: String, Sendable {
         case idle
         case reading
@@ -62,15 +65,33 @@ struct ForgeLiveFeedFrame: Equatable, Sendable {
 
     func windowed(maxCharacters: Int) -> ForgeLiveFeedFrame {
         guard maxCharacters > 0, displayText.count > maxCharacters else { return self }
-        let suffix = readableSuffix(maxCharacters: maxCharacters)
-        let windowedText = "…\n" + suffix
+        let marker = Self.middleOmissionMarker
+        let windowedText: String
+
+        if maxCharacters > marker.count + 2 {
+            let contentBudget = maxCharacters - marker.count
+            let targetPrefixBudget = max(1, contentBudget * 2 / 5)
+            let prefix = readablePrefix(maxCharacters: targetPrefixBudget)
+            let tailBudget = max(1, contentBudget - prefix.count)
+            let suffix = readableSuffix(
+                maxCharacters: tailBudget,
+                protectingSuffixCharacters: min(activeTail.count, tailBudget)
+            )
+            windowedText = prefix + marker + suffix
+        } else {
+            // Degenerate callers still get a hard bound and the newest text.
+            // Product surfaces use budgets large enough for the descriptive
+            // marker and both readable sides.
+            let suffixBudget = max(0, maxCharacters - 1)
+            windowedText = "…" + String(displayText.suffix(suffixBudget))
+        }
+
         let windowedTail: String
         if !activeTail.isEmpty, windowedText.hasSuffix(activeTail) {
             windowedTail = activeTail
-        } else if !activeTail.isEmpty, suffix.hasSuffix(activeTail) {
-            windowedTail = activeTail
         } else if !activeTail.isEmpty {
-            windowedTail = String(activeTail.suffix(min(activeTail.count, suffix.count)))
+            let matchingTail = String(activeTail.suffix(min(activeTail.count, windowedText.count)))
+            windowedTail = windowedText.hasSuffix(matchingTail) ? matchingTail : ""
         } else {
             windowedTail = ""
         }
@@ -89,13 +110,33 @@ struct ForgeLiveFeedFrame: Equatable, Sendable {
         )
     }
 
-    private func readableSuffix(maxCharacters: Int) -> String {
+    private func readablePrefix(maxCharacters: Int) -> String {
+        guard displayText.count > maxCharacters else { return displayText }
+        var prefix = String(displayText.prefix(maxCharacters))
+
+        // Prefer a nearby complete word/sentence without sacrificing a large
+        // part of the stable opening merely because it contains short words.
+        let boundarySearchCount = min(48, max(0, prefix.count / 3))
+        guard boundarySearchCount > 0 else { return prefix }
+        let searchStart = prefix.index(prefix.endIndex, offsetBy: -boundarySearchCount)
+        if let boundary = prefix[searchStart...].lastIndex(where: { character in
+            character.isLiveFeedWhitespace || character.isLiveFeedPunctuation
+        }) {
+            prefix = String(prefix[...boundary])
+        }
+        return prefix
+    }
+
+    private func readableSuffix(maxCharacters: Int, protectingSuffixCharacters: Int = 0) -> String {
         guard displayText.count > maxCharacters else { return displayText }
         let start = displayText.index(displayText.endIndex, offsetBy: -maxCharacters)
         var suffix = String(displayText[start...])
         guard start > displayText.startIndex else { return suffix }
 
-        if let boundary = suffix.firstIndex(where: { character in
+        let removableCount = max(0, suffix.count - protectingSuffixCharacters)
+        let boundarySearchCount = min(48, removableCount)
+        let searchEnd = suffix.index(suffix.startIndex, offsetBy: boundarySearchCount)
+        if let boundary = suffix[..<searchEnd].firstIndex(where: { character in
             character.isLiveFeedWhitespace || character.isLiveFeedPunctuation
         }) {
             let next = suffix.index(after: boundary)
@@ -104,8 +145,10 @@ struct ForgeLiveFeedFrame: Equatable, Sendable {
             }
         }
 
-        let trimmed = suffix.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? String(displayText.suffix(maxCharacters)) : trimmed
+        // Do not trim the trailing edge: it may be part of `activeTail`, and
+        // preserving that exact suffix keeps the calm/active attributed split
+        // coherent even when a reveal frame lands on whitespace.
+        return suffix
     }
 }
 
@@ -119,46 +162,73 @@ struct ForgeLiveFeedEngine: Sendable {
     }
 
     private struct Atom: Equatable, Sendable {
-        var id: Int
         var kind: AtomKind
         var text: String
     }
 
     private var visibleText = ""
+    private var retainedVisibleCharacterCount = 0
+    private var didTrimVisibleText = false
     private var pendingAtoms: [Atom] = []
+    private var pendingHead = 0
+    private var pendingCharacterCount = 0
     private var partialWord = ""
-    private var nextAtomID = 0
+    private var visibleCharacterCount = 0
     private var visibleAtomCount = 0
     private var revision = 0
     private var lastActiveTail = ""
     private var lastPauseFrames = 0
     private var partialWordHoldFrames = 0
+    private var retainedStablePrefix = ""
+    private var retainedStablePrefixCharacterCount = 0
 
     private let maxPartialWordCharacters = 24
     private let activeTailCharacterLimit = 48
+    /// The durable assistant message owns the full transcript. The live feed
+    /// keeps a stable opening plus a generous recent tail. Both are bounded;
+    /// trimming happens in chunks to avoid copying an ever-growing transcript
+    /// on every display frame.
+    private let retainedStablePrefixLimit = 1_536
+    private let retainedVisibleCharacterTarget = 8_192
+    private let retainedVisibleCharacterLimit = 12_288
+    /// Network delivery can outrun the display cadence by many seconds. Keep
+    /// the unread word tree bounded too, then fast-forward its oldest portion
+    /// into the same stable-prefix + recent-tail representation used on screen.
+    static let pendingBacklogCharacterTarget = 8_192
+    static let pendingBacklogCharacterLimit = 12_288
+
+    var retainedPendingAtomCount: Int {
+        max(0, pendingAtoms.count - pendingHead)
+    }
 
     var isEmpty: Bool {
-        visibleText.isEmpty && pendingAtoms.isEmpty && partialWord.isEmpty
+        visibleCharacterCount == 0 && !hasPendingAtoms && partialWord.isEmpty
     }
 
     var hasPendingReveal: Bool {
-        !pendingAtoms.isEmpty || !partialWord.isEmpty
+        hasPendingAtoms || !partialWord.isEmpty
     }
 
     var backlogCharacters: Int {
-        pendingAtoms.reduce(partialWord.count) { total, atom in total + atom.text.count }
+        pendingCharacterCount + partialWord.count
     }
 
     mutating func reset() {
         visibleText = ""
+        retainedVisibleCharacterCount = 0
+        didTrimVisibleText = false
         pendingAtoms = []
+        pendingHead = 0
+        pendingCharacterCount = 0
         partialWord = ""
-        nextAtomID = 0
+        visibleCharacterCount = 0
         visibleAtomCount = 0
         revision = 0
         lastActiveTail = ""
         lastPauseFrames = 0
         partialWordHoldFrames = 0
+        retainedStablePrefix = ""
+        retainedStablePrefixCharacterCount = 0
     }
 
     mutating func ingest(_ delta: String) {
@@ -166,55 +236,72 @@ struct ForgeLiveFeedEngine: Sendable {
         for character in delta {
             ingest(character)
         }
+        compactPendingBacklogIfNeeded()
     }
 
     mutating func revealNextFrame(forceMinimum: Bool, profileMode: Bool) -> ForgeLiveFeedFrame? {
         prepareReveal(forceMinimum: forceMinimum)
-        guard !pendingAtoms.isEmpty else { return nil }
+        guard hasPendingAtoms else { return nil }
 
         let targetBudget = revealCharacterBudget(profileMode: profileMode)
         var revealed = ""
+        var revealedCharacterCount = 0
         var lastKind: AtomKind = .word
         var revealedAtomCount = 0
 
-        while !pendingAtoms.isEmpty {
-            let atom = pendingAtoms[0]
-            let wouldExceedBudget = !revealed.isEmpty && revealed.count + atom.text.count > targetBudget
+        while let atom = firstPendingAtom {
+            let atomCharacterCount = atom.text.count
+            let wouldExceedBudget = !revealed.isEmpty && revealedCharacterCount + atomCharacterCount > targetBudget
             let shouldCarryTrailingSmallToken = atom.kind == .whitespace || atom.kind == .punctuation || atom.kind == .newline
             if wouldExceedBudget && !shouldCarryTrailingSmallToken { break }
 
-            pendingAtoms.removeFirst()
+            consumeFirstPendingAtom(characterCount: atomCharacterCount)
             revealed += atom.text
+            revealedCharacterCount += atomCharacterCount
             lastKind = atom.kind
             revealedAtomCount += 1
 
-            if revealed.count >= targetBudget,
+            if revealedCharacterCount >= targetBudget,
                atom.kind == .word || atom.kind == .newline {
                 break
             }
         }
 
         guard !revealed.isEmpty else { return nil }
-        visibleText += revealed
+        appendVisibleText(revealed, characterCount: revealedCharacterCount)
+        visibleCharacterCount += revealedCharacterCount
         visibleAtomCount += revealedAtomCount
         revision += 1
         lastActiveTail = Self.makeActiveTail(from: revealed, limit: activeTailCharacterLimit)
         lastPauseFrames = pauseFrames(after: lastKind, revealedText: revealed)
+        compactPendingAtomsIfNeeded()
         return makeFrame(cadence: cadence(forBacklog: backlogCharacters), pauseFrames: lastPauseFrames, profileMode: profileMode)
     }
 
     mutating func flush() -> ForgeLiveFeedFrame? {
         sealPartialWordIfNeeded()
-        guard !pendingAtoms.isEmpty else {
-            return visibleText.isEmpty ? nil : makeFrame(cadence: .idle, pauseFrames: 0)
+        guard hasPendingAtoms else {
+            return visibleCharacterCount == 0 ? nil : makeFrame(cadence: .idle, pauseFrames: 0)
         }
-        let revealed = pendingAtoms.map(\.text).joined()
-        visibleText += revealed
-        visibleAtomCount += pendingAtoms.count
+        let revealedAtomCount = pendingAtoms.count - pendingHead
+        let revealedCharacterCount = pendingCharacterCount
+        var revealedTail = ""
+        for atom in pendingAtoms[pendingHead...] {
+            let atomCharacterCount = atom.text.count
+            appendVisibleText(atom.text, characterCount: atomCharacterCount)
+            revealedTail += atom.text
+            if revealedTail.count > activeTailCharacterLimit * 2 {
+                revealedTail = String(revealedTail.suffix(activeTailCharacterLimit))
+            }
+        }
+        visibleCharacterCount += revealedCharacterCount
+        visibleAtomCount += revealedAtomCount
         pendingAtoms.removeAll(keepingCapacity: true)
+        pendingHead = 0
+        pendingCharacterCount = 0
         partialWordHoldFrames = 0
         revision += 1
-        lastActiveTail = Self.makeActiveTail(from: revealed, limit: activeTailCharacterLimit)
+        lastActiveTail = Self.makeActiveTail(from: revealedTail, limit: activeTailCharacterLimit)
         lastPauseFrames = 0
         return makeFrame(cadence: .idle, pauseFrames: 0)
     }
@@ -244,18 +331,21 @@ struct ForgeLiveFeedEngine: Sendable {
 
     private mutating func appendAtom(kind: AtomKind, text: String) {
         guard !text.isEmpty else { return }
-        if let last = pendingAtoms.indices.last,
+        let characterCount = text.count
+        if hasPendingAtoms,
+           let last = pendingAtoms.indices.last,
            pendingAtoms[last].kind == kind,
            kind == .whitespace {
             pendingAtoms[last].text += text
+            pendingCharacterCount += characterCount
             return
         }
-        pendingAtoms.append(Atom(id: nextAtomID, kind: kind, text: text))
-        nextAtomID += 1
+        pendingAtoms.append(Atom(kind: kind, text: text))
+        pendingCharacterCount += characterCount
     }
 
     private mutating func prepareReveal(forceMinimum _: Bool) {
-        guard pendingAtoms.isEmpty, !partialWord.isEmpty else { return }
+        guard !hasPendingAtoms, !partialWord.isEmpty else { return }
         if partialWord.count >= maxPartialWordCharacters || partialWordHoldFrames >= 3 {
             sealPartialWordIfNeeded()
         } else {
@@ -270,14 +360,32 @@ struct ForgeLiveFeedEngine: Sendable {
         partialWordHoldFrames = 0
     }
 
-    private func makeFrame(cadence: ForgeLiveFeedFrame.Cadence, pauseFrames: Int, profileMode: Bool = false) -> ForgeLiveFeedFrame {
-        let displayText = Self.liveDisplayWindow(visibleText, profileMode: profileMode)
+    private mutating func appendVisibleText(_ text: String, characterCount: Int) {
+        guard !text.isEmpty else { return }
+        if retainedStablePrefixCharacterCount < retainedStablePrefixLimit {
+            let remaining = retainedStablePrefixLimit - retainedStablePrefixCharacterCount
+            let stableAddition = String(text.prefix(remaining))
+            retainedStablePrefix += stableAddition
+            retainedStablePrefixCharacterCount += stableAddition.count
+        }
+        visibleText += text
+        retainedVisibleCharacterCount += characterCount
+        guard retainedVisibleCharacterCount > retainedVisibleCharacterLimit else { return }
+        visibleText = String(visibleText.suffix(retainedVisibleCharacterTarget))
+        retainedVisibleCharacterCount = retainedVisibleCharacterTarget
+        didTrimVisibleText = true
+    }
+
+    private func makeFrame(cadence: ForgeLiveFeedFrame.Cadence, pauseFrames: Int, profileMode _: Bool = false) -> ForgeLiveFeedFrame {
+        let displayText = didTrimVisibleText
+            ? retainedStablePrefix + ForgeLiveFeedFrame.middleOmissionMarker + visibleText
+            : visibleText
         let activeTail = displayText.hasSuffix(lastActiveTail) ? lastActiveTail : ""
         return ForgeLiveFeedFrame(
             displayText: displayText,
             settledText: Self.settledPrefix(displayText: displayText, activeTail: activeTail),
             activeTail: activeTail,
-            characterCount: visibleText.count,
+            characterCount: visibleCharacterCount,
             visibleAtomCount: visibleAtomCount,
             backlogCharacters: backlogCharacters,
             revision: revision,
@@ -333,15 +441,69 @@ struct ForgeLiveFeedEngine: Sendable {
         return String(trimmedTrailingNewline.suffix(limit))
     }
 
-    private static func liveDisplayWindow(_ text: String, profileMode: Bool) -> String {
-        guard profileMode, text.count > 640 else { return text }
-        return "…" + String(text.suffix(640))
-    }
-
     private static func settledPrefix(displayText: String, activeTail: String) -> String {
         guard !activeTail.isEmpty, displayText.hasSuffix(activeTail) else { return displayText }
         let end = displayText.index(displayText.endIndex, offsetBy: -activeTail.count)
         return String(displayText[..<end])
+    }
+
+    private var hasPendingAtoms: Bool {
+        pendingHead < pendingAtoms.count
+    }
+
+    private var firstPendingAtom: Atom? {
+        guard hasPendingAtoms else { return nil }
+        return pendingAtoms[pendingHead]
+    }
+
+    private mutating func consumeFirstPendingAtom(characterCount: Int) {
+        pendingHead += 1
+        pendingCharacterCount -= characterCount
+    }
+
+    /// Keep queue consumption O(1) per atom. Occasionally copy only the live
+    /// suffix so a long response does not retain an ever-growing consumed
+    /// prefix; this makes total compaction work amortized linear.
+    private mutating func compactPendingAtomsIfNeeded() {
+        if pendingHead == pendingAtoms.count {
+            pendingAtoms.removeAll(keepingCapacity: true)
+            pendingHead = 0
+        } else if pendingHead >= 256, pendingHead * 2 >= pendingAtoms.count {
+            pendingAtoms = Array(pendingAtoms[pendingHead...])
+            pendingHead = 0
+        }
+    }
+
+    /// Fast-forward a bounded chunk of unread atoms when a provider delivers
+    /// faster than the frame clock. This preserves exact character accounting
+    /// and a readable opening/tail without allocating an unbounded pending
+    /// word tree or forcing a giant final-frame flush on the MainActor.
+    private mutating func compactPendingBacklogIfNeeded() {
+        guard backlogCharacters > Self.pendingBacklogCharacterLimit else { return }
+        sealPartialWordIfNeeded()
+        guard pendingCharacterCount > Self.pendingBacklogCharacterLimit else { return }
+
+        var compactedParts: [String] = []
+        var compactedCharacters = 0
+        var compactedAtoms = 0
+        while pendingCharacterCount > Self.pendingBacklogCharacterTarget,
+              let atom = firstPendingAtom {
+            let characterCount = atom.text.count
+            consumeFirstPendingAtom(characterCount: characterCount)
+            compactedParts.append(atom.text)
+            compactedCharacters += characterCount
+            compactedAtoms += 1
+        }
+        guard compactedCharacters > 0 else { return }
+
+        let compactedText = compactedParts.joined()
+        appendVisibleText(compactedText, characterCount: compactedCharacters)
+        visibleCharacterCount += compactedCharacters
+        visibleAtomCount += compactedAtoms
+        revision += 1
+        lastActiveTail = Self.makeActiveTail(from: compactedText, limit: activeTailCharacterLimit)
+        lastPauseFrames = 0
+        compactPendingAtomsIfNeeded()
     }
 }
 
