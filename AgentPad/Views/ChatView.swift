@@ -936,6 +936,10 @@ struct ChatView: View {
                         .onChange(of: runtime.runState) { _, newState in
                             handleRunStateChange(newState)
                         }
+                        .onChange(of: runtime.liveStream.handoffMessageID) { _, newValue in
+                            guard ownsActiveRunState, newValue != nil else { return }
+                            settleLiveStreamHandoff(animated: true)
+                        }
                         .onReceive(runtime.liveStream.objectWillChange) { _ in
                             keepLiveStreamReadableDuringGrowth()
                         }

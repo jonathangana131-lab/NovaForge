@@ -169,7 +169,9 @@ final class LiveStreamBuffer: ObservableObject {
     var characterCount: Int { frame.characterCount }
     var revision: Int { frame.revision }
     var isEmpty: Bool { frame.characterCount == 0 }
-    var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
+    var isHandoffActive: Bool {
+        handoffMessageID != nil && (pendingHandoffClearMessageID == nil || feedEngine.hasPendingReveal)
+    }
     var isShowingTail: Bool { displayFrame.isShowingTail }
     var revealBacklog: Int { frame.backlogCharacters }
 
