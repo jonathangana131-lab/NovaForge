@@ -1,6 +1,15 @@
 import Foundation
 import SwiftData
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+private func triggerRunsLightImpact() {
+#if canImport(UIKit)
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+#endif
+}
 
 struct RunsView: View {
     @Environment(\.modelContext) var modelContext
@@ -1984,7 +1993,7 @@ private struct HistoryAgentRunOutcomePanel: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            triggerRunsLightImpact()
             action()
         } label: {
             Label(title, systemImage: symbol)
@@ -2202,7 +2211,7 @@ private struct HistoryAgentRunCompactCard: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            triggerRunsLightImpact()
             action()
         } label: {
             Label(title, systemImage: symbol)
@@ -2313,7 +2322,7 @@ private struct HistoryMissionOutcomePanel: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            triggerRunsLightImpact()
             action()
         } label: {
             Label(title, systemImage: symbol)
