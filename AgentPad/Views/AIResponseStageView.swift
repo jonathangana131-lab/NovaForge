@@ -18,6 +18,10 @@ struct AIResponseStageView: View {
         stream.displayFrame
     }
 
+    private var streamedCharacterCount: Int {
+        max(stream.characterCount, frame.characterCount)
+    }
+
     private var artifacts: [LiveChatArtifactHandoff] {
         Array(stream.responseDocument.artifacts.prefix(2))
     }
@@ -55,7 +59,7 @@ struct AIResponseStageView: View {
             // response-stage and compatibility renderers. Nested SwiftUI
             // accessibility containers do not expose the inner identifier.
             .accessibilityIdentifier("liveStreamingBubble")
-            .accessibilityValue("\(frame.characterCount) characters streamed")
+            .accessibilityValue("\(streamedCharacterCount) characters streamed")
         }
     }
 }
