@@ -1757,6 +1757,7 @@ struct ChatView: View {
         settleLiveStreamHandoff(animated: state == .waitingForApproval)
         switch state {
         case .completed, .cancelled, .failed(_):
+            updateCachedMessages()
             keepLatestReadableAfterAccessoryResize(animated: false)
         case .waitingForApproval:
             if shouldKeepTranscriptPinned {
