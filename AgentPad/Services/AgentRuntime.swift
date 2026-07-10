@@ -27,6 +27,17 @@ enum AgentRunState: Equatable, Sendable {
     case failed(String)
 }
 
+struct CommittedChatMessageHandoff: Equatable, Sendable {
+    let revision: Int
+    let conversationID: UUID
+    let id: UUID
+    let roleRawValue: String
+    let content: String
+    let createdAt: Date
+    let toolCallID: String?
+    let toolCallsJSON: String?
+}
+
 enum AgentRunOrigin: String, Equatable, Sendable {
     case manual
     case retry
@@ -379,6 +390,8 @@ final class AgentRuntime {
     var lastRunDuration: TimeInterval?
     var wasInterrupted = false
     private(set) var queuedFollowUpMessageIDs: Set<UUID> = []
+    private(set) var committedMessageHandoff: CommittedChatMessageHandoff?
+    private var committedMessageHandoffRevision = 0
     let localModels = LocalModelManager()
     /// Transient in-app feedback queue (saves, copies, recoverable failures).
     /// Surfaces through AgentToastView so user-facing operations no longer fail
@@ -1991,6 +2004,7 @@ final class AgentRuntime {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     throw error
                 }
+                publishCommittedMessageHandoff(assistant, conversation: conversation)
                 liveStream.finishHandoff(to: assistant.id)
                 pushTrace("Local safe response", detail: "Skipped unstable local generation for this prompt.", status: .success)
                 isWorking = false
@@ -2124,6 +2138,7 @@ final class AgentRuntime {
                         context: context
                     )
                     try saveCompacted(context)
+                    publishCommittedMessageHandoff(assistant, conversation: conversation)
                     liveStream.finishHandoff(to: assistant.id)
 
                     var pausedForApproval = false
@@ -2290,6 +2305,7 @@ final class AgentRuntime {
                     rollbackUnsavedMessage(assistant, from: conversation, context: context)
                     throw error
                 }
+                publishCommittedMessageHandoff(assistant, conversation: conversation)
                 liveStream.finishHandoff(to: assistant.id)
                 pushTrace("Response complete", detail: "\(text.count) characters delivered.", status: .success)
                 ProjectEventRecorder.record(
@@ -3304,6 +3320,20 @@ final class AgentRuntime {
             presentToast("NovaForge could not save the latest run state: \(message)", tone: .error)
             pushTrace("Run state save failed", detail: message, status: .failed)
         }
+    }
+
+    private func publishCommittedMessageHandoff(_ message: ChatMessage, conversation: Conversation) {
+        committedMessageHandoffRevision += 1
+        committedMessageHandoff = CommittedChatMessageHandoff(
+            revision: committedMessageHandoffRevision,
+            conversationID: conversation.id,
+            id: message.id,
+            roleRawValue: message.role.rawValue,
+            content: message.content,
+            createdAt: message.createdAt,
+            toolCallID: message.toolCallID,
+            toolCallsJSON: message.toolCallsJSON
+        )
     }
 
     private func appendVisibleErrorMessage(

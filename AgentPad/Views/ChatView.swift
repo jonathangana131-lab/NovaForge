@@ -511,7 +511,7 @@ struct ChatView: View {
         let scopeIdentity = evidenceScopeIdentity
         let fetchLimit = max(messageRenderWindowSize, messageRenderLimit)
         let relationshipSources = Self.recentMessageSources(from: conversation.messages, limit: fetchLimit)
-        let sources: [ChatMessageSource]
+        var sources: [ChatMessageSource]
         do {
             var descriptor = FetchDescriptor<ChatMessage>(
                 predicate: #Predicate<ChatMessage> { message in
@@ -530,6 +530,7 @@ struct ChatView: View {
         } catch {
             sources = relationshipSources
         }
+        sources = sourcesIncludingCommittedHandoff(in: sources, limit: fetchLimit)
         let runtimeArtifacts = runtimeArtifactsForSelectedConversation
 
         // In expanded-history mode, keep older assistant bubbles readable but avoid
@@ -677,6 +678,30 @@ struct ChatView: View {
     private nonisolated static func messageSourceAscending(_ lhs: ChatMessageSource, _ rhs: ChatMessageSource) -> Bool {
         if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
         return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    private func sourcesIncludingCommittedHandoff(
+        in sources: [ChatMessageSource],
+        limit: Int
+    ) -> [ChatMessageSource] {
+        guard let source = committedHandoffSource else { return sources }
+        var merged = sources.filter { $0.id != source.id }
+        merged.append(source)
+        return Array(merged.sorted(by: Self.messageSourceAscending).suffix(limit))
+    }
+
+    private var committedHandoffSource: ChatMessageSource? {
+        guard let handoff = runtime.committedMessageHandoff,
+              handoff.conversationID == conversation.id,
+              let role = ChatRole(rawValue: handoff.roleRawValue) else { return nil }
+        return ChatMessageSource(
+            id: handoff.id,
+            role: role,
+            content: handoff.content,
+            createdAt: handoff.createdAt,
+            toolCallID: handoff.toolCallID,
+            toolCallsJSON: handoff.toolCallsJSON
+        )
     }
 
     private func updateCachedArtifacts(
@@ -940,6 +965,9 @@ struct ChatView: View {
                                 transient.handoffCacheRefreshTask?.cancel()
                                 return
                             }
+                            settleLiveStreamHandoff(animated: true)
+                        }
+                        .onChange(of: runtime.committedMessageHandoff?.revision) { _, _ in
                             settleLiveStreamHandoff(animated: true)
                         }
                         .onReceive(runtime.liveStream.objectWillChange) { _ in
@@ -1774,10 +1802,30 @@ struct ChatView: View {
 
     private func settleLiveStreamHandoff(animated: Bool) {
         guard ownsActiveRunState, runtime.liveStream.handoffMessageID != nil else { return }
+        upsertCommittedHandoffSnapshotIfAvailable()
         scheduleHandoffCacheRefresh(animated: animated)
         guard shouldKeepTranscriptPinned else { return }
         scrollAttachment = .restoring
         requestJumpToLatest(animated: animated, delay: .milliseconds(60))
+    }
+
+    private func upsertCommittedHandoffSnapshotIfAvailable() {
+        guard ownsActiveRunState,
+              let handoffMessageID = runtime.liveStream.handoffMessageID,
+              let source = committedHandoffSource,
+              source.id == handoffMessageID else { return }
+        guard let snapshot = ChatMessageSnapshot.make(from: [source]).first else { return }
+        cachedMessages.removeAll { $0.id == snapshot.id }
+        let firstQueuedFollowUpIndex = cachedMessages.firstIndex { message in
+            runtime.queuedFollowUpMessageIDs.contains(message.id)
+        }
+        if let firstQueuedFollowUpIndex {
+            cachedMessages.insert(snapshot, at: firstQueuedFollowUpIndex)
+        } else {
+            cachedMessages.append(snapshot)
+        }
+        cachedSourceMessageCount = max(cachedSourceMessageCount, cachedMessages.count)
+        updateCachedArtifacts(from: cachedMessages, runtimeArtifacts: runtimeArtifactsForSelectedConversation)
     }
 
     private func scheduleHandoffCacheRefresh(animated: Bool) {

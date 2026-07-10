@@ -8,7 +8,7 @@
 import SwiftUI
 import UIKit
 
-struct ChatMessageSource: Sendable {
+struct ChatMessageSource: Equatable, Sendable {
     let id: UUID
     let role: ChatRole
     let content: String
@@ -23,6 +23,22 @@ struct ChatMessageSource: Sendable {
         createdAt = message.createdAt
         toolCallID = message.toolCallID
         toolCallsJSON = message.toolCallsJSON
+    }
+
+    init(
+        id: UUID,
+        role: ChatRole,
+        content: String,
+        createdAt: Date,
+        toolCallID: String? = nil,
+        toolCallsJSON: String? = nil
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.createdAt = createdAt
+        self.toolCallID = toolCallID
+        self.toolCallsJSON = toolCallsJSON
     }
 }
 
