@@ -5,6 +5,7 @@ import UIKit
 struct ChatView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     var runtime: AgentRuntime
     var project: Project
     var projects: [Project]
@@ -24,6 +25,10 @@ struct ChatView: View {
     /// loop stays on this one surface.
     var missionStatus: WorkspaceStatusSnapshot = .hidden
     var missionAutoContinue: ProjectAutoContinueViewState = .disabled
+    /// True when the selected project chat itself owns the mission strip.
+    /// When false, an active strip belongs to the background project runtime
+    /// and this chat must not start a competing run in the same workspace.
+    var missionUsesChatRuntime = false
     var approveMissionTool: () -> Void = {}
     var rejectMissionTool: () -> Void = {}
     var stopMissionRun: () -> Void = {}
@@ -126,6 +131,29 @@ struct ChatView: View {
         conversation.project
     }
 
+    /// Durable evidence follows the selected conversation's scope, not the
+    /// project currently selected elsewhere in the app. Including the
+    /// conversation ID makes a General chat and a project chat distinct even
+    /// when a caller reuses this view instance during navigation.
+    private var evidenceScopeIdentity: String {
+        let projectID = scopedProject.map { $0.id.uuidString } ?? "general"
+        return "\(conversation.id.uuidString)-\(projectID)"
+    }
+
+    /// Runtime artifacts are transient and only safe to render while this
+    /// exact conversation owns the runtime. Completed work is read from the
+    /// durable snapshot instead, so switching chats can never borrow the
+    /// previous chat's in-memory artifact shelf.
+    private var runtimeIsBoundToSelectedConversation: Bool {
+        guard let activeConversationID = runtime.activeConversationID else { return false }
+        return activeConversationID == conversation.id
+    }
+
+    private var runtimeArtifactsForSelectedConversation: [WorkspaceArtifact] {
+        guard runtimeIsBoundToSelectedConversation else { return [] }
+        return runtime.currentArtifacts
+    }
+
     private var missionContract: MissionOSContract {
         cachedMissionContract ?? Self.placeholderMissionContract(for: project)
     }
@@ -179,7 +207,7 @@ struct ChatView: View {
     }
 
     private var composerMode: ChatComposerMode {
-        if hasForeignActiveRun || (ownsActiveRunState && runtime.pendingTool != nil) { return .disabled }
+        if hasForeignActiveRun || hasForeignProjectMission || (ownsActiveRunState && runtime.pendingTool != nil) { return .disabled }
         if prompt.contains("\n") || prompt.count > 72 { return .expanded }
         if composerFocused { return .focused }
         return .compact
@@ -200,7 +228,7 @@ struct ChatView: View {
         runtime.lastRunDuration != nil ||
             runtime.runState == .completed ||
             runtime.hasSuccessfulTraceEvent ||
-            !runtime.currentArtifacts.isEmpty ||
+            !runtimeArtifactsForSelectedConversation.isEmpty ||
             !cachedArtifacts.isEmpty ||
             cachedDurableRunSnapshot.hasCompletionEvidence
     }
@@ -227,6 +255,14 @@ struct ChatView: View {
     private var shouldShowLiveResponseIsland: Bool {
         ownsActiveRunState &&
             (runtime.isWorking || runtime.liveStream.isHandoffActive)
+    }
+
+    private var missionStripIsVisible: Bool {
+        ForgeMissionStrip.isVisible(
+            scopedProject: scopedProject,
+            status: missionStatus,
+            autoContinue: missionAutoContinue
+        )
     }
 
     private var usesCompactStreamingComposer: Bool {
@@ -355,6 +391,12 @@ struct ChatView: View {
         hasRunState && !ownsActiveRunState
     }
 
+    private var hasForeignProjectMission: Bool {
+        scopedProject != nil &&
+            !missionUsesChatRuntime &&
+            missionStatus.blocksCommand
+    }
+
     private var activeElsewhereTitle: String {
         let title = runtime.activeConversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if title.isEmpty || title == LaunchConversationSelection.safeStartTitle {
@@ -369,53 +411,82 @@ struct ChatView: View {
     }
 
     private var conversationRefreshID: String {
-        "\(conversation.id.uuidString)-\(conversation.messageCount)-\(conversation.updatedAt.timeIntervalSince1970)"
+        "\(evidenceScopeIdentity)-\(conversation.messageCount)-\(conversation.updatedAt.timeIntervalSince1970)"
     }
 
     private var missionContractRefreshID: String {
-        [
-            project.id.uuidString,
-            project.statusRawValue,
-            String(project.updatedAt.timeIntervalSince1970),
-            String(project.lastActivityAt.timeIntervalSince1970),
+        guard let scopedProject else {
+            return [
+                evidenceScopeIdentity,
+                "general",
+                String(conversation.updatedAt.timeIntervalSince1970),
+                String(conversation.messageCount)
+            ].joined(separator: "-")
+        }
+        return [
+            evidenceScopeIdentity,
+            scopedProject.statusRawValue,
+            String(scopedProject.updatedAt.timeIntervalSince1970),
+            String(scopedProject.lastActivityAt.timeIntervalSince1970),
             String(conversation.updatedAt.timeIntervalSince1970),
             String(conversation.messageCount)
         ].joined(separator: "-")
     }
 
     private var durableRunRefreshID: String {
-        let latestArtifactUpdate = project.artifacts
+        let scopedArtifacts = scopedProject?.artifacts ?? []
+        let scopedRuns = scopedProject?.toolRuns ?? []
+        let scopedFileChanges = scopedProject?.fileChanges ?? []
+        let scopedTerminalCommands = scopedProject?.terminalCommands ?? []
+        let scopedProjectOSRuns = scopedProject?.projectOSRuns ?? []
+        let scopedEvents = scopedProject?.events ?? []
+        let latestArtifactUpdate = scopedArtifacts
             .map(\.updatedAt.timeIntervalSince1970)
             .max() ?? 0
-        let latestRunUpdate = project.toolRuns
+        let latestRunUpdate = scopedRuns
             .map { ($0.completedAt ?? $0.createdAt).timeIntervalSince1970 }
             .max() ?? 0
-        let latestFileChangeUpdate = project.fileChanges
+        let latestFileChangeUpdate = scopedFileChanges
             .map(\.createdAt.timeIntervalSince1970)
             .max() ?? 0
-        let latestTerminalUpdate = project.terminalCommands
+        let latestTerminalUpdate = scopedTerminalCommands
             .map(\.completedAt.timeIntervalSince1970)
             .max() ?? 0
-        let latestProjectOSUpdate = project.projectOSRuns
+        let latestProjectOSUpdate = scopedProjectOSRuns
             .map(\.updatedAt.timeIntervalSince1970)
             .max() ?? 0
-        let latestEventUpdate = project.events
+        let latestEventUpdate = scopedEvents
             .map(\.createdAt.timeIntervalSince1970)
             .max() ?? 0
-        return [
-            project.id.uuidString,
-            String(project.toolRuns.count),
-            String(project.artifacts.count),
-            String(project.fileChanges.count),
-            String(project.terminalCommands.count),
-            String(project.projectOSRuns.count),
-            String(project.events.count),
+        let scopeSnapshot = [
+            evidenceScopeIdentity,
+            String(scopedRuns.count),
+            String(scopedArtifacts.count),
+            String(scopedFileChanges.count),
+            String(scopedTerminalCommands.count),
+            String(scopedProjectOSRuns.count),
+            String(scopedEvents.count),
             String(latestRunUpdate),
             String(latestArtifactUpdate),
             String(latestFileChangeUpdate),
             String(latestTerminalUpdate),
             String(latestProjectOSUpdate),
-            String(latestEventUpdate),
+            String(latestEventUpdate)
+        ].joined(separator: "-")
+        let runtimeSnapshot: String
+        if runtimeIsBoundToSelectedConversation {
+            runtimeSnapshot = [
+                String(runtimeArtifactsForSelectedConversation.count),
+                String(runtime.hasTraceEvents),
+                String(runtime.lastRunDuration ?? 0),
+                String(describing: runtime.runState)
+            ].joined(separator: "-")
+        } else {
+            runtimeSnapshot = "0-false-0-idle"
+        }
+        return [
+            scopeSnapshot,
+            runtimeSnapshot,
             String(conversation.updatedAt.timeIntervalSince1970),
             String(conversation.messageCount)
         ].joined(separator: "-")
@@ -433,6 +504,7 @@ struct ChatView: View {
         let previousCachedCount = cachedMessages.count
 
         let conversationID = conversation.id
+        let scopeIdentity = evidenceScopeIdentity
         let fetchLimit = max(messageRenderWindowSize, messageRenderLimit)
         let relationshipSources = Self.recentMessageSources(from: conversation.messages, limit: fetchLimit)
         let sources: [ChatMessageSource]
@@ -454,7 +526,7 @@ struct ChatView: View {
         } catch {
             sources = relationshipSources
         }
-        let runtimeArtifacts = ownsActiveRunState ? runtime.currentArtifacts : []
+        let runtimeArtifacts = runtimeArtifactsForSelectedConversation
 
         // In expanded-history mode, keep older assistant bubbles readable but avoid
         // re-parsing every historical markdown/code block on the render path.
@@ -473,7 +545,10 @@ struct ChatView: View {
                     parseWindowSize: parseWindowSize
                 )
             }.value
-            guard !Task.isCancelled, transient.messageCacheGeneration == generation, conversation.id == conversationID else { return }
+            guard !Task.isCancelled,
+                  transient.messageCacheGeneration == generation,
+                  conversation.id == conversationID,
+                  evidenceScopeIdentity == scopeIdentity else { return }
             if snapshots.count > previousCachedCount {
                 AgentPerformance.event("Chat Message Append")
             }
@@ -489,19 +564,27 @@ struct ChatView: View {
 
     private func refreshMissionContract() {
         let signpostID = AgentPerformance.begin("Chat Mission Contract Build")
-        let summary = ProjectMissionSummarizer.summarize(project: project, context: modelContext)
-        cachedMissionContract = summary.missionContract
-        cachedWorkflowSpine = summary.workflowSpine
+        if let scopedProject {
+            let summary = ProjectMissionSummarizer.summarize(project: scopedProject, context: modelContext)
+            cachedMissionContract = summary.missionContract
+            cachedWorkflowSpine = summary.workflowSpine
+        } else {
+            cachedMissionContract = nil
+            cachedWorkflowSpine = nil
+        }
         AgentPerformance.end("Chat Mission Contract Build", id: signpostID)
     }
 
     private func refreshDurableRunSnapshot() {
         cachedDurableRunSnapshot = ChatDurableRunSnapshot.make(
-            project: project,
+            project: scopedProject,
             conversation: conversation,
             context: modelContext
         )
-        updateCachedArtifacts(from: cachedMessages)
+        updateCachedArtifacts(
+            from: cachedMessages,
+            runtimeArtifacts: runtimeArtifactsForSelectedConversation
+        )
     }
 
     private static func placeholderMissionContract(for project: Project) -> MissionOSContract {
@@ -598,10 +681,10 @@ struct ChatView: View {
 
     private func updateCachedArtifacts(
         from messages: [ChatMessageSnapshot],
-        runtimeArtifacts: [WorkspaceArtifact]? = nil
+        runtimeArtifacts: [WorkspaceArtifact] = []
     ) {
         var seen = Set<String>()
-        var artifacts = runtimeArtifacts ?? runtime.currentArtifacts
+        var artifacts = runtimeArtifacts
         seen.formUnion(artifacts.map(\.path))
 
         for artifact in cachedDurableRunSnapshot.artifacts where seen.insert(artifact.path).inserted {
@@ -618,6 +701,13 @@ struct ChatView: View {
             }
         }
         self.cachedArtifacts = Array(artifacts.prefix(4))
+    }
+
+    private func clearScopedEvidenceCaches() {
+        cachedArtifacts = []
+        cachedDurableRunSnapshot = .empty
+        cachedMissionContract = nil
+        cachedWorkflowSpine = nil
     }
 
     var body: some View {
@@ -637,57 +727,59 @@ struct ChatView: View {
 
     private func chatLayout(topSafeArea: CGFloat, rootBottom: CGFloat) -> some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Layout")
+        let showsMissionStrip = missionStripIsVisible
         return ZStack {
             ChatTranscriptBackdrop()
 
             VStack(spacing: 0) {
-                VStack(spacing: 9) {
-                    ForgeHeader(
-                        runtime: runtime,
-                        project: project,
-                        projects: projects,
-                        scopedProject: scopedProject,
-                        conversation: conversation,
-                        settings: settings,
-                        artifacts: cachedArtifacts,
-                        durableSnapshot: cachedDurableRunSnapshot,
-                        workflowSpine: cachedWorkflowSpine,
-                        ownsActiveRunState: ownsActiveRunState,
-                        hasForeignActiveRun: hasForeignActiveRun,
-                        foreignActiveTitle: activeElsewhereTitle,
-                        newChat: newChat,
-                        changeScope: { selectedProject in
-                            setConversationProjectScope(conversation, selectedProject)
-                        },
-                        createProject: createProject,
-                        openWorkspaceSurface: openWorkspaceSurface,
-                        openArtifact: previewArtifact,
-                        openMissionDossier: openMissionDossier,
-                        openChatDrawer: {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            withAnimation(shouldAnimateDecorative ? .smooth(duration: 0.22) : nil) {
-                                showingChatDrawer = true
-                            }
-                        }
-                    )
-
-                    if ForgeMissionStrip.isVisible(
-                        scopedProject: scopedProject,
-                        status: missionStatus,
-                        autoContinue: missionAutoContinue
-                    ) {
-                        ForgeMissionStrip(
+                GlassGroup(spacing: 9) {
+                    VStack(spacing: 9) {
+                        ForgeHeader(
+                            runtime: runtime,
                             project: project,
+                            projects: projects,
                             scopedProject: scopedProject,
-                            status: missionStatus,
-                            autoContinue: missionAutoContinue,
-                            approve: approveMissionTool,
-                            reject: rejectMissionTool,
-                            stop: stopMissionRun,
-                            pauseAutoContinue: pauseMissionAutoContinue,
-                            openDossier: openMissionDossier
+                            conversation: conversation,
+                            settings: settings,
+                            artifacts: cachedArtifacts,
+                            durableSnapshot: cachedDurableRunSnapshot,
+                            workflowSpine: cachedWorkflowSpine,
+                            ownsActiveRunState: ownsActiveRunState,
+                            missionStripOwnsLiveState: showsMissionStrip,
+                            hasForeignActiveRun: hasForeignActiveRun,
+                            foreignActiveTitle: activeElsewhereTitle,
+                            newChat: newChat,
+                            changeScope: { selectedProject in
+                                setConversationProjectScope(conversation, selectedProject)
+                            },
+                            createProject: createProject,
+                            openWorkspaceSurface: openWorkspaceSurface,
+                            openArtifact: previewArtifact,
+                            openMissionDossier: openMissionDossier,
+                            openChatDrawer: {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(shouldAnimateDecorative ? .smooth(duration: 0.22) : nil) {
+                                    showingChatDrawer = true
+                                }
+                            },
+                            glassNamespace: glassNamespace
                         )
-                        .transition(.move(edge: .top).combined(with: .opacity))
+
+                        if showsMissionStrip {
+                            ForgeMissionStrip(
+                                project: project,
+                                scopedProject: scopedProject,
+                                status: missionStatus,
+                                autoContinue: missionAutoContinue,
+                                glassNamespace: glassNamespace,
+                                approve: approveMissionTool,
+                                reject: rejectMissionTool,
+                                stop: stopMissionRun,
+                                pauseAutoContinue: pauseMissionAutoContinue,
+                                openDossier: openMissionDossier
+                            )
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
                     }
                 }
                 .padding(.horizontal)
@@ -850,7 +942,10 @@ struct ChatView: View {
                 }
             }
             .onChange(of: runtime.currentArtifacts) {
-                updateCachedArtifacts(from: cachedMessages, runtimeArtifacts: ownsActiveRunState ? runtime.currentArtifacts : [])
+                updateCachedArtifacts(
+                    from: cachedMessages,
+                    runtimeArtifacts: runtimeArtifactsForSelectedConversation
+                )
             }
             .task(id: conversationRefreshID) {
                 updateCachedMessages()
@@ -910,6 +1005,7 @@ struct ChatView: View {
                 }
             }
             .onDisappear {
+                flushDraftPersistence(prompt, for: conversation.id)
                 transient.cancelLayoutTasks()
             }
 
@@ -976,12 +1072,20 @@ struct ChatView: View {
         .onPreferenceChange(ChatAccessoryGeometryPreferenceKey.self) { geometry in
             scheduleAccessoryGeometryUpdate(geometry, rootBottom: rootBottom)
         }
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.24) : nil, value: composerFocused)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.28) : nil, value: runtime.isWorking)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.24) : nil, value: hasForeignActiveRun)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.24) : nil, value: keyboard.revision)
+        .onChange(of: evidenceScopeIdentity) {
+            // Scope can change without changing the conversation (for example,
+            // moving a chat from a project back to General). Never leave the
+            // previous scope's summary or proof shelf on screen while the new
+            // scoped tasks rebuild them.
+            clearScopedEvidenceCaches()
+        }
         .onChange(of: conversation.id) { oldValue, _ in
-            persistDraft(prompt, for: oldValue)
+            flushDraftPersistence(prompt, for: oldValue)
+            transient.messageCacheGeneration += 1
+            transient.messageCacheTask?.cancel()
+            cachedMessages = []
+            cachedSourceMessageCount = 0
+            clearScopedEvidenceCaches()
             prompt = ""
             selectedArtifact = nil
             composerFocused = false
@@ -1002,7 +1106,11 @@ struct ChatView: View {
         }
         .onChange(of: prompt) {
             handlePromptChanged()
-            persistDraft(prompt, for: conversation.id)
+            scheduleDraftPersistence(prompt, for: conversation.id)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase != .active else { return }
+            flushDraftPersistence(prompt, for: conversation.id)
         }
         .onChange(of: cachedSourceMessageCount) {
             if cachedSourceMessageCount <= messageRenderWindowSize {
@@ -1011,17 +1119,6 @@ struct ChatView: View {
             if hasLatestJumpTarget, shouldKeepTranscriptPinned {
                 requestJumpToLatest()
             }
-        }
-        .sheet(item: Binding(get: { ownsActiveRunState ? runtime.pendingTool : nil }, set: { _ in })) { request in
-            ApprovalSheet(
-                request: request,
-                approve: { runtime.approvePendingTool(conversation: conversation, settings: settings, context: modelContext, project: scopedProject) },
-                reject: { runtime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: scopedProject) },
-                workspace: runtime.workspace
-            )
-            .presentationDetents([.fraction(0.68), .large])
-            .presentationDragIndicator(.visible)
-            .interactiveDismissDisabled(true)
         }
         .fullScreenCover(item: $selectedArtifact) { artifact in
             ArtifactPreviewSheet(
@@ -1060,7 +1157,7 @@ struct ChatView: View {
         AgentPerformance.event("Artifact Preview Open")
         ProjectEventRecorder.noteArtifactPreview(
             artifact,
-            project: project,
+            project: scopedProject,
             context: modelContext
         )
         do {
@@ -1116,6 +1213,26 @@ struct ChatView: View {
         persistedDraftsJSON = json
     }
 
+    private func scheduleDraftPersistence(_ draft: String, for conversationID: UUID) {
+        transient.draftPersistenceTask?.cancel()
+        transient.draftPersistenceTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(450))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            persistDraft(draft, for: conversationID)
+            transient.draftPersistenceTask = nil
+        }
+    }
+
+    private func flushDraftPersistence(_ draft: String, for conversationID: UUID) {
+        transient.draftPersistenceTask?.cancel()
+        transient.draftPersistenceTask = nil
+        persistDraft(draft, for: conversationID)
+    }
+
     private func persistedDrafts() -> [String: String] {
         guard let data = persistedDraftsJSON.data(using: .utf8),
               let drafts = try? JSONDecoder().decode([String: String].self, from: data) else {
@@ -1126,7 +1243,8 @@ struct ChatView: View {
 
     private var chatBottomAccessory: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Bottom Accessory Body")
-        return VStack(spacing: 6) {
+        return GlassGroup(spacing: 10) {
+            VStack(spacing: 6) {
             if hasForeignActiveRun {
                 ActiveResponseElsewhereDock(title: activeElsewhereTitle, open: openActiveConversation)
             } else if shouldShowContextBar {
@@ -1146,8 +1264,11 @@ struct ChatView: View {
                     stop: { runtime.stopGenerating(context: modelContext) },
                     openWorkspaceSurface: openWorkspaceSurface,
                     clear: { runtime.clearCurrentRunState(keepLastFailure: false) },
+                    compact: shouldShowJumpToLatestAccessory && runtime.isWorking && !progressExpanded,
+                    glassNamespace: glassNamespace,
                     expanded: $progressExpanded
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else if shouldShowQuickActions {
                 QuickDelegateRail(
                     workflowSpine: scopedProject == nil ? nil : cachedWorkflowSpine,
@@ -1156,7 +1277,7 @@ struct ChatView: View {
             }
 
             if shouldShowJumpToLatestAccessory {
-                JumpToLatestButton(tint: chatChromeTint) {
+                JumpToLatestButton(tint: chatChromeTint, glassNamespace: glassNamespace) {
                     jumpToLatestFromAccessory()
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -1165,6 +1286,7 @@ struct ChatView: View {
             }
 
             composer
+            }
         }
         .padding(.horizontal, composerHorizontalPadding)
         .padding(.vertical, 6)
@@ -1185,6 +1307,7 @@ struct ChatView: View {
 
     private var composerInputDisabled: Bool {
         hasForeignActiveRun ||
+            hasForeignProjectMission ||
             providerSetupBlocksComposer ||
             (ownsActiveRunState && runtime.pendingTool != nil)
     }
@@ -1195,6 +1318,7 @@ struct ChatView: View {
 
     private var composerPlaceholder: String {
         if hasForeignActiveRun { return "Open the running chat to send" }
+        if hasForeignProjectMission { return "Project mission is already running" }
         if ownsActiveRunState && runtime.pendingTool != nil { return "Approval needed before the next send" }
         if ownsActiveRunState && runtime.isWorking { return "Queue a follow-up" }
         if missingCredentialSetup { return "Add \(settings.provider.credentialDisplayName) key in Control" }
@@ -1204,6 +1328,7 @@ struct ChatView: View {
 
     private var composerSendAccessibilityLabel: String {
         if hasForeignActiveRun { return "Open running chat to send" }
+        if hasForeignProjectMission { return "Send disabled while the project mission is active" }
         if missingCredentialSetup { return "Send disabled until provider key is added" }
         if settings.provider == .local && needsLocalPowerUp { return "Send disabled until local model is downloaded" }
         if ownsActiveRunState && runtime.pendingTool != nil { return "Send disabled while approval is pending" }
@@ -1213,6 +1338,9 @@ struct ChatView: View {
     private var composerStatus: ComposerStatus {
         if hasForeignActiveRun {
             return ComposerStatus(title: "Elsewhere", symbol: "arrow.up.right.circle.fill", tint: AgentPalette.cyan)
+        }
+        if hasForeignProjectMission {
+            return ComposerStatus(title: "Mission", symbol: "shippingbox.fill", tint: missionStatus.tone == .approval ? AgentPalette.cyan : AgentPalette.lilac)
         }
         if ownsActiveRunState && runtime.pendingTool != nil {
             return ComposerStatus(title: "Approval", symbol: "checkmark.shield.fill", tint: AgentPalette.cyan)
@@ -1235,6 +1363,14 @@ struct ChatView: View {
         return ComposerStatus(title: "Ready", symbol: "sparkles", tint: AgentPalette.cyan)
     }
 
+    /// The inline mission strip is the decision surface for an approval. When
+    /// it is visible, repeating the same state in the composer turns the
+    /// bottom dock into visual noise without adding an action. Keep the pill
+    /// for General/fallback cases where the strip is not present.
+    private var showsComposerStatusPill: Bool {
+        !(ownsActiveRunState && runtime.pendingTool != nil && missionStripIsVisible)
+    }
+
     private var composer: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Composer Body")
         let compactStreamingComposer = usesCompactStreamingComposer
@@ -1247,15 +1383,16 @@ struct ChatView: View {
         let isQueueing = ownsActiveRunState && runtime.isWorking
         let isMatrix = AgentTheme.current == .matrixRain
 
-        return GlassGroup(spacing: compactStreamingComposer ? 8 : 12) {
-            VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 3) {
                 if !compactStreamingComposer {
                     HStack(spacing: 8) {
                         ComposerModelPickerAnchor(settings: settings)
 
                         Spacer(minLength: 0)
 
-                        ComposerStatusPill(status: composerStatus)
+                        if showsComposerStatusPill {
+                            ComposerStatusPill(status: composerStatus)
+                        }
                     }
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("composerActionRail")
@@ -1265,7 +1402,7 @@ struct ChatView: View {
                     Group {
                         if usesMultilineComposer {
                             TextEditor(text: $prompt)
-                                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                                .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
                                 .foregroundStyle(AgentPalette.ink)
                                 .lineSpacing(2)
                                 .scrollContentBackground(.hidden)
@@ -1279,7 +1416,7 @@ struct ChatView: View {
                                 .padding(.vertical, 5)
                         } else {
                             TextField(composerPlaceholder, text: $prompt, axis: .vertical)
-                                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                                .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
                                 .foregroundStyle(AgentPalette.ink)
                                 .textFieldStyle(.plain)
                                 .lineLimit(1...3)
@@ -1359,7 +1496,7 @@ struct ChatView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("chatComposerDock")
             .onTapGesture {
-                if !hasForeignActiveRun {
+                if !composerInputDisabled {
                     composerFocused = true
                 }
             }
@@ -1373,13 +1510,13 @@ struct ChatView: View {
                     .accessibilityIdentifier("chatComposerDock")
                     .allowsHitTesting(false)
             }
-        }
         .accessibilityIdentifier("chatComposerDock")
         .animation(shouldAnimateDecorative ? .smooth(duration: 0.20) : nil, value: usesMultilineComposer)
         .animation(shouldAnimateDecorative ? .smooth(duration: 0.20) : nil, value: compactStreamingComposer)
         .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: composerFocused)
         .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: runtime.isWorking)
         .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: hasForeignActiveRun)
+        .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: hasForeignProjectMission)
     }
 
     private var trimmedPrompt: String {
@@ -1420,17 +1557,36 @@ struct ChatView: View {
             openActiveConversation()
             return
         }
+        guard !hasForeignProjectMission else {
+            runtime.presentToast("Finish, stop, or approve the active project mission before starting another run here.", tone: .info)
+            return
+        }
         guard !(ownsActiveRunState && runtime.pendingTool != nil) else { return }
         AgentPerformance.event("Chat Prompt Send")
         if ownsActiveRunState && runtime.lastError != nil {
             runtime.clearCurrentRunState(keepLastFailure: false)
         }
+        let disposition = runtime.send(
+            prompt: text,
+            conversation: conversation,
+            settings: settings,
+            context: modelContext,
+            project: scopedProject
+        )
+        guard disposition.wasAccepted else {
+            // Queue capacity and cross-chat arbitration can reject a send. Keep
+            // the exact draft in place so the user can shorten it or retry.
+            composerFocused = true
+            return
+        }
         prompt = ""
+        flushDraftPersistence("", for: conversation.id)
         composerFocused = false
         keyboard.reset()
         forceScrollToBottom = true
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        runtime.send(prompt: text, conversation: conversation, settings: settings, context: modelContext, project: scopedProject)
+        if case .started = disposition {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
         updateCachedMessages()
         scrollAttachment = .restoring
         requestJumpToLatest(animated: true, delay: .milliseconds(60))
@@ -1447,6 +1603,10 @@ struct ChatView: View {
 
     private var shouldShowContextBar: Bool {
         guard ownsActiveRunState else { return false }
+        // The Forge mission strip owns approval decisions. Keeping the old
+        // compact run bar here would repeat the same state and could make its
+        // non-actionable "Approve" badge look like the decision control.
+        if runtime.pendingTool != nil, missionStripIsVisible { return false }
         if hasActionableRunState { return true }
         guard !composerFocused, trimmedPrompt.isEmpty else { return false }
         // Completion evidence only earns the bar above a transcript that
@@ -1876,6 +2036,7 @@ private final class ChatTransientState: ObservableObject {
     var accessoryResizeFollowUpTask: Task<Void, Never>?
     var scrollRequestTask: Task<Void, Never>?
     var manualRepinTask: Task<Void, Never>?
+    var draftPersistenceTask: Task<Void, Never>?
     var lastLiveStreamJumpRequestAt = Date.distantPast
     var lastReportedBottomDistance: CGFloat = .infinity
     var userDetachedUntil = Date.distantPast
@@ -1888,6 +2049,7 @@ private final class ChatTransientState: ObservableObject {
         accessoryResizeFollowUpTask?.cancel()
         scrollRequestTask?.cancel()
         manualRepinTask?.cancel()
+        draftPersistenceTask?.cancel()
     }
 }
 

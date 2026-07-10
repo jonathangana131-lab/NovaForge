@@ -11,6 +11,10 @@ import SwiftData
 
 enum ProjectBootstrap {
     static let defaultProjectName = "NovaForge Project"
+    /// Legacy releases predated General-scoped evidence and treated every nil
+    /// project link as an orphan. This marker makes that conversion exactly
+    /// once; after it is set, nil is an intentional General scope forever.
+    static let legacyOwnershipMigrationKey = "NovaForge.legacyProjectOwnershipMigration.v2"
 
     static func preferredProject(from projects: [Project], settings: AgentSettings?) -> Project? {
         if let activeProjectID = settings?.activeProjectID,
@@ -32,7 +36,8 @@ enum ProjectBootstrap {
     static func ensureDefaultProject(
         in context: ModelContext,
         settings: AgentSettings?,
-        now: Date = Date()
+        now: Date = Date(),
+        migrationStore: UserDefaults = .standard
     ) -> Project {
         let projects = (try? context.fetch(FetchDescriptor<Project>())) ?? []
         let project: Project
@@ -47,7 +52,7 @@ enum ProjectBootstrap {
                 project: project,
                 kind: .projectCreated,
                 title: "Default project created",
-                detail: "NovaForge created a durable project to own existing runs, files, terminal commands, and artifacts.",
+                detail: "NovaForge created a durable project for project-scoped missions and workspace activity.",
                 severity: .success,
                 sourceType: .system,
                 context: context,
@@ -55,24 +60,20 @@ enum ProjectBootstrap {
             )
         }
 
-        var linkedCount = 0
-        linkedCount += assignOrphanToolRuns(to: project, context: context)
-        linkedCount += assignOrphanTerminalCommands(to: project, context: context)
-        linkedCount += assignOrphanArtifacts(to: project, context: context)
-        linkedCount += assignOrphanFileChanges(to: project, context: context)
-        linkedCount += assignOrphanEvents(to: project, context: context)
-
-        if linkedCount > 0 {
-            ProjectEventRecorder.record(
-                project: project,
-                kind: .migrationLinked,
-                title: "Existing work linked",
-                detail: "\(linkedCount) existing records now belong to \(project.name).",
-                severity: .info,
-                sourceType: .system,
-                context: context,
-                now: now
-            )
+        if !migrationStore.bool(forKey: legacyOwnershipMigrationKey) {
+            let linkedCount = linkLegacyOrphans(to: project, context: context)
+            if linkedCount > 0 {
+                ProjectEventRecorder.record(
+                    project: project,
+                    kind: .migrationLinked,
+                    title: "Existing work linked",
+                    detail: "\(linkedCount) existing records now belong to \(project.name).",
+                    severity: .info,
+                    sourceType: .system,
+                    context: context,
+                    now: now
+                )
+            }
         }
 
         if settings?.activeProjectID != project.id {
@@ -86,54 +87,92 @@ enum ProjectBootstrap {
         return project
     }
 
-    private static func assignOrphanToolRuns(to project: Project, context: ModelContext) -> Int {
-        let runs = (try? context.fetch(FetchDescriptor<ToolRun>())) ?? []
+    /// Call only after the enclosing SwiftData transaction commits. Keeping
+    /// this separate means a disk-full error cannot permanently skip the
+    /// one-time legacy conversion just because UserDefaults wrote first.
+    static func markLegacyOwnershipMigrationComplete(in store: UserDefaults = .standard) {
+        store.set(true, forKey: legacyOwnershipMigrationKey)
+    }
+
+    /// Old nil links are migrated once, but any evidence already tied to a
+    /// nil-scoped canonical run is modern General work and must never move.
+    private static func linkLegacyOrphans(to project: Project, context: ModelContext) -> Int {
+        let generalRunIDs = Set(
+            ((try? context.fetch(FetchDescriptor<AgentRunRecord>())) ?? [])
+                .filter { $0.projectIDString == nil }
+                .map { $0.id.uuidString }
+        )
+        let toolRuns = (try? context.fetch(FetchDescriptor<ToolRun>())) ?? []
+        let generalToolRunIDs = Set(
+            toolRuns
+                .filter { run in
+                    guard let runIDString = normalizedUUIDString(run.runIDString) else { return false }
+                    return generalRunIDs.contains(runIDString)
+                }
+                .map { $0.id.uuidString }
+        )
+        func belongsToGeneralRun(_ sourceRunID: String?) -> Bool {
+            guard let sourceRunID = normalizedUUIDString(sourceRunID) else { return false }
+            return generalToolRunIDs.contains(sourceRunID)
+        }
+
         var count = 0
-        for run in runs where run.project == nil {
+        for run in toolRuns where run.project == nil && !generalRunIDs.contains(normalizedUUIDString(run.runIDString) ?? "") {
             run.project = project
             count += 1
         }
-        return count
-    }
-
-    private static func assignOrphanTerminalCommands(to project: Project, context: ModelContext) -> Int {
-        let commands = (try? context.fetch(FetchDescriptor<TerminalCommandRecord>())) ?? []
-        var count = 0
-        for command in commands where command.project == nil {
+        for command in ((try? context.fetch(FetchDescriptor<TerminalCommandRecord>())) ?? [])
+            where command.project == nil && !belongsToGeneralRun(command.sourceToolRunIDString) {
             command.project = project
             count += 1
         }
-        return count
-    }
-
-    private static func assignOrphanArtifacts(to project: Project, context: ModelContext) -> Int {
-        let artifacts = (try? context.fetch(FetchDescriptor<ProjectArtifact>())) ?? []
-        var count = 0
-        for artifact in artifacts where artifact.project == nil {
+        for artifact in ((try? context.fetch(FetchDescriptor<ProjectArtifact>())) ?? [])
+            where artifact.project == nil && !belongsToGeneralRun(artifact.sourceToolRunIDString) {
             artifact.project = project
             count += 1
         }
-        return count
-    }
-
-    private static func assignOrphanFileChanges(to project: Project, context: ModelContext) -> Int {
-        let changes = (try? context.fetch(FetchDescriptor<ProjectFileChange>())) ?? []
-        var count = 0
-        for change in changes where change.project == nil {
+        for change in ((try? context.fetch(FetchDescriptor<ProjectFileChange>())) ?? [])
+            where change.project == nil && !belongsToGeneralRun(change.sourceToolRunIDString) {
             change.project = project
             count += 1
         }
-        return count
-    }
-
-    private static func assignOrphanEvents(to project: Project, context: ModelContext) -> Int {
-        let events = (try? context.fetch(FetchDescriptor<ProjectEvent>())) ?? []
-        var count = 0
-        for event in events where event.project == nil {
+        for event in ((try? context.fetch(FetchDescriptor<ProjectEvent>())) ?? []) where event.project == nil {
             event.project = project
             count += 1
         }
         return count
+    }
+
+    /// UUID strings have historically been stored by multiple schema versions.
+    /// Normalize valid values before ownership checks so a lowercase legacy
+    /// reference cannot pull modern General evidence into a project migration.
+    private static func normalizedUUIDString(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return UUID(uuidString: trimmed)?.uuidString ?? trimmed
+    }
+
+}
+
+/// Project deletion retains transcripts and canonical run receipts in General.
+/// Relationship-backed records are nullified by SwiftData; scalar run links
+/// need the same policy explicitly so History never strands a deleted UUID.
+enum ProjectDeletionRetention {
+    static func clearScalarProjectLinks(projectID: UUID, context: ModelContext) {
+        let projectIDString = projectID.uuidString
+        let runDescriptor = FetchDescriptor<AgentRunRecord>(
+            predicate: #Predicate { $0.projectIDString == projectIDString }
+        )
+        let operationDescriptor = FetchDescriptor<ToolOperationRecord>(
+            predicate: #Predicate { $0.projectIDString == projectIDString }
+        )
+        for record in (try? context.fetch(runDescriptor)) ?? [] {
+            record.projectIDString = nil
+        }
+        for operation in (try? context.fetch(operationDescriptor)) ?? [] {
+            operation.projectIDString = nil
+        }
     }
 }
 
@@ -226,7 +265,6 @@ enum ProjectEventRecorder {
         context: ModelContext,
         now: Date = Date()
     ) -> ProjectArtifact? {
-        guard let project else { return nil }
         let persisted = upsertArtifact(
             artifact,
             project: project,
@@ -235,18 +273,22 @@ enum ProjectEventRecorder {
             now: now
         )
 
-        record(
-            project: project,
-            kind: .artifactCreated,
-            title: artifact.isSwiftGameArtifact ? "Swift game artifact ready" : artifact.isWebPage ? "Web artifact ready" : "Artifact ready",
-            detail: artifact.path,
-            severity: .success,
-            sourceType: .artifact,
-            sourceID: persisted.id,
-            metadata: ["path": artifact.path, "type": artifact.artifactType.rawValue],
-            context: context,
-            now: now
-        )
+        // General is a first-class scope. Persist its evidence, but do not
+        // create a project event or mutate a project's mission ledger.
+        if let project {
+            record(
+                project: project,
+                kind: .artifactCreated,
+                title: artifact.isSwiftGameArtifact ? "Swift game artifact ready" : artifact.isWebPage ? "Web artifact ready" : "Artifact ready",
+                detail: artifact.path,
+                severity: .success,
+                sourceType: .artifact,
+                sourceID: persisted.id,
+                metadata: ["path": artifact.path, "type": artifact.artifactType.rawValue],
+                context: context,
+                now: now
+            )
+        }
         return persisted
     }
 
@@ -257,7 +299,6 @@ enum ProjectEventRecorder {
         context: ModelContext,
         now: Date = Date()
     ) -> ProjectArtifact? {
-        guard let project else { return nil }
         let persisted = upsertArtifact(
             artifact,
             project: project,
@@ -265,18 +306,20 @@ enum ProjectEventRecorder {
             context: context,
             now: now
         )
-        record(
-            project: project,
-            kind: .artifactPreviewed,
-            title: artifact.isSwiftGameArtifact ? "Swift game artifact previewed" : artifact.isWebPage ? "Web artifact previewed" : "Artifact previewed",
-            detail: artifact.path,
-            severity: .info,
-            sourceType: .artifact,
-            sourceID: persisted.id,
-            metadata: ["path": artifact.path, "type": artifact.artifactType.rawValue],
-            context: context,
-            now: now
-        )
+        if let project {
+            record(
+                project: project,
+                kind: .artifactPreviewed,
+                title: artifact.isSwiftGameArtifact ? "Swift game artifact previewed" : artifact.isWebPage ? "Web artifact previewed" : "Artifact previewed",
+                detail: artifact.path,
+                severity: .info,
+                sourceType: .artifact,
+                sourceID: persisted.id,
+                metadata: ["path": artifact.path, "type": artifact.artifactType.rawValue],
+                context: context,
+                now: now
+            )
+        }
         return persisted
     }
 
@@ -290,7 +333,6 @@ enum ProjectEventRecorder {
         context: ModelContext,
         now: Date = Date()
     ) -> ProjectFileChange? {
-        guard let project else { return nil }
         let change = ProjectFileChange(
             project: project,
             action: action,
@@ -301,19 +343,21 @@ enum ProjectEventRecorder {
         )
         context.insert(change)
 
-        let event = record(
-            project: project,
-            kind: .fileChanged,
-            title: action,
-            detail: path,
-            severity: .success,
-            sourceType: .workspace,
-            sourceID: change.id,
-            metadata: ["path": path, "action": action],
-            context: context,
-            now: now
-        )
-        change.sourceEventIDString = event?.id.uuidString
+        if let project {
+            let event = record(
+                project: project,
+                kind: .fileChanged,
+                title: action,
+                detail: path,
+                severity: .success,
+                sourceType: .workspace,
+                sourceID: change.id,
+                metadata: ["path": path, "action": action],
+                context: context,
+                now: now
+            )
+            change.sourceEventIDString = event?.id.uuidString
+        }
         return change
     }
 
@@ -406,12 +450,15 @@ enum ProjectEventRecorder {
 
     private static func upsertArtifact(
         _ artifact: WorkspaceArtifact,
-        project: Project,
+        project: Project?,
         sourceToolRunID: UUID?,
         context: ModelContext,
         now: Date
     ) -> ProjectArtifact {
-        if let existing = project.artifacts.first(where: { $0.path == artifact.path }) {
+        let existing = ((try? context.fetch(FetchDescriptor<ProjectArtifact>())) ?? []).first { candidate in
+            candidate.path == artifact.path && candidate.project?.id == project?.id
+        }
+        if let existing {
             existing.updatedAt = now
             existing.type = artifact.artifactType
             existing.kind = ProjectArtifact.kind(for: artifact.artifactType)

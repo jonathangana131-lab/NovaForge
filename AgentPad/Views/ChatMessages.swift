@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ChatMessageSource: Sendable {
     let id: UUID
@@ -315,7 +316,7 @@ struct MessageBubble: View, Equatable {
         Group {
             switch message.role {
             case .user:
-                UserMessageBubble(content: message.content)
+                UserMessageBubble(content: message.content, createdAt: message.createdAt)
             case .assistant:
                 if !message.toolCalls.isEmpty {
                     AssistantToolCallBubble(
@@ -325,10 +326,12 @@ struct MessageBubble: View, Equatable {
                     )
                 } else {
                     AssistantMessageBubble(
+                        rawContent: message.content,
                         blocks: message.blocks,
                         references: message.referenceHints,
                         workspace: workspace,
-                        tint: tint
+                        tint: tint,
+                        createdAt: message.createdAt
                     )
                 }
             case .tool:
@@ -342,19 +345,24 @@ struct MessageBubble: View, Equatable {
 
 struct UserMessageBubble: View {
     let content: String
+    let createdAt: Date
 
     var body: some View {
         HStack {
             Spacer(minLength: 44)
-            Text(content)
-                .font(.system(size: 15.5, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                .lineSpacing(3)
-                .foregroundStyle(AgentPalette.ink)
-                .textSelection(.enabled)
-                .padding(.horizontal, 15)
-                .padding(.vertical, 13)
-                .frame(maxWidth: 324, alignment: .leading)
-                .chatMessageSurface(radius: 22, tint: AgentPalette.accent, emphasis: .user)
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(content)
+                    .font(.system(size: 15.5, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                    .lineSpacing(3)
+                    .foregroundStyle(AgentPalette.ink)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 13)
+                    .frame(maxWidth: 324, alignment: .leading)
+                    .chatMessageSurface(radius: 22, tint: AgentPalette.accent, emphasis: .user)
+
+                MessageActionMenu(content: content, createdAt: createdAt, roleLabel: "Your message")
+            }
         }
         .padding(.horizontal, 18)
         .accessibilityElement(children: .contain)
@@ -363,44 +371,98 @@ struct UserMessageBubble: View {
 }
 
 struct AssistantMessageBubble: View {
+    let rawContent: String
     let blocks: [MarkdownBlock]
     let references: [MessageReferenceHint]
     var workspace: SandboxWorkspace
     let tint: Color
+    let createdAt: Date
 
     var body: some View {
         HStack {
-            HStack(alignment: .top, spacing: 11) {
-                NovaReticleGlyph(symbol: "sparkles", tint: tint, size: 30)
-                    .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .top, spacing: 11) {
+                    NovaReticleGlyph(symbol: "sparkles", tint: tint, size: 30)
+                        .padding(.top, 1)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    if blocks.isEmpty {
-                        AssistantTextBlockView(content: "")
-                    } else {
-                        ForEach(blocks) { block in
-                            if block.isCode {
-                                CodeBlockView(block: block, workspace: workspace)
-                            } else {
-                                AssistantTextBlockView(content: block.content)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if blocks.isEmpty {
+                            AssistantTextBlockView(content: "")
+                        } else {
+                            ForEach(blocks) { block in
+                                if block.isCode {
+                                    CodeBlockView(block: block, workspace: workspace)
+                                } else {
+                                    AssistantTextBlockView(content: block.content)
+                                }
                             }
                         }
-                    }
 
-                    if !references.isEmpty {
-                        MessageReferenceHintRail(references: references)
+                        if !references.isEmpty {
+                            MessageReferenceHintRail(references: references)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(13)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .chatMessageSurface(radius: 20, tint: tint, emphasis: .assistant)
+
+                MessageActionMenu(
+                    // Preserve the source exactly. Reconstructing parsed blocks
+                    // drops fenced-code markers, languages, and intentional
+                    // whitespace from Copy and Share.
+                    content: rawContent,
+                    createdAt: createdAt,
+                    roleLabel: "NovaForge response"
+                )
             }
-            .padding(13)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .chatMessageSurface(radius: 20, tint: tint, emphasis: .assistant)
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatAssistantMessageBubble")
+    }
+}
+
+private struct MessageActionMenu: View {
+    let content: String
+    let createdAt: Date
+    let roleLabel: String
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(createdAt, format: .dateTime.hour().minute())
+                .font(.system(size: 9.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                .foregroundStyle(AgentPalette.quaternaryText)
+
+            Menu {
+                Button {
+                    UIPasteboard.general.string = content
+                    NovaHaptics.tick()
+                } label: {
+                    Label("Copy message", systemImage: "doc.on.doc")
+                }
+
+                ShareLink(item: content) {
+                    Label("Share message", systemImage: "square.and.arrow.up")
+                }
+            } label: {
+                ZStack {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .frame(width: 30, height: 26)
+                        .agentControlSurface(radius: 9, tint: AgentPalette.accent.opacity(0.06), selected: false)
+                }
+                // Keep the visual control quiet while giving it a full,
+                // reliable touch target for thumbs and assistive input.
+                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Actions for \(roleLabel)")
+            .accessibilityIdentifier("messageActionMenu")
+        }
     }
 }
 
@@ -601,9 +663,20 @@ struct ChatMessageSurfaceModifier: ViewModifier {
         decorated(content, includeSurfaceFill: true)
     }
 
+    @ViewBuilder
     private func glass(content: Content) -> some View {
-        decorated(content, includeSurfaceFill: false)
-            .agentGlass(radius: radius, interactive: emphasis == .user, tint: tint.opacity(tintOpacity))
+        if emphasis == .live {
+            // The live response is the one transcript element that owns native
+            // Liquid Glass. Let the material read cleanly instead of masking it
+            // with the settled-card gradient and an additional border.
+            content.agentGlass(radius: radius, interactive: false, tint: tint.opacity(tintOpacity))
+        } else {
+            // Long transcripts can keep dozens of settled bubbles alive. They
+            // retain the same layered glass styling without each becoming an
+            // independent native effect; the live bubble and app chrome own the
+            // expensive Liquid Glass treatment.
+            decorated(content, includeSurfaceFill: true)
+        }
     }
 }
 
@@ -911,7 +984,10 @@ struct CodeBlockView: View {
                 .allowsHitTesting(false)
             }
         }
-        .agentGlass(radius: 16, tint: AgentPalette.codeCursor.opacity(0.05))
+        // Code blocks can repeat many times inside a long transcript. Keep
+        // their visual depth, but let the enclosing message/live chrome own
+        // native refraction so scrolling does not stack glass render passes.
+        .agentSurface(radius: 16, tint: AgentPalette.codeCursor.opacity(0.05))
         .alert("Save Code Block", isPresented: $showingSaveAlert) {
             TextField("filename.swift", text: $saveFileName)
                 .textInputAutocapitalization(.never)

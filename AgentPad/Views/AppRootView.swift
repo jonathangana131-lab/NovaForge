@@ -21,12 +21,18 @@ extension EnvironmentValues {
 /// switch re-renders just these two lightweight views — not the tab surfaces.
 private struct TabActivatedBackground: View {
     let tab: AppTab
+    let runtime: AgentRuntime
+    let projectRuntime: AgentRuntime
     @Environment(\.novaActiveTab) private var activeTab
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+        // Read the observable runtimes in this tiny leaf. Stable/equatable tab
+        // shells can keep their heavy content cached while backdrop motion
+        // still reacts immediately to work starting or ending anywhere.
+        let hasActiveWork = runtime.isWorking || projectRuntime.isWorking
         AgentBackground(
-            isWorking: false,
+            isWorking: hasActiveWork,
             isAnimated: scenePhase == .active && activeTab == tab
         )
     }
@@ -104,6 +110,8 @@ private extension AppTab {
 
 @MainActor
 struct AppRootView: View {
+    private static let executionCoordinator = AgentExecutionCoordinator()
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -113,8 +121,8 @@ struct AppRootView: View {
     @Query private var settingsList: [AgentSettings]
     @State private var selectedTab = Self.initialDebugLaunchTab()
     @State private var showingMissionDossier = false
-    @State private var runtime = AgentRuntime()
-    @State private var projectRuntime = AgentRuntime()
+    @State private var runtime = AgentRuntime(executionCoordinator: AppRootView.executionCoordinator)
+    @State private var projectRuntime = AgentRuntime(executionCoordinator: AppRootView.executionCoordinator)
     @State private var selectedConversationID: UUID?
     @State private var optimisticSelectedConversation: Conversation?
     @State private var landscapeGameArtifact: WorkspaceArtifact?
@@ -239,6 +247,12 @@ struct AppRootView: View {
     private var activeProject: Project? {
         ProjectBootstrap.preferredProject(from: projects, settings: settings)
     }
+    private var workspaceRoutingIsLocked: Bool {
+        runtime.isWorking ||
+            runtime.pendingTool != nil ||
+            projectRuntime.isWorking ||
+            projectRuntime.pendingTool != nil
+    }
     private var usesDebugTerminalSurface: Bool {
         #if DEBUG || targetEnvironment(simulator)
         return ProcessInfo.processInfo.arguments.contains("--open-terminal")
@@ -268,83 +282,115 @@ struct AppRootView: View {
     }
 
     private var rootContentWithLifecycle: some View {
+        rootContentPresentationLifecycle
+    }
+
+    private var rootContentLaunchLifecycle: some View {
         rootContent
-        .environment(\.novaActiveTab, selectedTab)
-        .task {
-            runRootLaunchTasks()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.openTab)) { note in
-            guard let raw = note.userInfo?[NovaForgeIntentSignal.tabKey] as? String,
-                  let tab = AppTab.resolve(raw) else { return }
-            selectedTab = tab
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.askPrompt)) { _ in
-            // ChatView owns the composer prefill; the root just lands on Forge.
-            selectedTab = .forge
-        }
-        .onChange(of: settings?.activeWorkspaceName, initial: true) { _, newValue in
-            repairActiveWorkspaceNameChange(newValue)
-        }
-        .onChange(of: activeProject?.id, initial: true) {
-            if let activeProject {
-                clearInactiveRuntimeForConversationSwitch()
+            .environment(\.novaActiveTab, selectedTab)
+            .task {
+                runRootLaunchTasks()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.openTab)) { note in
+                guard let raw = note.userInfo?[NovaForgeIntentSignal.tabKey] as? String,
+                      let tab = AppTab.resolve(raw) else { return }
+                selectedTab = tab
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.askPrompt)) { _ in
+                // ChatView owns the composer prefill; the root just lands on Forge.
+                selectedTab = .forge
+            }
+    }
+
+    private var rootContentSelectionLifecycle: some View {
+        rootContentLaunchLifecycle
+            .onChange(of: settings?.activeWorkspaceName, initial: true) { _, newValue in
+                repairActiveWorkspaceNameChange(newValue)
+            }
+            .onChange(of: activeProject?.id, initial: true) {
+                if let activeProject {
+                    clearInactiveRuntimeForConversationSwitch()
+                    rootPrompt = ""
+                    landscapeGameArtifact = nil
+                    syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
+                    #if DEBUG || targetEnvironment(simulator)
+                    applyDebugLaunchTabArgument()
+                    presentDebugMissionDossierIfRequested()
+                    #endif
+                }
+            }
+            .onChange(of: selectedConversation?.id) {
                 rootPrompt = ""
-                landscapeGameArtifact = nil
-                syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
+                if let activeProject {
+                    syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
+                }
+                persistSelectedConversationIfSafe()
                 #if DEBUG || targetEnvironment(simulator)
-                applyDebugLaunchTabArgument()
                 presentDebugMissionDossierIfRequested()
                 #endif
             }
-        }
-        .onChange(of: selectedConversation?.id) {
-            rootPrompt = ""
-            if let activeProject {
-                syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
+            .onChange(of: selectedConversation?.updatedAt) {
+                persistSelectedConversationIfSafe()
             }
-            persistSelectedConversationIfSafe()
-            #if DEBUG || targetEnvironment(simulator)
-            presentDebugMissionDossierIfRequested()
-            #endif
-        }
-        .onChange(of: selectedConversation?.updatedAt) {
-            persistSelectedConversationIfSafe()
-        }
-        .onChange(of: selectedConversation?.messageCount) {
-            persistSelectedConversationIfSafe()
-        }
-        .onChange(of: selectedTab) { oldValue, newValue in
-            startTabSwitch(from: oldValue, to: newValue)
-            if let activeProject {
-                syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
+            .onChange(of: selectedConversation?.messageCount) {
+                persistSelectedConversationIfSafe()
             }
-        }
-        .onChange(of: autoContinueRuntimeSignature) {
-            reconcileAutoContinue()
-        }
-        .onChange(of: selectedThemeRawValue, initial: true) { _, newValue in
-            let theme = AgentTheme.resolved(from: newValue)
-            if newValue != theme.rawValue {
-                selectedThemeRawValue = theme.rawValue
+            .onChange(of: selectedTab) { oldValue, newValue in
+                startTabSwitch(from: oldValue, to: newValue)
+                if let activeProject {
+                    syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
+                }
             }
-            AgentPalette.refreshThemeCache(theme)
-            AgentThemeUIKit.apply(theme)
-        }
-        .onChange(of: performanceModeEnabled, initial: true) { _, _ in
-            AgentPerformance.invalidatePerformanceModeCache()
-        }
-        .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
-        .alert(
-            "NovaForge Save Failed",
-            isPresented: Binding(
-                get: { rootError != nil },
-                set: { if !$0 { rootError = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) { rootError = nil }
-        } message: {
-            Text(rootError ?? "NovaForge could not save this change.")
-        }
+    }
+
+    private var rootContentRuntimeLifecycle: some View {
+        rootContentSelectionLifecycle
+            .onChange(of: runtime.isWorking) { _, _ in
+                resyncRuntimeWorkspacesAfterSettlement()
+            }
+            .onChange(of: runtime.pendingTool?.id) { _, _ in
+                resyncRuntimeWorkspacesAfterSettlement()
+            }
+            .onChange(of: projectRuntime.isWorking) { _, _ in
+                resyncRuntimeWorkspacesAfterSettlement()
+            }
+            .onChange(of: projectRuntime.pendingTool?.id) { _, _ in
+                resyncRuntimeWorkspacesAfterSettlement()
+            }
+            .onChange(of: autoContinueRuntimeSignature) {
+                reconcileAutoContinue()
+            }
+    }
+
+    private var rootContentAppearanceLifecycle: some View {
+        rootContentRuntimeLifecycle
+            .onChange(of: selectedThemeRawValue, initial: true) { _, newValue in
+                let theme = AgentTheme.resolved(from: newValue)
+                if newValue != theme.rawValue {
+                    selectedThemeRawValue = theme.rawValue
+                }
+                AgentPalette.refreshThemeCache(theme)
+                AgentThemeUIKit.apply(theme)
+            }
+            .onChange(of: performanceModeEnabled, initial: true) { _, _ in
+                AgentPerformance.invalidatePerformanceModeCache()
+            }
+    }
+
+    private var rootContentPresentationLifecycle: some View {
+        rootContentAppearanceLifecycle
+            .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
+            .alert(
+                "NovaForge Save Failed",
+                isPresented: Binding(
+                    get: { rootError != nil },
+                    set: { if !$0 { rootError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) { rootError = nil }
+            } message: {
+                Text(rootError ?? "NovaForge could not save this change.")
+            }
     }
 
     private var rootContent: some View {
@@ -389,7 +435,7 @@ struct AppRootView: View {
 
             if showingMissionDossier {
                 missionDossierCover
-                    .transition(AgentPerformance.prefersReducedVisualEffects ? .identity : .opacity.combined(with: .move(edge: .bottom)))
+                    .transition((reduceMotion || AgentPerformance.prefersReducedVisualEffects) ? .identity : .opacity.combined(with: .move(edge: .bottom)))
                     .zIndex(20)
             }
         }
@@ -405,17 +451,25 @@ struct AppRootView: View {
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                ForEach(projectRuntime.toasts) { toast in
+                    AgentToastView(toast: toast) {
+                        projectRuntime.dismissToast(toast)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
-            .animation(.spring(duration: 0.35), value: runtime.toasts)
+            .animation(reduceMotion ? nil : .spring(duration: 0.35), value: runtime.toasts)
+            .animation(reduceMotion ? nil : .spring(duration: 0.35), value: projectRuntime.toasts)
         }
-        .allowsHitTesting(!runtime.toasts.isEmpty)
+        .allowsHitTesting(!runtime.toasts.isEmpty || !projectRuntime.toasts.isEmpty)
     }
 
     private func runRootLaunchTasks() {
         AgentPerformance.event("App Launch")
         repairRequiredLaunchRecords()
+        runtime.reconcileInterruptedDurableWork(context: modelContext)
         repairActiveProjectIfNeeded()
         repairRootStaleModelSelection()
         reconcileLaunchSelection()
@@ -788,7 +842,15 @@ struct AppRootView: View {
             selectedTab = .project
             let conversation = projectConversation(for: activeProject, now: Date())
             installProjectProofFixture(for: activeProject, conversation: conversation)
-            preserveGeneralChatSelection()
+            let shouldFocusProjectProof = ["--open-chat", "--open-project", "--open-files", "--open-runs"]
+                .contains { hasDebugLaunchFlag($0, in: arguments) }
+            if shouldFocusProjectProof {
+                selectedConversationID = conversation.id
+                optimisticSelectedConversation = conversation
+                persistedSelectedConversationID = conversation.id.uuidString
+            } else {
+                preserveGeneralChatSelection()
+            }
             saveRootLaunchState("project proof mission dossier fixture")
         }
         if hasDebugLaunchFlag("--project-spine-e2e-demo", in: arguments),
@@ -893,28 +955,34 @@ struct AppRootView: View {
         settings: AgentSettings,
         activeProject: Project
     ) -> some View {
-        #if DEBUG || targetEnvironment(simulator)
-        let forceProjectChat = hasDebugLaunchFlag("--open-project-chat", in: ProcessInfo.processInfo.arguments)
-        let forceDebugSeededChat = shouldPreferDebugSeededConversation
-        #else
-        let forceProjectChat = false
-        let forceDebugSeededChat = false
-        #endif
-        let chatConversation = forceProjectChat || forceDebugSeededChat
-            ? conversation
-            : (conversation.project == nil ? conversation : (preferredGeneralConversation() ?? conversation))
+        // A selected conversation is now the actual Forge session regardless
+        // of scope. Project chats no longer snap back to a preferred General
+        // thread after the drawer selection has already succeeded.
+        let chatConversation = conversation
+        let missionUsesChatRuntime = chatRuntimeOwnsMission(for: activeProject, conversation: chatConversation)
+        let activeMissionRuntime = missionUsesChatRuntime ? runtime : projectRuntime
+        let activeMissionConversation = missionConversation(
+            for: activeProject,
+            selectedConversation: chatConversation,
+            usesChatRuntime: missionUsesChatRuntime
+        )
         // The mission strip lives on Forge, so project runtime status is
         // computed while Forge is front (and while the dossier is open).
-        let projectRuntimeStatus = selectedTab == .forge || showingMissionDossier
-            ? WorkspaceStatusSnapshot(runtime: projectRuntime)
+        let projectRuntimeStatus = selectedTab == .forge || selectedTab == .history || showingMissionDossier
+            ? WorkspaceStatusSnapshot(runtime: activeMissionRuntime)
             : .hidden
-        let projectAutoContinueState = autoContinueViewState(for: activeProject, settings: settings)
+        // General is its own durable scope. Do not surface an unrelated
+        // project's auto-continue state beside a General run.
+        let projectAutoContinueState = missionUsesChatRuntime && chatConversation.project == nil
+            ? .disabled
+            : autoContinueViewState(for: activeProject, settings: settings)
         let chatProfilingVisible = AgentPerformance.shouldProfileFrameRate && selectedTab == .forge
         let appTabsRenderKey = AppTabsRenderKey(
             project: activeProject,
             conversation: chatConversation,
             settings: settings,
             runtimeStatus: projectRuntimeStatus,
+            missionUsesChatRuntime: missionUsesChatRuntime,
             selectedTab: selectedTab,
             projectResumeDraftRevision: rootPromptRevision,
             autoContinueState: projectAutoContinueState,
@@ -929,26 +997,35 @@ struct AppRootView: View {
             projectResumeDraftRevision: rootPromptRevision,
             missionStatus: projectRuntimeStatus,
             missionAutoContinue: projectAutoContinueState,
+            missionUsesChatRuntime: missionUsesChatRuntime,
             isVisibleForFrameProfiling: chatProfilingVisible,
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
         )
         let filesTabRenderKey = FilesTabKey(
             project: activeProject,
-            isVisible: false,
+            conversation: chatConversation,
+            isVisible: selectedTab == .workspace,
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
         )
         let runsTabRenderKey = RunsTabKey(
             project: activeProject,
-            isVisible: false,
+            missionConversationID: activeMissionConversation.id,
+            scopeConversationID: chatConversation.id,
+            scopeProjectID: chatConversation.project?.id,
+            scopeName: chatConversation.project?.name ?? "General",
+            conversationsSignature: ConversationListSignature(conversations: conversations),
+            missionUsesChatRuntime: missionUsesChatRuntime,
+            missionStatus: projectRuntimeStatus,
+            isVisible: selectedTab == .history,
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
         )
         let settingsTabRenderKey = SettingsTabKey(
             project: activeProject,
             settings: settings,
-            isVisible: false,
+            isVisible: selectedTab == .control,
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
         )
@@ -960,13 +1037,21 @@ struct AppRootView: View {
                     key: chatTabRenderKey,
                     project: activeProject,
                     conversation: chatConversation,
-                    missionConversation: conversation,
+                    missionConversation: activeMissionConversation,
+                    missionRuntime: activeMissionRuntime,
                     settings: settings,
                     runtimeStatus: projectRuntimeStatus,
                     autoContinueState: projectAutoContinueState
                 )
-                filesTab(key: filesTabRenderKey, project: activeProject)
-                runsTab(key: runsTabRenderKey, project: activeProject, conversation: conversation, settings: settings)
+                filesTab(key: filesTabRenderKey, project: activeProject, conversation: chatConversation)
+                runsTab(
+                    key: runsTabRenderKey,
+                    project: activeProject,
+                    missionConversation: activeMissionConversation,
+                    scopeConversation: chatConversation,
+                    runtime: activeMissionRuntime,
+                    settings: settings
+                )
                 settingsTab(key: settingsTabRenderKey, project: activeProject, settings: settings)
             }
             .tint(AgentPalette.dockSelectedTint)
@@ -981,6 +1066,7 @@ struct AppRootView: View {
         project: Project,
         conversation: Conversation,
         missionConversation: Conversation,
+        missionRuntime: AgentRuntime,
         settings: AgentSettings,
         runtimeStatus: WorkspaceStatusSnapshot,
         autoContinueState: ProjectAutoContinueViewState
@@ -1006,14 +1092,25 @@ struct AppRootView: View {
                     isVisibleForFrameProfiling: key.isVisibleForFrameProfiling,
                     missionStatus: runtimeStatus,
                     missionAutoContinue: autoContinueState,
+                    missionUsesChatRuntime: key.missionUsesChatRuntime,
                     approveMissionTool: {
-                        projectRuntime.approvePendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: project)
+                        missionRuntime.approvePendingTool(
+                            conversation: missionConversation,
+                            settings: settings,
+                            context: modelContext,
+                            project: missionConversation.project
+                        )
                     },
                     rejectMissionTool: {
-                        projectRuntime.rejectPendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: project)
+                        missionRuntime.rejectPendingTool(
+                            conversation: missionConversation,
+                            settings: settings,
+                            context: modelContext,
+                            project: missionConversation.project
+                        )
                     },
                     stopMissionRun: {
-                        projectRuntime.stopGenerating(context: modelContext)
+                        missionRuntime.stopGenerating(context: modelContext)
                     },
                     pauseMissionAutoContinue: { pauseAutoContinue(project) },
                     openMissionDossier: presentMissionDossier,
@@ -1027,12 +1124,16 @@ struct AppRootView: View {
         .tag(AppTab.forge)
     }
 
-    private func filesTab(key: FilesTabKey, project: Project) -> some View {
+    private func filesTab(key: FilesTabKey, project: Project, conversation: Conversation) -> some View {
         StableTabSurface(key: key) {
             tabWorldSurface(for: .workspace) {
                 FilesView(
                     runtime: runtime,
                     project: project,
+                    scopeProject: conversation.project,
+                    scopeConversationID: conversation.id,
+                    scopeTitle: conversation.project?.name ?? "General",
+                    isWorkspaceRoutingLocked: { workspaceRoutingIsLocked },
                     openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen
                 ) {
                     openTab(.forge)
@@ -1045,24 +1146,39 @@ struct AppRootView: View {
         .tag(AppTab.workspace)
     }
 
-    private func runsTab(key: RunsTabKey, project: Project, conversation: Conversation, settings: AgentSettings) -> some View {
+    private func runsTab(
+        key: RunsTabKey,
+        project: Project,
+        missionConversation: Conversation,
+        scopeConversation: Conversation,
+        runtime: AgentRuntime,
+        settings: AgentSettings
+    ) -> some View {
         StableTabSurface(key: key) {
             tabWorldSurface(for: .history) {
                 RunsView(
-                    runtime: projectRuntime,
+                    runtime: runtime,
                     project: project,
+                    scopeProjectID: scopeConversation.project?.id,
+                    scopeName: scopeConversation.project?.name ?? "General",
+                    conversations: conversations,
                     openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
                     openTerminalRecord: openTerminalRecord,
                     openProject: presentMissionDossier,
                     approvePendingTool: {
-                        projectRuntime.approvePendingTool(conversation: conversation, settings: settings, context: modelContext, project: project)
+                        runtime.approvePendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: missionConversation.project)
                     },
                     rejectPendingTool: {
-                        projectRuntime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: project)
+                        runtime.rejectPendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: missionConversation.project)
+                    },
+                    openChat: { openTab(.forge) },
+                    openConversationInForge: { conversationID in
+                        if let target = conversations.first(where: { $0.id == conversationID }) {
+                            selectConversation(target)
+                        }
+                        openTab(.forge)
                     }
-                ) {
-                    openTab(.forge)
-                }
+                )
             }
         }
         .equatable()
@@ -1088,7 +1204,11 @@ struct AppRootView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         ZStack {
-            TabActivatedBackground(tab: tab)
+            TabActivatedBackground(
+                tab: tab,
+                runtime: runtime,
+                projectRuntime: projectRuntime
+            )
             .id("tab-\(tab.rawValue)-\(selectedThemeRawValue)-\(performanceModeEnabled)")
             .ignoresSafeArea()
             .compositingGroup()
@@ -1137,7 +1257,7 @@ struct AppRootView: View {
         let update = {
             showingMissionDossier = isPresented
         }
-        if animated && !AgentPerformance.prefersReducedVisualEffects {
+        if animated && !reduceMotion && !AgentPerformance.prefersReducedVisualEffects {
             withAnimation(.snappy(duration: isPresented ? 0.18 : 0.15)) {
                 update()
             }
@@ -1152,11 +1272,18 @@ struct AppRootView: View {
     @ViewBuilder
     private var missionDossierCover: some View {
         if let conversation = selectedConversation, let settings, let activeProject {
+            let usesChatRuntime = chatRuntimeOwnsMission(for: activeProject, conversation: conversation)
+            let activeMissionRuntime = usesChatRuntime ? runtime : projectRuntime
+            let activeMissionConversation = missionConversation(
+                for: activeProject,
+                selectedConversation: conversation,
+                usesChatRuntime: usesChatRuntime
+            )
             MissionDossierCover(close: { dismissMissionDossier() }) {
                 ProjectDashboardView(
                     project: activeProject,
                     projects: projects,
-                    runtimeStatus: WorkspaceStatusSnapshot(runtime: projectRuntime),
+                    runtimeStatus: WorkspaceStatusSnapshot(runtime: activeMissionRuntime),
                     autoContinueState: autoContinueViewState(for: activeProject, settings: settings),
                     conversations: conversations,
                     openTab: { tab in
@@ -1164,13 +1291,23 @@ struct AppRootView: View {
                         openTab(tab)
                     },
                     stopWorkspaceRun: {
-                        projectRuntime.stopGenerating(context: modelContext)
+                        activeMissionRuntime.stopGenerating(context: modelContext)
                     },
                     approvePendingTool: {
-                        projectRuntime.approvePendingTool(conversation: conversation, settings: settings, context: modelContext, project: activeProject)
+                        activeMissionRuntime.approvePendingTool(
+                            conversation: activeMissionConversation,
+                            settings: settings,
+                            context: modelContext,
+                            project: activeMissionConversation.project
+                        )
                     },
                     rejectPendingTool: {
-                        projectRuntime.rejectPendingTool(conversation: conversation, settings: settings, context: modelContext, project: activeProject)
+                        activeMissionRuntime.rejectPendingTool(
+                            conversation: activeMissionConversation,
+                            settings: settings,
+                            context: modelContext,
+                            project: activeMissionConversation.project
+                        )
                     },
                     setAutoContinueEnabled: setAutoContinueEnabled,
                     pauseAutoContinue: pauseAutoContinue,
@@ -1254,13 +1391,22 @@ struct AppRootView: View {
 
     private func syncRuntimeWorkspaceForCurrentSurface(activeProject: Project) {
         runtime.switchWorkspace(to: runtimeWorkspaceName(for: activeProject))
-        if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
-            projectRuntime.switchWorkspace(to: SandboxWorkspace.sanitizedWorkspaceName(activeProject.workspaceName))
+        projectRuntime.switchWorkspace(to: SandboxWorkspace.sanitizedWorkspaceName(activeProject.workspaceName))
+    }
+
+    /// Navigation may update the selected surface while a run is finishing,
+    /// but neither runtime is allowed to follow that selection until every
+    /// executing or approval-paused run has released its workspace.
+    private func resyncRuntimeWorkspacesAfterSettlement() {
+        guard !workspaceRoutingIsLocked, let activeProject else { return }
+        if let requestedWorkspaceName = settings?.activeWorkspaceName {
+            repairActiveWorkspaceNameChange(requestedWorkspaceName)
         }
+        syncRuntimeWorkspaceForCurrentSurface(activeProject: activeProject)
     }
 
     private func setConversationProjectScope(_ conversation: Conversation, _ project: Project?) {
-        if runtime.isWorking || runtime.pendingTool != nil {
+        if workspaceRoutingIsLocked {
             runtime.presentToast("Pause or finish the active run before changing chat scope.", tone: .info)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             return
@@ -1296,8 +1442,12 @@ struct AppRootView: View {
     }
 
     private func createProject(_ intake: ProjectIntakeDraft = .empty) {
+        guard !workspaceRoutingIsLocked else {
+            runtime.presentToast("Pause or finish the active run before creating and selecting a project.", tone: .info)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return
+        }
         clearInactiveRuntimeForConversationSwitch()
-        let generalConversation = preferredGeneralConversation()
         let now = Date()
         let ordinal = nextProjectOrdinal()
         let fallbackName = "Project \(ordinal)"
@@ -1378,14 +1528,12 @@ struct AppRootView: View {
         settings?.activeWorkspaceName = workspaceName
         settings?.updatedAt = now
         guard saveRootContext("Could not create a new project.") else { return }
-        selectedConversationID = generalConversation?.id ?? conversation.id
-        if let generalConversation {
-            persistedSelectedConversationID = LaunchConversationSelection.isLaunchRestorable(generalConversation)
-                ? generalConversation.id.uuidString
-                : ""
-        } else {
-            persistedSelectedConversationID = ""
-        }
+        // A project conversation is a first-class Forge session. Select the
+        // session we just created immediately; launch restoration can still
+        // prefer a clean General chat on the next cold start.
+        selectedConversationID = conversation.id
+        optimisticSelectedConversation = conversation
+        persistedSelectedConversationID = ""
         rootPrompt = ""
         rootPromptRevision += 1
         landscapeGameArtifact = nil
@@ -1416,6 +1564,11 @@ struct AppRootView: View {
     }
 
     private func updateProject(_ project: Project, draft: ProjectEditDraft) {
+        guard !workspaceRoutingIsLocked else {
+            runtime.presentToast("Pause or finish the active run before editing project routing.", tone: .info)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return
+        }
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let mission = draft.mission.trimmingCharacters(in: .whitespacesAndNewlines)
         let workspaceName = SandboxWorkspace.sanitizedWorkspaceName(draft.workspaceName)
@@ -1481,7 +1634,7 @@ struct AppRootView: View {
     }
 
     private func deleteProject(_ project: Project) {
-        if projectRuntime.isWorking || projectRuntime.pendingTool != nil {
+        if workspaceRoutingIsLocked {
             runtime.presentToast("Pause or finish the active run before deleting a project.", tone: .info)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             return
@@ -1518,6 +1671,7 @@ struct AppRootView: View {
             }()
 
         let deletedName = project.name
+        ProjectDeletionRetention.clearScalarProjectLinks(projectID: project.id, context: modelContext)
         modelContext.delete(project)
 
         if deletingActiveProject {
@@ -1542,7 +1696,7 @@ struct AppRootView: View {
 
     @discardableResult
     private func selectProject(_ project: Project) -> Bool {
-        if activeProject?.id != project.id, projectRuntime.isWorking || projectRuntime.pendingTool != nil {
+        if activeProject?.id != project.id, workspaceRoutingIsLocked {
             runtime.presentToast("Pause or finish the active run before switching projects.", tone: .info)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             return false
@@ -1628,13 +1782,19 @@ struct AppRootView: View {
         operatorNote: String,
         shouldRunImmediately: Bool
     ) {
-        if activeProject?.id != project.id, projectRuntime.isWorking || projectRuntime.pendingTool != nil {
+        if activeProject?.id != project.id, workspaceRoutingIsLocked {
             runtime.presentToast("Pause or finish the active run before switching projects.", tone: .info)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             return
         }
         if shouldRunImmediately, projectRuntime.isWorking || projectRuntime.pendingTool != nil {
             runtime.presentToast("Finish the current run before starting another project command.", tone: .info)
+            selectedTab = .project
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return
+        }
+        if shouldRunImmediately, runtime.isWorking || runtime.pendingTool != nil {
+            runtime.presentToast("Finish the active Forge run before starting a project command in the same workspace.", tone: .info)
             selectedTab = .project
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             return
@@ -2162,6 +2322,43 @@ struct AppRootView: View {
         }
     }
 
+    /// Manual sends in a project-scoped Forge chat use the chat runtime, while
+    /// dossier/auto-continue commands use the project runtime. Resolve the one
+    /// currently responsible for the mission so approvals and Stop always hit
+    /// the runtime that owns the visible status.
+    private func chatRuntimeOwnsMission(for _: Project, conversation: Conversation) -> Bool {
+        // The active conversation is the ownership boundary, not whether it
+        // happens to be scoped to the selected project. This keeps a live
+        // General run, approval, and its workspace visible in General History
+        // instead of borrowing the active project's runtime.
+        guard runtime.activeConversationID == conversation.id else { return false }
+        let status = WorkspaceStatusSnapshot(runtime: runtime)
+        return runtime.isWorking ||
+            runtime.pendingTool != nil ||
+            runtime.queuedPromptCount > 0 ||
+            runtime.lastError != nil ||
+            runtime.wasInterrupted ||
+            status.isVisible
+    }
+
+    private func missionConversation(
+        for project: Project,
+        selectedConversation: Conversation,
+        usesChatRuntime: Bool
+    ) -> Conversation {
+        if usesChatRuntime { return selectedConversation }
+
+        let projectConversations = mergedProjectConversations(for: project)
+        if let activeConversationID = projectRuntime.activeConversationID,
+           let active = projectConversations.first(where: { $0.id == activeConversationID }) {
+            return active
+        }
+        return projectConversations.sorted { lhs, rhs in
+            if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+            return lhs.createdAt > rhs.createdAt
+        }.first ?? selectedConversation
+    }
+
     private func projectConversation(for project: Project, now: Date) -> Conversation {
         var seenIDs = Set<UUID>()
         let candidates = (conversations + project.conversations)
@@ -2196,6 +2393,16 @@ struct AppRootView: View {
     }
 
     private func selectConversation(_ conversation: Conversation) {
+        if (projectRuntime.isWorking || projectRuntime.pendingTool != nil),
+           let targetProject = conversation.project,
+           targetProject.id != activeProject?.id {
+            runtime.presentToast(
+                "Finish or stop the active \(activeProject?.name ?? "project") mission before opening \(targetProject.name).",
+                tone: .info
+            )
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return
+        }
         clearInactiveRuntimeForConversationSwitch()
         if optimisticSelectedConversation?.id != conversation.id {
             optimisticSelectedConversation = nil
@@ -2265,6 +2472,7 @@ struct AppRootView: View {
 
     private func repairActiveWorkspaceNameChange(_ workspaceName: String?) {
         guard let workspaceName else { return }
+        guard !workspaceRoutingIsLocked else { return }
         do {
             let safeName = try AppRootPersistence.repairActiveWorkspaceName(
                 workspaceName,
@@ -2295,9 +2503,7 @@ struct AppRootView: View {
                 }
             }
             runtime.switchWorkspace(to: safeName)
-            if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
-                projectRuntime.switchWorkspace(to: safeName)
-            }
+            projectRuntime.switchWorkspace(to: safeName)
         } catch {
             showRootSaveFailure("Could not repair the active workspace name.", error)
         }
@@ -2319,6 +2525,7 @@ struct AppRootView: View {
         _ = ProjectBootstrap.ensureDefaultProject(in: modelContext, settings: settings)
         do {
             try modelContext.save()
+            ProjectBootstrap.markLegacyOwnershipMigrationComplete()
         } catch {
             showRootSaveFailure("Could not prepare the active project.", error)
         }
@@ -2599,7 +2806,7 @@ struct AppRootView: View {
             sourceID: run.id,
             context: modelContext
         )
-        runtime.debugInstallPendingApproval(request: request, run: run)
+        runtime.debugInstallPendingApproval(request: request, run: run, conversation: conversation)
         conversation.refreshMessageMetadata(updateTimestamp: Date())
     }
 
@@ -3991,6 +4198,7 @@ private struct AppTabsRenderKey: Equatable {
     let providerRawValue: String
     let modelID: String
     let runtimeStatus: WorkspaceStatusSnapshot
+    let missionUsesChatRuntime: Bool
     let projectResumeDraftRevision: Int
     let autoContinueState: ProjectAutoContinueViewState
     let themeRawValue: String
@@ -4001,6 +4209,7 @@ private struct AppTabsRenderKey: Equatable {
         conversation: Conversation,
         settings: AgentSettings,
         runtimeStatus: WorkspaceStatusSnapshot,
+        missionUsesChatRuntime: Bool,
         selectedTab: AppTab,
         projectResumeDraftRevision: Int,
         autoContinueState: ProjectAutoContinueViewState,
@@ -4021,6 +4230,7 @@ private struct AppTabsRenderKey: Equatable {
         self.providerRawValue = settings.provider.id
         self.modelID = settings.modelID
         self.runtimeStatus = runtimeStatus
+        self.missionUsesChatRuntime = missionUsesChatRuntime
         self.projectResumeDraftRevision = projectResumeDraftRevision
         self.autoContinueState = autoContinueState
         self.themeRawValue = themeRawValue
@@ -4093,6 +4303,7 @@ private struct ChatTabKey: Equatable {
     let projectResumeDraftRevision: Int
     let missionStatus: WorkspaceStatusSnapshot
     let missionAutoContinue: ProjectAutoContinueViewState
+    let missionUsesChatRuntime: Bool
     let isVisibleForFrameProfiling: Bool
     let themeRawValue: String
     let performanceModeEnabled: Bool
@@ -4105,6 +4316,7 @@ private struct ChatTabKey: Equatable {
         projectResumeDraftRevision: Int,
         missionStatus: WorkspaceStatusSnapshot,
         missionAutoContinue: ProjectAutoContinueViewState,
+        missionUsesChatRuntime: Bool,
         isVisibleForFrameProfiling: Bool,
         themeRawValue: String,
         performanceModeEnabled: Bool
@@ -4125,6 +4337,7 @@ private struct ChatTabKey: Equatable {
         self.projectResumeDraftRevision = projectResumeDraftRevision
         self.missionStatus = missionStatus
         self.missionAutoContinue = missionAutoContinue
+        self.missionUsesChatRuntime = missionUsesChatRuntime
         self.isVisibleForFrameProfiling = isVisibleForFrameProfiling
         self.themeRawValue = themeRawValue
         self.performanceModeEnabled = performanceModeEnabled
@@ -4134,13 +4347,17 @@ private struct ChatTabKey: Equatable {
 private struct FilesTabKey: Equatable {
     let projectID: UUID
     let workspaceName: String
+    let scopeConversationID: UUID
+    let scopeProjectID: UUID?
     let isVisible: Bool
     let themeRawValue: String
     let performanceModeEnabled: Bool
 
-    init(project: Project, isVisible: Bool, themeRawValue: String, performanceModeEnabled: Bool) {
+    init(project: Project, conversation: Conversation, isVisible: Bool, themeRawValue: String, performanceModeEnabled: Bool) {
         self.projectID = project.id
         self.workspaceName = project.workspaceName
+        self.scopeConversationID = conversation.id
+        self.scopeProjectID = conversation.project?.id
         self.isVisible = isVisible
         self.themeRawValue = themeRawValue
         self.performanceModeEnabled = performanceModeEnabled
@@ -4150,13 +4367,39 @@ private struct FilesTabKey: Equatable {
 private struct RunsTabKey: Equatable {
     let projectID: UUID
     let workspaceName: String
+    let missionConversationID: UUID
+    let scopeConversationID: UUID
+    let scopeProjectID: UUID?
+    let scopeName: String
+    let conversationsSignature: ConversationListSignature
+    let missionUsesChatRuntime: Bool
+    let missionStatus: WorkspaceStatusSnapshot
     let isVisible: Bool
     let themeRawValue: String
     let performanceModeEnabled: Bool
 
-    init(project: Project, isVisible: Bool, themeRawValue: String, performanceModeEnabled: Bool) {
+    init(
+        project: Project,
+        missionConversationID: UUID,
+        scopeConversationID: UUID,
+        scopeProjectID: UUID?,
+        scopeName: String,
+        conversationsSignature: ConversationListSignature,
+        missionUsesChatRuntime: Bool,
+        missionStatus: WorkspaceStatusSnapshot,
+        isVisible: Bool,
+        themeRawValue: String,
+        performanceModeEnabled: Bool
+    ) {
         self.projectID = project.id
         self.workspaceName = project.workspaceName
+        self.missionConversationID = missionConversationID
+        self.scopeConversationID = scopeConversationID
+        self.scopeProjectID = scopeProjectID
+        self.scopeName = scopeName
+        self.conversationsSignature = conversationsSignature
+        self.missionUsesChatRuntime = missionUsesChatRuntime
+        self.missionStatus = missionStatus
         self.isVisible = isVisible
         self.themeRawValue = themeRawValue
         self.performanceModeEnabled = performanceModeEnabled

@@ -1,6 +1,9 @@
 #!/bin/bash
-# NovaForge CI pipeline - runs on a macOS GitHub Actions runner.
-# Builds the app for the iPhone simulator, restores the binary app icon if
+# NovaForge visual-census pipeline - runs only after the fast verification job
+# on main, or when explicitly requested from workflow_dispatch. Pull requests
+# use ci/verify.sh and do not pay for this full simulator tour.
+#
+# This builds the app for the iPhone simulator, restores the binary app icon if
 # missing, walks every app surface via launch arguments, captures screenshots
 # and a matrix-rain video, and force-pushes all captures to the `ci-shots`
 # branch (fetchable as public raw URLs). Build logs are published even when

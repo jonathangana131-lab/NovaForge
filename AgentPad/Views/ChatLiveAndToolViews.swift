@@ -580,9 +580,9 @@ private struct NovaLiveActivityPulse: View {
     }
 }
 
-/// Text with a soft highlight that sweeps across it — the "thinking shimmer".
-/// Implemented as a phase-animated gradient mask over a brighter copy of the
-/// text; a single tiny view, active only during live phases.
+/// Retained as a shared status-label type, now intentionally static. Continuous
+/// shimmer masks caused extra offscreen rendering while the transcript was
+/// already updating at display cadence.
 struct LiveShimmerText: View {
     let text: String
     let baseColor: Color
@@ -590,40 +590,9 @@ struct LiveShimmerText: View {
     let font: Font
 
     var body: some View {
-        let base = Text(text)
+        Text(text)
             .font(font)
             .foregroundStyle(baseColor)
-
-        if AgentPerformance.allowsDecorativeMotion {
-            base
-                .overlay {
-                    Text(text)
-                        .font(font)
-                        .foregroundStyle(highlightColor)
-                        .accessibilityHidden(true)
-                        .mask {
-                            GeometryReader { proxy in
-                                let width = max(proxy.size.width, 1)
-                                Rectangle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [.clear, .white, .clear],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .frame(width: width * 0.6)
-                                    .phaseAnimator([0.0, 1.0]) { content, phase in
-                                        content.offset(x: -width * 0.6 + phase * (width + width * 0.6))
-                                    } animation: { _ in
-                                        .easeInOut(duration: 1.4)
-                                    }
-                            }
-                        }
-                }
-        } else {
-            base
-        }
     }
 }
 
@@ -677,16 +646,11 @@ private struct LiquidMessageBubble<Content: View>: View {
     let tint: Color
     var isLive = false
     private let content: Content
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(tint: Color, isLive: Bool = false, @ViewBuilder content: () -> Content) {
         self.tint = tint
         self.isLive = isLive
         self.content = content()
-    }
-
-    private var allowsMotion: Bool {
-        AgentPerformance.allowsDecorativeMotion && !reduceMotion
     }
 
     var body: some View {
@@ -696,48 +660,13 @@ private struct LiquidMessageBubble<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .chatMessageSurface(radius: 22, tint: tint, emphasis: isLive ? .live : .assistant)
             .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(tint.opacity(isLive ? 0.18 : 0.24), lineWidth: isLive ? 0.48 : 0.65)
-                    .blendMode(AgentTheme.current == .matrixRain ? .normal : .screen)
-                    .allowsHitTesting(false)
-            }
-            .overlay {
-                if isLive && allowsMotion {
-                    LiquidSweepOverlay(tint: tint, radius: 22)
+                if !isLive {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(tint.opacity(0.24), lineWidth: 0.65)
+                        .blendMode(AgentTheme.current == .matrixRain ? .normal : .screen)
+                        .allowsHitTesting(false)
                 }
             }
-            .shadow(color: tint.opacity(isLive && !AgentPerformance.prefersReducedVisualEffects ? 0.10 : 0), radius: 14, x: 0, y: 5)
-    }
-}
-
-private struct LiquidSweepOverlay: View {
-    let tint: Color
-    let radius: CGFloat
-    @State private var flow = false
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(proxy.size.width, 1)
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(.clear)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [.clear, tint.opacity(0.16), .white.opacity(0.10), .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: max(72, width * 0.28))
-                        .rotationEffect(.degrees(11))
-                        .offset(x: flow ? width + 80 : -width * 0.45)
-                        .animation(.easeInOut(duration: 2.8).repeatForever(autoreverses: false), value: flow)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        }
-        .allowsHitTesting(false)
-        .onAppear { flow = true }
     }
 }
 
@@ -773,12 +702,6 @@ private struct ThinkingView: View {
 private struct LiquidTypingAuraView: View {
     let tint: Color
     var compact = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var orbit = false
-
-    private var allowsMotion: Bool {
-        AgentPerformance.allowsDecorativeMotion && !reduceMotion
-    }
 
     var body: some View {
         let size: CGFloat = compact ? 26 : 34
@@ -789,19 +712,11 @@ private struct LiquidTypingAuraView: View {
             Circle()
                 .stroke(tint.opacity(0.24), lineWidth: 1)
                 .frame(width: size - 3, height: size - 3)
-            Circle()
-                .trim(from: 0.12, to: 0.42)
-                .stroke(tint.opacity(0.92), style: StrokeStyle(lineWidth: 2.1, lineCap: .round))
-                .frame(width: size - 5, height: size - 5)
-                .rotationEffect(.degrees(orbit ? 360 : 0))
-                .animation(allowsMotion ? .linear(duration: 1.8).repeatForever(autoreverses: false) : nil, value: orbit)
-            Circle()
-                .fill(tint)
-                .frame(width: compact ? 5 : 6, height: compact ? 5 : 6)
-                .shadow(color: tint.opacity(allowsMotion ? 0.55 : 0.25), radius: compact ? 4 : 6)
+            Image(systemName: "sparkles")
+                .font(.system(size: compact ? 9 : 11, weight: .bold))
+                .foregroundStyle(tint)
         }
         .frame(width: size, height: size)
-        .onAppear { orbit = true }
     }
 }
 

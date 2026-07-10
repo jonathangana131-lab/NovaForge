@@ -4,15 +4,21 @@ import SwiftUI
 
 struct RunsView: View {
     @Environment(\.modelContext) var modelContext
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
     var runtime: AgentRuntime
     var project: Project
+    let scopeProjectID: UUID?
+    let scopeName: String
+    let conversations: [Conversation]
     let openArtifactLandscapeFullScreen: (WorkspaceArtifact) -> Void
     let openTerminalRecord: (UUID, String, String) -> Void
     let openProject: () -> Void
     let approvePendingTool: () -> Void
     let rejectPendingTool: () -> Void
     let openChat: () -> Void
+    let openConversationInForge: (UUID) -> Void
     @Query var runs: [ToolRun]
+    @Query var missionRuns: [AgentRunRecord]
     @Query var terminalRecords: [TerminalCommandRecord]
     @SceneStorage("RunsView.filterType") var restoredFilterTypeRawValue = FilterType.all.rawValue
     @SceneStorage("RunsView.expandedRunID") var expandedRunIDString = ""
@@ -23,13 +29,17 @@ struct RunsView: View {
     @State var replayTarget: RunReplayTarget?
 
     @State var cachedStats = RunStats()
+    @State var cachedLatestRun: RunRowData?
+    @State var cachedAgentRunReceipts: [AgentRunReceiptData] = []
     @State var cachedFilteredRuns: [RunRowData] = []
     @State var cachedRunSections: [RunDaySection] = []
     @State var cachedMatchingRunCount = 0
     @State var runDeleteError: String?
     @FocusState var searchFocused: Bool
+    @Namespace var historyChromeNamespace
 
     static let fetchedRunLimit = 500
+    static let fetchedMissionRunLimit = 40
     static let visibleRunLimit = 80
     static let fetchedTerminalRecordLimit = 500
     static let searchableArgumentsLimit = 2_000
@@ -44,38 +54,100 @@ struct RunsView: View {
         WorkspaceStatusSnapshot(runtime: runtime)
     }
 
+    var scopedProject: Project? {
+        guard let scopeProjectID else { return nil }
+        if project.id == scopeProjectID { return project }
+        return conversations.lazy.compactMap(\.project).first { $0.id == scopeProjectID }
+    }
+
     var artifactIterationPrompt: String {
-        ProjectMissionSummarizer.summarize(project: project, context: modelContext).workflowSpine.iterationPrompt
+        guard let scopedProject else {
+            return "Ask NovaForge to inspect this General artifact and suggest the next concrete improvement."
+        }
+        return ProjectMissionSummarizer.summarize(project: scopedProject, context: modelContext).workflowSpine.iterationPrompt
     }
 
     init(
         runtime: AgentRuntime,
         project: Project,
+        scopeProjectID: UUID?,
+        scopeName: String,
+        conversations: [Conversation],
         openArtifactLandscapeFullScreen: @escaping (WorkspaceArtifact) -> Void,
         openTerminalRecord: @escaping (UUID, String, String) -> Void,
         openProject: @escaping () -> Void,
         approvePendingTool: @escaping () -> Void,
         rejectPendingTool: @escaping () -> Void,
-        openChat: @escaping () -> Void
+        openChat: @escaping () -> Void,
+        openConversationInForge: @escaping (UUID) -> Void
     ) {
         self.runtime = runtime
         self.project = project
+        self.scopeProjectID = scopeProjectID
+        self.scopeName = scopeName
+        self.conversations = conversations
         self.openArtifactLandscapeFullScreen = openArtifactLandscapeFullScreen
         self.openTerminalRecord = openTerminalRecord
         self.openProject = openProject
         self.approvePendingTool = approvePendingTool
         self.rejectPendingTool = rejectPendingTool
         self.openChat = openChat
+        self.openConversationInForge = openConversationInForge
 
-        var descriptor = FetchDescriptor<ToolRun>(
-            sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
-        )
+        var descriptor: FetchDescriptor<ToolRun>
+        if let scopeProjectID {
+            descriptor = FetchDescriptor<ToolRun>(
+                predicate: #Predicate<ToolRun> { run in
+                    run.project?.id == scopeProjectID
+                },
+                sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor<ToolRun>(
+                predicate: #Predicate<ToolRun> { run in
+                    run.project == nil
+                },
+                sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
+            )
+        }
         descriptor.fetchLimit = Self.fetchedRunLimit
         _runs = Query(descriptor)
 
-        var terminalDescriptor = FetchDescriptor<TerminalCommandRecord>(
-            sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
-        )
+        var missionDescriptor: FetchDescriptor<AgentRunRecord>
+        if let scopeProjectIDString = scopeProjectID?.uuidString {
+            missionDescriptor = FetchDescriptor<AgentRunRecord>(
+                predicate: #Predicate<AgentRunRecord> { record in
+                    record.projectIDString == scopeProjectIDString
+                },
+                sortBy: [SortDescriptor(\AgentRunRecord.createdAt, order: .reverse)]
+            )
+        } else {
+            missionDescriptor = FetchDescriptor<AgentRunRecord>(
+                predicate: #Predicate<AgentRunRecord> { record in
+                    record.projectIDString == nil
+                },
+                sortBy: [SortDescriptor(\AgentRunRecord.createdAt, order: .reverse)]
+            )
+        }
+        missionDescriptor.fetchLimit = Self.fetchedMissionRunLimit
+        _missionRuns = Query(missionDescriptor)
+
+        var terminalDescriptor: FetchDescriptor<TerminalCommandRecord>
+        if let scopeProjectID {
+            terminalDescriptor = FetchDescriptor<TerminalCommandRecord>(
+                predicate: #Predicate<TerminalCommandRecord> { command in
+                    command.project?.id == scopeProjectID
+                },
+                sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
+            )
+        } else {
+            terminalDescriptor = FetchDescriptor<TerminalCommandRecord>(
+                predicate: #Predicate<TerminalCommandRecord> { command in
+                    command.project == nil
+                },
+                sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
+            )
+        }
         terminalDescriptor.fetchLimit = Self.fetchedTerminalRecordLimit
         _terminalRecords = Query(terminalDescriptor)
     }
@@ -671,14 +743,153 @@ struct RunsView: View {
         }
     }
 
+    /// A compact presentation snapshot for the canonical request-to-response
+    /// receipt. Tool rows remain separate evidence and are linked only when
+    /// the mission actually invoked one.
+    struct AgentRunReceiptData: Identifiable {
+        let id: UUID
+        let conversationID: UUID?
+        let status: AgentRunStatus
+        let conversationTitle: String
+        let requestExcerpt: String
+        let outcomeLine: String
+        let scopeLine: String
+        let timingLine: String
+        let engineLine: String
+        let proofLine: String
+        let errorLine: String?
+        let linkedTool: RunRowData?
+        let linkedToolCount: Int
+
+        init(
+            record: AgentRunRecord,
+            scopeName: String,
+            fallbackWorkspaceName: String,
+            conversationTitle: String,
+            requestExcerpt: String?,
+            linkedTool: RunRowData?,
+            linkedToolCount: Int,
+            now: Date = Date()
+        ) {
+            id = record.id
+            conversationID = record.conversationID
+            status = record.status
+            self.linkedTool = linkedTool
+            self.linkedToolCount = linkedToolCount
+            self.conversationTitle = conversationTitle
+            let trimmedRequest = requestExcerpt?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            self.requestExcerpt = trimmedRequest.flatMap { value in
+                value.isEmpty ? nil : value
+            } ?? "Request text unavailable for this legacy receipt."
+
+            let trimmedError = record.errorMessage?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmedError, !trimmedError.isEmpty {
+                errorLine = String(trimmedError.prefix(280))
+            } else if let errorKind = record.errorKind {
+                errorLine = errorKind.receiptTitle
+            } else {
+                errorLine = nil
+            }
+
+            outcomeLine = Self.outcomeLine(
+                status: record.status,
+                linkedToolCount: linkedToolCount
+            )
+
+            let workspaceName = record.workspaceName?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedWorkspaceName = workspaceName.flatMap { value in
+                value.isEmpty ? nil : value
+            } ?? fallbackWorkspaceName
+            scopeLine = HistoryWorkspacePresentation.workspaceScopeLine(
+                projectName: scopeName,
+                workspaceName: resolvedWorkspaceName
+            )
+
+            let provider = record.provider?.displayName ?? "Provider not recorded"
+            let trimmedModel = record.modelID?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let model = trimmedModel.flatMap { value in
+                value.isEmpty ? nil : value
+            } ?? "Model not recorded"
+            engineLine = "\(provider) · \(model)"
+
+            let start = record.startedAt ?? record.queuedAt ?? record.createdAt
+            let end = record.status.isTerminal
+                ? (record.completedAt ?? record.updatedAt)
+                : now
+            let createdTime = DateFormatter.localizedString(
+                from: record.createdAt,
+                dateStyle: .none,
+                timeStyle: .short
+            )
+            timingLine = "\(Self.durationText(from: start, to: end)) · \(createdTime)"
+
+            if linkedToolCount == 0 {
+                proofLine = "Conversation receipt · no tool required"
+            } else if let linkedTool {
+                let count = linkedToolCount == 1 ? "1 linked tool" : "\(linkedToolCount) linked tools"
+                proofLine = "\(count) · \(linkedTool.displayName)"
+            } else {
+                proofLine = linkedToolCount == 1 ? "1 linked tool receipt" : "\(linkedToolCount) linked tool receipts"
+            }
+        }
+
+        var isLive: Bool {
+            !status.isTerminal
+        }
+
+        private static func outcomeLine(
+            status: AgentRunStatus,
+            linkedToolCount: Int
+        ) -> String {
+            switch status {
+            case .queued:
+                return "Waiting for this mission to begin."
+            case .running:
+                return linkedToolCount == 0
+                    ? "NovaForge is preparing the response."
+                    : "NovaForge is working through linked tool evidence."
+            case .awaitingApproval:
+                return "Waiting for approval before the next workspace change."
+            case .completed:
+                return linkedToolCount == 0
+                    ? "Response saved. This mission finished without needing a tool call."
+                    : "Response saved with linked tool proof retained below."
+            case .failed:
+                return "The mission stopped before completion; its transcript and receipt were retained."
+            case .cancelled:
+                return "Stopped by request; the transcript remains saved."
+            case .interrupted:
+                return "The previous session ended before a final outcome was recorded."
+            }
+        }
+
+        private static func durationText(from start: Date, to end: Date) -> String {
+            let seconds = max(0, end.timeIntervalSince(start))
+            if seconds < 1 {
+                return String(format: "%.0fms", seconds * 1_000)
+            }
+            if seconds < 60 {
+                return String(format: "%.1fs", seconds)
+            }
+            let minutes = Int(seconds / 60)
+            let remainder = Int(seconds) % 60
+            return remainder == 0 ? "\(minutes)m" : "\(minutes)m \(remainder)s"
+        }
+    }
+
     func updateCachedData() {
         AgentPerformance.event("Runs Filter Update")
         let signpostID = AgentPerformance.begin("Runs Cache Update")
         defer {
             AgentPerformance.end("Runs Cache Update", id: signpostID)
         }
-        let activeProjectID = project.id
-        let projectRuns = runs.filter { $0.project?.id == activeProjectID }
+        // Both project and General scopes are constrained by the fetch
+        // descriptor, so the cache never scans another scope's tool log.
+        let projectRuns = runs
         var stats = RunStats()
         stats.total = projectRuns.count
         for run in projectRuns {
@@ -710,6 +921,12 @@ struct RunsView: View {
             filtered = matching.filter { $0.status == .failed || $0.status == .rejected }
         }
         let linkedTerminalRecords = terminalRecordsBySourceRunID()
+        self.cachedAgentRunReceipts = makeAgentRunReceipts(
+            linkedTerminalRecords: linkedTerminalRecords
+        )
+        self.cachedLatestRun = projectRuns.first.map { run in
+            RunRowData(run: run, terminalRecord: linkedTerminalRecords[run.id.uuidString])
+        }
         self.cachedFilteredRuns = filtered.prefix(Self.visibleRunLimit).map { run in
             RunRowData(run: run, terminalRecord: linkedTerminalRecords[run.id.uuidString])
         }
@@ -717,6 +934,96 @@ struct RunsView: View {
         self.cachedRunSections = Self.daySections(from: cachedFilteredRuns)
         AgentPerformance.value("Runs Project Rows", Double(projectRuns.count))
         AgentPerformance.value("Runs Filtered Rows", Double(filtered.count))
+    }
+
+    func makeAgentRunReceipts(
+        linkedTerminalRecords: [String: TerminalCommandRecord]
+    ) -> [AgentRunReceiptData] {
+        var toolsByAgentRunID: [String: [ToolRun]] = [:]
+        toolsByAgentRunID.reserveCapacity(min(runs.count, Self.fetchedMissionRunLimit))
+        for run in runs {
+            guard let runIDString = run.runIDString else { continue }
+            toolsByAgentRunID[runIDString, default: []].append(run)
+        }
+
+        let conversationByID = Dictionary(
+            conversations.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let requestedMessageIDs = Set(missionRuns.compactMap(\.requestMessageID))
+        var requestTextByID: [UUID: String] = [:]
+        requestTextByID.reserveCapacity(requestedMessageIDs.count)
+        if !requestedMessageIDs.isEmpty {
+            conversationSearch: for conversation in conversations {
+                for message in conversation.messages where requestedMessageIDs.contains(message.id) {
+                    requestTextByID[message.id] = Self.requestExcerpt(from: message.content)
+                    if requestTextByID.count == requestedMessageIDs.count {
+                        break conversationSearch
+                    }
+                }
+            }
+        }
+
+        let now = Date()
+        return missionRuns.map { record in
+            let linkedRuns = toolsByAgentRunID[record.id.uuidString] ?? []
+            let linkedTool = linkedRuns.first.map { run in
+                RunRowData(
+                    run: run,
+                    terminalRecord: linkedTerminalRecords[run.id.uuidString]
+                )
+            }
+            let conversation = record.conversationID.flatMap { conversationByID[$0] }
+            let rawConversationTitle = conversation?.title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let conversationTitle = rawConversationTitle.flatMap { value in
+                value.isEmpty ? nil : value
+            } ?? (scopeProjectID == nil ? "General" : scopeName)
+            let requestExcerpt = record.requestMessageID
+                .flatMap { requestTextByID[$0] }
+                ?? conversation.flatMap { conversation in
+                    Self.legacyRequestExcerpt(
+                        for: record,
+                        in: conversation
+                    )
+                }
+            return AgentRunReceiptData(
+                record: record,
+                scopeName: scopeName,
+                fallbackWorkspaceName: runtime.workspace.workspaceName,
+                conversationTitle: conversationTitle,
+                requestExcerpt: requestExcerpt,
+                linkedTool: linkedTool,
+                linkedToolCount: linkedRuns.count,
+                now: now
+            )
+        }
+    }
+
+    static func requestExcerpt(from content: String) -> String {
+        let flattened = content
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        guard flattened.count > 180 else { return flattened }
+        return String(flattened.prefix(177)) + "..."
+    }
+
+    static func legacyRequestExcerpt(
+        for record: AgentRunRecord,
+        in conversation: Conversation
+    ) -> String? {
+        if let exactMessage = conversation.messages.first(where: { message in
+            message.role == .user && message.runID == record.id
+        }) {
+            return requestExcerpt(from: exactMessage.content)
+        }
+        let message = conversation.messages
+            .filter { message in
+                message.role == .user && message.createdAt <= record.createdAt
+            }
+            .max(by: { $0.createdAt < $1.createdAt })
+        guard let message else { return nil }
+        return requestExcerpt(from: message.content)
     }
 
     func terminalRecordsBySourceRunID() -> [String: TerminalCommandRecord] {
@@ -734,7 +1041,7 @@ struct RunsView: View {
         AgentPerformance.event("Artifact Preview Open")
         ProjectEventRecorder.noteArtifactPreview(
             artifact,
-            project: project,
+            project: scopedProject,
             context: modelContext
         )
         do {
@@ -772,7 +1079,7 @@ struct RunsView: View {
     func revealRun(_ id: UUID, anchor: UnitPoint, proxy: ScrollViewProxy) {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(140))
-            withAnimation(.smooth(duration: 0.24)) {
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.24)) {
                 proxy.scrollTo(id, anchor: anchor)
             }
         }
@@ -792,89 +1099,18 @@ struct RunsView: View {
     }
 
     var body: some View {
+        runsAlertSurface
+    }
+
+    private var runsScrollSurface: some View {
         VStack(spacing: 0) {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     LazyVStack(spacing: 14) {
                         runsScreenHeader
                             .padding(.bottom, 2)
-
-                        if cachedStats.total > 0 {
-                            historyVaultSummary
-                        }
-
-                        // Live mission state, same component as Forge — one
-                        // vocabulary for "the agent is doing something".
-                        // Only rendered when there is something to act on.
-                        if shouldShowHistoryMissionStrip,
-                           ForgeMissionStrip.isVisible(
-                            scopedProject: project,
-                            status: liveStatus,
-                            autoContinue: .disabled
-                        ) {
-                            ForgeMissionStrip(
-                                project: project,
-                                scopedProject: project,
-                                status: liveStatus,
-                                autoContinue: .disabled,
-                                approve: approvePendingTool,
-                                reject: rejectPendingTool,
-                                stop: { runtime.stopGenerating(context: modelContext) },
-                                pauseAutoContinue: {},
-                                openDossier: openProject
-                            )
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        if shouldShowRuntimeReceiptBanner {
-                            HistoryRuntimeReceiptBanner(
-                                state: runtime.runState,
-                                title: runtime.activityTitle,
-                                detail: runtime.activityDetail,
-                                pendingToolName: runtime.pendingTool?.name,
-                                lastRunDuration: runtime.lastRunDuration,
-                                approve: approvePendingTool,
-                                reject: rejectPendingTool,
-                                stop: { runtime.stopGenerating(context: modelContext) },
-                                openChat: openChat
-                            )
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        if cachedStats.total > 0 {
-                            historyToolbar
-                        }
-
-                        if cachedFilteredRuns.isEmpty {
-                            NovaGlassEmptyState(
-                                symbol: emptyRunsSymbol,
-                                title: emptyRunsTitle,
-                                detail: emptyRunsDetail,
-                                tint: emptyRunsTint,
-                                actions: cachedStats.total == 0 ? [
-                                    NovaOrbitalEmptyState.Action(
-                                        title: "Ask NovaForge",
-                                        symbol: "bubble.left.and.bubble.right.fill",
-                                        tint: AgentPalette.cyan,
-                                        accessibilityIdentifier: "historyEmptyAskButton"
-                                    ) {
-                                        openChat()
-                                    }
-                                ] : []
-                            )
-                            .padding(.top, -6)
-                        } else {
-                            ForEach(cachedRunSections) { section in
-                                runDaySection(section, scrollProxy: scrollProxy)
-                            }
-                            if hasOffscreenRuns {
-                                Text(runs.count >= Self.fetchedRunLimit ? "Showing newest \(Self.visibleRunLimit) rows from a \(Self.fetchedRunLimit)-run fetched window." : "Older matching run rows are kept offscreen for smooth scrolling.")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(AgentPalette.tertiaryText)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                    .padding(.vertical, 8)
-                            }
-                        }
+                        historyMissionReceiptSection(scrollProxy: scrollProxy)
+                        historyToolEvidenceSection(scrollProxy: scrollProxy)
                     }
                     .padding()
                 }
@@ -886,11 +1122,129 @@ struct RunsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func historyMissionReceiptSection(scrollProxy: ScrollViewProxy) -> some View {
+        // Live mission state, same component as Forge — one vocabulary for
+        // "the agent is doing something". The matching live canonical record
+        // stays out of the settled receipt cards below.
+        if shouldShowHistoryMissionStrip,
+           ForgeMissionStrip.isVisible(
+            scopedProject: scopedProjectForHistory,
+            status: liveStatus,
+            autoContinue: .disabled
+           ) {
+            ForgeMissionStrip(
+                project: project,
+                scopedProject: scopedProjectForHistory,
+                status: liveStatus,
+                autoContinue: .disabled,
+                approve: approvePendingTool,
+                reject: rejectPendingTool,
+                stop: { runtime.stopGenerating(context: modelContext) },
+                pauseAutoContinue: {},
+                openDossier: openProject
+            )
+            .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
+        }
+
+        if shouldShowRuntimeReceiptBanner {
+            HistoryRuntimeReceiptBanner(
+                state: runtime.runState,
+                title: runtime.activityTitle,
+                detail: runtime.activityDetail,
+                openChat: openChat
+            )
+            .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
+        }
+
+        if let prominentAgentRunReceipt {
+            historyAgentRunOutcome(for: prominentAgentRunReceipt, scrollProxy: scrollProxy)
+        } else if cachedAgentRunReceipts.isEmpty,
+                  !shouldShowHistoryMissionStrip,
+                  let cachedLatestRun {
+            historyMissionOutcome(for: cachedLatestRun, scrollProxy: scrollProxy)
+        }
+
+        if !compactAgentRunReceipts.isEmpty {
+            NovaSectionMark(
+                title: "Mission receipts",
+                detail: "\(compactAgentRunReceipts.count)",
+                tint: AgentPalette.lilac
+            )
+            .padding(.top, 2)
+
+            ForEach(compactAgentRunReceipts) { receipt in
+                compactAgentRunReceipt(receipt, scrollProxy: scrollProxy)
+            }
+        }
+
+        if cachedStats.total >= 6 {
+            historyVaultSummary
+        }
+    }
+
+    @ViewBuilder
+    private func historyToolEvidenceSection(scrollProxy: ScrollViewProxy) -> some View {
+        if cachedStats.total > 0 {
+            historyToolbar
+        }
+
+        if cachedFilteredRuns.isEmpty {
+            if shouldShowToolEmptyState {
+                NovaGlassEmptyState(
+                    symbol: emptyRunsSymbol,
+                    title: emptyRunsTitle,
+                    detail: emptyRunsDetail,
+                    tint: emptyRunsTint,
+                    actions: cachedStats.total == 0 ? [
+                        NovaOrbitalEmptyState.Action(
+                            title: "Ask NovaForge",
+                            symbol: "bubble.left.and.bubble.right.fill",
+                            tint: AgentPalette.cyan,
+                            accessibilityIdentifier: "historyEmptyAskButton"
+                        ) {
+                            openChat()
+                        }
+                    ] : []
+                )
+                .padding(.top, -6)
+            }
+        } else {
+            ForEach(cachedRunSections) { section in
+                runDaySection(section, scrollProxy: scrollProxy)
+            }
+            if hasOffscreenRuns {
+                Text(runs.count >= Self.fetchedRunLimit ? "Showing newest \(Self.visibleRunLimit) rows from a \(Self.fetchedRunLimit)-run fetched window." : "Older matching run rows are kept offscreen for smooth scrolling.")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private var runsPresentationSurface: some View {
+        runsScrollSurface
         .sheet(item: $replayTarget) { target in
             RunReplaySheet(target: target)
                 .presentationDetents([.fraction(0.72), .large])
                 .presentationDragIndicator(.visible)
         }
+        .fullScreenCover(item: $previewArtifact) { artifact in
+            ArtifactPreviewSheet(
+                artifact: artifact,
+                workspace: runtime.workspace,
+                openLandscapeFullScreen: openArtifactLandscapeFullScreen,
+                iterationPrompt: artifactIterationPrompt,
+                openChat: openChat
+            )
+        }
+    }
+
+    private var runsTaskSurface: some View {
+        runsPresentationSurface
         .task {
             #if DEBUG || targetEnvironment(simulator)
             guard ProcessInfo.processInfo.arguments.contains("--open-run-replay-demo"),
@@ -920,25 +1274,26 @@ struct RunsView: View {
             }
             #endif
         }
-        .fullScreenCover(item: $previewArtifact) { artifact in
-            ArtifactPreviewSheet(
-                artifact: artifact,
-                workspace: runtime.workspace,
-                openLandscapeFullScreen: openArtifactLandscapeFullScreen,
-                iterationPrompt: artifactIterationPrompt,
-                openChat: openChat
-            )
-        }
         .task(id: searchText) {
             let value = searchText
             try? await Task.sleep(for: .milliseconds(220))
             guard !Task.isCancelled else { return }
             debouncedSearchText = value
         }
+    }
+
+    private var runsChangeSurface: some View {
+        runsTaskSurface
         .onChange(of: runs, initial: true) {
             updateCachedData()
         }
         .onChange(of: terminalRecords.count) {
+            updateCachedData()
+        }
+        .onChange(of: missionReceiptCacheKey) {
+            updateCachedData()
+        }
+        .onChange(of: conversationReceiptCacheKey) {
             updateCachedData()
         }
         .onChange(of: project.id) {
@@ -950,6 +1305,10 @@ struct RunsView: View {
         .onChange(of: debouncedSearchText) {
             updateCachedData()
         }
+    }
+
+    private var runsAlertSurface: some View {
+        runsChangeSurface
         .alert(
             "Run Log Error",
             isPresented: Binding(
@@ -961,6 +1320,20 @@ struct RunsView: View {
         } message: {
             Text(runDeleteError ?? "NovaForge could not save that run log change.")
         }
+    }
+
+    var missionReceiptCacheKey: String {
+        missionRuns.map { record in
+            "\(record.id.uuidString):\(record.statusRawValue):\(record.updatedAt.timeIntervalSinceReferenceDate)"
+        }
+        .joined(separator: "|")
+    }
+
+    var conversationReceiptCacheKey: String {
+        conversations.map { conversation in
+            "\(conversation.id.uuidString):\(conversation.messageCount):\(conversation.updatedAt.timeIntervalSinceReferenceDate):\(conversation.title)"
+        }
+        .joined(separator: "|")
     }
 
     @ViewBuilder
@@ -982,7 +1355,9 @@ struct RunsView: View {
         RunCard(
             row: row,
             expanded: expansionBinding(for: row),
-            hasLivePendingApproval: runtime.pendingTool != nil,
+            // History's ForgeMissionStrip owns the live decision controls.
+            // Tool rows remain durable evidence, never a second approval UI.
+            hasLivePendingApproval: runtime.pendingTool != nil && !shouldShowHistoryMissionStrip,
             deleteRun: { deleteRun(id: row.id) },
             openArtifact: { artifact in
                 preview(artifact)
@@ -1001,19 +1376,145 @@ struct RunsView: View {
                 revealRun(row.id, anchor: anchor, proxy: scrollProxy)
             },
             openReplay: {
-                replayTarget = RunReplayTarget(
-                    id: row.id,
-                    name: row.displayName,
-                    status: row.status,
-                    windowStart: row.createdAt,
-                    windowEnd: row.createdAt.addingTimeInterval(max(1, row.durationMs / 1_000) + 1),
-                    requestSummary: row.requestLine,
-                    outcomeSummary: row.outcomeLine,
-                    proofSummary: "\(row.proofLine) · \(row.proofDetail)",
-                    durationText: row.elapsedText
-                )
+                openReplay(for: row)
             }
         )
+    }
+
+    func openReplay(for row: RunRowData) {
+        replayTarget = RunReplayTarget(
+            id: row.id,
+            name: row.displayName,
+            status: row.status,
+            windowStart: row.createdAt,
+            windowEnd: row.createdAt.addingTimeInterval(max(1, row.durationMs / 1_000) + 1),
+            requestSummary: row.requestLine,
+            outcomeSummary: row.outcomeLine,
+            proofSummary: "\(row.proofLine) · \(row.proofDetail)",
+            durationText: row.elapsedText
+        )
+    }
+
+    func historyAgentRunOutcome(
+        for receipt: AgentRunReceiptData,
+        scrollProxy: ScrollViewProxy
+    ) -> some View {
+        let linkedTool = receipt.linkedTool
+        return HistoryAgentRunOutcomePanel(
+            receipt: receipt,
+            showsToolReceipt: linkedTool != nil,
+            openToolReceipt: {
+                guard let linkedTool else { return }
+                revealLinkedToolReceipt(linkedTool, scrollProxy: scrollProxy)
+            },
+            openForge: {
+                openAgentRunInForge(receipt)
+            }
+        )
+    }
+
+    func compactAgentRunReceipt(
+        _ receipt: AgentRunReceiptData,
+        scrollProxy: ScrollViewProxy
+    ) -> some View {
+        let openToolReceipt: (() -> Void)?
+        if let linkedTool = receipt.linkedTool {
+            openToolReceipt = {
+                revealLinkedToolReceipt(linkedTool, scrollProxy: scrollProxy)
+            }
+        } else {
+            openToolReceipt = nil
+        }
+        return HistoryAgentRunCompactCard(
+            receipt: receipt,
+            openToolReceipt: openToolReceipt,
+            openForge: {
+                openAgentRunInForge(receipt)
+            }
+        )
+    }
+
+    func revealLinkedToolReceipt(
+        _ linkedTool: RunRowData,
+        scrollProxy: ScrollViewProxy
+    ) {
+        restoredFilterTypeRawValue = FilterType.all.rawValue
+        searchText = ""
+        debouncedSearchText = ""
+        updateCachedData()
+        expandedRunIDString = linkedTool.id.uuidString
+        revealRun(linkedTool.id, anchor: .top, proxy: scrollProxy)
+    }
+
+    func openAgentRunInForge(_ receipt: AgentRunReceiptData) {
+        if let conversationID = receipt.conversationID {
+            openConversationInForge(conversationID)
+        } else {
+            openChat()
+        }
+    }
+
+    func historyMissionOutcome(for row: RunRowData, scrollProxy: ScrollViewProxy) -> some View {
+        HistoryMissionOutcomePanel(
+            row: row,
+            scopeLine: HistoryWorkspacePresentation.missionProvenanceLine(
+                projectName: scopeName,
+                workspaceName: runtime.workspace.workspaceName,
+                toolName: row.displayName
+            ),
+            actionTitle: missionOutcomeActionTitle(for: row),
+            actionSymbol: missionOutcomeActionSymbol(for: row),
+            openReceipt: {
+                restoredFilterTypeRawValue = FilterType.all.rawValue
+                searchText = ""
+                debouncedSearchText = ""
+                updateCachedData()
+                expandedRunIDString = row.id.uuidString
+                revealRun(row.id, anchor: .top, proxy: scrollProxy)
+            },
+            performAction: {
+                performMissionOutcomeAction(for: row)
+            }
+        )
+    }
+
+    func missionOutcomeActionTitle(for row: RunRowData) -> String {
+        if row.artifact != nil { return "Open proof" }
+        if row.terminalProof != nil { return "Open terminal" }
+        switch row.status {
+        case .pendingApproval, .approved:
+            return "Open Forge"
+        case .completed, .failed, .rejected:
+            return "Replay"
+        }
+    }
+
+    func missionOutcomeActionSymbol(for row: RunRowData) -> String {
+        if row.artifact != nil { return "play.rectangle.fill" }
+        if row.terminalProof != nil { return "terminal.fill" }
+        switch row.status {
+        case .pendingApproval, .approved:
+            return "bubble.left.and.bubble.right.fill"
+        case .completed, .failed, .rejected:
+            return "memories"
+        }
+    }
+
+    func performMissionOutcomeAction(for row: RunRowData) {
+        if let artifact = row.artifact {
+            preview(artifact)
+            return
+        }
+        if let proof = row.terminalProof {
+            openTerminalRecord(proof.id, proof.command, proof.terminalFocusQuery)
+            return
+        }
+        switch row.status {
+        case .pendingApproval, .approved:
+            openChat()
+        case .completed, .failed, .rejected:
+            openReplay(for: row)
+        }
     }
 
     func deleteRun(id: UUID) {
@@ -1025,7 +1526,7 @@ struct RunsView: View {
             guard let run = try modelContext.fetch(descriptor).first else { return }
             let cleanup = try ProjectRunLogCleanup.detachDeletedRunProvenance(for: run, context: modelContext)
             ProjectEventRecorder.record(
-                project: run.project ?? project,
+                project: run.project,
                 kind: .runLogDeleted,
                 title: "Run log deleted",
                 detail: run.name,
@@ -1053,28 +1554,71 @@ struct RunsView: View {
         (activeFilterType == .all && debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && runs.count >= Self.fetchedRunLimit)
     }
 
+    var scopedProjectForHistory: Project? {
+        guard scopeProjectID == project.id else { return nil }
+        return project
+    }
+
+    var agentRunReceiptsForDisplay: [AgentRunReceiptData] {
+        guard shouldShowHistoryMissionStrip else {
+            return cachedAgentRunReceipts
+        }
+        return cachedAgentRunReceipts.filter { !$0.isLive }
+    }
+
+    var prominentAgentRunReceipt: AgentRunReceiptData? {
+        guard !shouldShowHistoryMissionStrip else { return nil }
+        return agentRunReceiptsForDisplay.first
+    }
+
+    var compactAgentRunReceipts: [AgentRunReceiptData] {
+        if shouldShowHistoryMissionStrip {
+            return agentRunReceiptsForDisplay
+        }
+        return Array(agentRunReceiptsForDisplay.dropFirst())
+    }
+
+    var shouldShowToolEmptyState: Bool {
+        if cachedStats.total > 0 {
+            return true
+        }
+        return cachedAgentRunReceipts.isEmpty && !shouldShowHistoryMissionStrip
+    }
+
     var emptyRunsTitle: String {
-        cachedStats.total == 0 ? "No runs yet" : "No matching run events"
+        if cachedStats.total == 0, !missionRuns.isEmpty {
+            return "No tool calls in this mission"
+        }
+        return cachedStats.total == 0 ? "No runs yet" : "No matching run events"
     }
 
     var emptyRunsDetail: String {
         if cachedStats.total == 0 {
+            if !missionRuns.isEmpty {
+                return "The latest response completed without tools. Tool evidence will appear here when a mission reads or changes the workspace."
+            }
             return "Tool calls, approvals, and terminal proof will appear here after NovaForge acts."
         }
         return "Adjust the search or filter to review more run evidence."
     }
 
     var emptyRunsSymbol: String {
-        cachedStats.total == 0 ? "waveform.path.ecg.rectangle" : "line.3.horizontal.decrease.circle"
+        if cachedStats.total == 0, !missionRuns.isEmpty {
+            return "text.bubble.fill"
+        }
+        return cachedStats.total == 0 ? "waveform.path.ecg.rectangle" : "line.3.horizontal.decrease.circle"
     }
 
     var emptyRunsTint: Color {
-        cachedStats.total == 0 ? AgentPalette.lilac : AgentPalette.secondaryText
+        if let status = missionRuns.first?.status, cachedStats.total == 0 {
+            return status.receiptTint
+        }
+        return cachedStats.total == 0 ? AgentPalette.lilac : AgentPalette.secondaryText
     }
 
     var runsScreenHeader: some View {
         NovaScreenHeader(
-            kicker: "History // \(project.name)",
+            kicker: "History // \(scopeName)",
             title: "History",
             subtitle: runsHeaderStatusLine,
             symbol: "waveform.path.ecg",
@@ -1098,15 +1642,24 @@ struct RunsView: View {
 
     var shouldShowRuntimeReceiptBanner: Bool {
         switch runtime.runState {
-        case .running, .waitingForApproval, .cancelled, .failed(_):
-            return true
-        case .idle, .completed:
+        case .cancelled:
+            let latestStatus = cachedAgentRunReceipts.first?.status
+            return latestStatus != .cancelled && latestStatus != .interrupted
+        case .failed(_):
+            return cachedAgentRunReceipts.first?.status != .failed
+        case .idle, .running, .waitingForApproval, .completed:
             return false
         }
     }
 
     var runsHeaderStatusLine: String {
-        if cachedStats.total == 0 { return "Every tool call becomes auditable proof" }
+        if cachedStats.total == 0 {
+            if !cachedAgentRunReceipts.isEmpty {
+                let count = cachedAgentRunReceipts.count
+                return "\(count) mission receipt\(count == 1 ? "" : "s") · no tool evidence"
+            }
+            return "Every tool call becomes auditable proof"
+        }
         var parts = ["\(cachedStats.total) logged"]
         if cachedStats.completed > 0 { parts.append("\(cachedStats.completed) done") }
         if cachedStats.failures > 0 { parts.append("\(cachedStats.failures) failed") }
@@ -1121,15 +1674,14 @@ struct RunsView: View {
     }
 
     var historyToolbar: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            NovaSectionMark(title: "Run Log", detail: auditSectionDetail, tint: AgentPalette.lilac)
+        GlassGroup(spacing: 10) {
+            VStack(alignment: .leading, spacing: 13) {
+                NovaSectionMark(title: "Run Log", detail: auditSectionDetail, tint: AgentPalette.lilac)
 
-            if needsLogTools {
-                searchField
+                if needsLogTools {
+                    searchField
 
-                HStack {
                     filterSelector
-                    Spacer(minLength: 0)
                 }
             }
         }
@@ -1175,8 +1727,12 @@ struct RunsView: View {
             }
             .padding(.horizontal, 15)
             .frame(minHeight: AgentDesign.minimumTouchTarget + 2)
-            .background(Capsule(style: .continuous).fill(AgentPalette.controlFill.opacity(0.55)))
-            .overlay(Capsule(style: .continuous).strokeBorder(AgentPalette.lilac.opacity(searchFocused ? 0.42 : 0.16), lineWidth: 0.8))
+            .agentGlass(
+                radius: (AgentDesign.minimumTouchTarget + 2) / 2,
+                interactive: true,
+                tint: AgentPalette.lilac.opacity(searchFocused ? 0.18 : 0.08)
+            )
+            .agentGlassEffectID("history-search", in: historyChromeNamespace)
     }
 
     var auditSectionDetail: String {
@@ -1186,43 +1742,558 @@ struct RunsView: View {
     }
 
     var filterSelector: some View {
-        HStack(spacing: 8) {
-            ForEach(FilterType.allCases) { filter in
-                Button {
-                    NovaHaptics.lensChanged()
-                    withAnimation(.smooth(duration: 0.22)) {
-                        restoredFilterTypeRawValue = filter.rawValue
-                        searchFocused = false
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(FilterType.allCases) { filter in
+                    Button {
+                        NovaHaptics.lensChanged()
+                        withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
+                            restoredFilterTypeRawValue = filter.rawValue
+                            searchFocused = false
+                        }
+                    } label: {
+                        Text(filter.rawValue)
+                            .font(NovaType.caption)
+                            .foregroundStyle(activeFilterType == filter ? AgentPalette.ink : AgentPalette.secondaryText)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: AgentDesign.minimumTouchTarget)
+                            .contentShape(Capsule())
                     }
-                } label: {
-                    Text(filter.rawValue)
-                        .font(NovaType.caption)
-                        .foregroundStyle(activeFilterType == filter ? AgentPalette.ink : AgentPalette.secondaryText)
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: AgentDesign.minimumTouchTarget - 6)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(activeFilterType == filter ? AgentPalette.cyan.opacity(0.16) : AgentPalette.controlFill.opacity(0.4))
-                        )
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(
-                                    activeFilterType == filter ? AgentPalette.cyan.opacity(0.42) : AgentPalette.controlBorder.opacity(0.5),
-                                    lineWidth: 0.8
-                                )
-                        )
-                        .contentShape(Capsule())
+                    .agentInteractiveGlassButtonStyle(
+                        radius: AgentDesign.minimumTouchTarget / 2,
+                        tint: AgentPalette.cyan,
+                        selected: activeFilterType == filter,
+                        glassID: "history-filter-\(filter.rawValue)",
+                        in: historyChromeNamespace
+                    )
+                    .accessibilityLabel("Show \(filter.rawValue.lowercased()) runs")
+                    .accessibilityIdentifier("runsFilter-\(filter.rawValue)")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Show \(filter.rawValue.lowercased()) runs")
-                .accessibilityIdentifier("runsFilter-\(filter.rawValue)")
             }
         }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
     }
 
 }
 
+private struct HistoryAgentRunOutcomePanel: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Namespace private var glassNamespace
+
+    let receipt: RunsView.AgentRunReceiptData
+    let showsToolReceipt: Bool
+    let openToolReceipt: () -> Void
+    let openForge: () -> Void
+
+    private var tint: Color { receipt.status.receiptTint }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: receipt.status.receiptSymbol)
+                    .font(.system(size: 15, weight: .black))
+                    .foregroundStyle(tint)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        tint.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Latest mission receipt")
+                        .font(NovaType.label)
+                        .foregroundStyle(tint)
+                        .textCase(.uppercase)
+                        .tracking(0.8)
+                    Text(receipt.conversationTitle)
+                        .font(NovaType.title)
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                        .layoutPriority(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                AgentRunStatusBadge(status: receipt.status, tint: tint)
+            }
+
+            Text(receipt.outcomeLine)
+                .font(NovaType.body)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Label {
+                Text(receipt.requestExcerpt)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "text.quote")
+                    .foregroundStyle(AgentPalette.cyan)
+            }
+            .font(NovaType.body)
+            .foregroundStyle(AgentPalette.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                AgentPalette.controlFill.opacity(0.38),
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            )
+            .accessibilityLabel("Request: \(receipt.requestExcerpt)")
+
+            VStack(alignment: .leading, spacing: 7) {
+                HistoryReceiptFact(
+                    symbol: "scope",
+                    label: "Scope",
+                    value: receipt.scopeLine,
+                    tint: AgentPalette.cyan
+                )
+                HistoryReceiptFact(
+                    symbol: "cpu.fill",
+                    label: "Engine",
+                    value: receipt.engineLine,
+                    tint: AgentPalette.blue
+                )
+                HistoryReceiptFact(
+                    symbol: "timer",
+                    label: "Timing",
+                    value: receipt.timingLine,
+                    tint: AgentPalette.lilac
+                )
+                HistoryReceiptFact(
+                    symbol: receipt.linkedToolCount == 0 ? "text.bubble.fill" : "checkmark.seal.fill",
+                    label: "Proof",
+                    value: receipt.proofLine,
+                    tint: AgentPalette.green
+                )
+            }
+
+            if let errorLine = receipt.errorLine {
+                Label {
+                    Text(errorLine)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
+                .font(NovaType.body)
+                .foregroundStyle(AgentPalette.rose)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    AgentPalette.rose.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                )
+                .accessibilityLabel("Mission error: \(errorLine)")
+            }
+
+            GlassGroup(spacing: 9) {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 8) {
+                            if showsToolReceipt {
+                                missionButton(
+                                    title: "Tool receipt",
+                                    symbol: "doc.text.magnifyingglass",
+                                    tint: AgentPalette.lilac,
+                                    action: openToolReceipt
+                                )
+                            }
+                            missionButton(
+                                title: "Open Forge",
+                                symbol: "bubble.left.and.bubble.right.fill",
+                                tint: tint,
+                                action: openForge
+                            )
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            if showsToolReceipt {
+                                missionButton(
+                                    title: "Tool receipt",
+                                    symbol: "doc.text.magnifyingglass",
+                                    tint: AgentPalette.lilac,
+                                    action: openToolReceipt
+                                )
+                            }
+                            missionButton(
+                                title: "Open Forge",
+                                symbol: "bubble.left.and.bubble.right.fill",
+                                tint: tint,
+                                action: openForge
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .agentSurface(radius: 22, tint: tint.opacity(0.08), nativeGlass: true)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("historyLatestMissionOutcome")
+    }
+
+    private func missionButton(
+        title: String,
+        symbol: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(NovaType.caption)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+        }
+        .foregroundStyle(AgentPalette.ink)
+        .agentInteractiveGlassButtonStyle(
+            radius: 12,
+            tint: tint,
+            selected: true,
+            glassID: "history-latest-\(title)",
+            in: glassNamespace
+        )
+    }
+}
+
+private struct HistoryReceiptFact: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let symbol: String
+    let label: String
+    let value: String
+    let tint: Color
+
+    var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Image(systemName: symbol)
+                            .font(NovaType.caption)
+                            .foregroundStyle(tint)
+                        Text(label)
+                            .font(NovaType.label)
+                            .foregroundStyle(AgentPalette.tertiaryText)
+                            .textCase(.uppercase)
+                    }
+                    Text(value)
+                        .font(NovaType.caption)
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: symbol)
+                        .font(NovaType.label)
+                        .foregroundStyle(tint)
+                        .frame(width: 14)
+                    Text(label)
+                        .font(NovaType.label)
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .textCase(.uppercase)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                        .frame(width: 82, alignment: .leading)
+                    Text(value)
+                        .font(NovaType.caption)
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(value)")
+    }
+}
+
+private struct AgentRunStatusBadge: View {
+    let status: AgentRunStatus
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: status.receiptSymbol)
+                .font(NovaType.label)
+            Text(status.receiptStatusTitle)
+                .font(NovaType.label)
+                .lineLimit(1)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(tint.opacity(0.12), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(tint.opacity(0.28), lineWidth: 0.8)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Mission status: \(status.receiptStatusTitle)")
+    }
+}
+
+private struct HistoryAgentRunCompactCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let receipt: RunsView.AgentRunReceiptData
+    let openToolReceipt: (() -> Void)?
+    let openForge: () -> Void
+
+    private var tint: Color { receipt.status.receiptTint }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: receipt.status.receiptSymbol)
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(tint)
+                    .frame(width: 31, height: 31)
+                    .background(
+                        tint.opacity(0.1),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(receipt.conversationTitle)
+                        .font(NovaType.headline)
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                        .layoutPriority(1)
+                    Text(receipt.timingLine)
+                        .font(NovaType.label)
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                AgentRunStatusBadge(status: receipt.status, tint: tint)
+            }
+
+            Text(receipt.requestExcerpt)
+                .font(NovaType.body)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(receipt.scopeLine, systemImage: "scope")
+                        Label(receipt.proofLine, systemImage: receipt.linkedToolCount == 0 ? "text.bubble.fill" : "checkmark.seal.fill")
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Label(receipt.scopeLine, systemImage: "scope")
+                        Spacer(minLength: 4)
+                        Label(receipt.proofLine, systemImage: receipt.linkedToolCount == 0 ? "text.bubble.fill" : "checkmark.seal.fill")
+                    }
+                    .lineLimit(1)
+                }
+            }
+            .font(NovaType.label)
+            .foregroundStyle(AgentPalette.tertiaryText)
+
+            if let errorLine = receipt.errorLine {
+                Label(errorLine, systemImage: "exclamationmark.triangle.fill")
+                    .font(NovaType.body)
+                    .foregroundStyle(AgentPalette.rose)
+                    .lineLimit(2)
+            }
+
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 8) {
+                        if let openToolReceipt {
+                            compactButton(
+                                title: "Tool receipt",
+                                symbol: "doc.text.magnifyingglass",
+                                tint: AgentPalette.lilac,
+                                action: openToolReceipt
+                            )
+                        }
+                        compactButton(
+                            title: "Open Forge",
+                            symbol: "bubble.left.and.bubble.right.fill",
+                            tint: tint,
+                            action: openForge
+                        )
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        if let openToolReceipt {
+                            compactButton(
+                                title: "Tool receipt",
+                                symbol: "doc.text.magnifyingglass",
+                                tint: AgentPalette.lilac,
+                                action: openToolReceipt
+                            )
+                        }
+                        compactButton(
+                            title: "Open Forge",
+                            symbol: "bubble.left.and.bubble.right.fill",
+                            tint: tint,
+                            action: openForge
+                        )
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .agentSurface(radius: 18, tint: tint.opacity(0.055))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("historyMissionReceipt-\(receipt.id.uuidString)")
+    }
+
+    private func compactButton(
+        title: String,
+        symbol: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(NovaType.caption)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AgentPalette.ink)
+        .agentControlSurface(radius: 11, tint: tint.opacity(0.11), selected: true)
+    }
+}
+
+private struct HistoryMissionOutcomePanel: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Namespace private var glassNamespace
+
+    let row: RunsView.RunRowData
+    let scopeLine: String
+    let actionTitle: String
+    let actionSymbol: String
+    let openReceipt: () -> Void
+    let performAction: () -> Void
+
+    private var tint: Color { row.status.tint }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: row.status.symbol)
+                    .font(.system(size: 15, weight: .black))
+                    .foregroundStyle(tint)
+                    .frame(width: 38, height: 38)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Latest mission outcome")
+                        .font(NovaType.label)
+                        .foregroundStyle(tint)
+                        .textCase(.uppercase)
+                        .tracking(0.8)
+                    Text(row.receiptTitle)
+                        .font(NovaType.title)
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                        .layoutPriority(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                RunStatusBadge(status: row.status, tint: tint)
+            }
+
+            Text(row.outcomeLine)
+                .font(NovaType.body)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 7) {
+                HistoryReceiptFact(
+                    symbol: "scope",
+                    label: "Scope",
+                    value: scopeLine,
+                    tint: AgentPalette.cyan
+                )
+                HistoryReceiptFact(
+                    symbol: "timer",
+                    label: "Timing",
+                    value: "\(row.elapsedText) · \(row.createdTimeText)",
+                    tint: AgentPalette.lilac
+                )
+                HistoryReceiptFact(
+                    symbol: "checkmark.seal.fill",
+                    label: "Provenance",
+                    value: "\(row.proofLine) · \(row.proofDetail)",
+                    tint: AgentPalette.green
+                )
+            }
+
+            GlassGroup(spacing: 9) {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 8) {
+                            missionButton(title: "Receipt", symbol: "doc.text.magnifyingglass", tint: AgentPalette.lilac, action: openReceipt)
+                            missionButton(title: actionTitle, symbol: actionSymbol, tint: tint, action: performAction)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            missionButton(title: "Receipt", symbol: "doc.text.magnifyingglass", tint: AgentPalette.lilac, action: openReceipt)
+                            missionButton(title: actionTitle, symbol: actionSymbol, tint: tint, action: performAction)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .agentSurface(radius: 22, tint: tint.opacity(0.08), nativeGlass: true)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("historyLatestMissionOutcome")
+    }
+
+    private func missionButton(
+        title: String,
+        symbol: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(NovaType.caption)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+        }
+        .foregroundStyle(AgentPalette.ink)
+        .agentInteractiveGlassButtonStyle(
+            radius: 12,
+            tint: tint,
+            selected: true,
+            glassID: "history-outcome-\(title)",
+            in: glassNamespace
+        )
+    }
+}
+
 private struct HistoryVaultSummaryPanel: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let stats: RunsView.RunStats
     let visibleCount: Int
     let matchingCount: Int
@@ -1239,22 +2310,29 @@ private struct HistoryVaultSummaryPanel: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Replay Vault")
-                        .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.headline)
                         .foregroundStyle(AgentPalette.ink)
                     Text(vaultDetail)
-                        .font(.system(size: 10, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.caption)
                         .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(spacing: 8) {
-                HistoryVaultMetric(value: "\(stats.total)", label: "Receipts", symbol: "doc.text.magnifyingglass", tint: AgentPalette.lilac)
-                HistoryVaultMetric(value: stats.successRateText, label: "Complete", symbol: "checkmark.seal.fill", tint: AgentPalette.green)
-                HistoryVaultMetric(value: "\(stats.failures)", label: "Failed", symbol: "exclamationmark.triangle.fill", tint: AgentPalette.rose)
-                HistoryVaultMetric(value: "\(stats.pending)", label: "Approval", symbol: "checkmark.shield.fill", tint: AgentPalette.cyan)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    LazyVGrid(
+                        columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                        spacing: 8
+                    ) {
+                        metrics
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        metrics
+                    }
+                }
             }
         }
         .padding(12)
@@ -1271,6 +2349,14 @@ private struct HistoryVaultSummaryPanel: View {
         let shownText = hasOffscreenRuns ? "\(visibleCount) of \(matchingCount) shown" : "\(visibleCount) shown"
         return "\(shownText) · avg \(stats.averageDurationText) · failures stay retained"
     }
+
+    @ViewBuilder
+    private var metrics: some View {
+        HistoryVaultMetric(value: "\(stats.total)", label: "Receipts", symbol: "doc.text.magnifyingglass", tint: AgentPalette.lilac)
+        HistoryVaultMetric(value: stats.successRateText, label: "Complete", symbol: "checkmark.seal.fill", tint: AgentPalette.green)
+        HistoryVaultMetric(value: "\(stats.failures)", label: "Failed", symbol: "exclamationmark.triangle.fill", tint: AgentPalette.rose)
+        HistoryVaultMetric(value: "\(stats.pending)", label: "Approval", symbol: "checkmark.shield.fill", tint: AgentPalette.cyan)
+    }
 }
 
 private struct HistoryVaultMetric: View {
@@ -1283,19 +2369,18 @@ private struct HistoryVaultMetric: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Image(systemName: symbol)
-                    .font(.system(size: 8, weight: .black))
+                    .font(NovaType.label)
                 Text(label)
-                    .font(.system(size: 7.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .font(NovaType.label)
                     .textCase(.uppercase)
             }
             .foregroundStyle(AgentPalette.tertiaryText)
 
             Text(value)
-                .font(.system(size: 14, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .font(NovaType.readoutSmall)
                 .monospacedDigit()
                 .foregroundStyle(tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
@@ -1305,14 +2390,11 @@ private struct HistoryVaultMetric: View {
 }
 
 private struct HistoryRuntimeReceiptBanner: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let state: AgentRunState
     let title: String
     let detail: String
-    let pendingToolName: String?
-    let lastRunDuration: TimeInterval?
-    let approve: () -> Void
-    let reject: () -> Void
-    let stop: () -> Void
     let openChat: () -> Void
 
     var body: some View {
@@ -1326,12 +2408,12 @@ private struct HistoryRuntimeReceiptBanner: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(stateTitle)
-                        .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.headline)
                         .foregroundStyle(AgentPalette.ink)
                     Text(stateDetail)
-                        .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .font(NovaType.body)
                         .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1339,18 +2421,11 @@ private struct HistoryRuntimeReceiptBanner: View {
 
             HStack(spacing: 8) {
                 switch state {
-                case .waitingForApproval:
-                    runtimeButton("Approve", symbol: "checkmark", tint: AgentPalette.green, action: approve)
-                    runtimeButton("Reject", symbol: "xmark", tint: AgentPalette.rose, action: reject)
-                case .running:
-                    runtimeButton("Open Forge", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan, action: openChat)
-                    runtimeButton("Stop", symbol: "stop.fill", tint: AgentPalette.rose, action: stop)
                 case .cancelled:
                     runtimeButton(cancelledPrimaryTitle, symbol: "arrow.clockwise", tint: AgentPalette.lilac, action: openChat)
                 case .failed(_):
-                    runtimeButton("Retry", symbol: "arrow.clockwise", tint: AgentPalette.rose, action: openChat)
                     runtimeButton("Open Forge", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan, action: openChat)
-                case .idle, .completed:
+                case .idle, .running, .waitingForApproval, .completed:
                     EmptyView()
                 }
             }
@@ -1370,7 +2445,7 @@ private struct HistoryRuntimeReceiptBanner: View {
         case .running:
             return "Run in progress"
         case .waitingForApproval:
-            return pendingToolName.map { "Approval needed for \($0)" } ?? "Approval needed"
+            return "Approval needed"
         case .cancelled:
             return isPaused ? "Run paused" : "Run cancelled"
         case .failed(_):
@@ -1443,9 +2518,9 @@ private struct HistoryRuntimeReceiptBanner: View {
             action()
         } label: {
             Label(title, systemImage: symbol)
-                .font(.system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
+                .font(NovaType.caption)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
         }
         .buttonStyle(.plain)
@@ -1502,5 +2577,62 @@ extension RunsView {
         }
         flush()
         return sections
+    }
+}
+
+private extension AgentRunStatus {
+    var receiptStatusTitle: String {
+        switch self {
+        case .queued: "Queued"
+        case .running: "Running"
+        case .awaitingApproval: "Approval"
+        case .completed: "Completed"
+        case .failed: "Failed"
+        case .cancelled: "Cancelled"
+        case .interrupted: "Interrupted"
+        }
+    }
+
+    var receiptSymbol: String {
+        switch self {
+        case .queued: "clock.fill"
+        case .running: "waveform.path.ecg"
+        case .awaitingApproval: "checkmark.shield.fill"
+        case .completed: "checkmark.seal.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .cancelled: "xmark.octagon.fill"
+        case .interrupted: "bolt.slash.fill"
+        }
+    }
+
+    var receiptTint: Color {
+        switch self {
+        case .queued:
+            AgentPalette.secondaryText
+        case .running:
+            AgentPalette.lilac
+        case .awaitingApproval:
+            AgentPalette.cyan
+        case .completed:
+            AgentPalette.green
+        case .failed, .cancelled, .interrupted:
+            AgentPalette.rose
+        }
+    }
+}
+
+private extension AgentRunErrorKind {
+    var receiptTitle: String {
+        switch self {
+        case .invalidRequest: "Invalid request"
+        case .provider: "Provider request failed"
+        case .tool: "Tool execution failed"
+        case .approvalRejected: "Approval was rejected"
+        case .workspaceConflict: "Workspace execution conflict"
+        case .persistence: "Receipt persistence failed"
+        case .cancelled: "Mission was cancelled"
+        case .interrupted: "Mission was interrupted"
+        case .unknown: "Unknown mission error"
+        }
     }
 }

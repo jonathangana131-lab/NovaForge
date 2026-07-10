@@ -38,6 +38,7 @@ struct ForgeHeader: View {
     let durableSnapshot: ChatDurableRunSnapshot
     let workflowSpine: ProjectWorkflowSpine?
     let ownsActiveRunState: Bool
+    let missionStripOwnsLiveState: Bool
     let hasForeignActiveRun: Bool
     let foreignActiveTitle: String
     let newChat: () -> Void
@@ -47,6 +48,10 @@ struct ForgeHeader: View {
     let openArtifact: (WorkspaceArtifact) -> Void
     let openMissionDossier: () -> Void
     let openChatDrawer: () -> Void
+    var glassNamespace: Namespace.ID? = nil
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var localGlassNamespace
 
     private var chromeTint: Color { AgentPalette.primaryAccent }
 
@@ -99,6 +104,7 @@ struct ForgeHeader: View {
             durableSnapshot: durableSnapshot,
             settings: settings,
             ownsActiveRunState: ownsActiveRunState,
+            missionStripOwnsLiveState: missionStripOwnsLiveState,
             hasForeignActiveRun: hasForeignActiveRun,
             foreignActiveTitle: foreignActiveTitle
         )
@@ -124,7 +130,10 @@ struct ForgeHeader: View {
                         .truncationMode(.middle)
                         .accessibilityIdentifier("currentChatTitle")
 
-                    StatusDot(text: statusText, symbol: statusSymbol, tint: statusTint)
+                    if !missionStripOwnsLiveState {
+                        StatusDot(text: statusText, symbol: statusSymbol, tint: statusTint)
+                            .transition(.scale(scale: 0.88).combined(with: .opacity))
+                    }
                 }
 
                 contextLine
@@ -139,28 +148,52 @@ struct ForgeHeader: View {
                 action: newChat
             )
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .agentGlass(radius: 24, tint: chromeTint.opacity(0.08))
+        .agentGlassEffectID("forge-header", in: resolvedGlassNamespace)
+        .animation(
+            NovaMotion.enabled(reduceMotion: reduceMotion) ? .snappy(duration: 0.24) : nil,
+            value: missionStripOwnsLiveState
+        )
     }
 
     /// Second deck: the scope pill plus at most ONE prioritized signal.
     /// Fixed content only — nothing here can scroll or clip mid-word.
+    @ViewBuilder
     private var contextLine: some View {
-        HStack(spacing: 7) {
-            scopeMenu
+        if let signal {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 7) {
+                    scopeMenu
+                    dossierShortcut
 
-            dossierShortcut
+                    Text("·")
+                        .font(NovaType.caption)
+                        .foregroundStyle(AgentPalette.quaternaryText)
 
-            if let signal {
-                Text("·")
-                    .font(NovaType.caption)
-                    .foregroundStyle(AgentPalette.quaternaryText)
+                    ForgeSignalChip(signal: signal, glassNamespace: resolvedGlassNamespace) {
+                        activate(signal)
+                    }
+                    .layoutPriority(1)
 
-                ForgeSignalChip(signal: signal) {
-                    activate(signal)
+                    Spacer(minLength: 0)
                 }
-                .layoutPriority(1)
-            }
 
-            Spacer(minLength: 0)
+                HStack(spacing: 7) {
+                    scopeMenu
+                    dossierShortcut
+                    compactSignalButton(signal)
+                    Spacer(minLength: 0)
+                }
+            }
+        } else {
+            HStack(spacing: 7) {
+                scopeMenu
+                dossierShortcut
+                Spacer(minLength: 0)
+            }
         }
     }
 
@@ -192,18 +225,29 @@ struct ForgeHeader: View {
                 Image(systemName: scopedProject == nil ? "folder.fill" : "shippingbox.fill")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(scopeTint)
-                Text(scopeTitle)
+                Text(compactScopeTitle)
                     .font(NovaType.caption)
                     .foregroundStyle(scopeTint)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .minimumScaleFactor(0.78)
+                    .frame(maxWidth: 82, alignment: .leading)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 7, weight: .bold))
                     .foregroundStyle(AgentPalette.quaternaryText)
             }
+            .padding(.horizontal, 9)
+            .frame(minHeight: AgentDesign.minimumTouchTarget)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .agentInteractiveGlassButtonStyle(
+            radius: AgentDesign.minimumTouchTarget / 2,
+            tint: scopeTint,
+            selected: scopedProject != nil,
+            glassID: "forge-scope",
+            in: resolvedGlassNamespace
+        )
+        .layoutPriority(2)
         .accessibilityIdentifier("chatProjectScopeMenu")
     }
 
@@ -211,30 +255,42 @@ struct ForgeHeader: View {
         Button {
             openMissionDossier()
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(AgentPalette.primaryAccent)
-                Text("Dossier")
-                    .font(NovaType.caption)
-                    .foregroundStyle(AgentPalette.primaryAccent)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(AgentPalette.primaryAccent.opacity(0.08))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(AgentPalette.primaryAccent.opacity(0.18), lineWidth: 0.7)
-            )
-            .contentShape(Capsule(style: .continuous))
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(AgentPalette.primaryAccent)
+                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .agentInteractiveGlassButtonStyle(
+            radius: AgentDesign.minimumTouchTarget / 2,
+            tint: AgentPalette.primaryAccent,
+            selected: false,
+            glassID: "forge-dossier",
+            in: resolvedGlassNamespace
+        )
         .accessibilityLabel("Open Mission Dossier")
         .accessibilityIdentifier("missionDossierShortcut")
+    }
+
+    private func compactSignalButton(_ signal: ForgeSignal) -> some View {
+        Button {
+            activate(signal)
+        } label: {
+            Image(systemName: signal.symbol)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(signal.tint)
+                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                .contentShape(Circle())
+        }
+        .agentInteractiveGlassButtonStyle(
+            radius: AgentDesign.minimumTouchTarget / 2,
+            tint: signal.tint,
+            selected: true,
+            glassID: "forge-signal-compact",
+            in: resolvedGlassNamespace
+        )
+        .accessibilityLabel("\(signal.title): \(signal.detail)")
+        .accessibilityIdentifier(signal.accessibilityID)
     }
 
     private var scopeTitle: String {
@@ -243,8 +299,17 @@ struct ForgeHeader: View {
         return trimmed.isEmpty ? ProjectBootstrap.defaultProjectName : trimmed
     }
 
+    private var compactScopeTitle: String {
+        guard scopeTitle.count > 14 else { return scopeTitle }
+        return String(scopeTitle.prefix(12)) + "…"
+    }
+
     private var scopeTint: Color {
         scopedProject == nil ? AgentPalette.secondaryText : AgentPalette.cyan
+    }
+
+    private var resolvedGlassNamespace: Namespace.ID {
+        glassNamespace ?? localGlassNamespace
     }
 
     private func activate(_ signal: ForgeSignal) {
@@ -270,12 +335,16 @@ struct ForgeHeader: View {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(tint)
-                .frame(width: 42, height: 42)
-                .background(Circle().fill(tint.opacity(0.10)))
-                .overlay(Circle().strokeBorder(tint.opacity(0.26), lineWidth: 0.9))
+                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .agentInteractiveGlassButtonStyle(
+            radius: AgentDesign.minimumTouchTarget / 2,
+            tint: tint,
+            selected: false,
+            glassID: identifier,
+            in: resolvedGlassNamespace
+        )
         .accessibilityLabel(label)
         .accessibilityIdentifier(identifier)
     }
@@ -308,6 +377,7 @@ struct ForgeSignal: Equatable {
         durableSnapshot: ChatDurableRunSnapshot,
         settings: AgentSettings,
         ownsActiveRunState: Bool,
+        missionStripOwnsLiveState: Bool,
         hasForeignActiveRun: Bool,
         foreignActiveTitle: String
     ) -> ForgeSignal? {
@@ -321,7 +391,7 @@ struct ForgeSignal: Equatable {
                 accessibilityID: "forgeSignal-foreign"
             )
         }
-        if ownsActiveRunState {
+        if ownsActiveRunState && !missionStripOwnsLiveState {
             if let pending = runtime.pendingTool {
                 return ForgeSignal(
                     title: "Approval",
@@ -363,7 +433,7 @@ struct ForgeSignal: Equatable {
                 )
             }
         }
-        if durableSnapshot.pendingApprovalCount > 0 {
+        if !missionStripOwnsLiveState, durableSnapshot.pendingApprovalCount > 0 {
             return ForgeSignal(
                 title: "Approval",
                 detail: "\(durableSnapshot.pendingApprovalCount) waiting",
@@ -415,30 +485,52 @@ struct ForgeSignal: Equatable {
 
 struct ForgeSignalChip: View {
     let signal: ForgeSignal
+    var glassNamespace: Namespace.ID? = nil
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var localGlassNamespace
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: signal.symbol)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(signal.tint)
-                Text(signal.title)
-                    .novaLabel(signal.tint)
-                    .fixedSize()
-                Text(signal.detail)
-                    .font(NovaType.caption)
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 5) {
+                    signalIcon
+                    Text(signal.title)
+                        .novaLabel(signal.tint)
+                    Text(signal.detail)
+                        .font(NovaType.caption)
+                        .foregroundStyle(AgentPalette.secondaryText)
+                }
+                .fixedSize(horizontal: true, vertical: false)
+
+                HStack(spacing: 5) {
+                    signalIcon
+                    Text(signal.title)
+                        .novaLabel(signal.tint)
+                }
+                .fixedSize(horizontal: true, vertical: false)
             }
+            .padding(.horizontal, 10)
+            .frame(minHeight: AgentDesign.minimumTouchTarget)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .animation(.snappy(duration: 0.25), value: signal)
+        .agentInteractiveGlassButtonStyle(
+            radius: AgentDesign.minimumTouchTarget / 2,
+            tint: signal.tint,
+            selected: true,
+            glassID: signal.accessibilityID,
+            in: glassNamespace ?? localGlassNamespace
+        )
+        .animation(NovaMotion.enabled(reduceMotion: reduceMotion) ? .snappy(duration: 0.25) : nil, value: signal)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(signal.title): \(signal.detail)")
         .accessibilityIdentifier(signal.accessibilityID)
+    }
+
+    private var signalIcon: some View {
+        Image(systemName: signal.symbol)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(signal.tint)
     }
 }
 
@@ -453,11 +545,20 @@ struct ForgeMissionStrip: View {
     let scopedProject: Project?
     let status: WorkspaceStatusSnapshot
     let autoContinue: ProjectAutoContinueViewState
+    var glassNamespace: Namespace.ID? = nil
     let approve: () -> Void
     let reject: () -> Void
     let stop: () -> Void
     let pauseAutoContinue: () -> Void
     let openDossier: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var localGlassNamespace
+
+    private var allowsMotion: Bool {
+        NovaMotion.enabled(reduceMotion: reduceMotion) &&
+            !AgentPerformance.prefersReducedVisualEffects
+    }
 
     /// The strip surfaces whenever the project runtime has meaningful
     /// state (working, approval, error, paused, fresh changes, countdown).
@@ -533,7 +634,7 @@ struct ForgeMissionStrip: View {
                         Image(systemName: symbol)
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(tint)
-                            .symbolEffect(.pulse, isActive: status.isWorking)
+                            .symbolEffect(.pulse, isActive: status.isWorking && allowsMotion)
                     }
                     .frame(width: 28, height: 28)
 
@@ -561,37 +662,28 @@ struct ForgeMissionStrip: View {
 
                     Spacer(minLength: 6)
                 }
+                .frame(minHeight: AgentDesign.minimumTouchTarget)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .layoutPriority(1)
             .accessibilityLabel("Mission: \(title). \(detail). Opens the project dossier.")
             .accessibilityIdentifier("forgeMissionStrip")
 
             actions
-
-            Button {
-                NovaHaptics.surfaceRevealed()
-                openDossier()
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(AgentPalette.quaternaryText)
-                    .frame(width: 22, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHidden(true)
+                .layoutPriority(2)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .modifier(
             ForgeMissionStripSurface(
                 tint: tint,
-                usesSafetySurface: status.tone == .approval && !autoContinue.isCountingDown
+                usesSafetySurface: status.tone == .approval && !autoContinue.isCountingDown,
+                glassNamespace: resolvedGlassNamespace
             )
         )
-        .animation(.snappy(duration: 0.3), value: status)
-        .animation(.snappy(duration: 0.3), value: autoContinue)
+        .animation(allowsMotion ? .snappy(duration: 0.3) : nil, value: status)
+        .animation(allowsMotion ? .snappy(duration: 0.3) : nil, value: autoContinue)
     }
 
     @ViewBuilder
@@ -605,21 +697,13 @@ struct ForgeMissionStrip: View {
                 action: pauseAutoContinue
             )
         } else if status.tone == .approval {
-            HStack(spacing: 6) {
-                missionActionButton(
-                    title: "Reject",
-                    symbol: "xmark",
-                    tint: AgentPalette.rose,
-                    identifier: "missionReject",
-                    action: reject
-                )
-                missionActionButton(
-                    title: "Approve",
-                    symbol: "checkmark",
-                    tint: AgentPalette.green,
-                    identifier: "missionApprove",
-                    action: approve
-                )
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    approvalButtons
+                }
+                VStack(spacing: 6) {
+                    approvalButtons
+                }
             }
         } else if status.isWorking {
             missionActionButton(
@@ -647,23 +731,53 @@ struct ForgeMissionStrip: View {
                 Image(systemName: symbol)
                     .font(.system(size: 10, weight: .heavy))
                 Text(title)
-                    .font(NovaType.headline)
+                    .font(NovaType.caption)
+                    .fontWeight(.bold)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
             }
             .foregroundStyle(tint)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
-            .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.34), lineWidth: 0.8))
+            .padding(.horizontal, 10)
+            .frame(height: AgentDesign.minimumTouchTarget)
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .agentInteractiveGlassButtonStyle(
+            radius: AgentDesign.minimumTouchTarget / 2,
+            tint: tint,
+            selected: true,
+            glassID: identifier,
+            in: resolvedGlassNamespace
+        )
         .accessibilityIdentifier(identifier)
+    }
+
+    @ViewBuilder
+    private var approvalButtons: some View {
+        missionActionButton(
+            title: "Reject",
+            symbol: "xmark",
+            tint: AgentPalette.rose,
+            identifier: "missionReject",
+            action: reject
+        )
+        missionActionButton(
+            title: "Approve",
+            symbol: "checkmark",
+            tint: AgentPalette.green,
+            identifier: "missionApprove",
+            action: approve
+        )
+    }
+
+    private var resolvedGlassNamespace: Namespace.ID {
+        glassNamespace ?? localGlassNamespace
     }
 }
 
 private struct ForgeMissionStripSurface: ViewModifier {
     let tint: Color
     let usesSafetySurface: Bool
+    let glassNamespace: Namespace.ID
 
     func body(content: Content) -> some View {
         if usesSafetySurface {
@@ -673,15 +787,17 @@ private struct ForgeMissionStripSurface: ViewModifier {
                     shape.fill(
                         LinearGradient(
                             colors: [
-                                AgentPalette.surfaceElevated.opacity(0.96),
-                                AgentPalette.surface.opacity(0.92),
-                                tint.opacity(0.10)
+                                AgentPalette.surfaceElevated.opacity(0.54),
+                                AgentPalette.surface.opacity(0.42),
+                                tint.opacity(0.08)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
                 )
+                .agentGlass(radius: AgentDesign.rowRadius, tint: tint.opacity(0.14))
+                .agentGlassEffectID("forge-mission", in: glassNamespace)
                 .overlay(shape.strokeBorder(tint.opacity(0.36), lineWidth: 0.85))
                 .overlay(alignment: .leading) {
                     UnevenRoundedRectangle(topLeadingRadius: AgentDesign.rowRadius, bottomLeadingRadius: AgentDesign.rowRadius)
@@ -690,7 +806,12 @@ private struct ForgeMissionStripSurface: ViewModifier {
                 }
                 .shadow(color: AgentPalette.shadow.opacity(0.08), radius: 10, x: 0, y: 5)
         } else {
-            content.agentGlass(radius: AgentDesign.rowRadius, tint: tint)
+            // Keep status color in the glyph and actions; a restrained material
+            // tint lets the shared GlassGroup refract instead of reading as a
+            // solid colored card. Approval keeps the dedicated safety surface.
+            content
+                .agentGlass(radius: AgentDesign.rowRadius, tint: tint.opacity(0.11))
+                .agentGlassEffectID("forge-mission", in: glassNamespace)
         }
     }
 }
