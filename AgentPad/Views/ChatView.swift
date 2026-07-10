@@ -941,6 +941,10 @@ struct ChatView: View {
                         }
                         .onReceive(runtime.liveStream.objectWillChange) { _ in
                             keepLiveStreamReadableDuringGrowth()
+                            Task { @MainActor in
+                                await Task.yield()
+                                settleLiveStreamHandoff(animated: false)
+                            }
                         }
                         .onChange(of: composerFocused) {
                             guard composerFocused else { return }
