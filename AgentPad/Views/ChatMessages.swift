@@ -304,6 +304,19 @@ struct MessageBubble: View, Equatable {
     let tintID: String
     let openArtifact: (WorkspaceArtifact) -> Void
 
+    private var accessibilityIdentifier: String {
+        switch message.role {
+        case .user:
+            return "chatUserMessageBubble"
+        case .assistant:
+            return message.toolCalls.isEmpty ? "chatAssistantMessageBubble" : "chatAssistantToolCallBubble"
+        case .tool:
+            return "chatToolMessageBubble"
+        case .system:
+            return "chatSystemMessageBubble"
+        }
+    }
+
     nonisolated static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
         lhs.message == rhs.message &&
             lhs.workspace.rootURL == rhs.workspace.rootURL &&
@@ -340,6 +353,8 @@ struct MessageBubble: View, Equatable {
                 EmptyView()
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 
@@ -366,7 +381,6 @@ struct UserMessageBubble: View {
         }
         .padding(.horizontal, 18)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chatUserMessageBubble")
     }
 }
 
@@ -421,7 +435,6 @@ struct AssistantMessageBubble: View {
         }
         .padding(.horizontal, 18)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chatAssistantMessageBubble")
     }
 }
 
