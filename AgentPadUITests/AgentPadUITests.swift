@@ -217,12 +217,14 @@ final class AgentPadUITests: XCTestCase {
 
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 4), "Streaming response should render as one live assistant bubble.")
+        let liveBubbleFrame = liveBubble.frame
+        XCTAssertFalse(liveBubbleFrame.isEmpty, "Streaming response should be measurable before final handoff can replace it.")
         XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveStreamingBubble")), 1, "Streaming should update one live bubble instead of adding duplicates.")
         let liveCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: 0, timeout: 5)
         XCTAssertGreaterThan(liveCharacterCount, 0, "Send-path live response should reveal visible characters before final handoff.")
         let liveBottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(liveBottomAccessory.waitForExistence(timeout: 3), "Bottom accessory should be measurable while the live response is streaming.")
-        let liveDockGap = liveBottomAccessory.frame.minY - liveBubble.frame.maxY
+        let liveDockGap = liveBottomAccessory.frame.minY - liveBubbleFrame.maxY
         XCTAssertGreaterThanOrEqual(liveDockGap, 4, "Live response should stay readable above the composer while streaming.")
         XCTAssertLessThanOrEqual(liveDockGap, 112, "Live response auto-scroll should land on the response, not an invisible spacer below the transcript.")
         capture("sev0-chat-send-stream-live", app: app)

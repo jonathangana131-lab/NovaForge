@@ -65,19 +65,7 @@ struct AIResponseLetterFlowView: View {
     let frame: ForgeLiveFeedFrame
 
     var body: some View {
-        if frame.displayText.isEmpty {
-            Text("Preparing response")
-                .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
-                .foregroundStyle(AgentPalette.secondaryText)
-                .lineSpacing(5)
-                .accessibilityIdentifier("streamingTextReveal")
-                .accessibilityLabel("Preparing response")
-                .accessibilityValue("\(frame.characterCount) characters streamed")
-                .accessibilityHint("Response is still arriving")
-        } else {
-            LiquidStreamingTextReveal(frame: frame)
-                .accessibilityHint("Response is still arriving")
-        }
+        LiquidStreamingTextReveal(frame: frame)
     }
 }
 

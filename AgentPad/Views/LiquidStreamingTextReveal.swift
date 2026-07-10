@@ -9,9 +9,13 @@ import SwiftUI
 struct LiquidStreamingTextReveal: View {
     let frame: ForgeLiveFeedFrame
 
+    private var spokenText: String {
+        frame.displayText.isEmpty ? "Preparing response" : frame.displayText
+    }
+
     private var flowingText: Text {
         guard !frame.displayText.isEmpty else {
-            return Text(" ").foregroundColor(AgentPalette.ink)
+            return Text("Preparing response").foregroundColor(AgentPalette.secondaryText)
         }
 
         guard !frame.activeTail.isEmpty,
@@ -33,22 +37,20 @@ struct LiquidStreamingTextReveal: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            flowingText
-                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                .lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 2)
-                .accessibilityIdentifier("streamingTextReveal")
-                .accessibilityLabel(frame.displayText)
-                .accessibilityValue("\(frame.characterCount) characters streamed")
-                .transaction { transaction in
-                    // The feed engine owns cadence. Layout interpolation here
-                    // would make line wrapping wobble while the chat autoscrolls.
-                    transaction.animation = nil
-                }
-
-        }
+        flowingText
+            .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+            .lineSpacing(5)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 2)
+            .accessibilityIdentifier("streamingTextReveal")
+            .accessibilityLabel(spokenText)
+            .accessibilityValue("\(frame.characterCount) characters streamed")
+            .accessibilityHint("Response is still arriving")
+            .transaction { transaction in
+                // The feed engine owns cadence. Layout interpolation here
+                // would make line wrapping wobble while the chat autoscrolls.
+                transaction.animation = nil
+            }
     }
 }
 

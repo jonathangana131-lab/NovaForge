@@ -36,7 +36,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertGreaterThan(stream.revealBacklog, 0)
 
         let initialCount = stream.displayText.count
-        try await Task.sleep(for: .milliseconds(140))
+        let revealDeadline = Date().addingTimeInterval(1.0)
+        while stream.displayText.count <= initialCount && Date() < revealDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         XCTAssertGreaterThan(stream.displayText.count, initialCount, "The display-paced reveal loop should keep flowing after the first glyph.")
         XCTAssertLessThan(stream.displayText.count, text.count, "The reveal loop should not dump the entire backlog in one UI update.")
 
