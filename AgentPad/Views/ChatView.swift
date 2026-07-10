@@ -936,7 +936,10 @@ struct ChatView: View {
                             handleRunStateChange(newState)
                         }
                         .onChange(of: runtime.liveStream.handoffMessageID) { _, newValue in
-                            guard ownsActiveRunState, newValue != nil else { return }
+                            guard ownsActiveRunState, newValue != nil else {
+                                transient.handoffCacheRefreshTask?.cancel()
+                                return
+                            }
                             settleLiveStreamHandoff(animated: true)
                         }
                         .onReceive(runtime.liveStream.objectWillChange) { _ in
@@ -1771,10 +1774,47 @@ struct ChatView: View {
 
     private func settleLiveStreamHandoff(animated: Bool) {
         guard ownsActiveRunState, runtime.liveStream.handoffMessageID != nil else { return }
-        updateCachedMessages()
+        scheduleHandoffCacheRefresh(animated: animated)
         guard shouldKeepTranscriptPinned else { return }
         scrollAttachment = .restoring
         requestJumpToLatest(animated: animated, delay: .milliseconds(60))
+    }
+
+    private func scheduleHandoffCacheRefresh(animated: Bool) {
+        guard let handoffMessageID = runtime.liveStream.handoffMessageID else {
+            transient.handoffCacheRefreshTask?.cancel()
+            return
+        }
+        if cachedMessages.contains(where: { $0.id == handoffMessageID }) {
+            transient.handoffCacheRefreshTask?.cancel()
+            return
+        }
+        let conversationID = conversation.id
+        updateCachedMessages()
+        transient.handoffCacheRefreshTask?.cancel()
+        transient.handoffCacheRefreshTask = Task { @MainActor in
+            let delays: [Duration] = [
+                .milliseconds(75),
+                .milliseconds(150),
+                .milliseconds(300),
+                .milliseconds(600),
+                .seconds(1),
+                .seconds(2)
+            ]
+            for delay in delays {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled,
+                      ownsActiveRunState,
+                      conversation.id == conversationID,
+                      runtime.liveStream.handoffMessageID == handoffMessageID else { return }
+                guard !cachedMessages.contains(where: { $0.id == handoffMessageID }) else { return }
+                updateCachedMessages()
+                if shouldKeepTranscriptPinned {
+                    scrollAttachment = .restoring
+                    requestJumpToLatest(animated: animated, delay: .milliseconds(40))
+                }
+            }
+        }
     }
 
     private func keepLatestReadableAfterAccessoryResize(animated: Bool = true) {
@@ -2076,6 +2116,7 @@ private enum ChatTranscriptRow: Identifiable, Equatable {
 private final class ChatTransientState: ObservableObject {
     var messageCacheGeneration = 0
     var messageCacheTask: Task<Void, Never>?
+    var handoffCacheRefreshTask: Task<Void, Never>?
     var bottomDistanceUpdateTask: Task<Void, Never>?
     var accessoryHeightUpdateTask: Task<Void, Never>?
     var accessoryResizeFollowUpTask: Task<Void, Never>?
@@ -2089,6 +2130,7 @@ private final class ChatTransientState: ObservableObject {
     var manualRepinUntil = Date.distantPast
 
     func cancelLayoutTasks() {
+        handoffCacheRefreshTask?.cancel()
         bottomDistanceUpdateTask?.cancel()
         accessoryHeightUpdateTask?.cancel()
         accessoryResizeFollowUpTask?.cancel()
