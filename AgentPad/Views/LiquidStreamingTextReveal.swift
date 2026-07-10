@@ -35,9 +35,10 @@ struct LiquidStreamingTextReveal: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             flowingText
-                .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
+                .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
                 .lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 2)
                 .accessibilityIdentifier("streamingTextReveal")
                 .accessibilityLabel(frame.displayText)
                 .accessibilityValue("\(frame.characterCount) characters streamed")

@@ -512,8 +512,7 @@ struct LiveResponseView: View {
                     AIResponseStageView(
                         stream: stream,
                         isWorking: isWorking,
-                        isHandoffActive: isHandoffActive,
-                        runtime: runtime
+                        isHandoffActive: isHandoffActive
                     )
                 } else {
                     VStack(alignment: .leading, spacing: 10) {

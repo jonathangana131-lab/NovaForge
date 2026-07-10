@@ -11,48 +11,11 @@ struct AIResponseStageView: View {
     @ObservedObject var stream: LiveStreamBuffer
     let isWorking: Bool
     let isHandoffActive: Bool
-    let runtime: AgentRuntime
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var frame: ForgeLiveFeedFrame {
         stream.displayFrame
-    }
-
-    private var activeToolPresentation: (title: String, target: String?)? {
-        guard let toolName = runtime.activeToolName else { return nil }
-        return LiveChatSessionReducer.presentation(
-            forToolName: toolName,
-            detail: runtime.activeToolDetail
-        )
-    }
-
-    private var stageStatus: AIStreamStatus {
-        if runtime.pendingTool != nil {
-            return .waitingApproval("Review required")
-        }
-        if let activeToolPresentation {
-            return .usingTool(activeToolPresentation.title)
-        }
-        if frame.displayText.isEmpty {
-            return .connecting("NovaForge")
-        }
-        return .composing
-    }
-
-    private var statusLine: String {
-        switch stageStatus {
-        case .waitingApproval:
-            return "Waiting for your approval"
-        case .usingTool(let title):
-            return title
-        case .finalizing:
-            return "Finishing response…"
-        case .connecting:
-            return "Preparing response…"
-        default:
-            return frame.statusLine
-        }
     }
 
     private var artifacts: [LiveChatArtifactHandoff] {
@@ -61,42 +24,29 @@ struct AIResponseStageView: View {
 
     var body: some View {
         if isWorking || isHandoffActive {
-            HStack(alignment: .top, spacing: 0) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 9) {
-                        AIResponseStatusGlyph(status: stageStatus, tint: AgentPalette.primaryAccent)
-                            .accessibilityHidden(true)
+            HStack {
+                HStack(alignment: .top, spacing: 11) {
+                    NovaReticleGlyph(symbol: "sparkles", tint: AgentPalette.primaryAccent, size: 30)
+                        .padding(.top, 1)
+                        .accessibilityHidden(true)
 
-                        Text(statusLine)
-                            .font(.system(size: 11, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                            .tracking(0.15)
-                            .foregroundStyle(AgentPalette.tertiaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.78)
-                            .contentTransition(.interpolate)
-                            .accessibilityIdentifier("liveStreamingStatusText")
+                    VStack(alignment: .leading, spacing: 10) {
+                        AIResponseLetterFlowView(frame: frame)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Spacer(minLength: 0)
+                        if !artifacts.isEmpty {
+                            AIResponseArtifactShelf(artifacts: artifacts, tint: AgentPalette.primaryAccent)
+                        }
                     }
-                    .frame(minHeight: 25)
-
-                    AIResponseLetterFlowView(
-                        frame: frame
-                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if !artifacts.isEmpty {
-                        AIResponseArtifactShelf(artifacts: artifacts, tint: AgentPalette.primaryAccent)
-                    }
                 }
-                .padding(.horizontal, 15)
-                .padding(.vertical, 13)
+                .padding(13)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .chatMessageSurface(radius: 22, tint: AgentPalette.primaryAccent, emphasis: .live)
+                .chatMessageSurface(radius: 20, tint: AgentPalette.primaryAccent, emphasis: .assistant)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("aiResponseStage")
 
-                Spacer(minLength: 36)
+                Spacer(minLength: 44)
             }
             .padding(.horizontal, 18)
             .liquidResponseEntrance(enabled: NovaMotion.enabled(reduceMotion: reduceMotion))
@@ -133,58 +83,6 @@ struct AIResponseLetterFlowView: View {
         .accessibilityValue("\(frame.characterCount) characters streamed")
         .accessibilityHint("Response is still arriving")
         .accessibilityIdentifier("streamingTextReveal")
-    }
-}
-
-private struct AIResponseStatusGlyph: View {
-    let status: AIStreamStatus
-    let tint: Color
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(foreground.opacity(0.10))
-            Image(systemName: symbol)
-                .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(foreground)
-        }
-        .frame(width: 25, height: 25)
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(foreground.opacity(0.20), lineWidth: 0.55)
-        }
-    }
-
-    private var symbol: String {
-        switch status {
-        case .idle, .connecting:
-            return "sparkles"
-        case .composing:
-            return "text.bubble.fill"
-        case .usingTool:
-            return "wrench.and.screwdriver.fill"
-        case .waitingApproval:
-            return "hand.raised.fill"
-        case .finalizing:
-            return "checkmark.seal.fill"
-        case .complete:
-            return "checkmark.circle.fill"
-        case .failed:
-            return "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var foreground: Color {
-        switch status {
-        case .waitingApproval:
-            return AgentPalette.approval
-        case .complete, .finalizing:
-            return AgentPalette.green
-        case .failed:
-            return AgentPalette.rose
-        default:
-            return tint
-        }
     }
 }
 
