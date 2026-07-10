@@ -212,8 +212,10 @@ final class AgentPadUITests: XCTestCase {
         composer.typeText("Yo")
         app.buttons["sendMessageButton"].tap()
 
-        let userText = app.staticTexts["Yo"].firstMatch
-        XCTAssertTrue(userText.waitForExistence(timeout: 2), "User message should appear immediately after Send.")
+        let sentUserBubble = app.otherElements.matching(identifier: "chatUserMessageBubble")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Yo"))
+            .firstMatch
+        XCTAssertTrue(sentUserBubble.waitForExistence(timeout: 5), "User message should appear immediately after Send.")
 
         let liveBubble = app.otherElements["liveStreamingBubble"]
         XCTAssertTrue(liveBubble.waitForExistence(timeout: 4), "Streaming response should render as one live assistant bubble.")
