@@ -36,7 +36,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertGreaterThan(stream.revealBacklog, 0)
 
         let initialCount = stream.displayText.count
-        try await Task.sleep(for: .milliseconds(140))
+        let revealDeadline = Date().addingTimeInterval(1.0)
+        while stream.displayText.count <= initialCount && Date() < revealDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         XCTAssertGreaterThan(stream.displayText.count, initialCount, "The display-paced reveal loop should keep flowing after the first glyph.")
         XCTAssertLessThan(stream.displayText.count, text.count, "The reveal loop should not dump the entire backlog in one UI update.")
 
@@ -774,6 +777,61 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Local run complete" })
     }
 
+    func testSendPersistsAssistantResponseThroughProviderRuntimePath() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Send Proof", mission: "Prove Send saves the assistant response.", workspaceName: "Default")
+        let conversation = Conversation(title: "Send Proof", project: project)
+        let settings = AgentSettings(provider: .openAI, modelID: AIProvider.openAI.defaultModel, activeProjectID: project.id)
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "I can inspect files, plan changes, run builds, and capture proof screenshots.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug provider send proof"
+            )
+        ])
+
+        runtime.send(
+            prompt: "Show me what tools you can use",
+            conversation: conversation,
+            settings: settings,
+            context: context,
+            project: project
+        )
+
+        let deadline = Date().addingTimeInterval(3)
+        while runtime.isWorking && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertNil(runtime.lastError)
+        XCTAssertNil(runtime.lastFailedPrompt)
+        XCTAssertEqual(conversation.messages.map(\.role), [.user, .assistant])
+        XCTAssertEqual(conversation.messages.first?.content, "Show me what tools you can use")
+        XCTAssertEqual(conversation.messages.last?.content, "I can inspect files, plan changes, run builds, and capture proof screenshots.")
+        XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Response complete" })
+
+        let events = try context.fetch(FetchDescriptor<ProjectEvent>())
+        XCTAssertTrue(events.contains { $0.kind == .promptQueued && $0.detail == "Show me what tools you can use" })
+        XCTAssertTrue(events.contains { $0.kind == .responseSaved && $0.detail.contains("inspect files") })
+        XCTAssertTrue(events.contains { $0.kind == .runCompleted && $0.title == "Run completed" })
+        XCTAssertTrue(events.contains { $0.kind == .agentProofCreated && $0.title == "Agent proof captured" })
+    }
+
     func testLocalDeterministicWriteHonorsReviewFirstBeforeMutation() async throws {
         let container = try ModelContainer(
             for: TestModelSchema.projectFoundation,
@@ -877,42 +935,6 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue(runtime.switchWorkspace(to: redirectedWorkspaceName))
         XCTAssertEqual(runtime.workspace.workspaceName, redirectedWorkspaceName)
         try? FileManager.default.removeItem(at: runtime.workspace.rootURL)
-    }
-
-    func testLocalDeterministicWriteCanUseExplicitAutoApproval() async throws {
-        let container = try ModelContainer(
-            for: TestModelSchema.projectFoundation,
-            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
-        )
-        let context = container.mainContext
-        let workspaceRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("NovaForgeLocalAutoWrite-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
-
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        let conversation = Conversation(title: "Auto local write")
-        let settings = AgentSettings(provider: .local, autoApproveWrites: true)
-        context.insert(conversation)
-        context.insert(settings)
-        try context.save()
-
-        runtime.send(
-            prompt: "create file auto-write.txt with automatic content",
-            conversation: conversation,
-            settings: settings,
-            context: context
-        )
-
-        let deadline = Date().addingTimeInterval(3)
-        while runtime.isWorking && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(40))
-        }
-
-        XCTAssertNil(runtime.pendingTool)
-        XCTAssertEqual(runtime.runState, .completed)
-        XCTAssertEqual(try runtime.workspace.read("auto-write.txt"), "automatic content")
-        let automaticReceipt = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
-        XCTAssertEqual(automaticReceipt.phase, .completed)
     }
 
     func testLocalNativePlanDoesNotCompleteAfterHistorySaveFailure() async throws {

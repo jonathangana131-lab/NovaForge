@@ -1,7 +1,9 @@
 import os
 import Foundation
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct AgentPalette {
     nonisolated(unsafe) private static var cachedPalette = AgentTheme.current.palette
@@ -277,6 +279,7 @@ enum AgentPerformance {
     }
 }
 
+#if canImport(UIKit)
 struct PerformanceFrameProbe: UIViewRepresentable {
     let surface: AgentPerformance.FrameSurface
     let isActive: Bool
@@ -417,6 +420,19 @@ struct PerformanceFrameProbe: UIViewRepresentable {
         }
     }
 }
+#else
+struct PerformanceFrameProbe: View {
+    let surface: AgentPerformance.FrameSurface
+    let isActive: Bool
+    var sampleInterval: TimeInterval = 1
+    var hitchThreshold: TimeInterval = 1.0 / 30.0
+    var warmupDuration: TimeInterval = 0.55
+
+    var body: some View {
+        EmptyView()
+    }
+}
+#endif
 
 enum AgentDesign {
     static let cardRadius: CGFloat = 22
@@ -621,6 +637,7 @@ final class MatrixRainGlyphAtlas {
         let key = "\(kind.rawValue)-\(palette.backgroundEffect.rawValue)"
         if let cached = cache[key] { return cached }
         let layer = kind.layer
+#if canImport(UIKit)
         let sprites = LayerSprites(
             head: renderGlyphs(fontSize: layer.headFontSize, weight: .bold, color: UIColor(palette.textPrimary)),
             tail: renderGlyphs(fontSize: layer.tailFontSize, weight: .medium, color: UIColor(palette.primaryAccent)),
@@ -633,10 +650,25 @@ final class MatrixRainGlyphAtlas {
                 )
                 : []
         )
+#else
+        let sprites = LayerSprites(
+            head: renderGlyphs(fontSize: layer.headFontSize, weight: .bold, color: palette.textPrimary),
+            tail: renderGlyphs(fontSize: layer.tailFontSize, weight: .medium, color: palette.primaryAccent),
+            glow: layer.glowRadius > 0
+                ? renderGlyphs(
+                    fontSize: layer.headFontSize + layer.glowRadius,
+                    weight: .bold,
+                    color: palette.primaryAccent,
+                    blur: 1.5
+                )
+                : []
+        )
+#endif
         cache[key] = sprites
         return sprites
     }
 
+#if canImport(UIKit)
     private func renderGlyphs(
         fontSize: CGFloat,
         weight: UIFont.Weight,
@@ -672,6 +704,18 @@ final class MatrixRainGlyphAtlas {
             return Image(uiImage: image).renderingMode(.original)
         }
     }
+#else
+    private func renderGlyphs(
+        fontSize: CGFloat,
+        weight: Font.Weight,
+        color: Color,
+        blur: CGFloat = 0
+    ) -> [Image] {
+        MatrixRainSeed.glyphs.map { glyph in
+            Image(systemName: "circle.fill")
+        }
+    }
+#endif
 }
 
 private extension MatrixRainBackdrop {
@@ -1586,27 +1630,51 @@ struct BottomDockContentShield: View {
 @MainActor
 enum NovaHaptics {
     static func runStarted() {
+#if canImport(UIKit)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred(intensity: 0.9)
+#endif
     }
 
     static func runSucceeded() {
+#if canImport(UIKit)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+#endif
     }
 
     static func runFailed() {
+#if canImport(UIKit)
         UINotificationFeedbackGenerator().notificationOccurred(.error)
+#endif
     }
 
     static func approvalNeeded() {
+#if canImport(UIKit)
         let generator = UIImpactFeedbackGenerator(style: .rigid)
         generator.impactOccurred(intensity: 1.0)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             generator.impactOccurred(intensity: 0.6)
         }
+#endif
     }
 
     static func tick() {
+#if canImport(UIKit)
         UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.7)
+#endif
+    }
+
+    /// Lens/filter change — the light ratchet click.
+    static func lensChanged() {
+#if canImport(UIKit)
+        UISelectionFeedbackGenerator().selectionChanged()
+#endif
+    }
+
+    /// A sheet or drawer surfacing.
+    static func surfaceRevealed() {
+#if canImport(UIKit)
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.8)
+#endif
     }
 }
 

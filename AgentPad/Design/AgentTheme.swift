@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 enum AgentTheme: String, CaseIterable, Identifiable {
     case matrixRain
@@ -499,6 +501,7 @@ struct AgentThemePalette {
 @MainActor
 enum AgentThemeUIKit {
     static func apply(_ theme: AgentTheme = AgentTheme.current) {
+#if canImport(UIKit)
         let palette = theme.palette
         let appearance = UITabBarAppearance()
         appearance.configureWithTransparentBackground()
@@ -544,5 +547,6 @@ enum AgentThemeUIKit {
         UITabBar.appearance().backgroundColor = .clear
         UITabBar.appearance().barTintColor = .clear
         UITabBar.appearance().isTranslucent = true
+#endif
     }
 }

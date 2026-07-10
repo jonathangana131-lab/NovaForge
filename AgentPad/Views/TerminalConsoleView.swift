@@ -1,5 +1,8 @@
 import SwiftData
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct TerminalOutputLine: Identifiable, Hashable, Sendable {
     let id: UUID
@@ -299,6 +302,8 @@ struct TerminalConsoleView: View {
 
             commandDeckOverview
 
+            terminalSurfaceMap
+
             terminalProofSummaryStrip
 
             if runtime.shouldShowWorkspaceStatusStrip {
@@ -373,6 +378,44 @@ struct TerminalConsoleView: View {
             parts.append("\(commandHistory.count) in history")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private var terminalSurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Command loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Scope",
+                    detail: runtime.workspace.workspaceName,
+                    symbol: "folder.badge.gearshape",
+                    tint: AgentPalette.cyan,
+                    isActive: true
+                ),
+                NovaSurfaceMapNode(
+                    title: "Catalog",
+                    detail: "\(TerminalCommandCatalog.supportedCommands.count) commands",
+                    symbol: "list.bullet.rectangle.portrait.fill",
+                    tint: AgentPalette.lilac,
+                    isActive: !inputCommand.isEmpty
+                ),
+                NovaSurfaceMapNode(
+                    title: "Proof",
+                    detail: "\(consoleLines.count) receipts",
+                    symbol: "checkmark.seal.fill",
+                    tint: AgentPalette.green,
+                    isActive: !consoleLines.isEmpty
+                ),
+                NovaSurfaceMapNode(
+                    title: "Safety",
+                    detail: pendingMutatingCommand == nil ? "Armed" : "Review",
+                    symbol: "shield.lefthalf.filled",
+                    tint: pendingMutatingCommand == nil ? AgentPalette.green : AgentPalette.warning,
+                    isActive: pendingMutatingCommand != nil
+                )
+            ],
+            tint: AgentPalette.lilac
+        )
+        .accessibilityIdentifier("terminalSurfaceMap")
     }
 
     private var terminalProofSummaryStrip: some View {
@@ -878,8 +921,7 @@ struct TerminalConsoleView: View {
             }
             
             Button {
-                let impact = UIImpactFeedbackGenerator(style: .light)
-                impact.impactOccurred()
+                NovaHaptics.tick()
                 showingHistorySheet = true
             } label: {
                 ZStack(alignment: .topTrailing) {
@@ -993,7 +1035,7 @@ struct TerminalConsoleView: View {
         guard TerminalCommandDraft(cmd).canRun else { return }
         if shouldConfirmMutation(cmd) {
             pendingMutatingCommand = cmd
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            NovaHaptics.tick()
             return
         }
         executeCommand(cmd)
@@ -1076,17 +1118,15 @@ struct TerminalConsoleView: View {
                 } catch {
                     modelContext.rollback()
                     terminalSaveError = "Command ran, but NovaForge could not save its terminal record or timeline event. The output remains visible only in this Terminal session. \(error.localizedDescription)"
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    NovaHaptics.runFailed()
                 }
                 isExecuting = false
                 commandTask = nil
 
                 if commandFailed {
-                    let errorImpact = UINotificationFeedbackGenerator()
-                    errorImpact.notificationOccurred(.error)
+                    NovaHaptics.runFailed()
                 } else {
-                    let successImpact = UIImpactFeedbackGenerator(style: .medium)
-                    successImpact.impactOccurred()
+                    NovaHaptics.runStarted()
                 }
             }
         }
@@ -1179,7 +1219,7 @@ struct TerminalConsoleView: View {
     }
 
     private func toggleOutputDetails(_ id: UUID) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        NovaHaptics.tick()
         withAnimation(.smooth(duration: 0.18)) {
             if expandedLineIDs.contains(id) {
                 expandedLineIDs.remove(id)
@@ -1190,7 +1230,9 @@ struct TerminalConsoleView: View {
     }
 
     private func copyOutput(_ line: TerminalOutputLine) {
+        #if canImport(UIKit)
         UIPasteboard.general.string = line.output
+        #endif
         copiedOutputLineID = line.id
         copyFeedbackTask?.cancel()
         copyFeedbackTask = Task { @MainActor in
@@ -1201,7 +1243,7 @@ struct TerminalConsoleView: View {
             }
             copyFeedbackTask = nil
         }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        NovaHaptics.tick()
     }
 
     private func seedTerminalStressIfNeeded() {

@@ -23,7 +23,6 @@
 
 import SwiftData
 import SwiftUI
-import UIKit
 
 // MARK: - Forge header
 
@@ -112,23 +111,24 @@ struct ForgeHeader: View {
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Forge Header Body")
-        HStack(alignment: .center, spacing: 11) {
-            chromeButton(
-                symbol: "bubble.left.and.bubble.right",
-                tint: chromeTint,
-                label: "Open chats",
-                identifier: "forgeChatsButton",
-                action: openChatDrawer
-            )
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 11) {
+                chromeButton(
+                    symbol: "bubble.left.and.bubble.right",
+                    tint: chromeTint,
+                    label: "Open Forge threads",
+                    identifier: "forgeChatsButton",
+                    action: openChatDrawer
+                )
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(sessionTitle)
-                        .font(NovaType.title)
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityIdentifier("currentChatTitle")
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(sessionTitle)
+                            .font(NovaType.title)
+                            .foregroundStyle(AgentPalette.ink)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .accessibilityIdentifier("currentChatTitle")
 
                     if !missionStripOwnsLiveState {
                         StatusDot(text: statusText, symbol: statusSymbol, tint: statusTint)
@@ -137,16 +137,19 @@ struct ForgeHeader: View {
                 }
 
                 contextLine
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            chromeButton(
-                symbol: "square.and.pencil",
-                tint: AgentPalette.lilac,
-                label: "New chat",
-                identifier: "forgeNewChatButton",
-                action: newChat
-            )
+                chromeButton(
+                    symbol: "square.and.pencil",
+                    tint: AgentPalette.lilac,
+                    label: "New mission",
+                    identifier: "forgeNewChatButton",
+                    action: newChat
+                )
+            }
+
+            forgeSurfaceMap
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -157,6 +160,44 @@ struct ForgeHeader: View {
             NovaMotion.enabled(reduceMotion: reduceMotion) ? .snappy(duration: 0.24) : nil,
             value: missionStripOwnsLiveState
         )
+    }
+
+    private var forgeSurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Forge loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Brief",
+                    detail: scopeTitle,
+                    symbol: scopedProject == nil ? "folder.fill" : "shippingbox.fill",
+                    tint: scopeTint,
+                    isActive: scopedProject != nil
+                ),
+                NovaSurfaceMapNode(
+                    title: "Run",
+                    detail: statusText,
+                    symbol: statusSymbol,
+                    tint: statusTint,
+                    isActive: ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil)
+                ),
+                NovaSurfaceMapNode(
+                    title: "Proof",
+                    detail: "\(artifacts.count) artifacts",
+                    symbol: "checkmark.seal.fill",
+                    tint: AgentPalette.green,
+                    isActive: !artifacts.isEmpty
+                ),
+                NovaSurfaceMapNode(
+                    title: "Queue",
+                    detail: durableSnapshot.pendingApprovalCount > 0 ? "\(durableSnapshot.pendingApprovalCount) approvals" : "\(runtime.queuedPromptCount) queued",
+                    symbol: durableSnapshot.pendingApprovalCount > 0 ? "checkmark.shield.fill" : "tray.full.fill",
+                    tint: durableSnapshot.pendingApprovalCount > 0 ? AgentPalette.cyan : AgentPalette.lilac,
+                    isActive: durableSnapshot.pendingApprovalCount > 0 || runtime.queuedPromptCount > 0
+                )
+            ],
+            tint: chromeTint
+        )
+        .accessibilityIdentifier("forgeSurfaceMap")
     }
 
     /// Second deck: the scope pill plus at most ONE prioritized signal.
@@ -313,7 +354,7 @@ struct ForgeHeader: View {
     }
 
     private func activate(_ signal: ForgeSignal) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        NovaHaptics.tick()
         switch signal.destination {
         case .tab(let tab):
             openWorkspaceSurface(tab)
@@ -493,22 +534,8 @@ struct ForgeSignalChip: View {
     var body: some View {
         Button(action: action) {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 5) {
-                    signalIcon
-                    Text(signal.title)
-                        .novaLabel(signal.tint)
-                    Text(signal.detail)
-                        .font(NovaType.caption)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                }
-                .fixedSize(horizontal: true, vertical: false)
-
-                HStack(spacing: 5) {
-                    signalIcon
-                    Text(signal.title)
-                        .novaLabel(signal.tint)
-                }
-                .fixedSize(horizontal: true, vertical: false)
+                signalLine(showDetail: true)
+                signalLine(showDetail: false)
             }
             .padding(.horizontal, 10)
             .frame(minHeight: AgentDesign.minimumTouchTarget)
@@ -527,10 +554,23 @@ struct ForgeSignalChip: View {
         .accessibilityIdentifier(signal.accessibilityID)
     }
 
-    private var signalIcon: some View {
-        Image(systemName: signal.symbol)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(signal.tint)
+    private func signalLine(showDetail: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: signal.symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(signal.tint)
+            Text(signal.title)
+                .novaLabel(signal.tint)
+                .fixedSize(horizontal: true, vertical: false)
+            if showDetail {
+                Text(signal.detail)
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

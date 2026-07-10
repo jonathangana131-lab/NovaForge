@@ -64,27 +64,13 @@ sudo xcode-select -s "$NEWEST/Contents/Developer"
 xcodebuild -version
 
 # ---------------------------------------------------------------------------
-echo "==> Ensuring binary app icon"
-if [ ! -f "$ICON" ]; then
-  echo "icon missing - restoring from import archive"
-  curl -fsSL "$IMPORT_TARBALL_URL" -o /tmp/novaforge-import.tar.gz
-  mkdir -p /tmp/novaforge-import
-  tar -xzf /tmp/novaforge-import.tar.gz -C /tmp/novaforge-import
-  cp "/tmp/novaforge-import/$ICON" "$ICON"
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git add "$ICON"
-  git commit -m "chore: restore binary app icon from import archive [skip ci]"
-  git push origin "HEAD:${GITHUB_REF_NAME:-main}" || echo "WARN: icon push failed, continuing with local copy"
+echo "==> Verifying required source assets"
+if [ ! -s "$ICON" ]; then
+  echo "ERROR: required app icon is missing or empty: $ICON" >&2
+  echo "CI no longer downloads or commits source assets during release proof." >&2
+  exit 64
 fi
-
-echo "==> Applying facelift app icon"
-if curl -fsSL "$FACELIFT_ICON_URL" -o /tmp/facelift-icon.png && [ -s /tmp/facelift-icon.png ]; then
-  cp /tmp/facelift-icon.png "$ICON"
-  echo "facelift icon applied ($(wc -c < "$ICON") bytes)"
-else
-  echo "WARN: facelift icon fetch failed — building with repo icon"
-fi
+echo "app icon present ($(wc -c < "$ICON") bytes)"
 
 # ---------------------------------------------------------------------------
 # Watchdog: runs 30/31 sat in_progress for 36-45+ min against a 15-24 min

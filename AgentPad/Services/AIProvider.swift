@@ -217,44 +217,118 @@ struct ProviderConfiguration: Equatable, Sendable {
     let customChatCompletionsURL: String
 
     var chatCompletionsURL: URL? {
-        let raw = provider == .custom ? normalizedCustomChatCompletionsURL : provider.defaultChatCompletionsURL
-        return Self.validatedProviderURL(raw)
+        if provider == .custom {
+            return normalizedCustomChatCompletionsURL
+        }
+        return Self.secureEndpointURL(from: provider.defaultChatCompletionsURL)
     }
 
     var modelsURL: URL? {
         if let providerModelsURL = provider.modelsURL {
-            return Self.validatedProviderURL(providerModelsURL.absoluteString)
+            return Self.isSecureEndpoint(providerModelsURL) ? providerModelsURL : nil
         }
         guard provider == .custom else { return nil }
-        let trimmed = normalizedCustomChatCompletionsURL
-        guard trimmed.hasSuffix("/chat/completions") else { return nil }
-        return Self.validatedProviderURL(String(trimmed.dropLast("/chat/completions".count)) + "/models")
+        guard let chatURL = normalizedCustomChatCompletionsURL else { return nil }
+        return Self.customModelsURL(from: chatURL)
     }
 
-    private var normalizedCustomChatCompletionsURL: String {
+    private var normalizedCustomChatCompletionsURL: URL? {
         var trimmed = customChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while trimmed.hasSuffix("/") {
             trimmed.removeLast()
         }
-        if trimmed.hasSuffix("/chat/completions") {
-            return trimmed
-        }
-        if trimmed.hasSuffix("/v1") {
-            return trimmed + "/chat/completions"
-        }
-        return trimmed
-    }
-
-    private static func validatedProviderURL(_ raw: String) -> URL? {
-        guard let components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = components.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
+        guard var components = URLComponents(string: trimmed),
+              let rawScheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(rawScheme),
               components.host?.isEmpty == false,
               components.user == nil,
-              components.password == nil,
-              let url = components.url else {
-            return nil
-        }
+              components.password == nil else { return nil }
+
+        components.scheme = rawScheme
+        components.path = Self.normalizedCustomChatPath(components.path)
+        return components.url.flatMap { Self.isAllowedCustomEndpoint($0) ? $0 : nil }
+    }
+
+    private static func secureEndpointURL(from raw: String) -> URL? {
+        guard let url = URL(string: raw), isSecureEndpoint(url) else { return nil }
         return url
     }
+
+    private static func isSecureEndpoint(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" &&
+            endpointHost(url) != nil &&
+            url.user(percentEncoded: false) == nil &&
+            url.password(percentEncoded: false) == nil
+    }
+
+    private static func isAllowedCustomEndpoint(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = endpointHost(url),
+              url.user(percentEncoded: false) == nil,
+              url.password(percentEncoded: false) == nil else { return false }
+
+        if scheme == "https" { return true }
+        if scheme == "http" { return isLocalNetworkHost(host) }
+        return false
+    }
+
+    private static func endpointHost(_ url: URL) -> String? {
+        let host = (url.host(percentEncoded: false) ?? url.host ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return host.isEmpty ? nil : host.lowercased()
+    }
+
+    private static func isLocalNetworkHost(_ rawHost: String) -> Bool {
+        let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") {
+            return true
+        }
+        if host == "::1" { return true }
+        if host.contains(":") {
+            return host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd")
+        }
+
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+        switch parts[0] {
+        case 10, 127:
+            return true
+        case 169:
+            return parts[1] == 254
+        case 172:
+            return (16...31).contains(parts[1])
+        case 192:
+            return parts[1] == 168
+        default:
+            return false
+        }
+    }
+
+    private static func normalizedCustomChatPath(_ rawPath: String) -> String {
+        var path = rawPath
+        while path.hasSuffix("/") && path != "/" {
+            path.removeLast()
+        }
+        if path.hasSuffix("/chat/completions") {
+            return path
+        }
+        if path.hasSuffix("/v1") {
+            return path + "/chat/completions"
+        }
+        return path
+    }
+
+    private static func customModelsURL(from chatURL: URL) -> URL? {
+        guard var components = URLComponents(url: chatURL, resolvingAgainstBaseURL: false),
+              isAllowedCustomEndpoint(chatURL) else { return nil }
+
+        let chatPath = normalizedCustomChatPath(components.path)
+        guard chatPath.hasSuffix("/chat/completions") else { return nil }
+
+        components.path = String(chatPath.dropLast("/chat/completions".count)) + "/models"
+        components.query = nil
+        components.fragment = nil
+        return components.url.flatMap { isAllowedCustomEndpoint($0) ? $0 : nil }
+    }
+
 }

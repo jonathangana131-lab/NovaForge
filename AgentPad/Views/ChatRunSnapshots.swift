@@ -7,7 +7,6 @@
 
 import SwiftData
 import SwiftUI
-import UIKit
 
 struct ChatFileChangeSnapshot: Identifiable, Equatable {
     let id: UUID

@@ -1,6 +1,8 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
+use File::Basename qw(dirname);
+use File::Path qw(make_path);
 use POSIX qw(:sys_wait_h setsid);
 
 my ($timeout, $log_path, @command) = @ARGV;
@@ -11,6 +13,13 @@ if ($timeout !~ /\A\d+\z/ || $timeout <= 0) {
     die "timeout must be a positive integer\n";
 }
 
+my $log_dir = dirname($log_path);
+if (defined $log_dir && length $log_dir && $log_dir ne '.') {
+    make_path($log_dir) unless -d $log_dir;
+}
+
+my $command_text = join " ", @command;
+
 my $pid = fork();
 die "fork failed: $!\n" unless defined $pid;
 
@@ -18,6 +27,7 @@ if ($pid == 0) {
     setsid() or die "setsid failed: $!\n";
     open STDOUT, ">", $log_path or die "open $log_path failed: $!\n";
     open STDERR, ">&", \*STDOUT or die "redirect stderr failed: $!\n";
+    print "[command] $command_text\n";
     exec { $command[0] } @command or die "exec $command[0] failed: $!\n";
 }
 

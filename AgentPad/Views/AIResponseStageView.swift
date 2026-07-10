@@ -18,6 +18,10 @@ struct AIResponseStageView: View {
         stream.displayFrame
     }
 
+    private var streamedCharacterCount: Int {
+        max(stream.characterCount, frame.characterCount)
+    }
+
     private var artifacts: [LiveChatArtifactHandoff] {
         Array(stream.responseDocument.artifacts.prefix(2))
     }
@@ -55,6 +59,7 @@ struct AIResponseStageView: View {
             // response-stage and compatibility renderers. Nested SwiftUI
             // accessibility containers do not expose the inner identifier.
             .accessibilityIdentifier("liveStreamingBubble")
+            .accessibilityValue("\(streamedCharacterCount) characters streamed")
         }
     }
 }
@@ -65,24 +70,7 @@ struct AIResponseLetterFlowView: View {
     let frame: ForgeLiveFeedFrame
 
     var body: some View {
-        Group {
-            if frame.displayText.isEmpty {
-                Text("Preparing response")
-                    .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineSpacing(5)
-            } else {
-                LiquidStreamingTextReveal(frame: frame)
-            }
-        }
-        // Collapse the renderer's visual children into one readable response.
-        // This keeps its legacy visible-text identifier while preventing the
-        // one-pixel diagnostics label from becoming a VoiceOver stop.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(frame.displayText.isEmpty ? "Preparing response" : frame.displayText)
-        .accessibilityValue("\(frame.characterCount) characters streamed")
-        .accessibilityHint("Response is still arriving")
-        .accessibilityIdentifier("streamingTextReveal")
+        LiquidStreamingTextReveal(frame: frame)
     }
 }
 

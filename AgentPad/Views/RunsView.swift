@@ -1,6 +1,15 @@
 import Foundation
 import SwiftData
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+private func triggerRunsLightImpact() {
+#if canImport(UIKit)
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+#endif
+}
 
 struct RunsView: View {
     @Environment(\.modelContext) var modelContext
@@ -1109,6 +1118,10 @@ struct RunsView: View {
                     LazyVStack(spacing: 14) {
                         runsScreenHeader
                             .padding(.bottom, 2)
+
+
+                        historySurfaceMap
+
                         historyMissionReceiptSection(scrollProxy: scrollProxy)
                         historyToolEvidenceSection(scrollProxy: scrollProxy)
                     }
@@ -1310,7 +1323,7 @@ struct RunsView: View {
     private var runsAlertSurface: some View {
         runsChangeSurface
         .alert(
-            "Run Log Error",
+            "History Receipt Error",
             isPresented: Binding(
                 get: { runDeleteError != nil },
                 set: { if !$0 { runDeleteError = nil } }
@@ -1318,7 +1331,7 @@ struct RunsView: View {
         ) {
             Button("OK", role: .cancel) { runDeleteError = nil }
         } message: {
-            Text(runDeleteError ?? "NovaForge could not save that run log change.")
+            Text(runDeleteError ?? "NovaForge could not save that receipt change.")
         }
     }
 
@@ -1544,8 +1557,8 @@ struct RunsView: View {
             updateCachedData()
         } catch {
             modelContext.rollback()
-            runDeleteError = "Could not delete this run log. \(error.localizedDescription)"
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            runDeleteError = "Could not delete this history receipt. \(error.localizedDescription)"
+            NovaHaptics.runFailed()
         }
     }
 
@@ -1589,7 +1602,7 @@ struct RunsView: View {
         if cachedStats.total == 0, !missionRuns.isEmpty {
             return "No tool calls in this mission"
         }
-        return cachedStats.total == 0 ? "No runs yet" : "No matching run events"
+        return cachedStats.total == 0 ? "No receipts yet" : "No matching history receipts"
     }
 
     var emptyRunsDetail: String {
@@ -1597,9 +1610,9 @@ struct RunsView: View {
             if !missionRuns.isEmpty {
                 return "The latest response completed without tools. Tool evidence will appear here when a mission reads or changes the workspace."
             }
-            return "Tool calls, approvals, and terminal proof will appear here after NovaForge acts."
+            return "Tool calls, approvals, and terminal proof become receipts after NovaForge acts."
         }
-        return "Adjust the search or filter to review more run evidence."
+        return "Adjust the search or filter to review more receipt evidence."
     }
 
     var emptyRunsSymbol: String {
@@ -1634,6 +1647,44 @@ struct RunsView: View {
             matchingCount: cachedMatchingRunCount,
             hasOffscreenRuns: hasOffscreenRuns
         )
+    }
+
+    var historySurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Proof loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Receipts",
+                    detail: "\(cachedStats.total) logged",
+                    symbol: "waveform.path.ecg",
+                    tint: AgentPalette.lilac,
+                    isActive: activeFilterType == .all
+                ),
+                NovaSurfaceMapNode(
+                    title: "Writes",
+                    detail: "\(cachedStats.mutations) changes",
+                    symbol: "square.and.pencil",
+                    tint: AgentPalette.cyan,
+                    isActive: activeFilterType == .writes
+                ),
+                NovaSurfaceMapNode(
+                    title: "Failures",
+                    detail: "\(cachedStats.failures) to review",
+                    symbol: "exclamationmark.triangle.fill",
+                    tint: cachedStats.failures > 0 ? AgentPalette.rose : AgentPalette.green,
+                    isActive: activeFilterType == .failures || cachedStats.failures > 0
+                ),
+                NovaSurfaceMapNode(
+                    title: "Replay",
+                    detail: hasOffscreenRuns ? "\(cachedFilteredRuns.count) shown" : "Ready",
+                    symbol: "play.rectangle.fill",
+                    tint: AgentPalette.primaryAccent,
+                    isActive: replayTarget != nil
+                )
+            ],
+            tint: AgentPalette.lilac
+        )
+        .accessibilityIdentifier("historySurfaceMap")
     }
 
     var shouldShowHistoryMissionStrip: Bool {
@@ -1676,7 +1727,7 @@ struct RunsView: View {
     var historyToolbar: some View {
         GlassGroup(spacing: 10) {
             VStack(alignment: .leading, spacing: 13) {
-                NovaSectionMark(title: "Run Log", detail: auditSectionDetail, tint: AgentPalette.lilac)
+                NovaSectionMark(title: "Receipts", detail: auditSectionDetail, tint: AgentPalette.lilac)
 
                 if needsLogTools {
                     searchField
@@ -1721,7 +1772,7 @@ struct RunsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Clear run search")
+                    .accessibilityLabel("Clear receipt search")
                     .accessibilityIdentifier("runsSearchClearButton")
                 }
             }
@@ -1942,7 +1993,7 @@ private struct HistoryAgentRunOutcomePanel: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            triggerRunsLightImpact()
             action()
         } label: {
             Label(title, systemImage: symbol)
@@ -2160,7 +2211,7 @@ private struct HistoryAgentRunCompactCard: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            triggerRunsLightImpact()
             action()
         } label: {
             Label(title, systemImage: symbol)
@@ -2271,7 +2322,7 @@ private struct HistoryMissionOutcomePanel: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            triggerRunsLightImpact()
             action()
         } label: {
             Label(title, systemImage: symbol)
@@ -2514,7 +2565,7 @@ private struct HistoryRuntimeReceiptBanner: View {
 
     private func runtimeButton(_ title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            NovaHaptics.tick()
             action()
         } label: {
             Label(title, systemImage: symbol)

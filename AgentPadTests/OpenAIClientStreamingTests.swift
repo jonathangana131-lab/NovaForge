@@ -285,6 +285,77 @@ final class OpenAIClientStreamingTests: XCTestCase {
     }
 }
 
+final class ProviderConfigurationTests: XCTestCase {
+    func testCustomBaseV1EndpointNormalizesChatAndModelsURLs() throws {
+        let configuration = customConfiguration("  https://api.example.test/v1/  ")
+
+        XCTAssertEqual(configuration.chatCompletionsURL?.absoluteString, "https://api.example.test/v1/chat/completions")
+        XCTAssertEqual(configuration.modelsURL?.absoluteString, "https://api.example.test/v1/models")
+    }
+
+    func testCustomChatEndpointDerivesModelsURLWithPathComponents() throws {
+        let configuration = customConfiguration("https://api.example.test/custom/v1/chat/completions/")
+
+        XCTAssertEqual(configuration.chatCompletionsURL?.absoluteString, "https://api.example.test/custom/v1/chat/completions")
+        XCTAssertEqual(configuration.modelsURL?.absoluteString, "https://api.example.test/custom/v1/models")
+    }
+
+    func testCustomProviderAllowsLocalHTTPChatAndModelsURLs() throws {
+        for endpoint in [
+            "http://localhost:11434/v1/",
+            "http://192.168.1.42:1234/v1",
+            "http://studio.local:1234/v1/chat/completions"
+        ] {
+            let configuration = customConfiguration(endpoint)
+
+            XCTAssertEqual(configuration.chatCompletionsURL?.scheme, "http", endpoint)
+            XCTAssertTrue(configuration.chatCompletionsURL?.absoluteString.hasSuffix("/chat/completions") ?? false, endpoint)
+            XCTAssertEqual(configuration.modelsURL?.scheme, "http", endpoint)
+            XCTAssertTrue(configuration.modelsURL?.absoluteString.hasSuffix("/models") ?? false, endpoint)
+        }
+    }
+
+    func testCustomEndpointsRejectUnsafeRemoteHTTPOrHostlessURLs() throws {
+        for unsafeURL in [
+            "http://api.example.test/v1",
+            "file:///tmp/openai-compatible/v1",
+            "ftp://api.example.test/v1",
+            "https:///v1",
+            "api.example.test/v1"
+        ] {
+            let configuration = customConfiguration(unsafeURL)
+
+            XCTAssertNil(configuration.chatCompletionsURL, unsafeURL)
+            XCTAssertNil(configuration.modelsURL, unsafeURL)
+        }
+    }
+
+    func testBuiltInProviderEndpointsStayHTTPS() throws {
+        for provider in AIProvider.allCases where provider != .local && provider != .custom {
+            let configuration = ProviderConfiguration(
+                provider: provider,
+                modelID: provider.defaultModel,
+                apiKey: "test-key",
+                customChatCompletionsURL: ""
+            )
+
+            XCTAssertEqual(configuration.chatCompletionsURL?.scheme, "https", provider.rawValue)
+            XCTAssertFalse(configuration.chatCompletionsURL?.host?.isEmpty ?? true, provider.rawValue)
+            XCTAssertEqual(configuration.modelsURL?.scheme, "https", provider.rawValue)
+            XCTAssertFalse(configuration.modelsURL?.host?.isEmpty ?? true, provider.rawValue)
+        }
+    }
+
+    private func customConfiguration(_ endpoint: String) -> ProviderConfiguration {
+        ProviderConfiguration(
+            provider: .custom,
+            modelID: AIProvider.custom.defaultModel,
+            apiKey: "test-key",
+            customChatCompletionsURL: endpoint
+        )
+    }
+}
+
 private func XCTAssertThrowsAsyncError<T>(
     _ expression: @autoclosure @escaping () async throws -> T,
     _ errorHandler: (Error) -> Void,

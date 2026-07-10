@@ -1,5 +1,8 @@
 import SwiftData
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
@@ -79,6 +82,8 @@ struct SettingsView: View {
                                 theme: selectedTheme
                             )
                             .accessibilityIdentifier("settingsCommandDeck")
+
+                            controlSurfaceMap
 
                             providerSection
                             modelSection
@@ -186,14 +191,14 @@ struct SettingsView: View {
                     } catch {
                         modelContext.rollback()
                         resetWorkspaceError = "Workspace reset completed, but NovaForge could not save the project proof record. The files are cleared; run the smoke gate before trusting cleanup history. \(error.localizedDescription)"
-                        UINotificationFeedbackGenerator().notificationOccurred(.error)
+                        NovaHaptics.runFailed()
                         return
                     }
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    NovaHaptics.runSucceeded()
                     triggerSaveNotice()
                 } catch {
                     resetWorkspaceError = "Could not reset workspace: \(error.localizedDescription)"
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    NovaHaptics.runFailed()
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -398,7 +403,7 @@ struct SettingsView: View {
                         status: providerReadiness(for: provider).title,
                         statusTint: providerReadiness(for: provider).tint
                     ) {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        NovaHaptics.tick()
                         persistSettingsChange {
                             $0.switchProvider(to: provider)
                         }
@@ -426,7 +431,7 @@ struct SettingsView: View {
                     count: modelChoices.count,
                     isLoading: loadingProviderModels
                 ) {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    NovaHaptics.tick()
                     showingModelPicker = true
                     if providerModels.isEmpty && !loadingProviderModels {
                         loadProviderModels()
@@ -508,7 +513,7 @@ struct SettingsView: View {
                     }
 
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        NovaHaptics.tick()
                         showKey.toggle()
                     } label: {
                         ZStack {
@@ -613,7 +618,7 @@ struct SettingsView: View {
                         selected: settings.modelID == variant.id,
                         status: runtime.localModels.selectedVariantID == variant.id ? runtime.localModels.status : nil
                     ) {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        NovaHaptics.tick()
                         let previousVariantID = runtime.localModels.selectedVariantID
                         guard runtime.localModels.select(variant) else {
                             return
@@ -735,7 +740,7 @@ struct SettingsView: View {
                             theme: theme,
                             selected: selectedTheme == theme
                         ) {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            NovaHaptics.tick()
                             selectedThemeRawValue = theme.rawValue
                             AgentPalette.refreshThemeCache(theme)
                             AgentThemeUIKit.apply(theme)
@@ -784,7 +789,7 @@ struct SettingsView: View {
     private func selectModel(_ model: String) -> Bool {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        NovaHaptics.tick()
         let saved = persistSettingsChange {
             $0.modelID = trimmed
         }
@@ -885,7 +890,9 @@ struct SettingsView: View {
     }
 
     private func copyCodexTerminalCode() {
+        #if canImport(UIKit)
         UIPasteboard.general.string = codexTerminalCode
+        #endif
         appendCodexTerminalLine("Copied code \(codexTerminalCode) to clipboard.")
         triggerSaveNotice()
     }
@@ -912,6 +919,44 @@ struct SettingsView: View {
 
     private var selectedTheme: AgentTheme {
         AgentTheme.resolved(from: selectedThemeRawValue)
+    }
+
+    private var controlSurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Control loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Provider",
+                    detail: settings.provider.shortName,
+                    symbol: settings.provider.symbol,
+                    tint: settings.provider.tint,
+                    isActive: true
+                ),
+                NovaSurfaceMapNode(
+                    title: "Model",
+                    detail: modelDisplayName(settings.modelID),
+                    symbol: "cpu.fill",
+                    tint: AgentPalette.cyan,
+                    isActive: settings.provider == .local || settings.provider == .custom
+                ),
+                NovaSurfaceMapNode(
+                    title: "Safety",
+                    detail: safetyModeTitle,
+                    symbol: settings.autoApproveWrites ? "bolt.shield.fill" : "shield.lefthalf.filled",
+                    tint: safetyModeTint,
+                    isActive: settings.autoApproveWrites
+                ),
+                NovaSurfaceMapNode(
+                    title: "Theme",
+                    detail: selectedTheme.title,
+                    symbol: "sparkles.rectangle.stack.fill",
+                    tint: AgentPalette.lilac,
+                    isActive: true
+                )
+            ],
+            tint: AgentPalette.primaryAccent
+        )
+        .accessibilityIdentifier("controlSurfaceMap")
     }
 
     private var modelReadinessStats: [SettingsMiniStat] {
@@ -1217,7 +1262,7 @@ struct SettingsView: View {
     }
 
     private func applyPreset(temp: Double, prompt: String) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        NovaHaptics.tick()
         let previousDraftTemperature = draftTemperature
         let previousDraftPrompt = draftSystemPrompt
         draftTemperature = temp
@@ -1234,7 +1279,7 @@ struct SettingsView: View {
     }
 
     private func useLocalNoKeyModel() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        NovaHaptics.tick()
         let variant = LocalModelCatalog.defaultVariant
         let previousVariantID = runtime.localModels.selectedVariantID
         guard runtime.localModels.select(variant) else { return }
@@ -1317,7 +1362,7 @@ struct SettingsView: View {
 
     private func presentSettingsSaveError(_ error: Error) {
         settingsSaveError = "NovaForge could not save that provider/model change. Your previous setting is still active. \(error.localizedDescription)"
-        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        NovaHaptics.runFailed()
     }
 }
 

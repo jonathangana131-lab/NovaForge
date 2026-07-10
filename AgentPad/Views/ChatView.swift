@@ -101,11 +101,14 @@ struct ChatView: View {
         let handoffMessageID = runtime.liveStream.handoffMessageID
         rows.removeAll { row in
             guard let messageID = row.messageID else { return false }
-            return messageID == liveResponseID || messageID == handoffMessageID
+            return messageID == liveResponseID && messageID != handoffMessageID
         }
 
         let liveRow = ChatTranscriptRow.live(responseID: liveResponseID)
-        if let firstQueuedFollowUpIndex = rows.firstIndex(where: { row in
+        if let handoffMessageID,
+           let handoffIndex = rows.firstIndex(where: { $0.messageID == handoffMessageID }) {
+            rows.insert(liveRow, at: handoffIndex)
+        } else if let firstQueuedFollowUpIndex = rows.firstIndex(where: { row in
             guard let messageID = row.messageID else { return false }
             return runtime.queuedFollowUpMessageIDs.contains(messageID)
         }) {
@@ -254,6 +257,7 @@ struct ChatView: View {
 
     private var shouldShowLiveResponseIsland: Bool {
         ownsActiveRunState &&
+            !hasRenderedLiveHandoff &&
             (runtime.isWorking || runtime.liveStream.isHandoffActive)
     }
 
@@ -507,7 +511,7 @@ struct ChatView: View {
         let scopeIdentity = evidenceScopeIdentity
         let fetchLimit = max(messageRenderWindowSize, messageRenderLimit)
         let relationshipSources = Self.recentMessageSources(from: conversation.messages, limit: fetchLimit)
-        let sources: [ChatMessageSource]
+        var sources: [ChatMessageSource]
         do {
             var descriptor = FetchDescriptor<ChatMessage>(
                 predicate: #Predicate<ChatMessage> { message in
@@ -526,6 +530,7 @@ struct ChatView: View {
         } catch {
             sources = relationshipSources
         }
+        sources = sourcesIncludingCommittedHandoff(in: sources, limit: fetchLimit)
         let runtimeArtifacts = runtimeArtifactsForSelectedConversation
 
         // In expanded-history mode, keep older assistant bubbles readable but avoid
@@ -534,17 +539,15 @@ struct ChatView: View {
         let parseAllMessages = fetchLimit <= messageRenderWindowSize
         let parseWindowSize = messageRenderWindowSize
 
-        transient.messageCacheTask = Task {
+        transient.messageCacheTask = Task { @MainActor in
             defer {
                 AgentPerformance.end("Chat Message Cache", id: signpostID)
             }
-            let snapshots = await Task.detached(priority: .userInitiated) {
-                ChatMessageSnapshot.make(
-                    from: sources,
-                    parseAllMessages: parseAllMessages,
-                    parseWindowSize: parseWindowSize
-                )
-            }.value
+            let snapshots = ChatMessageSnapshot.make(
+                from: sources,
+                parseAllMessages: parseAllMessages,
+                parseWindowSize: parseWindowSize
+            )
             guard !Task.isCancelled,
                   transient.messageCacheGeneration == generation,
                   conversation.id == conversationID,
@@ -555,10 +558,6 @@ struct ChatView: View {
             cachedMessages = snapshots
             cachedSourceMessageCount = sources.count
             updateCachedArtifacts(from: snapshots, runtimeArtifacts: runtimeArtifacts)
-            if let handoffMessageID = runtime.liveStream.handoffMessageID,
-               snapshots.contains(where: { $0.id == handoffMessageID }) {
-                runtime.liveStream.clearHandoffIfRendered(messageID: handoffMessageID)
-            }
         }
     }
 
@@ -679,6 +678,30 @@ struct ChatView: View {
         return lhs.id.uuidString < rhs.id.uuidString
     }
 
+    private func sourcesIncludingCommittedHandoff(
+        in sources: [ChatMessageSource],
+        limit: Int
+    ) -> [ChatMessageSource] {
+        guard let source = committedHandoffSource else { return sources }
+        var merged = sources.filter { $0.id != source.id }
+        merged.append(source)
+        return Array(merged.sorted(by: Self.messageSourceAscending).suffix(limit))
+    }
+
+    private var committedHandoffSource: ChatMessageSource? {
+        guard let handoff = runtime.committedMessageHandoff,
+              handoff.conversationID == conversation.id,
+              let role = ChatRole(rawValue: handoff.roleRawValue) else { return nil }
+        return ChatMessageSource(
+            id: handoff.id,
+            role: role,
+            content: handoff.content,
+            createdAt: handoff.createdAt,
+            toolCallID: handoff.toolCallID,
+            toolCallsJSON: handoff.toolCallsJSON
+        )
+    }
+
     private func updateCachedArtifacts(
         from messages: [ChatMessageSnapshot],
         runtimeArtifacts: [WorkspaceArtifact] = []
@@ -728,7 +751,7 @@ struct ChatView: View {
     private func chatLayout(topSafeArea: CGFloat, rootBottom: CGFloat) -> some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Layout")
         let showsMissionStrip = missionStripIsVisible
-        return ZStack {
+        return ZStack(alignment: .bottomTrailing) {
             ChatTranscriptBackdrop()
 
             VStack(spacing: 0) {
@@ -874,7 +897,22 @@ struct ChatView: View {
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.hidden)
                         .scrollDismissesKeyboard(.interactively)
+                        // Layout-level bottom pinning: while the user is at the
+                        // bottom, content growth (streaming text, tool rows)
+                        // keeps the transcript pinned with NO scrollTo calls,
+                        // no animation fights, and no per-flush layout jumps.
+                        // Empty transcripts still top-anchor so the clean Forge
+                        // state does not sit at the bottom of the scroll view.
                         .defaultScrollAnchor(shouldTopAnchorEmptyTranscript ? .top : .bottom, for: .initialOffset)
+                        .defaultScrollAnchor(shouldKeepTranscriptPinned ? .bottom : nil, for: .sizeChanges)
+                        // When a completed run has only a short prompt + handoff,
+                        // there may be no scrollable offset for `scrollTo` to
+                        // create. Without an alignment anchor, SwiftUI top-aligns
+                        // the short transcript and leaves a giant blank tail above
+                        // Run Control/composer. Keep pinned short transcripts
+                        // bottom-aligned while long transcripts continue to use
+                        // the sentinel/size-change pinning above.
+                        .defaultScrollAnchor(shouldKeepTranscriptPinned ? .bottom : nil, for: .alignment)
                         .contentShape(Rectangle())
                         .simultaneousGesture(
                             DragGesture(minimumDistance: 14, coordinateSpace: .named(Self.chatScrollSpace))
@@ -920,8 +958,22 @@ struct ChatView: View {
                         .onChange(of: runtime.runState) { _, newState in
                             handleRunStateChange(newState)
                         }
+                        .onChange(of: runtime.liveStream.handoffMessageID) { _, newValue in
+                            guard ownsActiveRunState, newValue != nil else {
+                                transient.handoffCacheRefreshTask?.cancel()
+                                return
+                            }
+                            settleLiveStreamHandoff(animated: true)
+                        }
+                        .onChange(of: runtime.committedMessageHandoff?.revision) { _, _ in
+                            settleLiveStreamHandoff(animated: true)
+                        }
                         .onReceive(runtime.liveStream.objectWillChange) { _ in
                             keepLiveStreamReadableDuringGrowth()
+                            Task { @MainActor in
+                                await Task.yield()
+                                settleLiveStreamHandoff(animated: false)
+                            }
                         }
                         .onChange(of: composerFocused) {
                             guard composerFocused else { return }
@@ -1151,6 +1203,24 @@ struct ChatView: View {
         )
         .equatable()
         .id(message.id)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(accessibilityIdentifier(for: message))
+        .onAppear {
+            runtime.liveStream.clearHandoffIfRendered(messageID: message.id)
+        }
+    }
+
+    private func accessibilityIdentifier(for message: ChatMessageSnapshot) -> String {
+        switch message.role {
+        case .user:
+            return "chatUserMessageBubble"
+        case .assistant:
+            return message.toolCalls.isEmpty ? "chatAssistantMessageBubble" : "chatAssistantToolCallBubble"
+        case .tool:
+            return "chatToolMessageBubble"
+        case .system:
+            return "chatSystemMessageBubble"
+        }
     }
 
     private func previewArtifact(_ artifact: WorkspaceArtifact) {
@@ -1281,7 +1351,7 @@ struct ChatView: View {
                     jumpToLatestFromAccessory()
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 18)
+                .padding(.trailing, 16)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
@@ -1374,7 +1444,7 @@ struct ChatView: View {
     private var composer: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Composer Body")
         let compactStreamingComposer = usesCompactStreamingComposer
-        let usesMultilineComposer = !compactStreamingComposer && (prompt.contains("\n") || prompt.count > 28)
+        let usesMultilineComposer = !compactStreamingComposer && (prompt.contains("\n") || prompt.count > 72)
         let fieldHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 74 : 46)
         let fieldMaxHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 148 : 84)
         let textLaneVerticalPadding: CGFloat = compactStreamingComposer ? 2 : (usesMultilineComposer ? 3 : 4)
@@ -1611,8 +1681,11 @@ struct ChatView: View {
         guard !composerFocused, trimmedPrompt.isEmpty else { return false }
         // Completion evidence only earns the bar above a transcript that
         // actually contains the completed work. A fresh, empty conversation
-        // stays clean — the welcome state owns that moment.
-        return hasCompletedRunEvidence && !cachedMessages.isEmpty
+        // stays clean — the welcome state owns that moment. When the user has
+        // deliberately scrolled away from the bottom, collapse the completed
+        // summary so it does not hover over the older transcript they are
+        // trying to read; Latest becomes the single return affordance.
+        return isNearChatBottom && hasCompletedRunEvidence && !cachedMessages.isEmpty
     }
 
     private var hasActionableRunState: Bool {
@@ -1666,7 +1739,7 @@ struct ChatView: View {
     }
 
     private func scheduleAccessoryGeometryUpdate(_ geometry: ChatAccessoryGeometry, rootBottom: CGFloat) {
-        let sanitizedHeight = min(max(geometry.height, 0), keyboard.isVisible ? 260 : 492)
+        let sanitizedHeight = min(max(geometry.height, 0), keyboard.isVisible ? 260 : 300)
         let rawCoverage = rootBottom.isFinite && geometry.minY.isFinite
             ? rootBottom - geometry.minY
             : sanitizedHeight
@@ -1713,6 +1786,7 @@ struct ChatView: View {
         settleLiveStreamHandoff(animated: state == .waitingForApproval)
         switch state {
         case .completed, .cancelled, .failed(_):
+            updateCachedMessages()
             keepLatestReadableAfterAccessoryResize(animated: false)
         case .waitingForApproval:
             if shouldKeepTranscriptPinned {
@@ -1726,10 +1800,67 @@ struct ChatView: View {
 
     private func settleLiveStreamHandoff(animated: Bool) {
         guard ownsActiveRunState, runtime.liveStream.handoffMessageID != nil else { return }
-        updateCachedMessages()
+        upsertCommittedHandoffSnapshotIfAvailable()
+        scheduleHandoffCacheRefresh(animated: animated)
         guard shouldKeepTranscriptPinned else { return }
         scrollAttachment = .restoring
         requestJumpToLatest(animated: animated, delay: .milliseconds(60))
+    }
+
+    private func upsertCommittedHandoffSnapshotIfAvailable() {
+        guard ownsActiveRunState,
+              let handoffMessageID = runtime.liveStream.handoffMessageID,
+              let source = committedHandoffSource,
+              source.id == handoffMessageID else { return }
+        guard let snapshot = ChatMessageSnapshot.make(from: [source]).first else { return }
+        cachedMessages.removeAll { $0.id == snapshot.id }
+        let firstQueuedFollowUpIndex = cachedMessages.firstIndex { message in
+            runtime.queuedFollowUpMessageIDs.contains(message.id)
+        }
+        if let firstQueuedFollowUpIndex {
+            cachedMessages.insert(snapshot, at: firstQueuedFollowUpIndex)
+        } else {
+            cachedMessages.append(snapshot)
+        }
+        cachedSourceMessageCount = max(cachedSourceMessageCount, cachedMessages.count)
+        updateCachedArtifacts(from: cachedMessages, runtimeArtifacts: runtimeArtifactsForSelectedConversation)
+    }
+
+    private func scheduleHandoffCacheRefresh(animated: Bool) {
+        guard let handoffMessageID = runtime.liveStream.handoffMessageID else {
+            transient.handoffCacheRefreshTask?.cancel()
+            return
+        }
+        if cachedMessages.contains(where: { $0.id == handoffMessageID }) {
+            transient.handoffCacheRefreshTask?.cancel()
+            return
+        }
+        let conversationID = conversation.id
+        updateCachedMessages()
+        transient.handoffCacheRefreshTask?.cancel()
+        transient.handoffCacheRefreshTask = Task { @MainActor in
+            let delays: [Duration] = [
+                .milliseconds(75),
+                .milliseconds(150),
+                .milliseconds(300),
+                .milliseconds(600),
+                .seconds(1),
+                .seconds(2)
+            ]
+            for delay in delays {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled,
+                      ownsActiveRunState,
+                      conversation.id == conversationID,
+                      runtime.liveStream.handoffMessageID == handoffMessageID else { return }
+                guard !cachedMessages.contains(where: { $0.id == handoffMessageID }) else { return }
+                updateCachedMessages()
+                if shouldKeepTranscriptPinned {
+                    scrollAttachment = .restoring
+                    requestJumpToLatest(animated: animated, delay: .milliseconds(40))
+                }
+            }
+        }
     }
 
     private func keepLatestReadableAfterAccessoryResize(animated: Bool = true) {
@@ -1818,17 +1949,17 @@ struct ChatView: View {
     }
 
     private func handleUserScrollGesture(_ value: DragGesture.Value) {
-        guard ownsActiveRunState, runtime.isWorking else { return }
+        guard ownsActiveRunState, hasLatestJumpTarget else { return }
         // In a chat transcript, a downward finger drag means the user is pulling
-        // away from the live bottom to read older content. Once that happens,
-        // streaming/tool growth must stop forcing the scroll position until the
-        // explicit Latest button is tapped.
+        // away from the live/completed bottom to read older content. Once that
+        // happens, streaming/tool growth and completed-run chrome must stop
+        // forcing or covering the scroll position until Latest is tapped.
         guard value.translation.height > 18 else { return }
         markUserDetached()
     }
 
     private func handleScrollPhaseChange(_ phase: ScrollPhase, context: ScrollPhaseChangeContext) {
-        guard ownsActiveRunState, runtime.isWorking else { return }
+        guard ownsActiveRunState, hasLatestJumpTarget, runtime.isWorking else { return }
         guard Date() >= transient.manualRepinUntil else {
             scrollAttachment = .restoring
             return
@@ -2031,6 +2162,7 @@ private enum ChatTranscriptRow: Identifiable, Equatable {
 private final class ChatTransientState: ObservableObject {
     var messageCacheGeneration = 0
     var messageCacheTask: Task<Void, Never>?
+    var handoffCacheRefreshTask: Task<Void, Never>?
     var bottomDistanceUpdateTask: Task<Void, Never>?
     var accessoryHeightUpdateTask: Task<Void, Never>?
     var accessoryResizeFollowUpTask: Task<Void, Never>?
@@ -2044,6 +2176,7 @@ private final class ChatTransientState: ObservableObject {
     var manualRepinUntil = Date.distantPast
 
     func cancelLayoutTasks() {
+        handoffCacheRefreshTask?.cancel()
         bottomDistanceUpdateTask?.cancel()
         accessoryHeightUpdateTask?.cancel()
         accessoryResizeFollowUpTask?.cancel()
@@ -2079,7 +2212,7 @@ private struct ChatLayoutContract: Equatable {
     }
 
     var transcriptBreathingRoom: CGFloat {
-        // The composer / Run Control stack is installed with safeAreaInset(edge: .bottom),
+// The composer / Run Control stack is installed with safeAreaInset(edge: .bottom),
         // so SwiftUI already removes that chrome from the scroll viewport. Adding the
         // measured accessory height here double-counts the dock, makes scrollTo land on
         // an invisible spacer, and can leave the newest sent/assistant message stranded
@@ -2087,11 +2220,11 @@ private struct ChatLayoutContract: Equatable {
         // latest-response anchor; the inset owns real composer clearance.
         switch runAccessory {
         case .hidden:
-            return composerMode == .expanded ? 30 : 22
+            return composerMode == .expanded ? 28 : 20
         case .progress, .completion:
-            return 58
+            return 26
         case .approval, .failure:
-            return 64
+            return 32
         }
     }
 

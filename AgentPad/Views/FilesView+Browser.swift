@@ -593,33 +593,35 @@ extension FilesView {
         }
         let path = item.primaryPath
         guard !scopeProject.mission.localizedCaseInsensitiveContains(path) else {
-            showTransientNotice("Already in project brief")
+            showTransientNotice("Already in mission dossier")
             return
         }
 
         let line = "- \(item.title) (\(path)): \(item.detail)"
         let trimmedMission = scopeProject.mission.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedMission.localizedCaseInsensitiveContains("Project Memory:") {
+        if trimmedMission.localizedCaseInsensitiveContains("Mission Dossier:") {
+            scopeProject.mission = "\(trimmedMission)\n\(line)"
+        } else if trimmedMission.localizedCaseInsensitiveContains("Project Memory:") {
             scopeProject.mission = "\(trimmedMission)\n\(line)"
         } else if trimmedMission.isEmpty {
-            scopeProject.mission = "Project Memory:\n\(line)"
+            scopeProject.mission = "Mission Dossier:\n\(line)"
         } else {
-            scopeProject.mission = "\(trimmedMission)\n\nProject Memory:\n\(line)"
+            scopeProject.mission = "\(trimmedMission)\n\nMission Dossier:\n\(line)"
         }
         scopeProject.updatedAt = Date()
         scopeProject.lastActivityAt = Date()
         ProjectEventRecorder.record(
             project: scopeProject,
             kind: .agentProofCreated,
-            title: "Project brief updated",
+            title: "Mission dossier updated",
             detail: path,
             severity: .info,
             sourceType: .workspace,
             metadata: ["path": path, "source": "filesWorkbench"],
             context: modelContext
         )
-        if saveFileEvidence(failureMessage: "Added \(readableEvidencePath(path)) to the project brief, but NovaForge could not save it") {
-            showTransientNotice("Added to project brief")
+        if saveFileEvidence(failureMessage: "Added \(readableEvidencePath(path)) to the mission dossier, but NovaForge could not save it") {
+            showTransientNotice("Added to mission dossier")
         }
     }
 

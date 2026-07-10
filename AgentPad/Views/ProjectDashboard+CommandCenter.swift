@@ -2,8 +2,8 @@
 //  ProjectDashboard+CommandCenter.swift
 //  NovaForge
 //
-//  ProjectOS command center: control center, execution state panel,
-//  action row, now panel, adaptive intent, command brief, step rows.
+//  Mission dossier control surface: execution state panel, action row,
+//  now panel, adaptive intent, command brief, step rows.
 //
 
 import SwiftData
@@ -71,6 +71,7 @@ extension ProjectDashboardView {
             }
 
             projectOSIntelligenceTelemetry
+            projectOSSurfaceMap
             projectOSIntelligenceSignalGrid
 
             Rectangle()
@@ -108,6 +109,44 @@ extension ProjectDashboardView {
                 .strokeBorder(tintForIntelligenceTelemetry.opacity(0.16), lineWidth: 0.55)
         )
         .accessibilityIdentifier("projectOSIntelligenceTelemetry")
+    }
+
+    var projectOSSurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Mission loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Brief",
+                    detail: dashboardExecutionState.shortTitle,
+                    symbol: dashboardExecutionState.symbolName,
+                    tint: dashboardExecutionTint(dashboardExecutionState),
+                    isActive: runtimeStatus.isWorking
+                ),
+                NovaSurfaceMapNode(
+                    title: "Plan",
+                    detail: "\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1)) steps",
+                    symbol: "list.bullet.clipboard.fill",
+                    tint: AgentPalette.cyan,
+                    isActive: selectedDetailScope == .plan
+                ),
+                NovaSurfaceMapNode(
+                    title: "Proof",
+                    detail: "\(projectOSEvidenceMetricCount) items",
+                    symbol: "checkmark.seal.fill",
+                    tint: trustTint,
+                    isActive: selectedDetailScope == .evidence || projectOSEvidenceMetricCount > 0
+                ),
+                NovaSurfaceMapNode(
+                    title: "Gates",
+                    detail: projectOSGateMetricText,
+                    symbol: projectOSGateMetricCount == 0 ? "lock.open.fill" : "exclamationmark.triangle.fill",
+                    tint: projectOSGateMetricTint,
+                    isActive: projectOSGateMetricCount > 0
+                )
+            ],
+            tint: projectOSTint
+        )
+        .accessibilityIdentifier("projectOSSurfaceMap")
     }
 
     var projectOSIntelligenceSignalGrid: some View {
@@ -462,7 +501,7 @@ extension ProjectDashboardView {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            NovaHaptics.tick()
             action()
         } label: {
             Label(title, systemImage: symbol)
@@ -547,11 +586,11 @@ extension ProjectDashboardView {
     var projectOSPlanPreviewPanel: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label("Agent Plan", systemImage: "list.bullet.clipboard.fill")
+                Label("Mission Plan", systemImage: "list.bullet.clipboard.fill")
                     .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.ink)
                 Spacer(minLength: 0)
-                Text(activeProjectOSRun == nil ? "Preview" : "Run \(projectOSStatusText)")
+                Text(activeProjectOSRun == nil ? "Preview" : "Receipt \(projectOSStatusText)")
                     .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(projectOSTint)
                     .lineLimit(1)
@@ -847,7 +886,7 @@ extension ProjectDashboardView {
     var projectOSRunHistoryPanel: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label("Run History", systemImage: "clock.arrow.circlepath")
+                Label("Receipt History", systemImage: "clock.arrow.circlepath")
                     .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.ink)
                 Spacer(minLength: 0)
@@ -860,7 +899,7 @@ extension ProjectDashboardView {
             }
 
             if projectOSRuns.isEmpty {
-                emptyState(title: "No ProjectOS runs yet", detail: "Start a mission to create a durable run with plan, steps, proof, and history.", symbol: "target", tint: AgentPalette.cyan)
+                emptyState(title: "No mission receipts yet", detail: "Start a mission to create a durable receipt with plan, steps, proof, and history.", symbol: "target", tint: AgentPalette.cyan)
             } else {
                 VStack(spacing: 6) {
                     ForEach(projectOSRuns.prefix(5), id: \.id) { run in

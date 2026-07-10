@@ -109,7 +109,7 @@ extension FilesView {
                 if filteredProjectMemoryItems.isEmpty {
                     AgentInlineStateView(
                         title: "No \(selectedWorkbenchLens.title.lowercased()) evidence",
-                        detail: "Switch filters or create new proof from Chat.",
+                        detail: "Switch filters or create new proof from Forge.",
                         symbol: selectedWorkbenchLens.symbol,
                         tint: selectedWorkbenchLens.tint
                     )
@@ -669,11 +669,11 @@ extension FilesView {
                     togglePinned(item)
                 }
 
-                memoryActionButton(title: "Brief", symbol: "text.badge.plus", tint: AgentPalette.green) {
+                memoryActionButton(title: "Dossier", symbol: "text.badge.plus", tint: AgentPalette.green) {
                     addToProjectBrief(item)
                 }
 
-                memoryActionButton(title: "Chat", symbol: "bubble.left.and.bubble.right.fill", tint: AgentPalette.cyan) {
+                memoryActionButton(title: "Open in Forge", symbol: "sparkles", tint: AgentPalette.cyan) {
                     openChat()
                 }
             }

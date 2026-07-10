@@ -783,13 +783,13 @@
 				AB2000000000000000000009 /* ProjectNaming.swift in Sources */,
 				AB2000000000000000000019 /* DiffEngine.swift in Sources */,
 				AB2000000000000000000010 /* CodeHighlighter.swift in Sources */,
-							AB2000000000000000000026 /* AgentExecutionCoordinator.swift in Sources */,
-				AB2000000000000000000027 /* ProviderContextWindow.swift in Sources */,
-							AB2000000000000000000028 /* AgentExecutionCoordinatorTests.swift in Sources */,
-				AB2000000000000000000029 /* AgentRunPersistenceTests.swift in Sources */,
-				AB2000000000000000000030 /* ProviderContextWindowTests.swift in Sources */,
-							AB2000000000000000000031 /* HistoryWorkspacePresentationTests.swift in Sources */,
-							AB2000000000000000000032 /* HistoryWorkspacePresentation.swift in Sources */,
+					AB2000000000000000000026 /* AgentExecutionCoordinator.swift in Sources */,
+					AB2000000000000000000027 /* ProviderContextWindow.swift in Sources */,
+					AB2000000000000000000028 /* AgentExecutionCoordinatorTests.swift in Sources */,
+					AB2000000000000000000029 /* AgentRunPersistenceTests.swift in Sources */,
+					AB2000000000000000000030 /* ProviderContextWindowTests.swift in Sources */,
+					AB2000000000000000000031 /* HistoryWorkspacePresentationTests.swift in Sources */,
+					AB2000000000000000000032 /* HistoryWorkspacePresentation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

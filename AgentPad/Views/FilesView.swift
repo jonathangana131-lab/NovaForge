@@ -1,6 +1,5 @@
 import SwiftData
 import SwiftUI
-import UIKit
 
 struct SearchResultItem: Identifiable, Hashable, Sendable {
     let fileName: String
@@ -1280,6 +1279,9 @@ struct FilesView: View {
                     .padding(.horizontal)
                     .padding(.top, 14)
 
+                filesSurfaceMap
+                    .padding(.horizontal)
+
                 if runtime.shouldShowWorkspaceStatusStrip {
                     WorkspaceStatusStrip(runtime: runtime, openChat: openChat)
                         .padding(.horizontal)
@@ -1640,6 +1642,44 @@ struct FilesView: View {
             parts.append("latest \(newest)")
         }
         return parts.joined(separator: " · ")
+    }
+
+    var filesSurfaceMap: some View {
+        NovaSurfaceMap(
+            title: "Workspace loop",
+            nodes: [
+                NovaSurfaceMapNode(
+                    title: "Browse",
+                    detail: currentPath.isEmpty ? runtime.workspace.workspaceName : currentPath,
+                    symbol: "folder.fill",
+                    tint: AgentPalette.cyan,
+                    isActive: selectedWorkbenchLens == .all
+                ),
+                NovaSurfaceMapNode(
+                    title: "Memory",
+                    detail: "\(projectMemoryItems.count) signals",
+                    symbol: "brain.head.profile",
+                    tint: AgentPalette.primaryAccent,
+                    isActive: !projectMemoryItems.isEmpty
+                ),
+                NovaSurfaceMapNode(
+                    title: "Proof",
+                    detail: "\(artifactGalleryItems.count) artifacts",
+                    symbol: "checkmark.seal.fill",
+                    tint: AgentPalette.green,
+                    isActive: !artifactGalleryItems.isEmpty
+                ),
+                NovaSurfaceMapNode(
+                    title: "Review",
+                    detail: selectedInspectorMode.title,
+                    symbol: selectedInspectorMode.symbol,
+                    tint: AgentPalette.warning,
+                    isActive: selectedInspectorMode == .review
+                )
+            ],
+            tint: AgentPalette.cyan
+        )
+        .accessibilityIdentifier("filesSurfaceMap")
     }
 
     func reload() {
@@ -2193,8 +2233,7 @@ struct CreateFileSheet: View {
                 
                 HStack(spacing: 12) {
                     Button {
-                        let impact = UIImpactFeedbackGenerator(style: .light)
-                        impact.impactOccurred()
+                        NovaHaptics.tick()
                         withAnimation { isDirectory = false }
                     } label: {
                         Label("File", systemImage: "doc")
@@ -2206,8 +2245,7 @@ struct CreateFileSheet: View {
                     .buttonStyle(.plain)
                     
                     Button {
-                        let impact = UIImpactFeedbackGenerator(style: .light)
-                        impact.impactOccurred()
+                        NovaHaptics.tick()
                         withAnimation { isDirectory = true }
                     } label: {
                         Label("Folder", systemImage: "folder")
@@ -2284,13 +2322,11 @@ struct CreateFileSheet: View {
             } else {
                 try workspace.createNewFile(targetRelativePath, contents: "")
             }
-            let successImpact = UINotificationFeedbackGenerator()
-            successImpact.notificationOccurred(.success)
+            NovaHaptics.runSucceeded()
             onCreated(targetRelativePath, isDirectory)
             dismiss()
         } catch {
-            let errorImpact = UINotificationFeedbackGenerator()
-            errorImpact.notificationOccurred(.error)
+            NovaHaptics.runFailed()
             errorMessage = error.localizedDescription
         }
     }
