@@ -539,17 +539,15 @@ struct ChatView: View {
         let parseAllMessages = fetchLimit <= messageRenderWindowSize
         let parseWindowSize = messageRenderWindowSize
 
-        transient.messageCacheTask = Task {
+        transient.messageCacheTask = Task { @MainActor in
             defer {
                 AgentPerformance.end("Chat Message Cache", id: signpostID)
             }
-            let snapshots = await Task.detached(priority: .userInitiated) {
-                ChatMessageSnapshot.make(
-                    from: sources,
-                    parseAllMessages: parseAllMessages,
-                    parseWindowSize: parseWindowSize
-                )
-            }.value
+            let snapshots = ChatMessageSnapshot.make(
+                from: sources,
+                parseAllMessages: parseAllMessages,
+                parseWindowSize: parseWindowSize
+            )
             guard !Task.isCancelled,
                   transient.messageCacheGeneration == generation,
                   conversation.id == conversationID,
