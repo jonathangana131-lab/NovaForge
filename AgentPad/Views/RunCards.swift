@@ -26,6 +26,7 @@ struct RunCard: View {
     @State private var showingArguments = false
     @State private var showingOutput = false
     @State private var confirmingDelete = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var statusColor: Color {
         row.status.tint
@@ -37,7 +38,7 @@ struct RunCard: View {
                 dismissSearch()
                 let impact = UIImpactFeedbackGenerator(style: .light)
                 impact.impactOccurred()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.72)) {
                     expanded.toggle()
                     if !expanded {
                         showingArguments = false
@@ -45,90 +46,97 @@ struct RunCard: View {
                     }
                 }
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: row.isMutating ? "pencil.and.outline" : "eye")
-                        .font(.subheadline)
-                        .foregroundStyle(row.isMutating ? AgentPalette.cyan : AgentPalette.cyan)
-                        .frame(width: 32, height: 32)
-                        .agentControlSurface(radius: 10, tint: row.isMutating ? AgentPalette.cyan : AgentPalette.cyan, selected: true)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.receiptTitle)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AgentPalette.ink)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        Image(systemName: row.isMutating ? "pencil.and.outline" : "eye")
+                            .font(.subheadline)
+                            .foregroundStyle(AgentPalette.cyan)
+                            .frame(width: 32, height: 32)
+                            .agentControlSurface(radius: 10, tint: AgentPalette.cyan, selected: true)
 
-                        Text(row.requestLine)
-                            .font(.caption2)
-                            .foregroundStyle(AgentPalette.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        
-                        HStack(spacing: 6) {
-                            Text(row.displayName)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(AgentPalette.tertiaryText)
-                                .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.receiptTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AgentPalette.ink)
+                                .lineLimit(2)
+                                .truncationMode(.tail)
 
-                            Text("•")
-                                .font(.caption2)
-                                .foregroundStyle(AgentPalette.tertiaryText)
-
-                            Text(row.createdTimeText)
+                            Text(row.requestLine)
                                 .font(.caption2)
                                 .foregroundStyle(AgentPalette.secondaryText)
-                            
-                            if let durationText = row.durationText {
-                                Text("•")
-                                    .font(.caption2)
-                                    .foregroundStyle(AgentPalette.tertiaryText)
-                                
-                                Text(durationText)
-                                    .font(.system(size: 8, design: .monospaced))
-                                    .foregroundStyle(AgentPalette.secondaryText)
-                                
-                                if row.isFast {
-                                    Text("FAST")
-                                        .font(.system(size: 6, weight: .bold))
-                                        .foregroundStyle(AgentPalette.green)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .agentControlSurface(radius: 4, tint: AgentPalette.green, selected: true)
-                                } else if row.isHeavy {
-                                    Text("HEAVY")
-                                        .font(.system(size: 6, weight: .bold))
-                                        .foregroundStyle(AgentPalette.rose)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .agentControlSurface(radius: 4, tint: AgentPalette.rose, selected: true)
-                                }
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+
+                            if row.terminalProof != nil {
+                                Label("Terminal proof", systemImage: "terminal.fill")
+                                    .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
+                                    .foregroundStyle(AgentPalette.cyan)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 6)
+                                    .frame(height: 20)
+                                    .agentControlSurface(radius: 7, tint: AgentPalette.cyan.opacity(0.12), selected: true)
+                                    .accessibilityIdentifier("runTerminalProofBadge")
                             }
                         }
+                        .layoutPriority(1)
 
-                        if row.terminalProof != nil {
-                            Label("Terminal proof", systemImage: "terminal.fill")
-                                .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.cyan)
-                                .lineLimit(1)
-                                .padding(.horizontal, 6)
-                                .frame(height: 20)
-                                .agentControlSurface(radius: 7, tint: AgentPalette.cyan.opacity(0.12), selected: true)
-                                .accessibilityIdentifier("runTerminalProofBadge")
-                        }
-                    }
-                    .layoutPriority(1)
-                    
-                    Spacer()
-                    
-                    HStack(spacing: 6) {
-                        RunStatusBadge(status: row.status, tint: statusColor)
+                        Spacer(minLength: 6)
 
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(AgentPalette.tertiaryText)
+                            .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: AgentDesign.minimumTouchTarget)
                     }
-                    .fixedSize()
+
+                    HStack(spacing: 6) {
+                        Text(row.displayName)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(AgentPalette.tertiaryText)
+                            .lineLimit(1)
+
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundStyle(AgentPalette.tertiaryText)
+
+                        Text(row.createdTimeText)
+                            .font(.caption2)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+
+                        if let durationText = row.durationText {
+                            Text("•")
+                                .font(.caption2)
+                                .foregroundStyle(AgentPalette.tertiaryText)
+
+                            Text(durationText)
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundStyle(AgentPalette.secondaryText)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+
+                            if row.isFast {
+                                Text("FAST")
+                                    .font(.system(size: 6, weight: .bold))
+                                    .foregroundStyle(AgentPalette.green)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .agentControlSurface(radius: 4, tint: AgentPalette.green, selected: true)
+                            } else if row.isHeavy {
+                                Text("HEAVY")
+                                    .font(.system(size: 6, weight: .bold))
+                                    .foregroundStyle(AgentPalette.rose)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .agentControlSurface(radius: 4, tint: AgentPalette.rose, selected: true)
+                            }
+                        }
+
+                        Spacer(minLength: 6)
+
+                        RunStatusBadge(status: row.status, tint: statusColor)
+                            .fixedSize()
+                    }
                 }
             }
             .buttonStyle(.plain)
@@ -228,7 +236,7 @@ struct RunCard: View {
                         },
                         toggle: {
                             let willShowArguments = !showingArguments
-                            withAnimation(.smooth(duration: 0.2)) {
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) {
                                 showingArguments.toggle()
                             }
                             if willShowArguments {
@@ -259,7 +267,7 @@ struct RunCard: View {
                             },
                             toggle: {
                                 let willShowOutput = !showingOutput
-                                withAnimation(.smooth(duration: 0.2)) {
+                                withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) {
                                     showingOutput.toggle()
                                 }
                                 if willShowOutput {

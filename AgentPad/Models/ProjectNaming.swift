@@ -306,8 +306,10 @@ enum LaunchConversationSelection {
 
 enum ChatProjectSeparation {
     static func visibleChatConversations(from conversations: [Conversation]) -> [Conversation] {
-        let general = conversations.filter { $0.project == nil }
-        return general.isEmpty ? conversations : general
+        // Forge owns both General and project-scoped conversations. Keep every
+        // scope available to the drawer so a General chat cannot make durable
+        // project history disappear from navigation.
+        conversations
     }
 
     static func preferredGeneralConversation(
@@ -315,7 +317,11 @@ enum ChatProjectSeparation {
         selectedID: UUID?,
         persistedIDString: String
     ) -> Conversation? {
-        let general = visibleChatConversations(from: conversations)
+        // Preserve the launch contract independently from drawer visibility:
+        // prefer General whenever it exists, but retain the legacy project
+        // fallback for stores that do not have a General conversation yet.
+        let generalConversations = conversations.filter { $0.project == nil }
+        let general = generalConversations.isEmpty ? conversations : generalConversations
         if let ready = general.first(where: { $0.title == LaunchConversationSelection.safeStartTitle && !$0.hasUserMessages }) {
             return ready
         }

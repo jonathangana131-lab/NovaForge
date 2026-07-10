@@ -179,31 +179,29 @@ struct ChatDurableRunSnapshot: Equatable {
     }
 
     static func make(
-        project: Project,
+        project: Project?,
         conversation: Conversation,
         context: ModelContext
     ) -> ChatDurableRunSnapshot {
-        let fetchedArtifacts = fetchRecentArtifacts(context: context)
-        let fetchedRuns = fetchRecentToolRuns(context: context)
-        let fetchedFileChanges = fetchRecentFileChanges(context: context)
-        let fetchedTerminalCommands = fetchRecentTerminalCommands(context: context)
-        let fetchedProjectOSRuns = fetchRecentProjectOSRuns(context: context)
-        let summary = ProjectMissionSummarizer.summarize(project: project, context: context)
-        let projectID = project.id
-        let allowsOrphanFallback = conversationSuggestsRecentRun(conversation)
-
+        let scopeProjectID = project?.id
+        let fetchedArtifacts = fetchRecentArtifacts(context: context, projectID: scopeProjectID)
+        let fetchedRuns = fetchRecentToolRuns(context: context, projectID: scopeProjectID)
+        let fetchedFileChanges = fetchRecentFileChanges(context: context, projectID: scopeProjectID)
+        let fetchedTerminalCommands = fetchRecentTerminalCommands(context: context, projectID: scopeProjectID)
+        let fetchedProjectOSRuns = fetchRecentProjectOSRuns(context: context, projectID: scopeProjectID)
+        let summary = project.map { ProjectMissionSummarizer.summarize(project: $0, context: context) }
         let latestArtifacts = uniqueArtifacts(
-            project.artifacts +
-                fetchedArtifacts.filter { $0.project?.id == projectID } +
-                (allowsOrphanFallback ? fetchedArtifacts.filter { $0.project == nil } : [])
+            project.map { scopedProject in
+                scopedProject.artifacts + fetchedArtifacts.filter { $0.project?.id == scopedProject.id }
+            } ?? fetchedArtifacts.filter { $0.project == nil }
         ).sorted { lhs, rhs in
             if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
             return lhs.path < rhs.path
         }
         let latestRuns = uniqueRuns(
-            project.toolRuns +
-                fetchedRuns.filter { $0.project?.id == projectID } +
-                (allowsOrphanFallback ? fetchedRuns.filter { $0.project == nil } : [])
+            project.map { scopedProject in
+                scopedProject.toolRuns + fetchedRuns.filter { $0.project?.id == scopedProject.id }
+            } ?? fetchedRuns.filter { $0.project == nil }
         ).sorted { lhs, rhs in
             let lhsDate = lhs.completedAt ?? lhs.createdAt
             let rhsDate = rhs.completedAt ?? rhs.createdAt
@@ -211,24 +209,25 @@ struct ChatDurableRunSnapshot: Equatable {
             return lhs.id.uuidString < rhs.id.uuidString
         }
         let latestFileChanges = uniqueFileChanges(
-            project.fileChanges +
-                fetchedFileChanges.filter { $0.project?.id == projectID } +
-                (allowsOrphanFallback ? fetchedFileChanges.filter { $0.project == nil } : [])
+            project.map { scopedProject in
+                scopedProject.fileChanges + fetchedFileChanges.filter { $0.project?.id == scopedProject.id }
+            } ?? fetchedFileChanges.filter { $0.project == nil }
         ).sorted { lhs, rhs in
             if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
             return lhs.path < rhs.path
         }
         let latestTerminalCommands = uniqueTerminalCommands(
-            project.terminalCommands +
-                fetchedTerminalCommands.filter { $0.project?.id == projectID } +
-                (allowsOrphanFallback ? fetchedTerminalCommands.filter { $0.project == nil } : [])
+            project.map { scopedProject in
+                scopedProject.terminalCommands + fetchedTerminalCommands.filter { $0.project?.id == scopedProject.id }
+            } ?? fetchedTerminalCommands.filter { $0.project == nil }
         ).sorted { lhs, rhs in
             if lhs.completedAt != rhs.completedAt { return lhs.completedAt > rhs.completedAt }
             return lhs.id.uuidString < rhs.id.uuidString
         }
         let latestProjectOSRun = uniqueProjectOSRuns(
-            project.projectOSRuns +
-                fetchedProjectOSRuns.filter { $0.project?.id == projectID }
+            project.map { scopedProject in
+                scopedProject.projectOSRuns + fetchedProjectOSRuns.filter { $0.project?.id == scopedProject.id }
+            } ?? []
         ).sorted { lhs, rhs in
             if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
             return lhs.id.uuidString < rhs.id.uuidString
@@ -271,14 +270,14 @@ struct ChatDurableRunSnapshot: Equatable {
             artifacts: artifacts,
             traceEvents: Array(traceEvents.prefix(6)),
             fileChanges: latestFileChanges.prefix(5).map { ChatFileChangeSnapshot(change: $0) },
-            pendingApprovalCount: summary.pendingApprovalCount,
-            latestProof: summary.proofItems.first.map { ChatProofSnapshot(item: $0) },
+            pendingApprovalCount: summary?.pendingApprovalCount ?? latestRuns.filter { $0.status == .pendingApproval }.count,
+            latestProof: summary?.proofItems.first.map { ChatProofSnapshot(item: $0) },
             latestTerminalProof: latestTerminalCommands.first.map { ChatTerminalProofSnapshot(command: $0) },
             projectOSRun: latestProjectOSRun.map { ChatProjectOSRunSnapshot(run: $0) },
-            reviewHeadline: summary.review.headline,
-            reviewDetail: summary.review.detail,
-            proofFreshness: summary.review.proofFreshness,
-            evidenceTrail: summary.review.evidenceTrail,
+            reviewHeadline: summary?.review.headline ?? "",
+            reviewDetail: summary?.review.detail ?? "",
+            proofFreshness: summary?.review.proofFreshness ?? "",
+            evidenceTrail: summary?.review.evidenceTrail ?? "",
             lastRunDuration: duration,
             hasCompletedRun: latestRuns.contains { $0.status == .completed }
         )
@@ -344,40 +343,78 @@ struct ChatDurableRunSnapshot: Equatable {
         }
     }
 
-    private static func fetchRecentArtifacts(context: ModelContext) -> [ProjectArtifact] {
-        var descriptor = FetchDescriptor<ProjectArtifact>(
-            sortBy: [SortDescriptor(\ProjectArtifact.updatedAt, order: .reverse)]
-        )
+    private static func fetchRecentArtifacts(context: ModelContext, projectID: UUID?) -> [ProjectArtifact] {
+        var descriptor: FetchDescriptor<ProjectArtifact>
+        if let projectID {
+            descriptor = FetchDescriptor<ProjectArtifact>(
+                predicate: #Predicate { $0.project?.id == projectID },
+                sortBy: [SortDescriptor(\ProjectArtifact.updatedAt, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor<ProjectArtifact>(
+                predicate: #Predicate { $0.project == nil },
+                sortBy: [SortDescriptor(\ProjectArtifact.updatedAt, order: .reverse)]
+            )
+        }
         descriptor.fetchLimit = 24
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    private static func fetchRecentToolRuns(context: ModelContext) -> [ToolRun] {
-        var descriptor = FetchDescriptor<ToolRun>(
-            sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
-        )
+    private static func fetchRecentToolRuns(context: ModelContext, projectID: UUID?) -> [ToolRun] {
+        var descriptor: FetchDescriptor<ToolRun>
+        if let projectID {
+            descriptor = FetchDescriptor<ToolRun>(
+                predicate: #Predicate { $0.project?.id == projectID },
+                sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor<ToolRun>(
+                predicate: #Predicate { $0.project == nil },
+                sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
+            )
+        }
         descriptor.fetchLimit = 24
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    private static func fetchRecentFileChanges(context: ModelContext) -> [ProjectFileChange] {
-        var descriptor = FetchDescriptor<ProjectFileChange>(
-            sortBy: [SortDescriptor(\ProjectFileChange.createdAt, order: .reverse)]
-        )
+    private static func fetchRecentFileChanges(context: ModelContext, projectID: UUID?) -> [ProjectFileChange] {
+        var descriptor: FetchDescriptor<ProjectFileChange>
+        if let projectID {
+            descriptor = FetchDescriptor<ProjectFileChange>(
+                predicate: #Predicate { $0.project?.id == projectID },
+                sortBy: [SortDescriptor(\ProjectFileChange.createdAt, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor<ProjectFileChange>(
+                predicate: #Predicate { $0.project == nil },
+                sortBy: [SortDescriptor(\ProjectFileChange.createdAt, order: .reverse)]
+            )
+        }
         descriptor.fetchLimit = 24
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    private static func fetchRecentTerminalCommands(context: ModelContext) -> [TerminalCommandRecord] {
-        var descriptor = FetchDescriptor<TerminalCommandRecord>(
-            sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
-        )
+    private static func fetchRecentTerminalCommands(context: ModelContext, projectID: UUID?) -> [TerminalCommandRecord] {
+        var descriptor: FetchDescriptor<TerminalCommandRecord>
+        if let projectID {
+            descriptor = FetchDescriptor<TerminalCommandRecord>(
+                predicate: #Predicate { $0.project?.id == projectID },
+                sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor<TerminalCommandRecord>(
+                predicate: #Predicate { $0.project == nil },
+                sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
+            )
+        }
         descriptor.fetchLimit = 24
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    private static func fetchRecentProjectOSRuns(context: ModelContext) -> [ProjectOSRun] {
+    private static func fetchRecentProjectOSRuns(context: ModelContext, projectID: UUID?) -> [ProjectOSRun] {
+        guard let projectID else { return [] }
         var descriptor = FetchDescriptor<ProjectOSRun>(
+            predicate: #Predicate { $0.project?.id == projectID },
             sortBy: [SortDescriptor(\ProjectOSRun.updatedAt, order: .reverse)]
         )
         descriptor.fetchLimit = 12
@@ -434,14 +471,4 @@ struct ChatDurableRunSnapshot: Equatable {
         return result
     }
 
-    private static func conversationSuggestsRecentRun(_ conversation: Conversation) -> Bool {
-        conversation.messages.suffix(8).contains { message in
-            if message.role == .tool { return true }
-            let text = message.content.lowercased()
-            return text.contains("run complete") ||
-                text.contains("artifact") ||
-                text.contains("playable game ready") ||
-                text.contains("approval demo")
-        }
-    }
 }

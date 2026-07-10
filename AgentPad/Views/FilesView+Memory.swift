@@ -20,22 +20,31 @@ extension FilesView {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 7) {
                     NovaSectionMark(
                         title: "Evidence Workbench",
-                        detail: workbenchStatusLine,
+                        detail: nil,
                         tint: failedTerminalProofCount > 0 || riskCount > 0 ? AgentPalette.warning : AgentPalette.green
                     )
 
-                    Spacer(minLength: 0)
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(workbenchStatusLine)
+                            .font(NovaType.caption)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                    Label("Trust", systemImage: "checkmark.seal.fill")
-                        .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.green)
-                        .lineLimit(1)
-                        .padding(.horizontal, 8)
-                        .frame(height: 24)
-                        .agentControlSurface(radius: 8, tint: AgentPalette.green.opacity(0.10), selected: true)
+                        Spacer(minLength: 4)
+
+                        Label("Trust", systemImage: "checkmark.seal.fill")
+                            .font(NovaType.label)
+                            .foregroundStyle(AgentPalette.green)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
+                            .agentControlSurface(radius: 8, tint: AgentPalette.green.opacity(0.10), selected: true)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
 
                 if let primaryWorkbenchItem {
@@ -71,7 +80,7 @@ extension FilesView {
                 }
             }
             .padding(12)
-            .agentSurface(radius: 22, tint: AgentPalette.green.opacity(0.10))
+            .agentSurface(radius: 22, tint: AgentPalette.green.opacity(0.10), nativeGlass: true)
             .overlay(NovaCornerTicks(tint: AgentPalette.green.opacity(0.30), length: 9, thickness: 1.1, inset: 7))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("filesEvidenceWorkbenchOverview")
@@ -149,36 +158,49 @@ extension FilesView {
     }
 
     var workbenchMetricStrip: some View {
-        HStack(alignment: .top, spacing: 8) {
-            workbenchMetric(
-                value: "\(artifactCount)",
-                label: "Artifacts",
-                detail: "Generated outputs",
-                symbol: "shippingbox.fill",
-                tint: AgentPalette.green
-            )
-            workbenchMetric(
-                value: "\(changedFileCount)",
-                label: "Changes",
-                detail: "Files touched",
-                symbol: "plus.forwardslash.minus",
-                tint: AgentPalette.cyan
-            )
-            workbenchMetric(
-                value: "\(terminalProofCount)",
-                label: "Terminal",
-                detail: failedTerminalProofCount == 0 ? "Command proof" : "\(failedTerminalProofCount) failed",
-                symbol: "terminal.fill",
-                tint: failedTerminalProofCount == 0 ? AgentPalette.lilac : AgentPalette.rose
-            )
-            workbenchMetric(
-                value: "\(riskCount)",
-                label: "Review",
-                detail: riskCount == 0 ? "No flags" : "Needs eyes",
-                symbol: riskCount == 0 ? "checkmark.shield.fill" : "exclamationmark.triangle.fill",
-                tint: riskCount == 0 ? AgentPalette.green : AgentPalette.warning
-            )
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
+                    workbenchMetrics
+                }
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    workbenchMetrics
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private var workbenchMetrics: some View {
+        workbenchMetric(
+            value: "\(artifactCount)",
+            label: "Artifacts",
+            detail: "Generated outputs",
+            symbol: "shippingbox.fill",
+            tint: AgentPalette.green
+        )
+        workbenchMetric(
+            value: "\(changedFileCount)",
+            label: "Changes",
+            detail: "Files touched",
+            symbol: "plus.forwardslash.minus",
+            tint: AgentPalette.cyan
+        )
+        workbenchMetric(
+            value: "\(terminalProofCount)",
+            label: "Terminal",
+            detail: failedTerminalProofCount == 0 ? "Command proof" : "\(failedTerminalProofCount) failed",
+            symbol: "terminal.fill",
+            tint: failedTerminalProofCount == 0 ? AgentPalette.lilac : AgentPalette.rose
+        )
+        workbenchMetric(
+            value: "\(riskCount)",
+            label: "Review",
+            detail: riskCount == 0 ? "No flags" : "Needs eyes",
+            symbol: riskCount == 0 ? "checkmark.shield.fill" : "exclamationmark.triangle.fill",
+            tint: riskCount == 0 ? AgentPalette.green : AgentPalette.warning
+        )
     }
 
     func workbenchMetric(value: String, label: String, detail: String, symbol: String, tint: Color) -> some View {
@@ -257,22 +279,16 @@ extension FilesView {
                 .foregroundStyle(AgentPalette.secondaryText)
                 .lineLimit(2)
 
-            HStack(spacing: 8) {
-                workbenchActionButton(
-                    title: primaryActionTitle(for: item),
-                    symbol: primaryActionSymbol(for: item),
-                    tint: item.tint
-                ) {
-                    openMemoryItem(item)
-                }
-
-                workbenchActionButton(title: "Inspect", symbol: "doc.text.magnifyingglass", tint: AgentPalette.lilac) {
-                    selectedMemoryItemID = item.id
-                }
-
-                if item.hasRelatedContext {
-                    workbenchActionButton(title: "Source", symbol: "point.3.connected.trianglepath.dotted", tint: AgentPalette.cyan) {
-                        revealRelatedContext(for: item)
+            GlassGroup(spacing: 9) {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 8) {
+                            featuredEvidenceActions(item)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            featuredEvidenceActions(item)
+                        }
                     }
                 }
             }
@@ -287,21 +303,49 @@ extension FilesView {
         .accessibilityIdentifier("filesFeaturedEvidence")
     }
 
+    @ViewBuilder
+    private func featuredEvidenceActions(_ item: ProjectMemoryItem) -> some View {
+        workbenchActionButton(
+            title: primaryActionTitle(for: item),
+            symbol: primaryActionSymbol(for: item),
+            tint: item.tint
+        ) {
+            openMemoryItem(item)
+        }
+
+        workbenchActionButton(title: "Inspect", symbol: "doc.text.magnifyingglass", tint: AgentPalette.lilac) {
+            selectedMemoryItemID = item.id
+        }
+
+        if item.hasRelatedContext {
+            workbenchActionButton(title: "Source", symbol: "point.3.connected.trianglepath.dotted", tint: AgentPalette.cyan) {
+                revealRelatedContext(for: item)
+            }
+        }
+    }
+
     func workbenchActionButton(title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             action()
         } label: {
             Label(title, systemImage: symbol)
-                .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .font(NovaType.caption)
+                .fontWeight(.bold)
                 .foregroundStyle(AgentPalette.ink)
-                .lineLimit(1)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                .multilineTextAlignment(.center)
                 .minimumScaleFactor(0.78)
                 .padding(.horizontal, 9)
-                .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: 34)
-                .agentControlSurface(radius: 11, tint: tint.opacity(0.12), selected: true)
+                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
         }
-        .buttonStyle(.plain)
+        .agentInteractiveGlassButtonStyle(
+            radius: 11,
+            tint: tint,
+            selected: true,
+            glassID: "workbench-\(title)",
+            in: workspaceGlassNamespace
+        )
     }
 
     var workbenchChangeLane: some View {
@@ -643,10 +687,10 @@ extension FilesView {
             action()
         } label: {
             Label(title, systemImage: symbol)
-                .font(.system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign))
+                .font(.caption.weight(.bold))
                 .foregroundStyle(AgentPalette.ink)
                 .padding(.horizontal, 9)
-                .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: 34)
+                .frame(minWidth: AgentDesign.minimumTouchTarget, minHeight: AgentDesign.minimumTouchTarget)
                 .agentControlSurface(radius: 11, tint: tint.opacity(0.10), selected: true)
         }
         .buttonStyle(.plain)
