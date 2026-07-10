@@ -31,6 +31,7 @@ private struct AgentLiquidGlassSurfaceModifier: ViewModifier {
     let interactive: Bool
     let pressed: Bool
     let enabled: Bool
+    let nativeGlass: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -44,7 +45,9 @@ private struct AgentLiquidGlassSurfaceModifier: ViewModifier {
         let highlightOpacity = selected ? 0.18 : 0.075
         let borderOpacity = selected ? 0.32 : 0.16
         let pressedAdjustment = pressed ? 0.82 : 1.0
-        let usesNativeGlass = !reduceTransparency &&
+        let usesNativeGlass = nativeGlass &&
+            !performanceMode &&
+            !reduceTransparency &&
             !isMatrix &&
             !AgentPlatformCompatibility.usesConservativeRendering &&
             (level == .card || (interactive && enabled))
@@ -67,107 +70,112 @@ private struct AgentLiquidGlassSurfaceModifier: ViewModifier {
             return level == .card ? 0.10 : 0.06
         }()
 
-        content
-            .background(
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                AgentPalette.surface.opacity(baseSurfaceOpacity),
-                                accent.opacity((performanceMode ? highlightOpacity * 0.42 : highlightOpacity + 0.035) * pressedAdjustment),
-                                (isMatrix ? AgentPalette.surfaceElevated : AgentPalette.surfaceAlt).opacity(altSurfaceOpacity)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            )
-            .background(
-                shape
-                    .fill(.ultraThinMaterial)
-                    .opacity(materialOpacity)
-            )
-            .overlay(alignment: .topLeading) {
-                shape
-                    .strokeBorder(
-                        AgentPalette.glassStroke
-                            .opacity(usesNativeGlass ? 0.24 : (performanceMode ? 0.12 : (selected ? 0.48 : 0.30))),
-                        lineWidth: 0.65
-                    )
-                    .blendMode(isMatrix || usesNativeGlass || performanceMode ? .normal : .screen)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                shape
-                    .strokeBorder(accent.opacity(borderOpacity), lineWidth: selected ? 0.85 : 0.55)
-            }
-            .overlay {
-                if !performanceMode && (pressed || selectedGlowAllowed) {
+        if usesNativeGlass {
+            content
+                .clipShape(shape)
+                .agentGlass(
+                    radius: radius,
+                    interactive: interactive && enabled,
+                    tint: selected ? accent.opacity(0.20) : accent.opacity(0.06)
+                )
+                .scaleEffect(pressed ? 0.982 : 1)
+                .brightness(pressed ? -0.018 : 0)
+                .saturation(enabled ? 1 : 0.65)
+                .animation(shouldAnimate ? .snappy(duration: 0.18, extraBounce: 0.04) : nil, value: pressed)
+                .animation(shouldAnimate ? .snappy(duration: 0.20, extraBounce: 0.03) : nil, value: selected)
+        } else {
+            content
+                .background(
                     shape
                         .fill(
-                            RadialGradient(
+                            LinearGradient(
                                 colors: [
-                                    accent.opacity(pressed ? 0.20 : 0.15),
-                                    accent.opacity(0.04),
-                                    .clear
+                                    AgentPalette.surface.opacity(baseSurfaceOpacity),
+                                    accent.opacity((performanceMode ? highlightOpacity * 0.42 : highlightOpacity + 0.035) * pressedAdjustment),
+                                    (isMatrix ? AgentPalette.surfaceElevated : AgentPalette.surfaceAlt).opacity(altSurfaceOpacity)
                                 ],
-                                center: .topLeading,
-                                startRadius: 0,
-                                endRadius: 120
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
                             )
                         )
-                        .blendMode(.plusLighter)
-                        .opacity(reduceTransparency ? 0.35 : 1)
-                }
-            }
-            .overlay(alignment: .top) {
-                Capsule(style: .continuous)
-                    .fill(
-                        LinearGradient(
-                                colors: [
-                                    AgentPalette.glassStroke.opacity(isMatrix ? 0.36 : 0.45),
-                                    AgentPalette.glassStroke.opacity(isMatrix ? 0.10 : 0.08),
-                                    .clear
-                                ],
-                            startPoint: .leading,
-                            endPoint: .trailing
+                )
+                .background(
+                    shape
+                        .fill(.ultraThinMaterial)
+                        .opacity(materialOpacity)
+                )
+                .overlay(alignment: .topLeading) {
+                    shape
+                        .strokeBorder(
+                            AgentPalette.glassStroke
+                                .opacity(performanceMode ? 0.12 : (selected ? 0.48 : 0.30)),
+                            lineWidth: 0.65
                         )
-                    )
-                    .frame(height: 1.2)
-                    .padding(.horizontal, max(8, radius * 0.52))
-                    .opacity(reduceTransparency ? 0.22 : (performanceMode ? 0.18 : (level == .control && !interactive ? 0.36 : 0.58)))
-            }
-            .clipShape(shape)
-            .agentGlassIfEnabled(usesNativeGlass, radius: radius, interactive: interactive && enabled, tint: selected ? accent.opacity(0.20) : nil)
-            .shadow(
-                color: AgentPalette.shadow.opacity(performanceMode || shadowRadius == 0 ? 0.0 : (selected ? 0.10 : 0.05)),
-                radius: shadowRadius,
-                x: 0,
-                y: shadowY
-            )
-            .shadow(
-                color: accent.opacity(accentShadowOpacity),
-                radius: accentShadowOpacity > 0 ? level.shadowRadius * 0.72 : 0,
-                x: 0,
-                y: accentShadowOpacity > 0 ? 3 : 0
-            )
-            .scaleEffect(pressed ? 0.985 : 1)
-            .brightness(pressed ? -0.012 : 0)
-            .saturation(enabled ? 1 : 0.65)
-            .animation(shouldAnimate ? .snappy(duration: 0.18, extraBounce: 0.04) : nil, value: pressed)
-            .animation(shouldAnimate ? .snappy(duration: 0.20, extraBounce: 0.03) : nil, value: selected)
+                        .blendMode(isMatrix || performanceMode ? .normal : .screen)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    shape
+                        .strokeBorder(accent.opacity(borderOpacity), lineWidth: selected ? 0.85 : 0.55)
+                }
+                .overlay {
+                    if !performanceMode && (pressed || selectedGlowAllowed) {
+                        shape
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        accent.opacity(pressed ? 0.20 : 0.15),
+                                        accent.opacity(0.04),
+                                        .clear
+                                    ],
+                                    center: .topLeading,
+                                    startRadius: 0,
+                                    endRadius: 120
+                                )
+                            )
+                            .blendMode(.plusLighter)
+                            .opacity(reduceTransparency ? 0.35 : 1)
+                    }
+                }
+                .overlay(alignment: .top) {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                    colors: [
+                                        AgentPalette.glassStroke.opacity(isMatrix ? 0.36 : 0.45),
+                                        AgentPalette.glassStroke.opacity(isMatrix ? 0.10 : 0.08),
+                                        .clear
+                                    ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(height: 1.2)
+                        .padding(.horizontal, max(8, radius * 0.52))
+                        .opacity(reduceTransparency ? 0.22 : (performanceMode ? 0.18 : (level == .control && !interactive ? 0.36 : 0.58)))
+                }
+                .clipShape(shape)
+                .shadow(
+                    color: AgentPalette.shadow.opacity(performanceMode || shadowRadius == 0 ? 0.0 : (selected ? 0.10 : 0.05)),
+                    radius: shadowRadius,
+                    x: 0,
+                    y: shadowY
+                )
+                .shadow(
+                    color: accent.opacity(accentShadowOpacity),
+                    radius: accentShadowOpacity > 0 ? level.shadowRadius * 0.72 : 0,
+                    x: 0,
+                    y: accentShadowOpacity > 0 ? 3 : 0
+                )
+                .scaleEffect(pressed ? 0.985 : 1)
+                .brightness(pressed ? -0.012 : 0)
+                .saturation(enabled ? 1 : 0.65)
+                .animation(shouldAnimate ? .snappy(duration: 0.18, extraBounce: 0.04) : nil, value: pressed)
+                .animation(shouldAnimate ? .snappy(duration: 0.20, extraBounce: 0.03) : nil, value: selected)
+        }
     }
 }
 
 private extension View {
-    @ViewBuilder
-    func agentGlassIfEnabled(_ enabled: Bool, radius: CGFloat, interactive: Bool, tint: Color?) -> some View {
-        if enabled {
-            agentGlass(radius: radius, interactive: interactive, tint: tint)
-        } else {
-            self
-        }
-    }
-
     func agentLiquidSurface(
         radius: CGFloat,
         tint: Color? = nil,
@@ -175,7 +183,8 @@ private extension View {
         level: AgentLiquidGlassSurfaceModifier.Level = .control,
         interactive: Bool = false,
         pressed: Bool = false,
-        enabled: Bool = true
+        enabled: Bool = true,
+        nativeGlass: Bool = false
     ) -> some View {
         modifier(
             AgentLiquidGlassSurfaceModifier(
@@ -185,7 +194,8 @@ private extension View {
                 level: level,
                 interactive: interactive,
                 pressed: pressed,
-                enabled: enabled
+                enabled: enabled,
+                nativeGlass: nativeGlass
             )
         )
     }
@@ -196,6 +206,8 @@ private struct AgentLiquidGlassButtonStyle: ButtonStyle {
     let tint: Color?
     let selected: Bool
     let level: AgentLiquidGlassSurfaceModifier.Level
+    var glassID: String? = nil
+    var glassNamespace: Namespace.ID? = nil
 
     @Environment(\.isEnabled) private var isEnabled
 
@@ -208,8 +220,34 @@ private struct AgentLiquidGlassButtonStyle: ButtonStyle {
                 level: level,
                 interactive: true,
                 pressed: configuration.isPressed,
-                enabled: isEnabled
+                enabled: isEnabled,
+                nativeGlass: true
             )
+            .agentGlassEffectID(glassID, in: glassNamespace)
+    }
+}
+
+extension View {
+    /// The shared press-responsive native glass treatment for isolated chrome
+    /// buttons. Keeping the implementation here lets feature views opt into
+    /// one bounded effect without exposing the surface modifier internals.
+    func agentInteractiveGlassButtonStyle(
+        radius: CGFloat = AgentDesign.controlRadius,
+        tint: Color? = nil,
+        selected: Bool = false,
+        glassID: String? = nil,
+        in namespace: Namespace.ID? = nil
+    ) -> some View {
+        buttonStyle(
+            AgentLiquidGlassButtonStyle(
+                radius: radius,
+                tint: tint,
+                selected: selected,
+                level: .control,
+                glassID: glassID,
+                glassNamespace: namespace
+            )
+        )
     }
 }
 
@@ -298,6 +336,8 @@ struct IconGlassButton: View {
     let accessibilityLabel: String
     var accessibilityIdentifier: String? = nil
     var tint: Color? = nil
+    var glassID: String? = nil
+    var glassNamespace: Namespace.ID? = nil
     let action: () -> Void
 
     var body: some View {
@@ -310,11 +350,15 @@ struct IconGlassButton: View {
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(tint ?? AgentPalette.ink)
                 .frame(width: AgentDesign.controlHeight, height: AgentDesign.controlHeight)
-                .background(Circle().fill(accent.opacity(tint == nil ? 0.07 : 0.12)))
-                .overlay(Circle().strokeBorder(accent.opacity(tint == nil ? 0.22 : 0.30), lineWidth: 0.9))
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .agentInteractiveGlassButtonStyle(
+            radius: AgentDesign.controlHeight / 2,
+            tint: accent,
+            selected: tint != nil,
+            glassID: glassID,
+            in: glassNamespace
+        )
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier ?? accessibilityLabel)
     }
@@ -914,6 +958,7 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
 
 struct WorkspaceStatusStrip: View {
     @Environment(\.modelContext) private var modelContext
+    @Namespace private var glassNamespace
     private var runtime: AgentRuntime?
     let snapshot: WorkspaceStatusSnapshot
     var pause: (() -> Void)?
@@ -997,11 +1042,15 @@ struct WorkspaceStatusStrip: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(AgentPalette.rose)
                         .frame(width: 38, height: 38)
-                        .background(Circle().fill(AgentPalette.rose.opacity(0.12)))
-                        .overlay(Circle().strokeBorder(AgentPalette.rose.opacity(0.32), lineWidth: 0.9))
                         .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .agentInteractiveGlassButtonStyle(
+                    radius: 19,
+                    tint: AgentPalette.rose,
+                    selected: true,
+                    glassID: "workspace-status-pause",
+                    in: glassNamespace
+                )
                 .accessibilityLabel("Pause run")
                 .accessibilityIdentifier("workspaceStatusPauseButton")
             }
@@ -1014,18 +1063,22 @@ struct WorkspaceStatusStrip: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(tint)
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(tint.opacity(0.10)))
-                    .overlay(Circle().strokeBorder(tint.opacity(0.28), lineWidth: 0.9))
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .agentInteractiveGlassButtonStyle(
+                radius: 19,
+                tint: tint,
+                selected: false,
+                glassID: "workspace-status-destination",
+                in: glassNamespace
+            )
             .accessibilityLabel(destinationAccessibilityLabel)
             .accessibilityIdentifier(destinationAccessibilityLabel == "Open chat" ? "workspaceStatusOpenChatButton" : "workspaceStatusOpenDestinationButton")
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 8)
-        .background(Capsule(style: .continuous).fill(tint.opacity(0.09)))
-        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.26), lineWidth: 0.8))
+        .agentGlass(radius: 22, tint: tint.opacity(0.10))
+        .agentGlassEffectID("workspace-status", in: glassNamespace)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspaceStatusStrip")
     }
@@ -1099,7 +1152,7 @@ struct MissionOSStatusStrip: View, Equatable {
             .frame(minWidth: 72, alignment: .trailing)
         }
         .padding(10)
-        .agentLiquidSurface(radius: 18, tint: tint, selected: true, level: .card)
+        .agentLiquidSurface(radius: 18, tint: tint, selected: true, level: .card, nativeGlass: true)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(surfaceName) Mission OS. \(contract.phase.displayName). \(contract.readinessScore) percent ready. \(contract.decisionLabel). \(compactDetail)")
         .accessibilityIdentifier("missionOSStatusStrip-\(surfaceName)")
@@ -1166,6 +1219,7 @@ struct AgentToastView: View {
                         .background(tint.opacity(0.14), in: Capsule(style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .minimumTapTarget()
                 .accessibilityIdentifier("agentToastRetry")
                 .minimumScaleFactor(0.8)
             } else {
@@ -1175,7 +1229,7 @@ struct AgentToastView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .black))
                         .foregroundStyle(AgentPalette.tertiaryText)
-                        .frame(width: 22, height: 22)
+                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Dismiss")
@@ -1183,7 +1237,7 @@ struct AgentToastView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .agentLiquidSurface(radius: 16, tint: tint, selected: true, level: .card)
+        .agentLiquidSurface(radius: 16, tint: tint, selected: true, level: .card, nativeGlass: true)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agentToast")
         .onAppear { scheduleAutoDismiss() }

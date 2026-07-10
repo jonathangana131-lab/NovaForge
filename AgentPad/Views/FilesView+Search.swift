@@ -240,7 +240,7 @@ extension FilesView {
     func exportWorkspace() {
         let impact = UIImpactFeedbackGenerator(style: .medium)
         impact.impactOccurred()
-        withAnimation { isExporting = true }
+        withAnimation(reduceMotion ? nil : .default) { isExporting = true }
         
         let root = runtime.workspace.rootURL
         let workspaceName = runtime.workspace.workspaceName
@@ -257,19 +257,19 @@ extension FilesView {
                     try? FileManager.default.removeItem(at: destinationURL)
                     try FileManager.default.copyItem(at: zipURL, to: destinationURL)
                     DispatchQueue.main.async {
-                        withAnimation { self.isExporting = false }
+                        withAnimation(self.reduceMotion ? nil : .default) { self.isExporting = false }
                         self.shareFile(destinationURL)
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        withAnimation { self.isExporting = false }
+                        withAnimation(self.reduceMotion ? nil : .default) { self.isExporting = false }
                         self.fileActionError = "Could not export \(workspaceName): \(error.localizedDescription)"
                     }
                 }
             }
             if error != nil {
                 DispatchQueue.main.async {
-                    withAnimation { self.isExporting = false }
+                    withAnimation(self.reduceMotion ? nil : .default) { self.isExporting = false }
                     self.fileActionError = "Could not export \(workspaceName): \(error?.localizedDescription ?? "Unknown coordinator error")"
                 }
             }

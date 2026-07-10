@@ -29,10 +29,28 @@ struct FileEditTarget: Identifiable, Hashable, Sendable {
 
 struct FilesView: View {
     @Environment(\.modelContext) var modelContext
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.dynamicTypeSize) var dynamicTypeSize
     @Query var settingsList: [AgentSettings]
+    /// Evidence is queried by the selected chat scope rather than read through
+    /// the active workspace project relationship. That keeps General truly
+    /// general: it sees its own nil-project evidence, never whichever project
+    /// happens to own the physical workspace.
+    @Query var scopedArtifactRecords: [ProjectArtifact]
+    @Query var scopedFileChangeRecords: [ProjectFileChange]
+    @Query var scopedTerminalCommandRecords: [TerminalCommandRecord]
+    @Query var scopedToolRunRecords: [ToolRun]
+    @Query var scopedEventRecords: [ProjectEvent]
     
     var runtime: AgentRuntime
+    /// The active project still owns the physical workspace selection, while
+    /// this optional project represents the selected chat's evidence scope.
+    /// `nil` is the explicit General scope and must not borrow project proof.
     var project: Project
+    var scopeProject: Project?
+    let scopeConversationID: UUID
+    let scopeTitle: String
+    let isWorkspaceRoutingLocked: () -> Bool
     let openArtifactLandscapeFullScreen: (WorkspaceArtifact) -> Void
     let openChat: () -> Void
     @SceneStorage("novaforge.files.currentPath") var currentPath = ""
@@ -83,12 +101,132 @@ struct FilesView: View {
     @State var isExporting = false
     @State var recentCutoff = Date().addingTimeInterval(-300)
     @State var cachedStats = FileStats()
+    @State var cachedProjectMemoryItems: [ProjectMemoryItem] = []
+    @Namespace var workspaceGlassNamespace
 
     let tabBarClearance: CGFloat = BottomDockMetrics.scrollClearance
     let searchResultLimit = 200
 
+    init(
+        runtime: AgentRuntime,
+        project: Project,
+        scopeProject: Project?,
+        scopeConversationID: UUID,
+        scopeTitle: String,
+        isWorkspaceRoutingLocked: @escaping () -> Bool,
+        openArtifactLandscapeFullScreen: @escaping (WorkspaceArtifact) -> Void,
+        openChat: @escaping () -> Void
+    ) {
+        self.runtime = runtime
+        self.project = project
+        self.scopeProject = scopeProject
+        self.scopeConversationID = scopeConversationID
+        self.scopeTitle = scopeTitle
+        self.isWorkspaceRoutingLocked = isWorkspaceRoutingLocked
+        self.openArtifactLandscapeFullScreen = openArtifactLandscapeFullScreen
+        self.openChat = openChat
+
+        let scopeProjectID = scopeProject?.id
+        _scopedArtifactRecords = Query(Self.artifactRecordsDescriptor(scopeProjectID: scopeProjectID))
+        _scopedFileChangeRecords = Query(Self.fileChangeRecordsDescriptor(scopeProjectID: scopeProjectID))
+        _scopedTerminalCommandRecords = Query(Self.terminalCommandRecordsDescriptor(scopeProjectID: scopeProjectID))
+        _scopedToolRunRecords = Query(Self.toolRunRecordsDescriptor(scopeProjectID: scopeProjectID))
+        _scopedEventRecords = Query(Self.eventRecordsDescriptor(scopeProjectID: scopeProjectID))
+    }
+
+    /// Query predicates intentionally make `nil` a first-class scope. Do not
+    /// replace these with a project relationship fallback: General evidence is
+    /// durable work in its own right and project evidence must remain exact.
+    private static func artifactRecordsDescriptor(scopeProjectID: UUID?) -> FetchDescriptor<ProjectArtifact> {
+        if let scopeProjectID {
+            return FetchDescriptor(
+                predicate: #Predicate<ProjectArtifact> { artifact in
+                    artifact.project?.id == scopeProjectID
+                },
+                sortBy: [SortDescriptor(\ProjectArtifact.updatedAt, order: .reverse)]
+            )
+        }
+        return FetchDescriptor(
+            predicate: #Predicate<ProjectArtifact> { artifact in
+                artifact.project == nil
+            },
+            sortBy: [SortDescriptor(\ProjectArtifact.updatedAt, order: .reverse)]
+        )
+    }
+
+    private static func fileChangeRecordsDescriptor(scopeProjectID: UUID?) -> FetchDescriptor<ProjectFileChange> {
+        if let scopeProjectID {
+            return FetchDescriptor(
+                predicate: #Predicate<ProjectFileChange> { change in
+                    change.project?.id == scopeProjectID
+                },
+                sortBy: [SortDescriptor(\ProjectFileChange.createdAt, order: .reverse)]
+            )
+        }
+        return FetchDescriptor(
+            predicate: #Predicate<ProjectFileChange> { change in
+                change.project == nil
+            },
+            sortBy: [SortDescriptor(\ProjectFileChange.createdAt, order: .reverse)]
+        )
+    }
+
+    private static func terminalCommandRecordsDescriptor(scopeProjectID: UUID?) -> FetchDescriptor<TerminalCommandRecord> {
+        if let scopeProjectID {
+            return FetchDescriptor(
+                predicate: #Predicate<TerminalCommandRecord> { record in
+                    record.project?.id == scopeProjectID
+                },
+                sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
+            )
+        }
+        return FetchDescriptor(
+            predicate: #Predicate<TerminalCommandRecord> { record in
+                record.project == nil
+            },
+            sortBy: [SortDescriptor(\TerminalCommandRecord.completedAt, order: .reverse)]
+        )
+    }
+
+    private static func toolRunRecordsDescriptor(scopeProjectID: UUID?) -> FetchDescriptor<ToolRun> {
+        if let scopeProjectID {
+            return FetchDescriptor(
+                predicate: #Predicate<ToolRun> { run in
+                    run.project?.id == scopeProjectID
+                },
+                sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
+            )
+        }
+        return FetchDescriptor(
+            predicate: #Predicate<ToolRun> { run in
+                run.project == nil
+            },
+            sortBy: [SortDescriptor(\ToolRun.createdAt, order: .reverse)]
+        )
+    }
+
+    private static func eventRecordsDescriptor(scopeProjectID: UUID?) -> FetchDescriptor<ProjectEvent> {
+        if let scopeProjectID {
+            return FetchDescriptor(
+                predicate: #Predicate<ProjectEvent> { event in
+                    event.project?.id == scopeProjectID
+                },
+                sortBy: [SortDescriptor(\ProjectEvent.createdAt, order: .reverse)]
+            )
+        }
+        return FetchDescriptor(
+            predicate: #Predicate<ProjectEvent> { event in
+                event.project == nil
+            },
+            sortBy: [SortDescriptor(\ProjectEvent.createdAt, order: .reverse)]
+        )
+    }
+
     var artifactIterationPrompt: String {
-        ProjectMissionSummarizer.summarize(project: project, context: modelContext).workflowSpine.iterationPrompt
+        guard let scopeProject else {
+            return "Continue this General session in Forge with the workspace evidence you reviewed."
+        }
+        return ProjectMissionSummarizer.summarize(project: scopeProject, context: modelContext).workflowSpine.iterationPrompt
     }
 
     struct FileStats {
@@ -409,6 +547,7 @@ struct FilesView: View {
         let sourceToolRunIDString: String?
         let sourceTerminalCommandIDString: String?
         let sourceEventIDString: String?
+        let shareURL: URL?
 
         var primaryPath: String {
             comparisonPaths?.destination ?? path
@@ -604,11 +743,42 @@ struct FilesView: View {
     }
 
     var projectMemoryItems: [ProjectMemoryItem] {
-        let artifactItems = project.artifacts.map(memoryItem(for:))
-        let changeItems = project.fileChanges.map(memoryItem(for:))
-        let fileItems = items.map(memoryItem(for:))
-        return (artifactItems + changeItems + fileItems)
+        cachedProjectMemoryItems
+    }
+
+    func evidenceBelongsToCurrentScope(_ evidenceProject: Project?) -> Bool {
+        HistoryWorkspacePresentation.evidenceBelongsToScope(
+            evidenceProjectID: evidenceProject?.id,
+            scopeProjectID: scopeProject?.id
+        )
+    }
+
+    func rebuildProjectMemoryCache(fileRows: [FileRowData]? = nil) {
+        let artifactItems = scopedArtifactRecords
+            .filter { evidenceBelongsToCurrentScope($0.project) }
+            .map(memoryItem(for:))
+        let changeItems = scopedFileChangeRecords
+            .filter { evidenceBelongsToCurrentScope($0.project) }
+            .map(memoryItem(for:))
+        let fileItems = (fileRows ?? items).map(memoryItem(for:))
+        cachedProjectMemoryItems = (artifactItems + changeItems + fileItems)
             .sorted(by: compareMemoryItems)
+    }
+
+    /// `@Query` updates the evidence rows without involving the active
+    /// project, while this small value snapshot tells the derived-memory cache
+    /// when it must be rebuilt. Keeping it to IDs and durable timestamps avoids
+    /// a second large transformation in `body`.
+    var artifactEvidenceRevision: [String] {
+        scopedArtifactRecords.map { record in
+            "\(record.id.uuidString):\(record.updatedAt.timeIntervalSinceReferenceDate)"
+        }
+    }
+
+    var fileChangeEvidenceRevision: [String] {
+        scopedFileChangeRecords.map { record in
+            "\(record.id.uuidString):\(record.createdAt.timeIntervalSinceReferenceDate)"
+        }
     }
 
     var filteredProjectMemoryItems: [ProjectMemoryItem] {
@@ -645,7 +815,7 @@ struct FilesView: View {
     }
 
     var memoryPreferencePrefix: String {
-        "novaforge.files.memory.\(project.id.uuidString)"
+        "novaforge.files.memory.\(scopeProject?.id.uuidString ?? "general-\(scopeConversationID.uuidString)")"
     }
 
     var changedFileCount: Int {
@@ -665,7 +835,7 @@ struct FilesView: View {
     }
 
     var recentTerminalRecords: [TerminalCommandRecord] {
-        project.terminalCommands
+        scopedTerminalCommandRecords
             .sorted {
                 if $0.completedAt != $1.completedAt { return $0.completedAt > $1.completedAt }
                 return $0.id.uuidString < $1.id.uuidString
@@ -675,11 +845,11 @@ struct FilesView: View {
     }
 
     var terminalProofCount: Int {
-        project.terminalCommands.count
+        scopedTerminalCommandRecords.count
     }
 
     var failedTerminalProofCount: Int {
-        project.terminalCommands.filter { $0.status == .failed }.count
+        scopedTerminalCommandRecords.filter { $0.status == .failed }.count
     }
 
     var primaryWorkbenchItem: ProjectMemoryItem? {
@@ -699,7 +869,7 @@ struct FilesView: View {
         let item = row.item
         let path = item.relativePath
         let artifact = WorkspaceArtifact(path: path)
-        let relatedChange = project.fileChanges.first { change in
+        let relatedChange = scopedFileChangeRecords.first { change in
             change.path == path || change.path.components(separatedBy: " -> ").contains(path)
         }
         let isScreenshot = isScreenshotPath(path)
@@ -708,7 +878,7 @@ struct FilesView: View {
         let group = memoryGroup(
             path: path,
             isDirectory: item.isDirectory,
-            isArtifact: project.artifacts.contains { $0.path == path },
+            isArtifact: scopedArtifactRecords.contains { $0.path == path },
             isChanged: relatedChange != nil,
             isScreenshot: isScreenshot,
             isVerification: isVerification
@@ -722,7 +892,12 @@ struct FilesView: View {
             path: path,
             detail: relatedChange.map { "\($0.action) in project memory" } ?? fileDetail(for: artifact, item: item),
             metadata: "\(row.kindText) · \(row.modifiedText)",
-            origin: currentPath.isEmpty ? "Workspace root" : "Workspace folder",
+            origin: Self.provenanceLabel(
+                base: currentPath.isEmpty ? "Workspace root" : "Workspace folder",
+                toolRunID: relatedChange?.sourceToolRunIDString,
+                terminalCommandID: relatedChange?.sourceTerminalCommandIDString,
+                eventID: relatedChange?.sourceEventIDString
+            ),
             status: row.isRecent ? "Fresh" : group.title,
             group: group,
             risk: risk,
@@ -741,7 +916,8 @@ struct FilesView: View {
             isPinned: pinnedMemoryPaths.contains(path),
             sourceToolRunIDString: relatedChange?.sourceToolRunIDString,
             sourceTerminalCommandIDString: relatedChange?.sourceTerminalCommandIDString,
-            sourceEventIDString: relatedChange?.sourceEventIDString
+            sourceEventIDString: relatedChange?.sourceEventIDString,
+            shareURL: workspaceShareURL(for: path)
         )
     }
 
@@ -767,7 +943,12 @@ struct FilesView: View {
             path: path,
             detail: detail?.isEmpty == false ? detail! : "\(artifact.artifactType.displayName) output captured for this project.",
             metadata: "\(artifact.artifactType.displayName) · \(dateText(artifactRecord.updatedAt))",
-            origin: artifactRecord.sourceToolRunIDString == nil ? "Project artifact" : "Tool run artifact",
+            origin: Self.provenanceLabel(
+                base: artifactRecord.sourceToolRunIDString == nil ? "Project artifact" : "Tool run artifact",
+                toolRunID: artifactRecord.sourceToolRunIDString,
+                terminalCommandID: nil,
+                eventID: nil
+            ),
             status: status,
             group: group,
             risk: riskFor(path: path, action: status, isFailed: failed, group: group),
@@ -786,7 +967,8 @@ struct FilesView: View {
             isPinned: pinnedMemoryPaths.contains(path),
             sourceToolRunIDString: artifactRecord.sourceToolRunIDString,
             sourceTerminalCommandIDString: nil,
-            sourceEventIDString: nil
+            sourceEventIDString: nil,
+            shareURL: workspaceShareURL(for: path)
         )
     }
 
@@ -806,7 +988,12 @@ struct FilesView: View {
             path: path,
             detail: reviewSummary(for: change.action, path: path),
             metadata: "\(dateText(change.createdAt)) · \(primaryPath)",
-            origin: change.sourceToolRunIDString == nil ? "Workspace change" : "Tool run change",
+            origin: Self.provenanceLabel(
+                base: change.sourceToolRunIDString == nil ? "Workspace change" : "Tool run change",
+                toolRunID: change.sourceToolRunIDString,
+                terminalCommandID: change.sourceTerminalCommandIDString,
+                eventID: change.sourceEventIDString
+            ),
             status: changeStatus(for: change.action),
             group: .changed,
             risk: riskFor(path: primaryPath, action: change.action, isFailed: failed, group: .changed),
@@ -825,7 +1012,8 @@ struct FilesView: View {
             isPinned: pinnedMemoryPaths.contains(primaryPath) || pinnedMemoryPaths.contains(path),
             sourceToolRunIDString: change.sourceToolRunIDString,
             sourceTerminalCommandIDString: change.sourceTerminalCommandIDString,
-            sourceEventIDString: change.sourceEventIDString
+            sourceEventIDString: change.sourceEventIDString,
+            shareURL: workspaceShareURL(for: primaryPath)
         )
     }
 
@@ -961,7 +1149,130 @@ struct FilesView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    var body: some View {
+    func workspaceShareURL(for path: String) -> URL? {
+        guard let url = try? runtime.workspace.resolve(path),
+              FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return url
+    }
+
+    static func provenanceReference(
+        toolRunID: String?,
+        terminalCommandID: String?,
+        eventID: String?
+    ) -> String {
+        HistoryWorkspacePresentation.provenanceReference(
+            toolRunID: toolRunID,
+            terminalCommandID: terminalCommandID,
+            eventID: eventID
+        )
+    }
+
+    static func provenanceLabel(
+        base: String,
+        toolRunID: String?,
+        terminalCommandID: String?,
+        eventID: String?
+    ) -> String {
+        HistoryWorkspacePresentation.provenanceLabel(
+            base: base,
+            toolRunID: toolRunID,
+            terminalCommandID: terminalCommandID,
+            eventID: eventID
+        )
+    }
+
+    static func workspaceScopeLine(projectName: String, workspaceName: String) -> String {
+        HistoryWorkspacePresentation.workspaceScopeLine(
+            projectName: projectName,
+            workspaceName: workspaceName
+        )
+    }
+
+    func workspaceProvenanceHandoff(_ item: ProjectMemoryItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(AgentPalette.cyan)
+                    .frame(width: 30, height: 30)
+                    .background(AgentPalette.cyan.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Handoff & provenance")
+                        .font(.system(size: 11.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.ink)
+                    Text(Self.workspaceScopeLine(projectName: scopeTitle, workspaceName: runtime.workspace.workspaceName))
+                        .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("\(item.origin) · \(item.primaryPath)")
+                        .font(.system(size: 8.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                        .foregroundStyle(AgentPalette.tertiaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    openMemoryItem(item)
+                } label: {
+                    handoffActionLabel(
+                        title: primaryActionTitle(for: item),
+                        symbol: primaryActionSymbol(for: item),
+                        tint: item.tint
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("filesHandoffOpen")
+
+                if let shareURL = item.shareURL, !item.isDirectory {
+                    ShareLink(item: shareURL) {
+                        handoffActionLabel(title: "Share", symbol: "square.and.arrow.up", tint: AgentPalette.lilac)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("filesHandoffShare")
+                }
+
+                Button {
+                    copyMemoryPath(item)
+                } label: {
+                    handoffActionLabel(title: "Copy path", symbol: "doc.on.doc", tint: AgentPalette.cyan)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("filesHandoffCopyPath")
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AgentPalette.row.opacity(0.58), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(AgentPalette.cyan.opacity(0.16), lineWidth: 0.7)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("filesProvenanceHandoff")
+    }
+
+    func handoffActionLabel(title: String, symbol: String, tint: Color) -> some View {
+        Label(title, systemImage: symbol)
+            .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
+            .foregroundStyle(AgentPalette.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.76)
+            .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+            .agentControlSurface(radius: 11, tint: tint.opacity(0.10), selected: true)
+    }
+
+    /// Keep the dense explorer hierarchy behind an opaque result boundary so
+    /// the lifecycle/presentation modifier chain below does not force Swift's
+    /// type checker to solve the entire screen as one expression.
+    @ViewBuilder
+    var filesRootSurface: some View {
         ZStack {
             VStack(spacing: 12) {
                 filesScreenHeader
@@ -986,6 +1297,11 @@ struct FilesView: View {
                         evidenceWorkbenchOverview
                             .padding(.horizontal)
                             .padding(.top, 2)
+
+                        if let primaryWorkbenchItem {
+                            workspaceProvenanceHandoff(primaryWorkbenchItem)
+                                .padding(.horizontal)
+                        }
 
                         if let fileLoadError {
                             FilesLoadErrorState(
@@ -1085,18 +1401,48 @@ struct FilesView: View {
                 .accessibilityIdentifier("filesTransientNotice")
             }
         }
+    }
+
+    private var filesLifecycleSurface: some View {
+        filesRootSurface
         .task {
             loadMemoryFlags()
+            rebuildProjectMemoryCache()
             seedFileStressIfNeeded()
             reload()
             reloadWorkspaces()
             openDebugArtifactPreviewIfRequested()
             openFilesSurfaceDemosIfRequested()
         }
-        .onChange(of: project.id) { _, _ in
+        .onChange(of: scopeConversationID) { _, _ in
             selectedMemoryItemID = ""
             loadMemoryFlags()
+            rebuildProjectMemoryCache()
         }
+        .onChange(of: scopeProject?.updatedAt) { _, _ in
+            rebuildProjectMemoryCache()
+        }
+        .onChange(of: artifactEvidenceRevision) { _, _ in
+            rebuildProjectMemoryCache()
+        }
+        .onChange(of: fileChangeEvidenceRevision) { _, _ in
+            rebuildProjectMemoryCache()
+        }
+        .onChange(of: runtime.workspace.workspaceName) { _, _ in
+            currentPath = ""
+            reload()
+            reloadWorkspaces()
+        }
+        .onChange(of: importantMemoryPaths) { _, _ in
+            rebuildProjectMemoryCache()
+        }
+        .onChange(of: pinnedMemoryPaths) { _, _ in
+            rebuildProjectMemoryCache()
+        }
+    }
+
+    private var filesInspectorSurface: some View {
+        filesLifecycleSurface
         .sheet(item: $editingTarget) { target in
             CodeEditorView(
                 fileName: target.item.name,
@@ -1106,7 +1452,7 @@ struct FilesView: View {
                 onSave: {
                     runtime.noteWorkspaceChanged()
                     ProjectEventRecorder.recordFileChange(
-                        project: project,
+                        project: scopeProject,
                         action: "Saved file",
                         path: target.item.relativePath,
                         context: modelContext
@@ -1154,6 +1500,10 @@ struct FilesView: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
+    }
+
+    private var filesSearchLifecycleSurface: some View {
+        filesInspectorSurface
         .onChange(of: showingSearch) { _, isShowing in
             if !isShowing {
                 cancelSearch()
@@ -1180,11 +1530,15 @@ struct FilesView: View {
             fileActionTask = nil
             fileActionStatus = nil
         }
+    }
+
+    private var filesCreationAndAlertSurface: some View {
+        filesSearchLifecycleSurface
         .sheet(isPresented: $showingCreate) {
             CreateFileSheet(workspace: runtime.workspace, currentPath: currentPath) { path, isDirectory in
                 runtime.noteWorkspaceChanged()
                 ProjectEventRecorder.recordFileChange(
-                    project: project,
+                    project: scopeProject,
                     action: isDirectory ? "Created folder" : "Created file",
                     path: path,
                     context: modelContext
@@ -1251,6 +1605,10 @@ struct FilesView: View {
                 Text(deleteConfirmationDetail(for: item))
             }
         }
+    }
+
+    var body: some View {
+        filesCreationAndAlertSurface
         .scrollDismissesKeyboard(.interactively)
     }
 
@@ -1259,7 +1617,7 @@ struct FilesView: View {
     /// Replaces the old banner + explorer card + stat-chip stack.
     var filesScreenHeader: some View {
         NovaScreenHeader(
-            kicker: "\(project.name) // \(runtime.workspace.workspaceName)",
+            kicker: "\(scopeTitle) // \(runtime.workspace.workspaceName)",
             title: "Workspace",
             subtitle: filesHeaderStatusLine,
             symbol: "folder.fill",
@@ -1366,6 +1724,7 @@ struct FilesView: View {
                     recentCutoff = cutoff
                     items = rows
                     cachedStats = stats
+                    rebuildProjectMemoryCache(fileRows: rows)
                     fileLoadError = nil
                     reloadTask = nil
                 }
@@ -1380,6 +1739,7 @@ struct FilesView: View {
                     guard !Task.isCancelled, currentPath == path else { return }
                     items = []
                     cachedStats = FileStats()
+                    rebuildProjectMemoryCache(fileRows: [])
                     fileLoadError = message
                     reloadTask = nil
                 }
@@ -1394,6 +1754,19 @@ struct FilesView: View {
     @discardableResult
     func switchWorkspace(to name: String) -> Bool {
         let safeName = SandboxWorkspace.sanitizedWorkspaceName(name)
+        guard !isWorkspaceRoutingLocked() else {
+            workspaceSaveError = "Finish or stop the active mission before switching workspaces. NovaForge kept the current workspace unchanged."
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return false
+        }
+
+        let previousRuntimeWorkspaceName = runtime.workspace.workspaceName
+        guard runtime.switchWorkspace(to: safeName) else {
+            workspaceSaveError = "NovaForge could not switch workspaces while work is active. The current workspace is unchanged."
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return false
+        }
+
         let projectWorkspaceWillChange = project.workspaceName != safeName
         if projectWorkspaceWillChange {
             ProjectEventRecorder.record(
@@ -1415,10 +1788,10 @@ struct FilesView: View {
             )
         } catch {
             modelContext.rollback()
+            _ = runtime.switchWorkspace(to: previousRuntimeWorkspaceName)
             workspaceSaveError = "Could not switch to \(safeName): \(error.localizedDescription)"
             return false
         }
-        runtime.switchWorkspace(to: safeName)
         currentPath = ""
         reload()
         reloadWorkspaces()
@@ -1435,7 +1808,7 @@ struct FilesView: View {
 
     func open(_ item: FileItem) {
         if item.isDirectory {
-            withAnimation(.smooth(duration: 0.3)) {
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
                 currentPath = item.relativePath
                 reload()
             }
@@ -1461,7 +1834,7 @@ struct FilesView: View {
         let artifact = WorkspaceArtifact(path: path)
         ProjectEventRecorder.noteArtifactPreview(
             artifact,
-            project: project,
+            project: scopeProject,
             context: modelContext
         )
         saveFileEvidence(
@@ -1521,7 +1894,7 @@ struct FilesView: View {
                    FileManager.default.fileExists(atPath: url.path) {
                     ProjectEventRecorder.noteArtifactPreview(
                         WorkspaceArtifact(path: artifactPath),
-                        project: project,
+                        project: scopeProject,
                         context: modelContext
                     )
                     previewArtifact = WorkspaceArtifact(path: artifactPath)
@@ -1630,7 +2003,7 @@ struct FilesView: View {
         }
         runtime.noteWorkspaceChanged()
         ProjectEventRecorder.recordFileChange(
-            project: project,
+            project: scopeProject,
             action: "Created file",
             path: path,
             context: modelContext

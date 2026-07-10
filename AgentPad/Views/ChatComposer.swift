@@ -122,7 +122,9 @@ struct ComposerGlassSurfaceModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if reduceTransparency || AgentPlatformCompatibility.usesConservativeRendering {
+        if reduceTransparency ||
+            AgentPlatformCompatibility.usesConservativeRendering ||
+            AgentPerformance.prefersReducedVisualEffects {
             fallback(content: content)
         } else if #available(iOS 26.0, *) {
             glass(content: content)
@@ -206,7 +208,7 @@ extension View {
 
     @ViewBuilder
     func runContextSurface(usesPolishedSurface: Bool, tint: Color) -> some View {
-        if usesPolishedSurface {
+        if usesPolishedSurface || AgentPerformance.prefersReducedVisualEffects {
             agentSurface(radius: 18, tint: tint.opacity(0.07))
         } else {
             agentGlass(radius: 18, tint: tint.opacity(0.09))
@@ -215,10 +217,12 @@ extension View {
 }
 
 struct ComposerMenuButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(.spring(response: 0.2, dampingFraction: 0.65), value: configuration.isPressed)
+            .scaleEffect(reduceMotion || AgentPerformance.prefersReducedVisualEffects ? 1 : (configuration.isPressed ? 0.95 : 1.0))
+            .animation(reduceMotion || AgentPerformance.prefersReducedVisualEffects ? nil : .spring(response: 0.2, dampingFraction: 0.65), value: configuration.isPressed)
     }
 }
 
@@ -304,7 +308,7 @@ struct ComposerModelMenu: View {
         }
         .padding(.leading, 8)
         .padding(.trailing, 8)
-        .frame(height: 34)
+        .frame(height: AgentDesign.minimumTouchTarget)
         .frame(minWidth: 124, maxWidth: 168, alignment: .leading)
         .background {
             ZStack {

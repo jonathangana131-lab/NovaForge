@@ -190,6 +190,7 @@ struct NovaScreenHeader<Trailing: View>: View {
     var isActive: Bool = false
     var showsGlyph: Bool = true
     @ViewBuilder var trailing: Trailing
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(
         kicker: String,
@@ -212,30 +213,51 @@ struct NovaScreenHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                NovaKicker(text: kicker, tint: tint)
-                Text(title)
-                    .font(NovaType.hero)
-                    .foregroundStyle(AgentPalette.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .layoutPriority(1)
-                Text(subtitle)
-                    .font(NovaType.caption)
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerText
 
-            trailing
+                    HStack(spacing: 10) {
+                        trailing
+                        Spacer(minLength: 0)
+                        if showsGlyph {
+                            NovaReticleGlyph(symbol: symbol, tint: tint, isActive: isActive)
+                        }
+                    }
+                }
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    headerText
 
-            if showsGlyph {
-                NovaReticleGlyph(symbol: symbol, tint: tint, isActive: isActive)
+                    trailing
+
+                    if showsGlyph {
+                        NovaReticleGlyph(symbol: symbol, tint: tint, isActive: isActive)
+                    }
+                }
             }
         }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var headerText: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            NovaKicker(text: kicker, tint: tint)
+            Text(title)
+                .font(NovaType.hero)
+                .foregroundStyle(AgentPalette.ink)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.7)
+                .layoutPriority(1)
+            Text(subtitle)
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                .truncationMode(.tail)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title). \(subtitle)")
     }

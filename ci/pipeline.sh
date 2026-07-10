@@ -1,7 +1,10 @@
 #!/bin/bash
-# NovaForge CI pipeline - runs on a macOS GitHub Actions runner.
-# Builds the app for the iPhone simulator, verifies required source assets are
-# present, walks every app surface via launch arguments, captures screenshots
+# NovaForge visual-census pipeline - runs only after the fast verification job
+# on main, or when explicitly requested from workflow_dispatch. Pull requests
+# use ci/verify.sh and do not pay for this full simulator tour.
+#
+# This builds the app for the iPhone simulator, restores the binary app icon if
+# missing, walks every app surface via launch arguments, captures screenshots
 # and a matrix-rain video, and force-pushes all captures to the `ci-shots`
 # branch (fetchable as public raw URLs). Build logs are published even when
 # the build fails.
@@ -14,6 +17,10 @@ exec > >(tee -a pipeline.log) 2>&1
 
 BUNDLE="com.joey.NovaForge"
 ICON="AgentPad/App/Assets.xcassets/AppIcon.appiconset/icon_1024.png"
+IMPORT_TARBALL_URL="https://pub.hyperagent.com/api/published/pbf01KWKBBTZB_0ZV3WMJ212R4ZGSN/novaforge-import.tar.gz"
+# Facelift arc-reactor icon (binary assets can't ride the text-only git
+# bridge, so the build fetches it — same trust path as the import tarball).
+FACELIFT_ICON_URL="https://pub.hyperagent.com/api/published/pbf01KWNCR2ZQ_1N7M4RF7JH7D9EVH/icon_new.png"
 APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/NovaForge.app"
 
 # ---------------------------------------------------------------------------

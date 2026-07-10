@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import SwiftData
 
 /// A lightweight in-app toast for transient feedback (saves, copies, model loads,
@@ -45,6 +46,69 @@ enum ToolRunStatus: String, Codable, CaseIterable, Sendable {
     case rejected
     case completed
     case failed
+}
+
+/// The durable lifecycle of one user-visible agent mission.
+///
+/// Raw values are persisted so future app versions can add cases without
+/// changing SwiftData's storage representation.
+enum AgentRunStatus: String, Codable, CaseIterable, Sendable {
+    case queued
+    case running
+    case awaitingApproval
+    case completed
+    case failed
+    case cancelled
+    case interrupted
+
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .failed, .cancelled, .interrupted:
+            true
+        case .queued, .running, .awaitingApproval:
+            false
+        }
+    }
+}
+
+enum AgentRunRecordOrigin: String, Codable, CaseIterable, Sendable {
+    case user
+    case retry
+    case continuation
+    case autoContinue
+    case recovery
+    case system
+}
+
+enum AgentRunErrorKind: String, Codable, CaseIterable, Sendable {
+    case invalidRequest
+    case provider
+    case tool
+    case approvalRejected
+    case workspaceConflict
+    case persistence
+    case cancelled
+    case interrupted
+    case unknown
+}
+
+/// A write-ahead tool receipt advances monotonically through these phases.
+enum ToolOperationPhase: String, Codable, CaseIterable, Sendable {
+    case scheduled
+    case executing
+    case applied
+    case completed
+    case failed
+    case interrupted
+
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .failed, .interrupted:
+            true
+        case .scheduled, .executing, .applied:
+            false
+        }
+    }
 }
 
 enum ProjectState: String, Codable, CaseIterable, Sendable {
@@ -1444,8 +1508,11 @@ enum PersistedPayloadBudget {
     static let maxToolCallsJSONCharacters = 24_000
 
     static func compactMessageContent(_ content: String, role: ChatRole) -> String {
-        let limit = role == .tool ? maxToolMessageContentCharacters : maxMessageContentCharacters
-        return compact(content, label: "persisted \(role.rawValue) message", limit: limit)
+        // User requests and assistant answers are the durable transcript. The
+        // provider context window already makes an ephemeral bounded copy, so
+        // truncating either side here would silently destroy accepted text.
+        guard role == .tool else { return content }
+        return compact(content, label: "persisted tool message", limit: maxToolMessageContentCharacters)
     }
 
     static func compactToolRunArguments(_ argumentsJSON: String) -> String {
@@ -1482,36 +1549,6 @@ enum PersistedPayloadBudget {
         }
 
         return compactJSONArguments(json, label: "persisted tool_calls JSON", limit: maxToolCallsJSONCharacters)
-    }
-
-    static func compactBeforeSave(in context: ModelContext) {
-        if let messages = try? context.fetch(FetchDescriptor<ChatMessage>()) {
-            for message in messages {
-                let compactedContent = compactMessageContent(message.content, role: message.role)
-                if compactedContent != message.content {
-                    message.content = compactedContent
-                }
-
-                let compactedToolCallsJSON = compactToolCallsJSON(message.toolCallsJSON)
-                if compactedToolCallsJSON != message.toolCallsJSON {
-                    message.toolCallsJSON = compactedToolCallsJSON
-                }
-            }
-        }
-
-        if let runs = try? context.fetch(FetchDescriptor<ToolRun>()) {
-            for run in runs {
-                let compactedArguments = compactToolRunArguments(run.argumentsJSON)
-                if compactedArguments != run.argumentsJSON {
-                    run.argumentsJSON = compactedArguments
-                }
-
-                let compactedOutput = compactToolRunOutput(run.output)
-                if compactedOutput != run.output {
-                    run.output = compactedOutput
-                }
-            }
-        }
     }
 
     private static func containsOversizedToolArguments(_ json: String) -> Bool {
@@ -1590,10 +1627,25 @@ final class ChatMessage {
     var conversation: Conversation?
     var toolCallID: String?
     var toolCallsJSON: String?
+    /// Scalar linkage keeps run history additive and avoids making legacy
+    /// message ownership dependent on a new SwiftData relationship.
+    var runIDString: String?
+    var runSequence: Int?
+    var runStatusRawValue: String?
 
     var role: ChatRole {
         get { ChatRole(rawValue: roleRawValue) ?? .assistant }
         set { roleRawValue = newValue.rawValue }
+    }
+
+    var runID: UUID? {
+        get { runIDString.flatMap(UUID.init(uuidString:)) }
+        set { runIDString = newValue?.uuidString }
+    }
+
+    var runStatus: AgentRunStatus? {
+        get { runStatusRawValue.flatMap(AgentRunStatus.init(rawValue:)) }
+        set { runStatusRawValue = newValue?.rawValue }
     }
 
     var toolCalls: [APIToolCall]? {
@@ -1608,7 +1660,10 @@ final class ChatMessage {
         content: String,
         toolCallID: String? = nil,
         toolCallsJSON: String? = nil,
-        conversation: Conversation? = nil
+        conversation: Conversation? = nil,
+        runID: UUID? = nil,
+        runSequence: Int? = nil,
+        runStatus: AgentRunStatus? = nil
     ) {
         self.id = id
         self.roleRawValue = role.rawValue
@@ -1617,6 +1672,9 @@ final class ChatMessage {
         self.toolCallsJSON = PersistedPayloadBudget.compactToolCallsJSON(toolCallsJSON)
         self.createdAt = Date()
         self.conversation = conversation
+        self.runIDString = runID?.uuidString
+        self.runSequence = runSequence
+        self.runStatusRawValue = runStatus?.rawValue
     }
 }
 
@@ -1632,10 +1690,23 @@ final class ToolRun {
     var requiresApproval: Bool
     var isMutating: Bool
     var project: Project?
+    var runIDString: String?
+    var runSequence: Int?
+    var runStatusRawValue: String?
 
     var status: ToolRunStatus {
         get { ToolRunStatus(rawValue: statusRawValue) ?? .completed }
         set { statusRawValue = newValue.rawValue }
+    }
+
+    var runID: UUID? {
+        get { runIDString.flatMap(UUID.init(uuidString:)) }
+        set { runIDString = newValue?.uuidString }
+    }
+
+    var runStatus: AgentRunStatus? {
+        get { runStatusRawValue.flatMap(AgentRunStatus.init(rawValue:)) }
+        set { runStatusRawValue = newValue?.rawValue }
     }
 
     init(
@@ -1645,7 +1716,10 @@ final class ToolRun {
         status: ToolRunStatus = .completed,
         requiresApproval: Bool = false,
         isMutating: Bool = false,
-        project: Project? = nil
+        project: Project? = nil,
+        runID: UUID? = nil,
+        runSequence: Int? = nil,
+        runStatus: AgentRunStatus? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -1657,6 +1731,289 @@ final class ToolRun {
         self.requiresApproval = requiresApproval
         self.isMutating = isMutating
         self.project = project
+        self.runIDString = runID?.uuidString
+        self.runSequence = runSequence
+        self.runStatusRawValue = runStatus?.rawValue
+    }
+}
+
+/// Canonical durable ownership for one request-to-proof mission.
+///
+/// Linkage intentionally uses UUID strings rather than SwiftData relationships.
+/// That lets the app dual-write records before every historical surface has
+/// migrated, and it keeps deletion policy explicit at call sites.
+@Model
+final class AgentRunRecord {
+    var id: UUID
+    var statusRawValue: String
+    var originRawValue: String
+    var conversationIDString: String?
+    var projectIDString: String?
+    var workspaceIDString: String?
+    var workspaceName: String?
+    var requestMessageIDString: String?
+    var responseMessageIDString: String?
+    var providerRawValue: String?
+    var modelID: String?
+    var errorKindRawValue: String?
+    var errorMessage: String?
+    var retryOfRunIDString: String?
+    var continuationOfRunIDString: String?
+    var createdAt: Date
+    var queuedAt: Date?
+    var startedAt: Date?
+    var updatedAt: Date
+    var completedAt: Date?
+
+    var status: AgentRunStatus {
+        get { AgentRunStatus(rawValue: statusRawValue) ?? .interrupted }
+        set { statusRawValue = newValue.rawValue }
+    }
+
+    var origin: AgentRunRecordOrigin {
+        get { AgentRunRecordOrigin(rawValue: originRawValue) ?? .user }
+        set { originRawValue = newValue.rawValue }
+    }
+
+    var provider: AIProvider? {
+        get { providerRawValue.flatMap(AIProvider.init(rawValue:)) }
+        set { providerRawValue = newValue?.rawValue }
+    }
+
+    var errorKind: AgentRunErrorKind? {
+        get { errorKindRawValue.flatMap(AgentRunErrorKind.init(rawValue:)) }
+        set { errorKindRawValue = newValue?.rawValue }
+    }
+
+    var conversationID: UUID? {
+        get { conversationIDString.flatMap(UUID.init(uuidString:)) }
+        set { conversationIDString = newValue?.uuidString }
+    }
+
+    var projectID: UUID? {
+        get { projectIDString.flatMap(UUID.init(uuidString:)) }
+        set { projectIDString = newValue?.uuidString }
+    }
+
+    var workspaceID: UUID? {
+        get { workspaceIDString.flatMap(UUID.init(uuidString:)) }
+        set { workspaceIDString = newValue?.uuidString }
+    }
+
+    var requestMessageID: UUID? {
+        get { requestMessageIDString.flatMap(UUID.init(uuidString:)) }
+        set { requestMessageIDString = newValue?.uuidString }
+    }
+
+    var responseMessageID: UUID? {
+        get { responseMessageIDString.flatMap(UUID.init(uuidString:)) }
+        set { responseMessageIDString = newValue?.uuidString }
+    }
+
+    var retryOfRunID: UUID? {
+        get { retryOfRunIDString.flatMap(UUID.init(uuidString:)) }
+        set { retryOfRunIDString = newValue?.uuidString }
+    }
+
+    var continuationOfRunID: UUID? {
+        get { continuationOfRunIDString.flatMap(UUID.init(uuidString:)) }
+        set { continuationOfRunIDString = newValue?.uuidString }
+    }
+
+    init(
+        id: UUID = UUID(),
+        status: AgentRunStatus = .queued,
+        origin: AgentRunRecordOrigin = .user,
+        conversationID: UUID? = nil,
+        projectID: UUID? = nil,
+        workspaceID: UUID? = nil,
+        workspaceName: String? = nil,
+        requestMessageID: UUID? = nil,
+        responseMessageID: UUID? = nil,
+        provider: AIProvider? = nil,
+        modelID: String? = nil,
+        errorKind: AgentRunErrorKind? = nil,
+        errorMessage: String? = nil,
+        retryOfRunID: UUID? = nil,
+        continuationOfRunID: UUID? = nil,
+        now: Date = Date()
+    ) {
+        self.id = id
+        self.statusRawValue = status.rawValue
+        self.originRawValue = origin.rawValue
+        self.conversationIDString = conversationID?.uuidString
+        self.projectIDString = projectID?.uuidString
+        self.workspaceIDString = workspaceID?.uuidString
+        self.workspaceName = workspaceName
+        self.requestMessageIDString = requestMessageID?.uuidString
+        self.responseMessageIDString = responseMessageID?.uuidString
+        self.providerRawValue = provider?.rawValue
+        self.modelID = modelID
+        self.errorKindRawValue = errorKind?.rawValue
+        self.errorMessage = errorMessage
+        self.retryOfRunIDString = retryOfRunID?.uuidString
+        self.continuationOfRunIDString = continuationOfRunID?.uuidString
+        self.createdAt = now
+        self.queuedAt = status == .queued ? now : nil
+        self.startedAt = status == .running || status == .awaitingApproval || status.isTerminal ? now : nil
+        self.updatedAt = now
+        self.completedAt = status.isTerminal ? now : nil
+    }
+
+    func transition(
+        to nextStatus: AgentRunStatus,
+        at timestamp: Date = Date(),
+        errorKind: AgentRunErrorKind? = nil,
+        errorMessage: String? = nil
+    ) {
+        status = nextStatus
+        updatedAt = timestamp
+        if nextStatus == .queued, queuedAt == nil {
+            queuedAt = timestamp
+        }
+        if nextStatus != .queued, startedAt == nil {
+            startedAt = timestamp
+        }
+        completedAt = nextStatus.isTerminal ? timestamp : nil
+        self.errorKind = errorKind
+        self.errorMessage = errorMessage
+    }
+}
+
+/// Write-ahead receipt for a single tool operation. A record can be saved in
+/// `.scheduled` before a mutation begins and recovered as `.interrupted` if the
+/// app exits before the final result is persisted.
+@Model
+final class ToolOperationRecord {
+    var id: UUID
+    var runIDString: String?
+    var projectIDString: String?
+    var conversationIDString: String?
+    var workspaceIDString: String?
+    var workspaceName: String?
+    var toolCallID: String?
+    var toolName: String
+    var argumentsHash: String
+    var argumentsJSON: String
+    var targetPathsJSON: String?
+    var phaseRawValue: String
+    var resultSummary: String?
+    var errorMessage: String?
+    var scheduledAt: Date
+    var startedAt: Date?
+    var appliedAt: Date?
+    var completedAt: Date?
+    var updatedAt: Date
+
+    var phase: ToolOperationPhase {
+        get { ToolOperationPhase(rawValue: phaseRawValue) ?? .interrupted }
+        set { phaseRawValue = newValue.rawValue }
+    }
+
+    var runID: UUID? {
+        get { runIDString.flatMap(UUID.init(uuidString:)) }
+        set { runIDString = newValue?.uuidString }
+    }
+
+    var projectID: UUID? {
+        get { projectIDString.flatMap(UUID.init(uuidString:)) }
+        set { projectIDString = newValue?.uuidString }
+    }
+
+    var conversationID: UUID? {
+        get { conversationIDString.flatMap(UUID.init(uuidString:)) }
+        set { conversationIDString = newValue?.uuidString }
+    }
+
+    var workspaceID: UUID? {
+        get { workspaceIDString.flatMap(UUID.init(uuidString:)) }
+        set { workspaceIDString = newValue?.uuidString }
+    }
+
+    var targetPaths: [String] {
+        get {
+            guard let targetPathsJSON,
+                  let data = targetPathsJSON.data(using: .utf8),
+                  let paths = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return paths
+        }
+        set { targetPathsJSON = Self.encodePaths(newValue) }
+    }
+
+    init(
+        id: UUID = UUID(),
+        runID: UUID? = nil,
+        projectID: UUID? = nil,
+        conversationID: UUID? = nil,
+        workspaceID: UUID? = nil,
+        workspaceName: String? = nil,
+        toolCallID: String? = nil,
+        toolName: String,
+        argumentsJSON: String,
+        argumentsHash: String? = nil,
+        targetPaths: [String] = [],
+        phase: ToolOperationPhase = .scheduled,
+        resultSummary: String? = nil,
+        errorMessage: String? = nil,
+        now: Date = Date()
+    ) {
+        self.id = id
+        self.runIDString = runID?.uuidString
+        self.projectIDString = projectID?.uuidString
+        self.conversationIDString = conversationID?.uuidString
+        self.workspaceIDString = workspaceID?.uuidString
+        self.workspaceName = workspaceName
+        self.toolCallID = toolCallID
+        self.toolName = toolName
+        self.argumentsHash = argumentsHash ?? Self.sha256(argumentsJSON)
+        self.argumentsJSON = PersistedPayloadBudget.compactToolRunArguments(argumentsJSON)
+        self.targetPathsJSON = Self.encodePaths(targetPaths)
+        self.phaseRawValue = phase.rawValue
+        self.resultSummary = resultSummary.map(PersistedPayloadBudget.compactToolRunOutput)
+        self.errorMessage = errorMessage.map(PersistedPayloadBudget.compactToolRunOutput)
+        self.scheduledAt = now
+        self.startedAt = phase == .scheduled ? nil : now
+        self.appliedAt = phase == .applied || phase == .completed ? now : nil
+        self.completedAt = phase.isTerminal ? now : nil
+        self.updatedAt = now
+    }
+
+    func transition(
+        to nextPhase: ToolOperationPhase,
+        at timestamp: Date = Date(),
+        resultSummary: String? = nil,
+        errorMessage: String? = nil
+    ) {
+        phase = nextPhase
+        updatedAt = timestamp
+        if nextPhase != .scheduled, startedAt == nil {
+            startedAt = timestamp
+        }
+        if nextPhase == .applied || nextPhase == .completed, appliedAt == nil {
+            appliedAt = timestamp
+        }
+        completedAt = nextPhase.isTerminal ? timestamp : nil
+        if let resultSummary {
+            self.resultSummary = PersistedPayloadBudget.compactToolRunOutput(resultSummary)
+        }
+        if let errorMessage {
+            self.errorMessage = PersistedPayloadBudget.compactToolRunOutput(errorMessage)
+        }
+    }
+
+    private static func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func encodePaths(_ paths: [String]) -> String? {
+        guard !paths.isEmpty,
+              let data = try? JSONEncoder().encode(paths),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return PersistedPayloadBudget.compactToolRunArguments(json)
     }
 }
 
@@ -1791,5 +2148,43 @@ final class AgentSettings {
         self.customSystemPrompt = customSystemPrompt.isEmpty ? nil : customSystemPrompt
         self.createdAt = Date()
         self.updatedAt = Date()
+    }
+}
+
+/// The first explicit SwiftData schema baseline. Existing NovaForge releases
+/// used an unversioned `Schema` with the same model names. The additional
+/// entities and optional linkage fields in this baseline are lightweight,
+/// additive changes so those stores can be opened in place.
+enum NovaForgeSchemaV1: VersionedSchema {
+    static let versionIdentifier = Schema.Version(1, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        [
+            Project.self,
+            ProjectEvent.self,
+            ProjectArtifact.self,
+            TerminalCommandRecord.self,
+            ProjectFileChange.self,
+            ProjectOSRun.self,
+            ProjectOSStep.self,
+            Conversation.self,
+            ChatMessage.self,
+            ToolRun.self,
+            AgentRunRecord.self,
+            ToolOperationRecord.self,
+            AgentSettings.self
+        ]
+    }
+}
+
+enum NovaForgeSchemaMigrationPlan: SchemaMigrationPlan {
+    static var schemas: [any VersionedSchema.Type] {
+        [NovaForgeSchemaV1.self]
+    }
+
+    /// V1 is the explicit baseline. Add a lightweight or custom stage here when
+    /// V2 changes the persisted shape.
+    static var stages: [MigrationStage] {
+        []
     }
 }
