@@ -93,8 +93,9 @@ scripts/codex-sim-clean-check.sh
 
 Expected proof:
 
-- `scripts/codex-focused-tests.sh` prints `Focused tests passed` and leaves logs in `QA/codex-focused-tests-<timestamp>/`.
-- `scripts/codex-performance-gate.sh` reuses the focused `.xctestrun`, prints `Performance budgets passed`, and leaves `performance-summary.txt` plus raw OSLog output in `QA/codex-performance-gate-<timestamp>/`.
+- `scripts/codex-focused-tests.sh` prints `Focused tests passed`, leaves logs in `QA/codex-focused-tests-<timestamp>/`, and reuses one bounded `QA/DerivedData/codex-focused-tests/` cache instead of creating a new build tree per run.
+- `scripts/codex-performance-gate.sh` reuses the focused `.xctestrun`, prints `Performance budgets passed`, and leaves `performance-summary.txt` plus raw OSLog output in `QA/codex-performance-gate-<timestamp>/`. If it must build for itself, its managed DerivedData is removed on exit by default.
+- `scripts/codex-ai-streaming-video-proof.sh` preserves video, screenshots, contact sheet, and logs while removing its managed `QA/DerivedData/codex-ai-streaming-video-proof/` build cache on exit by default. Set `KEEP_DERIVED_DATA=1` only for debugging; custom `DERIVED_DATA` paths are preserved.
 - `scripts/codex-sim-tour.sh` prints `Tour passed`, leaves eleven required screenshots in `NovaForgeScreenshots/codex-tour-<timestamp>/`, and writes `tour-verification-summary.txt`.
 - `scripts/codex-sim-clean-check.sh` reports the proof simulator is shutdown and no NovaForge, `xcodebuild`, `simctl`, fast screenshot, or tour helper is lingering.
 
@@ -107,7 +108,7 @@ scripts/codex-focused-tests.sh
 ```
 
 The helper runs the focused suites below with bounded logs under `QA/codex-focused-tests-<timestamp>/`.
-By default it runs one project-based `build-for-testing` phase first in an isolated `QA/codex-focused-tests-<timestamp>/DerivedData` folder, discovers the generated `.xctestrun`, writes that path to `xctestrun.path`, restarts and waits for the proof simulator with `simctl bootstatus`, then runs all focused suites in one `test-without-building` invocation from that file. This keeps the trust gate fast while avoiding package graph resolution in every suite and avoids locking the shared Xcode DerivedData database when another Codex thread is building. Xcode and simulator boot/shutdown commands run through `scripts/codex-timeout-runner.pl`, which records logs and terminates its own process group on timeout. The helper shuts the proof simulator down on exit unless `SHUTDOWN_SIMULATOR_AFTER_TESTS=0`.
+By default it runs one project-based `build-for-testing` phase first in the bounded managed cache `QA/DerivedData/codex-focused-tests/`, discovers the generated `.xctestrun`, writes that path to the timestamped run's `xctestrun.path`, restarts and waits for the proof simulator with `simctl bootstatus`, then runs all focused suites in one `test-without-building` invocation from that file. Reusing one project-local cache keeps the trust gate fast, avoids package graph resolution in every suite, avoids locking the shared Xcode DerivedData database, and prevents every timestamped QA run from retaining another ~0.8-1 GiB build tree. A PID lock makes concurrent focused-test runs fail closed instead of corrupting the shared cache, and stale locks are repaired automatically. The cache resets automatically before a run if it exceeds `MAX_DERIVED_DATA_GIB=4`. Set `RESET_DERIVED_DATA_BEFORE_BUILD=1` for intentionally fresh proof, or `KEEP_DERIVED_DATA=0` when no follow-on performance gate needs the `.xctestrun`. Custom `DERIVED_DATA_PATH` values are never automatically removed. Xcode and simulator boot/shutdown commands run through `scripts/codex-timeout-runner.pl`, which records logs and terminates its own process group on timeout. The helper shuts the proof simulator down on exit unless `SHUTDOWN_SIMULATOR_AFTER_TESTS=0`.
 
 For testmanagerd triage, use the slower isolated mode:
 
@@ -167,7 +168,7 @@ Default budgets:
 | Project scroll hitches | max <= `MAX_PROJECT_SCROLL_HITCH_COUNT=30` |
 | Chat streaming hitches | max <= `MAX_CHAT_STREAMING_HITCH_COUNT=30` |
 
-If no reusable focused test bundle exists, run `BUILD_IF_NEEDED=1 scripts/codex-performance-gate.sh`; that is slower and should stay outside the default fast trust gate unless necessary.
+If no reusable focused test bundle exists, run `BUILD_IF_NEEDED=1 scripts/codex-performance-gate.sh`; that is slower and should stay outside the default fast trust gate unless necessary. Self-builds use `QA/DerivedData/codex-performance-gate/` and remove that managed cache on exit by default. Set `KEEP_DERIVED_DATA=1` only when debugging the self-built bundle, `RESET_DERIVED_DATA_BEFORE_BUILD=1` for a clean rebuild, or adjust the integer `MAX_DERIVED_DATA_GIB` cap when there is a measured need. Caller-supplied custom DerivedData paths are preserved.
 
 Fast gate does not fully cover:
 

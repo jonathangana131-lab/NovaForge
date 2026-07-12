@@ -1286,21 +1286,14 @@ struct FilesView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                breadcrumbs
+                if !currentPath.isEmpty {
+                    breadcrumbs
+                }
                 actionBar
                     .padding(.horizontal)
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 14) {
-                        evidenceWorkbenchOverview
-                            .padding(.horizontal)
-                            .padding(.top, 2)
-
-                        if let primaryWorkbenchItem {
-                            workspaceProvenanceHandoff(primaryWorkbenchItem)
-                                .padding(.horizontal)
-                        }
-
                         if let fileLoadError {
                             FilesLoadErrorState(
                                 path: currentPath,
@@ -1615,7 +1608,7 @@ struct FilesView: View {
     /// Replaces the old banner + explorer card + stat-chip stack.
     var filesScreenHeader: some View {
         NovaScreenHeader(
-            kicker: "\(scopeTitle) // \(runtime.workspace.workspaceName)",
+            kicker: scopeTitle,
             title: "Workspace",
             subtitle: filesHeaderStatusLine,
             symbol: "folder.fill",
@@ -1627,19 +1620,9 @@ struct FilesView: View {
     }
 
     var filesHeaderStatusLine: String {
-        var parts: [String] = []
-        parts.append("\(cachedStats.fileCount) file\(cachedStats.fileCount == 1 ? "" : "s")")
-        if cachedStats.folderCount > 0 {
-            parts.append("\(cachedStats.folderCount) folder\(cachedStats.folderCount == 1 ? "" : "s")")
-        }
-        parts.append(cachedStats.totalBytesText)
-        if cachedStats.recentCount > 0 {
-            parts.append("\(cachedStats.recentCount) fresh")
-        }
-        if let newest = cachedStats.newestName {
-            parts.append("latest \(newest)")
-        }
-        return parts.joined(separator: " · ")
+        currentPath.isEmpty
+            ? "Files, artifacts, and proof for this mission."
+            : "Browsing \(currentPath)"
     }
 
     func reload() {

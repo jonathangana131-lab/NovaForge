@@ -98,7 +98,7 @@ extension FilesView {
             VStack(alignment: .leading, spacing: 13) {
                 NovaSectionMark(
                     title: "Evidence",
-                    detail: memoryIsStale ? "Stale" : projectMemorySubtitle,
+                    detail: memoryIsStale ? "Stale" : nil,
                     tint: memoryIsStale ? AgentPalette.warning : AgentPalette.green
                 )
 

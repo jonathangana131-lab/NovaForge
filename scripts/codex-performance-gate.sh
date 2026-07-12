@@ -17,7 +17,11 @@ BUILD_TIMEOUT="${BUILD_TIMEOUT:-600}"
 SIM_BOOT_TIMEOUT="${SIM_BOOT_TIMEOUT:-180}"
 ONLY_ACTIVE_ARCH="${ONLY_ACTIVE_ARCH:-YES}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/QA/codex-performance-gate-$(date +%Y%m%d-%H%M%S)}"
-DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$LOG_DIR/DerivedData}"
+MANAGED_DERIVED_DATA_PATH="$ROOT_DIR/QA/DerivedData/codex-performance-gate"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$MANAGED_DERIVED_DATA_PATH}"
+KEEP_DERIVED_DATA="${KEEP_DERIVED_DATA:-0}"
+RESET_DERIVED_DATA_BEFORE_BUILD="${RESET_DERIVED_DATA_BEFORE_BUILD:-0}"
+MAX_DERIVED_DATA_GIB="${MAX_DERIVED_DATA_GIB:-4}"
 XCTESTRUN_PATH="${XCTESTRUN_PATH:-}"
 BUILD_IF_NEEDED="${BUILD_IF_NEEDED:-0}"
 REQUIRE_QUIET_LANE="${REQUIRE_QUIET_LANE:-1}"
@@ -30,8 +34,45 @@ SUMMARY_LOG="${SUMMARY_LOG:-$LOG_DIR/performance-summary.txt}"
 BOOT_LOG="$LOG_DIR/simulator-bootstatus.log"
 SHUTDOWN_LOG="$LOG_DIR/simulator-shutdown.log"
 LOG_STREAM_PID=""
+MANAGED_DERIVED_DATA_USED=0
 
 mkdir -p "$LOG_DIR"
+
+prepare_managed_derived_data() {
+  [[ "$DERIVED_DATA_PATH" == "$MANAGED_DERIVED_DATA_PATH" ]] || return 0
+  MANAGED_DERIVED_DATA_USED=1
+
+  if [[ "$RESET_DERIVED_DATA_BEFORE_BUILD" == "1" ]]; then
+    echo "Resetting managed DerivedData before the performance build: $DERIVED_DATA_PATH"
+    rm -rf -- "$DERIVED_DATA_PATH"
+  elif [[ -d "$DERIVED_DATA_PATH" ]]; then
+    if [[ "$MAX_DERIVED_DATA_GIB" != <-> ]]; then
+      echo "MAX_DERIVED_DATA_GIB must be a non-negative integer." >&2
+      exit 2
+    fi
+    local size_kib
+    local max_kib=$(( MAX_DERIVED_DATA_GIB * 1024 * 1024 ))
+    size_kib="$(du -sk "$DERIVED_DATA_PATH" | cut -f1)"
+    if (( size_kib > max_kib )); then
+      echo "Managed DerivedData exceeded ${MAX_DERIVED_DATA_GIB} GiB; resetting it before the performance build."
+      rm -rf -- "$DERIVED_DATA_PATH"
+    fi
+  fi
+
+  mkdir -p "$DERIVED_DATA_PATH"
+}
+
+cleanup_managed_derived_data() {
+  (( MANAGED_DERIVED_DATA_USED == 1 )) || return 0
+  [[ "$DERIVED_DATA_PATH" == "$MANAGED_DERIVED_DATA_PATH" ]] || return 0
+  if [[ "$KEEP_DERIVED_DATA" == "1" ]]; then
+    echo "Keeping bounded performance DerivedData: $DERIVED_DATA_PATH"
+    return 0
+  fi
+  echo "Removing managed performance DerivedData: $DERIVED_DATA_PATH"
+  rm -rf -- "$DERIVED_DATA_PATH" || true
+  rmdir "$ROOT_DIR/QA/DerivedData" 2>/dev/null || true
+}
 
 cleanup_on_exit() {
   local exit_status=$?
@@ -44,6 +85,7 @@ cleanup_on_exit() {
   if [[ "$SHUTDOWN_SIMULATOR_AFTER_TESTS" == "1" ]]; then
     "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$SHUTDOWN_LOG" xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
   fi
+  cleanup_managed_derived_data
   return "$exit_status"
 }
 
@@ -144,6 +186,7 @@ run_ui_performance_test() {
     exit 2
   fi
 
+  prepare_managed_derived_data
   mkdir -p "$DERIVED_DATA_PATH"
   "$TIMEOUT_RUNNER" "$BUILD_TIMEOUT" "$TEST_LOG" xcodebuild \
     -project "$PROJECT_PATH" \

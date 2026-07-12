@@ -26,7 +26,7 @@ extension ProjectDashboardView {
                         .foregroundStyle(isSelected ? AgentPalette.ink : AgentPalette.secondaryText)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity, minHeight: 38)
+                        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
                         .background(
                             Capsule(style: .continuous)
                                 .fill(isSelected ? projectOSTint.opacity(0.16) : Color.clear)
@@ -43,6 +43,7 @@ extension ProjectDashboardView {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Show \(scope.title)")
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityIdentifier("projectDetailScope-\(scope.rawValue)")
             }
         }
         .accessibilityElement(children: .contain)
@@ -138,11 +139,7 @@ extension ProjectDashboardView {
 
     func createAndDismissProject() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        showsProjectSwitcherSheet = false
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 220_000_000)
-            showsProjectIntakeSheet = true
-        }
+        presentedProjectSheet = .intake
     }
 
     var projectSwitcherList: some View {
@@ -178,7 +175,7 @@ extension ProjectDashboardView {
                             withAnimation((reduceMotion || !AgentPerformance.allowsDecorativeMotion) ? nil : .smooth(duration: 0.42)) {
                                 highlightedProjectID = candidate.id
                                 selectProject(candidate)
-                                showsProjectSwitcherSheet = false
+                                presentedProjectSheet = nil
                             }
                         } label: {
                             projectSwitcherRow(candidate, isSelected: false)

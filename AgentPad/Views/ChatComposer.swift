@@ -42,6 +42,8 @@ struct ComposerStatusPill: View {
         .padding(.horizontal, 8)
         .frame(height: 24)
         .agentControlSurface(radius: 8, tint: status.tint.opacity(0.10), selected: true)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("composerStatusPill")
     }
 }
 
@@ -74,7 +76,7 @@ struct ComposerChromeStyle: Equatable {
         verticalPadding: 4,
         minHeight: 96,
         collapsedMaxHeight: 108,
-        expandedMaxHeight: 220,
+        expandedMaxHeight: 164,
         surfaceOpacity: 0.76,
         focusedSurfaceOpacity: 0.82,
         tintOpacity: 0.020,

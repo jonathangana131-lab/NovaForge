@@ -4,6 +4,28 @@ import Observation
 import SwiftData
 import UIKit
 
+/// A small Combine-backed value publisher that deliberately does not forward
+/// through an enclosing `ObservableObject.objectWillChange`. It is useful for
+/// side-channel signals such as scroll growth: subscribers receive every value,
+/// while views observing the owner are invalidated only by renderer state.
+@propertyWrapper
+final class IndependentPublished<Value> {
+    private let subject: CurrentValueSubject<Value, Never>
+
+    init(wrappedValue: Value) {
+        subject = CurrentValueSubject(wrappedValue)
+    }
+
+    var wrappedValue: Value {
+        get { subject.value }
+        set { subject.send(newValue) }
+    }
+
+    var projectedValue: AnyPublisher<Value, Never> {
+        subject.eraseToAnyPublisher()
+    }
+}
+
 enum AgentTraceStatus: String, Hashable {
     case queued
     case thinking
@@ -125,104 +147,90 @@ struct AgentTraceEvent: Identifiable, Hashable {
 
 @MainActor
 final class LiveStreamBuffer: ObservableObject {
-    /// Provider chunks can arrive in ragged half-words. The Forge engine first
-    /// builds a semantic word tree, then reveals whole word/phrase frames on a
-    /// steady display cadence so the AI feels like it is speaking instead of
-    /// resizing text on every network packet.
+    /// Provider chunks can arrive in ragged half-words. The composer parses
+    /// each chunk once, then publishes stable paragraph + active-phrase
+    /// snapshots at a bounded cadence.
     private var activeRevealFrameInterval: Duration {
-        // Normal use feels lively; profiling uses a calmer cadence so the gate
-        // measures sustained scroll/render health instead of stress-test packet spam.
-        AgentPerformance.shouldProfileFrameRate ? .milliseconds(300) : .milliseconds(50)
+        AgentPerformance.shouldProfileFrameRate ? .milliseconds(300) : .milliseconds(110)
     }
 
-    // Keep the live bubble as a bounded readable opening + active tail. The
-    // final durable assistant message still contains the exact full response;
-    // during streaming this avoids re-laying out a giant wall on every frame.
-    private var maximumDisplayedCharacters: Int {
-        // Normal mode leaves several paragraphs readable. The profiling gate
-        // uses a smaller but still comprehensible two-sided window so layout
-        // cost remains predictable on the iPhone 12 baseline.
-        AgentPerformance.shouldProfileFrameRate ? 540 : 1_200
-    }
-    @Published private var frame = ForgeLiveFeedFrame.empty
-    @Published private var semanticDocument = AIStreamDocument.empty
-    @ObservationIgnored private var cachedDisplayFrame = ForgeLiveFeedFrame.empty
-    @ObservationIgnored private var feedEngine = ForgeLiveFeedEngine()
-    @ObservationIgnored private var semanticEngine = AIStreamDisplayEngine()
+    @Published private var snapshot: LiveTranscriptSnapshot
+    @ObservationIgnored private var composer: LiveTranscriptComposer
     @ObservationIgnored private var revealTask: Task<Void, Never>?
+    /// Cancellation alone is not ownership. A cancelled task can resume after
+    /// a reset, so every loop captures this generation and may only mutate or
+    /// clear the task slot while it still owns that generation.
+    @ObservationIgnored private var revealGeneration: UInt64 = 0
     @ObservationIgnored private var punctuationPauseFrames = 0
     @ObservationIgnored private var revealMetricTickCounter = 0
-    @Published private(set) var responseID = UUID()
+    @Published private(set) var responseID: UUID
     @Published private(set) var handoffMessageID: UUID?
+    /// The chat scroll surface subscribes only to this value. Lifecycle and
+    /// handoff changes no longer trigger growth correction through a broad
+    /// `objectWillChange` subscription.
+    @IndependentPublished private(set) var layoutRevision = 0
 
-    var displayFrame: ForgeLiveFeedFrame {
-        cachedDisplayFrame
+    init() {
+        let responseID = UUID()
+        self.responseID = responseID
+        snapshot = .empty(responseID: responseID)
+        composer = LiveTranscriptComposer(responseID: responseID)
     }
 
-    var responseDocument: AIStreamDocument { semanticDocument }
-    var shouldUseResponseStage: Bool { AIStreamFeatureFlags.responseStageEnabled }
+    var transcriptSnapshot: LiveTranscriptSnapshot { snapshot }
 
-    var displayText: String { displayFrame.displayText }
-    var characterCount: Int { frame.characterCount }
-    var revision: Int { frame.revision }
-    var isEmpty: Bool { frame.characterCount == 0 }
+    var displayText: String { snapshot.visibleText }
+    var characterCount: Int { snapshot.characterCount }
+    var revision: Int { snapshot.revision }
+    var isEmpty: Bool { snapshot.isEmpty }
     var isHandoffActive: Bool { handoffMessageID != nil && !isEmpty }
-    var isShowingTail: Bool { displayFrame.isShowingTail }
-    var revealBacklog: Int { frame.backlogCharacters }
+    var isShowingTail: Bool { snapshot.activeParagraph.activePhrase != nil }
+    var revealBacklog: Int { snapshot.backlogCharacters }
+
+    #if DEBUG || targetEnvironment(simulator)
+    var debugHasTrackedRevealTask: Bool { revealTask != nil }
+    #endif
 
     func reset() {
-        revealTask?.cancel()
-        revealTask = nil
-        feedEngine.reset()
-        semanticEngine = AIStreamDisplayEngine(configuration: semanticConfiguration)
-        semanticDocument = .empty
+        cancelRevealLoop()
         punctuationPauseFrames = 0
         revealMetricTickCounter = 0
-        responseID = UUID()
+        let nextResponseID = UUID()
+        responseID = nextResponseID
+        composer.reset(responseID: nextResponseID)
         handoffMessageID = nil
-        replaceFrame(.empty)
+        replaceSnapshot(.empty(responseID: nextResponseID))
     }
 
     func append(_ delta: String) {
         guard !delta.isEmpty else { return }
-        feedEngine.ingest(delta)
-        if shouldPublishSemanticStream {
-            publishSemanticUpdate(semanticEngine.consume(AIStreamEvent(kind: .textDelta(delta))), reason: nil)
-        }
+        composer.ingest(delta)
 
-        if frame.characterCount == 0 {
-            revealNextFrame(forceMinimum: true)
+        if snapshot.characterCount == 0 {
+            revealNextSnapshot(forceMinimum: true)
         }
         startRevealLoopIfNeeded()
     }
 
-    /// Legacy/testing escape hatch: reveal everything now.
+    /// Testing/completion escape hatch: reveal everything in one snapshot.
     func flushPending() {
-        revealTask?.cancel()
-        revealTask = nil
-        if let next = feedEngine.flush() {
-            publish(next, reason: "Live Stream Flush")
-        }
-        if shouldPublishSemanticStream {
-            publishSemanticUpdate(semanticEngine.flush(), reason: "AI Stream Flush")
+        cancelRevealLoop()
+        if let next = composer.flush() {
+            publishIfChanged(next, reason: "Live Transcript Flush")
         }
         punctuationPauseFrames = 0
     }
 
     func finishHandoff(to messageID: UUID) {
-        // The provider is done. Freeze the live surface at its last delivered
-        // frame and let the durable assistant message replace it as soon as it
-        // is rendered. Continuing the reveal loop here used to create a
-        // visible "Finishing response" phase that replayed text the user had
-        // already watched arrive.
-        revealTask?.cancel()
-        revealTask = nil
+        // The durable message is about to replace this surface. Publish the
+        // exact final provider text first so a slow persistence/render handoff
+        // never leaves a truncated live response frozen on screen.
+        cancelRevealLoop()
         punctuationPauseFrames = 0
-        handoffMessageID = messageID
-        if shouldPublishSemanticStream {
-            publishSemanticUpdate(semanticEngine.consume(AIStreamEvent(kind: .completed)), reason: "AI Stream Completed")
-            publishSemanticUpdate(semanticEngine.flush(), reason: nil)
+        if let final = composer.flush() {
+            publishIfChanged(final, reason: "Live Transcript Handoff Flush")
         }
+        handoffMessageID = messageID
     }
 
     func clearHandoffIfRendered(messageID: UUID) {
@@ -231,30 +239,39 @@ final class LiveStreamBuffer: ObservableObject {
     }
 
     private func startRevealLoopIfNeeded() {
-        guard revealTask == nil, feedEngine.hasPendingReveal else { return }
+        guard revealTask == nil, composer.hasPendingReveal else { return }
+        let generation = revealGeneration
         revealTask = Task { @MainActor [weak self] in
-            while let self, !Task.isCancelled, self.feedEngine.hasPendingReveal {
+            while let self,
+                  !Task.isCancelled,
+                  self.revealGeneration == generation,
+                  self.composer.hasPendingReveal {
                 do {
                     try await Task.sleep(for: self.activeRevealFrameInterval)
                 } catch {
                     break
                 }
-                guard !Task.isCancelled else { break }
+                guard !Task.isCancelled,
+                      self.revealGeneration == generation else { break }
                 if self.punctuationPauseFrames > 0 {
                     self.punctuationPauseFrames -= 1
                 } else {
-                    self.revealNextFrame(forceMinimum: false)
-                    if self.shouldPublishSemanticStream {
-                        self.publishSemanticUpdate(self.semanticEngine.tick(), reason: nil)
-                    }
+                    self.revealNextSnapshot(forceMinimum: false)
                 }
             }
-            self?.revealTask = nil
+            guard let self, self.revealGeneration == generation else { return }
+            self.revealTask = nil
         }
     }
 
-    private func revealNextFrame(forceMinimum: Bool) {
-        guard let next = feedEngine.revealNextFrame(
+    private func cancelRevealLoop() {
+        revealGeneration &+= 1
+        revealTask?.cancel()
+        revealTask = nil
+    }
+
+    private func revealNextSnapshot(forceMinimum: Bool) {
+        guard let next = composer.revealNextSnapshot(
             forceMinimum: forceMinimum,
             profileMode: AgentPerformance.shouldProfileFrameRate
         ) else { return }
@@ -262,54 +279,29 @@ final class LiveStreamBuffer: ObservableObject {
         publish(next, reason: nil)
     }
 
-    private func publish(_ next: ForgeLiveFeedFrame, reason: StaticString?) {
-        replaceFrame(next)
+    private func publish(_ next: LiveTranscriptSnapshot, reason: StaticString?) {
+        replaceSnapshot(next)
         revealMetricTickCounter += 1
         if let reason {
             AgentPerformance.event(reason)
         }
         if revealMetricTickCounter.isMultiple(of: 8) || next.backlogCharacters == 0 {
-            AgentPerformance.event("Live Feed Word Tree Tick")
-            AgentPerformance.value("Live Feed Visible Characters", Double(next.characterCount))
-            AgentPerformance.value("Live Feed Visible Atoms", Double(next.visibleAtomCount))
-            AgentPerformance.value("Live Feed Backlog Characters", Double(next.backlogCharacters))
+            AgentPerformance.event("Live Transcript Phrase Tick")
+            AgentPerformance.value("Live Transcript Visible Characters", Double(next.characterCount))
+            AgentPerformance.value("Live Transcript Stable Paragraphs", Double(next.settledParagraphs.count))
+            AgentPerformance.value("Live Transcript Backlog Characters", Double(next.backlogCharacters))
         }
     }
 
-    /// Windowing a Swift `String` walks its grapheme clusters. Cache that work
-    /// once when a frame is published instead of repeating it for every view
-    /// property (`displayText`, `isShowingTail`, and the stage's full frame).
-    private func replaceFrame(_ next: ForgeLiveFeedFrame) {
-        cachedDisplayFrame = next.windowed(maxCharacters: maximumDisplayedCharacters)
-        frame = next
+    private func publishIfChanged(_ next: LiveTranscriptSnapshot, reason: StaticString?) {
+        guard next != snapshot else { return }
+        publish(next, reason: reason)
     }
 
-    private var semanticConfiguration: AIStreamDisplayEngine.Configuration {
-        AIStreamDisplayEngine.Configuration(
-            minimumUpdateInterval: AgentPerformance.shouldProfileFrameRate ? 0.18 : 1.0 / 18.0,
-            reducedMotion: !AgentPerformance.allowsDecorativeMotion,
-            performanceMode: AgentPerformance.shouldProfileFrameRate,
-            maxAnimatedGlyphs: AgentPerformance.shouldProfileFrameRate ? 48 : 96
-        )
+    private func replaceSnapshot(_ next: LiveTranscriptSnapshot) {
+        snapshot = next
+        layoutRevision = next.revision
     }
-
-    private var shouldPublishSemanticStream: Bool {
-        AIStreamFeatureFlags.semanticStreamEnabled && !AgentPerformance.shouldProfileFrameRate
-    }
-
-    private func publishSemanticUpdate(_ update: AIStreamDisplayUpdate?, reason: StaticString?) {
-        guard let update else { return }
-        semanticDocument = update.document
-        if let reason {
-            AgentPerformance.event(reason)
-        }
-        if update.metrics.emittedSnapshotCount.isMultiple(of: 8) || update.document.isComplete {
-            AgentPerformance.event("AI Stream Semantic Tick")
-            AgentPerformance.value("AI Stream Characters", Double(update.document.characterCount))
-            AgentPerformance.value("AI Stream Suppressed Updates", Double(update.metrics.suppressedUpdateCount))
-        }
-    }
-
 }
 
 @MainActor
@@ -318,30 +310,41 @@ private final class LocalBenchmarkProbe {
     var characters = 0
 }
 
+/// Side effects that accompany one logical run session. Keeping these behind a
+/// tiny injectable boundary makes it impossible for a presentation boolean to
+/// guess whether a run succeeded, paused for approval, or was cancelled.
+@MainActor
+struct AgentRuntimeLifecycleEffects {
+    var runStarted: (_ projectName: String, _ statusLine: String) -> Void
+    var runEnded: (_ statusLine: String, _ succeeded: Bool) -> Void
+
+    static let live = AgentRuntimeLifecycleEffects(
+        runStarted: { projectName, statusLine in
+            NovaHaptics.runStarted()
+            RunActivityController.shared.runStarted(
+                projectName: projectName,
+                statusLine: statusLine
+            )
+        },
+        runEnded: { statusLine, succeeded in
+            if succeeded {
+                NovaHaptics.runSucceeded()
+            } else {
+                NovaHaptics.runFailed()
+            }
+            RunActivityController.shared.runEnded(
+                statusLine: statusLine,
+                success: succeeded
+            )
+        }
+    )
+}
+
 @MainActor
 @Observable
 final class AgentRuntime {
     var runState: AgentRunState = .idle
-    var isWorking = false {
-        didSet {
-            guard oldValue != isWorking else { return }
-            if isWorking {
-                NovaHaptics.runStarted()
-                RunActivityController.shared.runStarted(
-                    projectName: runWorkspace.workspaceName,
-                    statusLine: activityTitle == "Ready" ? "Agent run started" : activityTitle
-                )
-            } else {
-                let succeeded = lastError == nil && !wasInterrupted
-                if succeeded { NovaHaptics.runSucceeded() } else { NovaHaptics.runFailed() }
-                RunActivityController.shared.runEnded(
-                    statusLine: lastError ?? activityTitle,
-                    success: succeeded
-                )
-                releaseRunWorkspaceIfSettled()
-            }
-        }
-    }
+    var isWorking = false
     @ObservationIgnored var liveStream = LiveStreamBuffer()
     var pendingTool: ToolRequest? {
         didSet {
@@ -393,6 +396,11 @@ final class AgentRuntime {
     private let keychain = KeychainStore()
     private let localModelClient = LocalModelClient()
     private let executionCoordinator: AgentExecutionCoordinator
+    private let lifecycleEffects: AgentRuntimeLifecycleEffects
+    /// A run stays one logical session while it pauses for approval. Resuming
+    /// must not replay the start haptic, and stopping from approval must still
+    /// end the Live Activity even though `isWorking` is temporarily false.
+    private var hasActiveWorkSession = false
     private let maxQueuedPrompts = 3
     private let maxQueuedPromptCharacters = 4_000
     private let maxToolRoundCount = 96
@@ -412,13 +420,20 @@ final class AgentRuntime {
     private var pendingApprovalRun: ToolRun?
     private var pendingLocalPlanContinuation: PendingLocalPlanContinuation?
     private var activeLocalModelID: String?
-    private var cachedWorkspaceSummary: (signature: String, provider: AIProvider, text: String)?
+    private var workspaceMutationRevision: UInt64 = 0
+    private var cachedWorkspaceSummary: (
+        workspaceName: String,
+        revision: UInt64,
+        provider: AIProvider,
+        text: String
+    )?
     #if DEBUG || targetEnvironment(simulator)
     private var didInjectRecoverableFailureFixture = false
     private var debugCompactedSaveOverride: ((ModelContext) throws -> Void)?
     private var debugProviderResponses: [ProviderResponse] = []
     private var debugProviderFailure: Error?
     private var debugProviderCredentialOverride = false
+    private(set) var debugWorkspaceSummaryManifestScanCount = 0
     #endif
 
     private struct QueuedPrompt: Identifiable {
@@ -485,10 +500,70 @@ final class AgentRuntime {
 
     init(
         workspace: SandboxWorkspace = SandboxWorkspace(),
-        executionCoordinator: AgentExecutionCoordinator = AgentExecutionCoordinator()
+        executionCoordinator: AgentExecutionCoordinator = AgentExecutionCoordinator(),
+        lifecycleEffects: AgentRuntimeLifecycleEffects = .live
     ) {
         self.workspace = workspace
         self.executionCoordinator = executionCoordinator
+        self.lifecycleEffects = lifecycleEffects
+    }
+
+    private enum WorkConclusion {
+        case succeeded
+        case failed
+        case cancelled
+
+        var succeeded: Bool {
+            if case .succeeded = self { return true }
+            return false
+        }
+    }
+
+    private func beginWorkingSession() {
+        isWorking = true
+        guard !hasActiveWorkSession else { return }
+        hasActiveWorkSession = true
+        lifecycleEffects.runStarted(
+            runWorkspace.workspaceName,
+            activityTitle == "Ready" ? "Agent run started" : activityTitle
+        )
+    }
+
+    /// Approval is a suspension inside the same run session, not a successful
+    /// terminal result. Keep the Live Activity open and avoid all completion
+    /// haptics until the user approves, rejects, or stops the run.
+    private func suspendWorkingForApproval() {
+        isWorking = false
+    }
+
+    private func finishWorkingSession(_ conclusion: WorkConclusion) {
+        isWorking = false
+        guard hasActiveWorkSession else {
+            releaseRunWorkspaceIfSettled()
+            return
+        }
+        hasActiveWorkSession = false
+        lifecycleEffects.runEnded(
+            lastError ?? activityTitle,
+            conclusion.succeeded
+        )
+        releaseRunWorkspaceIfSettled()
+    }
+
+    private func finishWorkingSessionForCurrentState() {
+        switch runState {
+        case .completed:
+            finishWorkingSession(.succeeded)
+        case .failed:
+            finishWorkingSession(.failed)
+        case .cancelled:
+            finishWorkingSession(.cancelled)
+        case .waitingForApproval:
+            suspendWorkingForApproval()
+        case .idle, .running:
+            // A path that exits without a terminal state is never success.
+            finishWorkingSession(.failed)
+        }
     }
 
     private func setLastRunConversation(_ conversation: Conversation?) {
@@ -500,6 +575,8 @@ final class AgentRuntime {
 
     #if DEBUG || targetEnvironment(simulator)
     var debugHasTrackedTask: Bool { currentTask != nil }
+    var debugHasActiveRunIdentity: Bool { activeRunID != nil }
+    var debugHasActiveWorkSession: Bool { hasActiveWorkSession }
 
     func debugInstallPendingApproval(
         request: ToolRequest,
@@ -512,8 +589,8 @@ final class AgentRuntime {
         }
         pendingTool = request
         pendingApprovalRun = run
-        isWorking = false
         runState = .waitingForApproval
+        suspendWorkingForApproval()
         setActiveTool(request, title: "Approval needed")
         pushTrace("Approval needed", detail: request.argumentsJSON, status: .approval)
     }
@@ -521,8 +598,8 @@ final class AgentRuntime {
     func debugInstallCompletedArtifact(_ artifact: WorkspaceArtifact) {
         pendingTool = nil
         pendingApprovalRun = nil
-        isWorking = false
         runState = .completed
+        finishWorkingSession(.succeeded)
         stopRequested = false
         wasInterrupted = false
         lastError = nil
@@ -541,8 +618,8 @@ final class AgentRuntime {
     func debugInstallCompletedLocalAgentBoundaryArtifact(_ artifact: WorkspaceArtifact) {
         pendingTool = nil
         pendingApprovalRun = nil
-        isWorking = false
         runState = .completed
+        finishWorkingSession(.succeeded)
         stopRequested = false
         wasInterrupted = false
         lastError = nil
@@ -563,9 +640,10 @@ final class AgentRuntime {
     func simulateRecoverableFailure(failedPrompt: String = "Continue the interrupted request.") {
         guard !didInjectRecoverableFailureFixture else { return }
         didInjectRecoverableFailureFixture = true
-        isWorking = false
-        runState = .failed("The network connection was lost. Reconnect, then tap Retry.")
-        lastError = "The network connection was lost. Reconnect, then tap Retry."
+        let message = "The network connection was lost. Reconnect, then tap Retry."
+        lastError = message
+        runState = .failed(message)
+        finishWorkingSession(.failed)
         lastFailedPrompt = failedPrompt
         setActivity("Something needs attention", detail: lastError ?? "Network unavailable.")
     }
@@ -588,6 +666,10 @@ final class AgentRuntime {
         debugProviderFailure = error
     }
 
+    func debugWorkspaceSummary(for provider: AIProvider) -> String {
+        workspaceSummaryForProvider(provider)
+    }
+
     func debugSimulateActiveStatusStripRun(conversation: Conversation? = nil) {
         if isWorking {
             if pendingTool == nil,
@@ -599,7 +681,6 @@ final class AgentRuntime {
         }
         guard pendingTool == nil else { return }
         activeRunWorkspace = workspace
-        isWorking = true
         runState = .running
         stopRequested = false
         wasInterrupted = false
@@ -614,6 +695,7 @@ final class AgentRuntime {
         activeToolDetail = "Verifying shared workspace controls."
         setActivity("Release check running", detail: "Workspace controls should remain easy to pause or review from Project.")
         pushTrace("Release check started", detail: "Debug fixture keeps the shared status strip active without network work.", status: .thinking)
+        beginWorkingSession()
         _ = beginRunIdentity()
     }
 
@@ -621,15 +703,15 @@ final class AgentRuntime {
         guard !isWorking, pendingTool == nil else { return }
 
         activeRunWorkspace = workspace
-        isWorking = true
         runState = .running
         stopRequested = false
         wasInterrupted = false
         liveStream.reset()
         traceEvents = []
         updateActiveTool(name: "response renderer", detail: "Preparing a readable live answer")
-        setActivity("Forge live response", detail: "Writing with a steady, readable cadence.")
+        setActivity("Forge live response", detail: "Revealing readable phrases.")
         pushTrace("Live response started", detail: "The incoming response is being smoothed into readable phrases.", status: .thinking)
+        beginWorkingSession()
 
         let script = Array(repeating: Self.forgeLiveFeedStressScript, count: 16).joined(separator: "\n\n")
         let chunks = Self.raggedProviderChunks(from: script)
@@ -655,7 +737,7 @@ final class AgentRuntime {
             self.setActivity("Live response complete", detail: "The full answer is ready to review.")
             self.pushTrace("Live response complete", detail: "\(chunks.count) provider chunks became readable live frames.", status: .success)
             self.runState = .completed
-            self.isWorking = false
+            self.finishWorkingSession(.succeeded)
             self.clearActiveTool()
         }
     }
@@ -686,12 +768,12 @@ final class AgentRuntime {
     func debugSimulateDelayedCompletionForActiveRun(delayMilliseconds: UInt64 = 120) {
         guard !isWorking, pendingTool == nil else { return }
         activeRunWorkspace = workspace
-        isWorking = true
         runState = .running
         stopRequested = false
         wasInterrupted = false
         setActivity("Delayed completion fixture", detail: "A stale async completion will try to finish this run.")
         pushTrace("Delayed completion started", detail: "Debug fixture for active-run identity gating.", status: .thinking)
+        beginWorkingSession()
 
         let runID = beginRunIdentity()
         currentTask = Task { [weak self] in
@@ -702,7 +784,7 @@ final class AgentRuntime {
             self.setActivity("Stale completion applied", detail: "This should only appear for the original active run.")
             self.pushTrace("Delayed completion applied", detail: "Original run was still active.", status: .success)
             self.runState = .completed
-            self.isWorking = false
+            self.finishWorkingSession(.succeeded)
         }
     }
     #endif
@@ -958,8 +1040,8 @@ final class AgentRuntime {
                     pendingTool = pendingRequest
                     self.pendingApprovalRun = pendingApprovalRun
                     stopRequested = false
-                    isWorking = false
                     runState = .waitingForApproval
+                    suspendWorkingForApproval()
                     let message = friendlyError(error)
                     lastError = message
                     if let pendingRequest {
@@ -989,7 +1071,6 @@ final class AgentRuntime {
         pendingApprovalRun = nil
         pendingLocalPlanContinuation = nil
         discardQueuedPrompts(context: context, terminalStatus: .cancelled)
-        isWorking = false
         runState = .cancelled
         wasInterrupted = true
         if let currentPrompt {
@@ -1000,6 +1081,7 @@ final class AgentRuntime {
         liveStream.reset()
         setActivity("Paused", detail: "Run paused. You can continue, retry, or inspect progress.")
         pushTrace("Paused by user", detail: "The active run was paused before completion.", status: .paused)
+        finishWorkingSession(.cancelled)
         if let context {
             ProjectEventRecorder.record(
                 project: lastRunConversation?.project,
@@ -1186,9 +1268,27 @@ final class AgentRuntime {
     }
 
     func clearCurrentRunState(keepLastFailure: Bool = true) {
-        isWorking = false
+        // This is a real lifecycle boundary, not just presentation cleanup.
+        // Invalidate ownership before resetting flags so cancelled work cannot
+        // resume against a fresh conversation or a newly keyed transcript.
+        stopRequested = true
+        currentTask?.cancel()
+        currentTask = nil
+        activeRunID = nil
+        stopActiveLocalModel()
+        pendingTool = nil
+        pendingApprovalRun = nil
+        pendingLocalPlanContinuation = nil
+        liveStream.reset()
+
+        if hasActiveWorkSession {
+            runState = .cancelled
+            finishWorkingSession(.cancelled)
+        } else {
+            isWorking = false
+        }
+
         runState = .idle
-        stopRequested = false
         wasInterrupted = false
         if !keepLastFailure {
             lastError = nil
@@ -1207,9 +1307,10 @@ final class AgentRuntime {
         lastRunDuration = nil
         runStartedAt = nil
         currentPrompt = nil
-        pendingLocalPlanContinuation = nil
+        activeRunRecord = nil
         activeRunWorkspace = nil
         setLastRunConversation(nil)
+        stopRequested = false
     }
 
     @discardableResult
@@ -1481,7 +1582,6 @@ final class AgentRuntime {
         }
 
         activeRunWorkspace = workspace
-        isWorking = true
         runState = .running
         stopRequested = false
         wasInterrupted = false
@@ -1510,6 +1610,7 @@ final class AgentRuntime {
         } else {
             pushTrace("Planning run", detail: "Breaking the request into model and workspace steps.", status: .planning)
         }
+        beginWorkingSession()
 
         activeRunRecord = durableRun
         _ = beginRunIdentity(runID)
@@ -1585,8 +1686,8 @@ final class AgentRuntime {
                 approvalRun.completedAt = previousCompletedAt
                 pendingTool = request
                 pendingApprovalRun = approvalRun
-                isWorking = false
                 runState = .waitingForApproval
+                suspendWorkingForApproval()
                 let message = friendlyError(error)
                 lastError = message
                 setActiveTool(request, title: "Approval not saved")
@@ -1600,8 +1701,8 @@ final class AgentRuntime {
         }
         pendingApprovalRun = nil
         pendingTool = nil
-        isWorking = true
         runState = .running
+        beginWorkingSession()
         setActiveTool(request, title: "Running approved tool")
         pushTrace("Approved \(request.name)", detail: request.argumentsJSON, status: .approval)
 
@@ -1664,13 +1765,13 @@ final class AgentRuntime {
                     lastError = message
                     lastFailedPrompt = latestUserPrompt(in: targetConversation)
                     discardQueuedPrompts(context: context)
-                    isWorking = false
                     runState = .failed(message)
                     setActivity(
                         "Tool Result Not Saved",
                         detail: "NovaForge ran \(request.name), but could not save the tool result. Check storage and retry from the current workspace state."
                     )
                     pushTrace("Tool result not saved", detail: message, status: .failed)
+                    finishWorkingSession(.failed)
                     persistActiveRunRecordState(runID: runID, conversation: targetConversation, context: context)
                     return
                 }
@@ -1711,10 +1812,10 @@ final class AgentRuntime {
                     let message = friendlyError(error)
                     lastError = message
                     lastFailedPrompt = latestUserPrompt(in: targetConversation)
-                    isWorking = false
                     runState = .failed(message)
                     setActivity("Local continuation failed", detail: message)
                     pushTrace("Local continuation failed", detail: message, status: .failed)
+                    finishWorkingSession(.failed)
                     saveCompactedIfPossible(context)
                 }
                 persistActiveRunRecordState(runID: runID, conversation: targetConversation, context: context)
@@ -1741,8 +1842,8 @@ final class AgentRuntime {
         let previousRunOutput = approvalRun?.output
         let previousRunCompletedAt = approvalRun?.completedAt
         runStartedAt = runStartedAt ?? Date()
-        isWorking = true
         runState = .running
+        beginWorkingSession()
 
         let runID = beginRunIdentity(activeRunRecord?.id)
         currentTask = Task {
@@ -1806,8 +1907,8 @@ final class AgentRuntime {
                 lastError = message
                 pendingTool = request
                 pendingApprovalRun = approvalRun
-                isWorking = false
                 runState = .waitingForApproval
+                suspendWorkingForApproval()
                 setActiveTool(request, title: "Rejection Not Saved")
                 setActivity(
                     "Rejection Not Saved",
@@ -1842,8 +1943,8 @@ final class AgentRuntime {
         if conversation.project == nil {
             conversation.project = activeProject
         }
-        isWorking = true
         runState = .running
+        beginWorkingSession()
         lastError = nil
         var shouldDrainQueuedFollowUps = false
 
@@ -1902,8 +2003,8 @@ final class AgentRuntime {
                     context: context
                 )
                 liveStream.reset()
-                isWorking = false
                 runState = .failed(message)
+                finishWorkingSession(.failed)
                 activeToolName = nil
                 activeToolDetail = ""
                 discardQueuedPrompts(context: context)
@@ -1983,8 +2084,8 @@ final class AgentRuntime {
                 }
                 liveStream.finishHandoff(to: assistant.id)
                 pushTrace("Local safe response", detail: "Skipped unstable local generation for this prompt.", status: .success)
-                isWorking = false
                 runState = .completed
+                finishWorkingSession(.succeeded)
                 activeToolName = nil
                 activeToolDetail = ""
                 if let runStartedAt {
@@ -2199,7 +2300,7 @@ final class AgentRuntime {
                     }
 
                     if pausedForApproval {
-                        isWorking = false
+                        suspendWorkingForApproval()
                         return
                     }
 
@@ -2222,7 +2323,6 @@ final class AgentRuntime {
                         lastError = message
                         lastFailedPrompt = latestUserPrompt(in: conversation)
                         discardQueuedPrompts(context: context)
-                        isWorking = false
                         runState = .failed(message)
                         activeToolName = nil
                         activeToolDetail = ""
@@ -2236,6 +2336,7 @@ final class AgentRuntime {
                             detail: "NovaForge ran provider-requested tools, but could not save their transcript. Check storage and retry."
                         )
                         pushTrace("Tool results not saved", detail: message, status: .failed)
+                        finishWorkingSession(.failed)
                         return
                     }
                     liveStream.finishHandoff(to: assistant.id)
@@ -2428,7 +2529,7 @@ final class AgentRuntime {
         }
 
         guard isActiveRun(runID) else { return }
-        isWorking = false
+        finishWorkingSessionForCurrentState()
         if !liveStream.isHandoffActive {
             liveStream.reset()
         }
@@ -3044,7 +3145,7 @@ final class AgentRuntime {
                     context: context
                 )
                 try saveCompacted(context)
-                isWorking = false
+                suspendWorkingForApproval()
                 return false
             }
 
@@ -3091,7 +3192,7 @@ final class AgentRuntime {
                 context: context
             )
             runState = .cancelled
-            isWorking = false
+            finishWorkingSession(.cancelled)
             activeToolName = nil
             activeToolDetail = ""
             if let runStartedAt {
@@ -3159,7 +3260,7 @@ final class AgentRuntime {
             lastError = compactOutputSummary(failureSummary)
             lastFailedPrompt = latestUserPrompt(in: conversation)
             runState = .failed(lastError ?? "Local tool run failed.")
-            isWorking = false
+            finishWorkingSession(.failed)
             if let runStartedAt {
                 lastRunDuration = Date().timeIntervalSince(runStartedAt)
             }
@@ -3233,7 +3334,7 @@ final class AgentRuntime {
         try saveCompacted(context)
         pushTrace("Local run complete", detail: completion, status: .success)
         runState = .completed
-        isWorking = false
+        finishWorkingSession(.succeeded)
         if let runStartedAt {
             lastRunDuration = Date().timeIntervalSince(runStartedAt)
         }
@@ -3901,27 +4002,43 @@ final class AgentRuntime {
     }
 
     private func workspaceSummaryForProvider(_ provider: AIProvider) -> String {
-        let items = (try? runWorkspace.manifest(maxItems: provider == .local ? 120 : 500, maxDepth: provider == .local ? 3 : 5)) ?? []
-        guard !items.isEmpty else { return "No files yet." }
-        let signature = items.map { "\($0.relativePath):\($0.byteCount):\(Int($0.modifiedAt?.timeIntervalSince1970 ?? 0))" }.joined(separator: "|")
-        if let cachedWorkspaceSummary, cachedWorkspaceSummary.signature == signature, cachedWorkspaceSummary.provider == provider {
+        let workspaceName = runWorkspace.workspaceName
+        if let cachedWorkspaceSummary,
+           cachedWorkspaceSummary.workspaceName == workspaceName,
+           cachedWorkspaceSummary.revision == workspaceMutationRevision,
+           cachedWorkspaceSummary.provider == provider {
             return cachedWorkspaceSummary.text
         }
 
-        let limit = provider == .local ? 36 : 160
-        let paths = items.map { item in
-            "\(item.isDirectory ? "folder" : "file"): \(item.relativePath)"
+        #if DEBUG || targetEnvironment(simulator)
+        debugWorkspaceSummaryManifestScanCount += 1
+        #endif
+        let items = (try? runWorkspace.manifest(maxItems: provider == .local ? 120 : 500, maxDepth: provider == .local ? 3 : 5)) ?? []
+        let text: String
+        if items.isEmpty {
+            text = "No files yet."
+        } else {
+            let limit = provider == .local ? 36 : 160
+            let paths = items.map { item in
+                "\(item.isDirectory ? "folder" : "file"): \(item.relativePath)"
+            }
+            let visible = paths.prefix(limit).joined(separator: "\n")
+            let remaining = max(0, paths.count - limit)
+            text = remaining > 0
+                ? "\(visible)\n... \(remaining) more workspace items hidden for responsive provider setup."
+                : visible
         }
-        let visible = paths.prefix(limit).joined(separator: "\n")
-        let remaining = max(0, paths.count - limit)
-        let text = remaining > 0
-            ? "\(visible)\n... \(remaining) more workspace items hidden for responsive provider setup."
-            : visible
-        cachedWorkspaceSummary = (signature: signature, provider: provider, text: text)
+        cachedWorkspaceSummary = (
+            workspaceName: workspaceName,
+            revision: workspaceMutationRevision,
+            provider: provider,
+            text: text
+        )
         return text
     }
 
     private func invalidateWorkspaceSummaryCache() {
+        workspaceMutationRevision &+= 1
         cachedWorkspaceSummary = nil
     }
 

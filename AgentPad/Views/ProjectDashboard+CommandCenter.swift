@@ -14,78 +14,68 @@ extension ProjectDashboardView {
         let tint = projectOSTint
         let state = dashboardExecutionState
         let stateTint = dashboardExecutionTint(state)
-        let intentModeTitle = adaptiveIntent.mode.displayName
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        NovaKicker(text: "Mission Intel", tint: tint)
+        let steps = projectOSDisplaySteps
+        let completedStepCount = steps.filter { $0.status == .completed }.count
+        let totalStepCount = steps.count
+        let progress = totalStepCount == 0 ? 0 : Double(completedStepCount) / Double(totalStepCount)
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                NovaKicker(text: "Now", tint: stateTint)
 
-                        HStack(spacing: 7) {
-                            Text(state.shortTitle)
-                                .novaLabel(stateTint)
-                                .padding(.horizontal, 8)
-                                .frame(height: 19)
-                                .background(stateTint.opacity(0.10), in: Capsule(style: .continuous))
-                                .accessibilityIdentifier("projectOSExecutionStatePill")
-                            if intentModeTitle.localizedCaseInsensitiveCompare(state.shortTitle) != .orderedSame {
-                                Text(intentModeTitle)
-                                    .novaLabel(tint)
-                                    .padding(.horizontal, 8)
-                                    .frame(height: 19)
-                                    .background(tint.opacity(0.10), in: Capsule(style: .continuous))
-                                    .accessibilityIdentifier("projectOSIntentMode")
-                            }
-                        }
-                    }
+                Text(state.shortTitle)
+                    .novaLabel(stateTint)
+                    .padding(.horizontal, 9)
+                    .frame(minHeight: 22)
+                    .background(stateTint.opacity(0.10), in: Capsule(style: .continuous))
+                    .accessibilityIdentifier("projectOSExecutionStatePill")
 
-                    Text(project.name)
-                        .font(NovaType.display)
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.68)
-                        .accessibilityIdentifier("projectOSProjectName")
+                Spacer(minLength: 0)
 
-                    Text(projectOSMissionText)
-                        .font(NovaType.body)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.82)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("projectOSMission")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-
-                if projectOSProgressFraction > 0 || runtimeStatus.isWorking {
-                    NovaReactorGauge(
-                        fraction: projectOSProgressFraction,
-                        value: "\(projectOSCompletedStepCount)/\(max(projectOSDisplaySteps.count, 1))",
-                        label: "Steps",
-                        tint: tint,
-                        size: 78,
-                        isLive: runtimeStatus.isWorking
-                    )
+                Text(totalStepCount == 0 ? "No steps" : "\(completedStepCount)/\(totalStepCount) steps")
+                    .font(NovaType.readoutSmall)
+                    .foregroundStyle(tint)
+                    .monospacedDigit()
                     .accessibilityIdentifier("projectOSProgressCount")
-                }
             }
 
-            projectOSIntelligenceTelemetry
-            projectOSIntelligenceSignalGrid
+            Text(state.headline)
+                .font(NovaType.title)
+                .foregroundStyle(AgentPalette.ink)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("projectOSExecutionStateHeadline")
 
-            Rectangle()
-                .fill(AgentPalette.divider.opacity(0.45))
-                .frame(height: 0.7)
+            Text(projectOSExecutionStateDetail)
+                .font(NovaType.body)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("projectOSExecutionStateDetail")
 
-            projectOSExecutionStatePanel
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Mission")
+                    .novaLabel(tint)
+                Text(projectOSMissionText)
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("projectOSMission")
+            }
+            .padding(.top, 1)
+
+            if totalStepCount > 0 {
+                ProgressView(value: progress, total: 1)
+                    .progressViewStyle(.linear)
+                    .tint(tint)
+                    .accessibilityLabel("Mission progress")
+                    .accessibilityValue("\(completedStepCount) of \(totalStepCount) steps")
+            }
+
+            projectOSExecutionStateLadder
         }
-        .padding(16)
-        .agentGlass(radius: 24, interactive: false, tint: tint.opacity(0.13))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(tint.opacity(0.20), lineWidth: 0.7)
-        )
-        .overlay(NovaCornerTicks(tint: tint.opacity(0.38), length: 9, thickness: 1.3, inset: 8))
+        .padding(14)
+        .agentSurface(radius: 22, tint: tint.opacity(0.08))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectOSControlCenter")
     }
@@ -181,9 +171,9 @@ extension ProjectDashboardView {
     var projectOSExecutionStatePanel: some View {
         let state = dashboardExecutionState
         let tint = dashboardExecutionTint(state)
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 7) {
                         Circle()
                             .fill(tint)
@@ -198,15 +188,9 @@ extension ProjectDashboardView {
                         .font(NovaType.title)
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(2)
-                        .minimumScaleFactor(0.82)
-                        .accessibilityIdentifier("projectOSExecutionStateHeadline")
-
-                    Text(projectOSExecutionStateDetail)
-                        .font(NovaType.body)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .lineLimit(3)
+                        .minimumScaleFactor(0.84)
                         .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("projectOSExecutionStateDetail")
+                        .accessibilityIdentifier("projectOSExecutionStateHeadline")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
@@ -214,13 +198,16 @@ extension ProjectDashboardView {
                 NovaReticleGlyph(
                     symbol: state.symbolName,
                     tint: tint,
-                    size: 46,
+                    size: 40,
                     isActive: runtimeStatus.isWorking
                 )
             }
 
             projectOSExecutionStateLadder
-            projectOSExecutionActionRow
+
+            if state == .approvalRequired {
+                projectOSExecutionActionRow
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectOSExecutionStatePanel")
@@ -467,7 +454,7 @@ extension ProjectDashboardView {
         } label: {
             Label(title, systemImage: symbol)
                 .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                .frame(maxWidth: .infinity, minHeight: 34)
+                .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
         }
         .buttonStyle(.plain)
         .foregroundStyle(AgentPalette.ink)
@@ -725,12 +712,10 @@ extension ProjectDashboardView {
     }
 
     var projectOSWorkspaceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             projectDetailScopePicker
             projectOSWorkspaceScopeContent
         }
-        .padding(12)
-        .agentGlass(radius: 22, interactive: false, tint: AgentPalette.cyan.opacity(0.07))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectOSWorkspaceSections")
     }
@@ -751,7 +736,7 @@ extension ProjectDashboardView {
 
     var projectOSOverviewDetail: some View {
         VStack(alignment: .leading, spacing: 10) {
-            projectOSMissionCard
+            projectHeroNextAction
             projectReviewDashboard
             if runtimeStatus.isVisible {
                 projectRunStatusPanel

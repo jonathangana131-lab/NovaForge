@@ -291,8 +291,7 @@ struct ChatLiveResponseIsland: View {
             LiveResponseView(
                 isWorking: isWorking,
                 isHandoffActive: stream.isHandoffActive,
-                stream: stream,
-                runtime: runtime
+                stream: stream
             )
 
             if AgentPerformance.shouldProfileFrameRate {
@@ -336,18 +335,15 @@ struct ChatStreamingFrameRateProbe: View {
 
 @MainActor
 final class ChatKeyboardState: ObservableObject {
-    @Published private(set) var overlapHeight: CGFloat = 0
-    @Published private(set) var minY: CGFloat = .greatestFiniteMagnitude
-    @Published private(set) var revision = 0
+    @Published private(set) var snapshot = ChatKeyboardSnapshot.hidden
 
     var isVisible: Bool {
-        minY < .greatestFiniteMagnitude && overlapHeight > 1
+        snapshot.isVisible
     }
 
     func reset() {
-        overlapHeight = 0
-        minY = .greatestFiniteMagnitude
-        revision &+= 1
+        guard snapshot != .hidden else { return }
+        snapshot = .hidden
     }
 
     init() {
@@ -372,12 +368,10 @@ final class ChatKeyboardState: ObservableObject {
     @objc private func handleKeyboardFrameChange(_ notification: Notification) {
         let nextFrame = Self.keyboardFrame(from: notification)
         let nextHeight = Self.keyboardOverlap(for: nextFrame)
-        let nextMinY = nextHeight > 1 ? nextFrame.minY : .greatestFiniteMagnitude
-        guard abs(nextHeight - overlapHeight) > 0.5 || abs(nextMinY - minY) > 0.5 else { return }
-        overlapHeight = nextHeight
-        minY = nextMinY
         AgentPerformance.value("Keyboard Height", Double(nextHeight))
-        revision &+= 1
+        let nextSnapshot = ChatKeyboardSnapshot(isVisible: nextHeight > 1)
+        guard snapshot != nextSnapshot else { return }
+        snapshot = nextSnapshot
     }
 
     private static func keyboardFrame(from notification: Notification) -> CGRect {
@@ -395,6 +389,12 @@ final class ChatKeyboardState: ObservableObject {
         let bottomSafeArea = window?.safeAreaInsets.bottom ?? 0
         return max(0, screenHeight - endFrame.minY - bottomSafeArea)
     }
+}
+
+struct ChatKeyboardSnapshot: Equatable, Sendable {
+    static let hidden = ChatKeyboardSnapshot(isVisible: false)
+
+    let isVisible: Bool
 }
 
 struct JumpToLatestButton: View {

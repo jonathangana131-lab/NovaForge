@@ -398,7 +398,7 @@ struct AgentProgressDrawer: View {
 
     private var activeToolPanel: some View {
         let presentation = runtime.activeToolName.map {
-            LiveChatSessionReducer.presentation(forToolName: $0, detail: runtime.activeToolDetail)
+            AgentActivityPresentation.presentation(forToolName: $0, detail: runtime.activeToolDetail)
         }
         return HStack(alignment: .top, spacing: 10) {
             ZStack {
@@ -959,7 +959,7 @@ struct AgentTraceRow: View {
     private var displayDetail: String {
         let cleaned = event.detail.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return "" }
-        if let humanDetail = LiveChatSessionReducer.humanizedVisibleDetail(cleaned) {
+        if let humanDetail = AgentActivityPresentation.humanizedVisibleDetail(cleaned) {
             return humanDetail
         }
         if let summary = jsonArgumentSummary(from: cleaned) {

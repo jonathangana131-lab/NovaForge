@@ -38,7 +38,7 @@ struct ForgeHeader: View {
     let durableSnapshot: ChatDurableRunSnapshot
     let workflowSpine: ProjectWorkflowSpine?
     let ownsActiveRunState: Bool
-    let missionStripOwnsLiveState: Bool
+    let secondarySurfaceOwnsLiveState: Bool
     let hasForeignActiveRun: Bool
     let foreignActiveTitle: String
     let newChat: () -> Void
@@ -70,6 +70,7 @@ struct ForgeHeader: View {
         if runtime.pendingTool != nil { return "Approval" }
         if runtime.isWorking { return "Working" }
         if runtime.lastError != nil { return "Failed" }
+        if providerSetupNeeded { return "Setup" }
         return "Ready"
     }
 
@@ -79,13 +80,33 @@ struct ForgeHeader: View {
         if runtime.pendingTool != nil { return AgentPalette.cyan }
         if runtime.lastError != nil { return AgentPalette.rose }
         if runtime.isWorking { return chromeTint }
+        if providerSetupNeeded { return AgentPalette.cyan }
         return AgentPalette.accent
     }
 
     private var statusSymbol: String {
         if hasForeignActiveRun { return "arrow.up.right.circle.fill" }
         guard ownsActiveRunState else { return "circle.fill" }
-        return runtime.isWorking ? "waveform" : "circle.fill"
+        if runtime.queuedPromptCount > 0 { return "tray.full.fill" }
+        if runtime.pendingTool != nil { return "checkmark.shield.fill" }
+        if runtime.isWorking { return "waveform" }
+        if runtime.lastError != nil { return "exclamationmark.triangle.fill" }
+        if providerSetupNeeded {
+            return settings.provider == .local ? "arrow.down.circle.fill" : "key.slash.fill"
+        }
+        return "circle.fill"
+    }
+
+    private var providerSetupNeeded: Bool {
+        if settings.provider != .local {
+            return !runtime.hasUsableProviderCredential(settings: settings)
+        }
+        switch runtime.localModels.status {
+        case .missing, .partial, .downloading, .failed, .incompatible:
+            return true
+        case .checking, .ready:
+            return false
+        }
     }
 
     private var sortedProjects: [Project] {
@@ -102,9 +123,8 @@ struct ForgeHeader: View {
             runtime: runtime,
             artifacts: artifacts,
             durableSnapshot: durableSnapshot,
-            settings: settings,
             ownsActiveRunState: ownsActiveRunState,
-            missionStripOwnsLiveState: missionStripOwnsLiveState,
+            secondarySurfaceOwnsLiveState: secondarySurfaceOwnsLiveState,
             hasForeignActiveRun: hasForeignActiveRun,
             foreignActiveTitle: foreignActiveTitle
         )
@@ -130,9 +150,12 @@ struct ForgeHeader: View {
                         .truncationMode(.middle)
                         .accessibilityIdentifier("currentChatTitle")
 
-                    if !missionStripOwnsLiveState {
+                    if !secondarySurfaceOwnsLiveState {
                         StatusDot(text: statusText, symbol: statusSymbol, tint: statusTint)
                             .transition(.scale(scale: 0.88).combined(with: .opacity))
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Session status: \(statusText)")
+                            .accessibilityIdentifier("forgeSessionStatus")
                     }
                 }
 
@@ -155,7 +178,7 @@ struct ForgeHeader: View {
         .agentGlassEffectID("forge-header", in: resolvedGlassNamespace)
         .animation(
             NovaMotion.enabled(reduceMotion: reduceMotion) ? .snappy(duration: 0.24) : nil,
-            value: missionStripOwnsLiveState
+            value: secondarySurfaceOwnsLiveState
         )
     }
 
@@ -225,7 +248,7 @@ struct ForgeHeader: View {
                 Image(systemName: scopedProject == nil ? "folder.fill" : "shippingbox.fill")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(scopeTint)
-                Text(compactScopeTitle)
+                Text(scopeTitle)
                     .font(NovaType.caption)
                     .foregroundStyle(scopeTint)
                     .lineLimit(1)
@@ -255,11 +278,25 @@ struct ForgeHeader: View {
         Button {
             openMissionDossier()
         } label: {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(AgentPalette.primaryAccent)
-                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                .contentShape(Circle())
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Dossier")
+                        .font(NovaType.caption)
+                        .fontWeight(.bold)
+                        .lineLimit(1)
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 9)
+                .frame(minHeight: AgentDesign.minimumTouchTarget)
+
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+            }
+            .foregroundStyle(AgentPalette.primaryAccent)
+            .contentShape(Capsule())
         }
         .agentInteractiveGlassButtonStyle(
             radius: AgentDesign.minimumTouchTarget / 2,
@@ -299,10 +336,6 @@ struct ForgeHeader: View {
         return trimmed.isEmpty ? ProjectBootstrap.defaultProjectName : trimmed
     }
 
-    private var compactScopeTitle: String {
-        guard scopeTitle.count > 14 else { return scopeTitle }
-        return String(scopeTitle.prefix(12)) + "…"
-    }
 
     private var scopeTint: Color {
         scopedProject == nil ? AgentPalette.secondaryText : AgentPalette.cyan
@@ -375,9 +408,8 @@ struct ForgeSignal: Equatable {
         runtime: AgentRuntime,
         artifacts: [WorkspaceArtifact],
         durableSnapshot: ChatDurableRunSnapshot,
-        settings: AgentSettings,
         ownsActiveRunState: Bool,
-        missionStripOwnsLiveState: Bool,
+        secondarySurfaceOwnsLiveState: Bool,
         hasForeignActiveRun: Bool,
         foreignActiveTitle: String
     ) -> ForgeSignal? {
@@ -391,7 +423,7 @@ struct ForgeSignal: Equatable {
                 accessibilityID: "forgeSignal-foreign"
             )
         }
-        if ownsActiveRunState && !missionStripOwnsLiveState {
+        if ownsActiveRunState && !secondarySurfaceOwnsLiveState {
             if let pending = runtime.pendingTool {
                 return ForgeSignal(
                     title: "Approval",
@@ -433,7 +465,7 @@ struct ForgeSignal: Equatable {
                 )
             }
         }
-        if !missionStripOwnsLiveState, durableSnapshot.pendingApprovalCount > 0 {
+        if !secondarySurfaceOwnsLiveState, durableSnapshot.pendingApprovalCount > 0 {
             return ForgeSignal(
                 title: "Approval",
                 detail: "\(durableSnapshot.pendingApprovalCount) waiting",
@@ -441,16 +473,6 @@ struct ForgeSignal: Equatable {
                 tint: AgentPalette.cyan,
                 destination: .tab(.history),
                 accessibilityID: "forgeSignal-durableApproval"
-            )
-        }
-        if settings.provider == .local, !runtime.localModels.isDownloaded {
-            return ForgeSignal(
-                title: "Model setup",
-                detail: "Download needed",
-                symbol: "arrow.down.circle.fill",
-                tint: AgentPalette.cyan,
-                destination: .tab(.control),
-                accessibilityID: "forgeSignal-model"
             )
         }
         if let artifact = artifacts.first {
@@ -822,36 +844,15 @@ private struct ForgeMissionStripSurface: ViewModifier {
 /// (plan, activity ledger, proof, project switching) that used to occupy a
 /// whole tab now opens from the mission strip and closes back to Forge.
 struct MissionDossierCover<Dashboard: View>: View {
-    let close: () -> Void
     @ViewBuilder var dashboard: Dashboard
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             AgentBackground(isWorking: false, isAnimated: false)
                 .ignoresSafeArea()
 
             dashboard
-
-            Button {
-                NovaHaptics.surfaceRevealed()
-                close()
-            } label: {
-                ZStack {
-                    Color.clear
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                }
-                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                .background(Circle().fill(AgentPalette.ink.opacity(0.08)))
-                .overlay(Circle().strokeBorder(AgentPalette.divider.opacity(0.7), lineWidth: 0.8))
-                .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, 12)
-            .padding(.top, 8)
-            .accessibilityLabel("Close mission dossier")
-            .accessibilityIdentifier("missionDossierClose")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

@@ -13,16 +13,17 @@ extension FilesView {
     var actionBar: some View {
         GlassGroup(spacing: 10) {
             HStack(spacing: 8) {
-            IconGlassButton(
-                symbol: "chevron.up",
-                accessibilityLabel: "Go up",
-                accessibilityIdentifier: "filesGoUpButton",
-                glassID: "workspace-up",
-                glassNamespace: workspaceGlassNamespace
-            ) {
-                goUp()
+            if !currentPath.isEmpty {
+                IconGlassButton(
+                    symbol: "chevron.up",
+                    accessibilityLabel: "Go up",
+                    accessibilityIdentifier: "filesGoUpButton",
+                    glassID: "workspace-up",
+                    glassNamespace: workspaceGlassNamespace
+                ) {
+                    goUp()
+                }
             }
-            .disabled(currentPath.isEmpty)
 
             IconGlassButton(
                 symbol: isGridLayout ? "list.bullet" : "square.grid.2x2",
@@ -111,16 +112,27 @@ extension FilesView {
 
             Spacer(minLength: 0)
 
-            IconGlassButton(
-                symbol: "plus",
-                accessibilityLabel: "Create file",
-                accessibilityIdentifier: "filesCreateFileButton",
-                tint: AgentPalette.green,
-                glassID: "workspace-create",
-                glassNamespace: workspaceGlassNamespace
-            ) {
+            Button {
                 showingCreate = true
+            } label: {
+                Label("New", systemImage: "plus")
+                    .font(NovaType.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(1)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: AgentDesign.minimumTouchTarget)
+                    .contentShape(Capsule())
             }
+            .agentInteractiveGlassButtonStyle(
+                radius: AgentDesign.minimumTouchTarget / 2,
+                tint: AgentPalette.green,
+                selected: true,
+                glassID: "workspace-create",
+                in: workspaceGlassNamespace
+            )
+            .accessibilityLabel("New file or folder")
+            .accessibilityIdentifier("filesCreateFileButton")
             }
         }
     }
@@ -163,16 +175,6 @@ extension FilesView {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("filesBreadcrumb-\(idx)-\(part)")
-                }
-                
-                if !items.isEmpty {
-                    Spacer()
-                    Text("\(items.count) item\(items.count == 1 ? "" : "s")")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(AgentPalette.secondaryText)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .agentControlSurface(radius: 6)
                 }
             }
             .padding(.horizontal)
@@ -232,18 +234,6 @@ extension FilesView {
                                             .agentControlSurface(radius: 4, tint: row.visualKind.tint, selected: true)
                                     }
 
-                                    if row.isPreviewable {
-                                        Label("Preview", systemImage: "play.fill")
-                                            .font(.system(size: 7, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                            .foregroundStyle(AgentPalette.green)
-                                            .labelStyle(.titleAndIcon)
-                                            .lineLimit(1)
-                                            .fixedSize(horizontal: true, vertical: false)
-                                            .padding(.horizontal, 5)
-                                            .frame(height: 16)
-                                            .agentControlSurface(radius: 5, tint: AgentPalette.green.opacity(0.12), selected: true)
-                                    }
-
                                     fileEvidenceBadge(for: row.item)
                                 }
                             }
@@ -257,6 +247,12 @@ extension FilesView {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        row.item.isDirectory
+                            ? "Open folder \(row.item.name)"
+                            : (row.isPreviewable ? "Preview \(row.item.name)" : "Edit \(row.item.name)")
+                    )
+                    .accessibilityIdentifier(fileActionIdentifier(prefix: "fileOpen", relativePath: row.item.relativePath))
 
                     fileActionMenu(for: row.item)
                 }
@@ -295,15 +291,7 @@ extension FilesView {
     }
 
     var browserSectionDetail: String {
-        var parts: [String] = []
-        parts.append("\(items.count) item\(items.count == 1 ? "" : "s")")
-        if cachedStats.recentCount > 0 {
-            parts.append("\(cachedStats.recentCount) fresh")
-        }
-        if !currentPath.isEmpty {
-            parts.append(currentPath)
-        }
-        return parts.joined(separator: " / ")
+        "\(items.count) item\(items.count == 1 ? "" : "s")"
     }
 
     var gridLayout: some View {
@@ -355,6 +343,12 @@ extension FilesView {
                     .agentRowSurface(radius: 18, tint: row.visualKind.tint)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(
+                    row.item.isDirectory
+                        ? "Open folder \(row.item.name)"
+                        : (row.isPreviewable ? "Preview \(row.item.name)" : "Edit \(row.item.name)")
+                )
+                .accessibilityIdentifier(fileActionIdentifier(prefix: "fileOpen", relativePath: row.item.relativePath))
                 .overlay(alignment: .topTrailing) {
                     fileActionMenu(for: row.item)
                         .padding(6)
@@ -399,87 +393,43 @@ extension FilesView {
     }
 
     func fileActionMenu(for item: FileItem) -> some View {
-        HStack(spacing: 4) {
+        Menu {
             if canPreview(item) {
-                filePrimaryActionButton(
-                    symbol: "play.rectangle.fill",
-                    label: "Preview \(item.name)",
-                    identifier: fileActionIdentifier(prefix: "filePreview", relativePath: item.relativePath),
-                    tint: AgentPalette.green
-                ) {
+                Button {
                     preview(item)
-                }
-            } else if !item.isDirectory {
-                filePrimaryActionButton(
-                    symbol: "square.and.pencil",
-                    label: "Edit \(item.name)",
-                    identifier: fileActionIdentifier(prefix: "fileEdit", relativePath: item.relativePath),
-                    tint: AgentPalette.cyan
-                ) {
-                    editFile(item)
-                }
-            }
-
-            Menu {
-                if canPreview(item) {
-                    Button {
-                        preview(item)
-                    } label: {
-                        Label("Preview", systemImage: "play.rectangle.fill")
-                    }
-                }
-
-                if !item.isDirectory {
-                    Button {
-                        editFile(item)
-                    } label: {
-                        Label("Edit", systemImage: "square.and.pencil")
-                    }
-                }
-
-                if !item.isDirectory {
-                    Button {
-                        duplicateFile(item)
-                    } label: {
-                        Label("Duplicate", systemImage: "plus.square.on.square")
-                    }
-                }
-
-                Button(role: .destructive) {
-                    pendingDeleteItem = item
                 } label: {
-                    Label(item.isDirectory ? "Delete Folder" : "Delete File", systemImage: "trash")
+                    Label("Preview", systemImage: "play.rectangle.fill")
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.caption.weight(.black))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .frame(width: 44, height: 44)
-                    .agentControlSurface(radius: 13, tint: AgentPalette.secondaryText.opacity(0.05), selected: false)
             }
-            .accessibilityLabel("More actions for \(item.name)")
-            .accessibilityIdentifier(fileActionIdentifier(prefix: "fileMoreActions", relativePath: item.relativePath))
-            .disabled(fileActionTask != nil)
-            .opacity(fileActionTask == nil ? 1 : 0.42)
-        }
-    }
 
-    func filePrimaryActionButton(
-        symbol: String,
-        label: String,
-        identifier: String,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
+            if !item.isDirectory {
+                Button {
+                    editFile(item)
+                } label: {
+                    Label("Edit", systemImage: "square.and.pencil")
+                }
+
+                Button {
+                    duplicateFile(item)
+                } label: {
+                    Label("Duplicate", systemImage: "plus.square.on.square")
+                }
+            }
+
+            Button(role: .destructive) {
+                pendingDeleteItem = item
+            } label: {
+                Label(item.isDirectory ? "Delete Folder" : "Delete File", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
                 .font(.caption.weight(.black))
-                .foregroundStyle(tint)
+                .foregroundStyle(AgentPalette.secondaryText)
                 .frame(width: 44, height: 44)
-                .agentControlSurface(radius: 13, tint: tint.opacity(0.12), selected: true)
+                .agentControlSurface(radius: 13, tint: AgentPalette.secondaryText.opacity(0.05), selected: false)
         }
-        .accessibilityLabel(label)
-        .accessibilityIdentifier(identifier)
+        .accessibilityLabel("More actions for \(item.name)")
+        .accessibilityIdentifier(fileActionIdentifier(prefix: "fileMoreActions", relativePath: item.relativePath))
         .disabled(fileActionTask != nil)
         .opacity(fileActionTask == nil ? 1 : 0.42)
     }

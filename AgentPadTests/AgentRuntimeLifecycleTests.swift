@@ -1,3 +1,4 @@
+import Combine
 import SwiftData
 import SwiftUI
 import UIKit
@@ -24,6 +25,21 @@ enum TestModelSchema {
 }
 
 @MainActor
+private final class RuntimeLifecycleEffectsRecorder {
+    private(set) var starts: [(projectName: String, statusLine: String)] = []
+    private(set) var endings: [(statusLine: String, succeeded: Bool)] = []
+
+    lazy var effects = AgentRuntimeLifecycleEffects(
+        runStarted: { [weak self] projectName, statusLine in
+            self?.starts.append((projectName, statusLine))
+        },
+        runEnded: { [weak self] statusLine, succeeded in
+            self?.endings.append((statusLine, succeeded))
+        }
+    )
+}
+
+@MainActor
 final class AgentRuntimeLifecycleTests: XCTestCase {
     func testLiveStreamBufferRevealsLargeChunksGradually() async throws {
         let stream = LiveStreamBuffer()
@@ -41,16 +57,64 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertLessThan(stream.displayText.count, text.count, "The reveal loop should not dump the entire backlog in one UI update.")
 
         stream.flushPending()
-        XCTAssertEqual(stream.characterCount, text.count, "The underlying live frame should still retain the complete provider response for durable handoff.")
-        XCTAssertLessThan(stream.displayText.count, text.count, "The live bubble should remain a compact rolling window even after backlog is flushed.")
-        XCTAssertLessThanOrEqual(stream.displayText.count, 1_200, "The normal live window should have a strict layout budget.")
-        XCTAssertTrue(stream.displayText.hasPrefix("NovaForge should flow"), "The stable opening should remain readable instead of being replaced by a rolling suffix.")
-        XCTAssertTrue(stream.displayText.contains(ForgeLiveFeedFrame.middleOmissionMarker), "Windowed live text should clearly mark its omitted middle.")
-        XCTAssertTrue(stream.displayText.hasSuffix(String(text.suffix(48))), "The newest active response tail should remain visible.")
+        XCTAssertEqual(stream.characterCount, text.count, "The transcript store should retain the complete provider response for durable handoff.")
+        XCTAssertEqual(stream.displayText, text, "The canonical transcript snapshot should preserve exact durable text instead of injecting a string-level omission marker.")
+        XCTAssertLessThanOrEqual(
+            stream.transcriptSnapshot.activeParagraph.activePhrase?.text.count ?? 0,
+            LiveTranscriptComposer.maximumActivePhraseCharacters,
+            "Only a bounded newest phrase may remain animated after a flush."
+        )
         XCTAssertEqual(stream.revealBacklog, 0)
     }
 
-    func testLiveStreamHandoffClearsImmediatelyOnceFinalMessageIsRendered() async throws {
+    func testLiveStreamLayoutRevisionDoesNotDuplicateObservableObjectInvalidation() {
+        let stream = LiveStreamBuffer()
+        var objectInvalidations = 0
+        var layoutRevisions: [Int] = []
+        let objectToken = stream.objectWillChange.sink { _ in
+            objectInvalidations += 1
+        }
+        let layoutToken = stream.$layoutRevision.dropFirst().sink { revision in
+            layoutRevisions.append(revision)
+        }
+
+        stream.append("One complete phrase. ")
+
+        XCTAssertEqual(objectInvalidations, 1, "One transcript publication should invalidate observed renderers exactly once.")
+        XCTAssertEqual(layoutRevisions, [1], "The independent scroll-growth publisher must still deliver the matching revision.")
+        withExtendedLifetime((objectToken, layoutToken)) {}
+    }
+
+    func testResetCannotLetCancelledRevealLoopUntrackOrMutateReplacement() async throws {
+        let stream = LiveStreamBuffer()
+        let oldText = String(repeating: "Old response must be abandoned safely. ", count: 80)
+        let newText = String(repeating: "New response owns the reveal generation. ", count: 80)
+
+        stream.append(oldText)
+        await Task.yield()
+        XCTAssertTrue(stream.debugHasTrackedRevealTask)
+
+        stream.reset()
+        let replacementID = stream.responseID
+        stream.append(newText)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(stream.responseID, replacementID)
+        XCTAssertTrue(stream.debugHasTrackedRevealTask, "A cancelled predecessor must not clear the replacement task handle when it resumes.")
+
+        let handoffID = UUID()
+        stream.finishHandoff(to: handoffID)
+        let finalSnapshot = stream.transcriptSnapshot
+        XCTAssertEqual(finalSnapshot.visibleText, newText)
+        XCTAssertEqual(finalSnapshot.backlogCharacters, 0)
+        XCTAssertFalse(stream.debugHasTrackedRevealTask)
+
+        try await Task.sleep(for: .milliseconds(180))
+        XCTAssertEqual(stream.transcriptSnapshot, finalSnapshot, "No orphaned reveal loop may mutate a completed replacement response.")
+        XCTAssertEqual(stream.handoffMessageID, handoffID)
+    }
+
+    func testLiveStreamHandoffFlushesFinalTextAndClearsOnceMessageIsRendered() async throws {
         let stream = LiveStreamBuffer()
         let messageID = UUID()
         let text = String(repeating: "handoff should replace the live response as soon as the final message is rendered. ", count: 6)
@@ -58,12 +122,14 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         stream.append(text)
         stream.finishHandoff(to: messageID)
         let characterCountAtFinish = stream.characterCount
+        XCTAssertEqual(stream.displayText, text, "Handoff must expose the exact final provider text before the durable message replaces it.")
+        XCTAssertEqual(stream.revealBacklog, 0)
         try await Task.sleep(for: .milliseconds(140))
-        XCTAssertEqual(stream.characterCount, characterCountAtFinish, "Provider completion should freeze the live response instead of replaying its reveal backlog.")
+        XCTAssertEqual(stream.characterCount, characterCountAtFinish, "Provider completion should remain frozen after publishing its final snapshot.")
 
         stream.clearHandoffIfRendered(messageID: messageID)
 
-        XCTAssertTrue(stream.isEmpty, "The live island should disappear immediately once the durable assistant bubble is ready.")
+        XCTAssertTrue(stream.isEmpty, "The live field should disappear immediately once the durable assistant response is ready.")
         XCTAssertNil(stream.handoffMessageID)
     }
 
@@ -78,6 +144,91 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Running command/check" && $0.status == .executing })
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Inspecting files/evidence" && $0.status == .thinking })
         XCTAssertTrue(runtime.traceEvents.contains { $0.title == "Reading project state" && $0.status == .planning })
+    }
+
+    func testApprovalSuspendsSessionWithoutSuccessAndStopEndsItAsFailure() {
+        let recorder = RuntimeLifecycleEffectsRecorder()
+        let runtime = AgentRuntime(lifecycleEffects: recorder.effects)
+        runtime.debugSimulateActiveStatusStripRun()
+        let request = ToolRequest(
+            id: "approval-lifecycle",
+            name: "write_file",
+            arguments: ["path": "approval.txt", "contents": "review me"]
+        )
+        let toolRun = ToolRun(
+            name: request.name,
+            argumentsJSON: request.argumentsJSON,
+            status: .pendingApproval,
+            requiresApproval: true,
+            isMutating: true
+        )
+
+        XCTAssertEqual(recorder.starts.count, 1)
+        runtime.debugInstallPendingApproval(request: request, run: toolRun)
+
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertEqual(runtime.runState, .waitingForApproval)
+        XCTAssertTrue(runtime.debugHasActiveWorkSession, "Approval should suspend, not terminate, the logical run session.")
+        XCTAssertTrue(recorder.endings.isEmpty, "Waiting for approval must never report a successful completion.")
+
+        runtime.stopGenerating()
+
+        XCTAssertEqual(runtime.runState, .cancelled)
+        XCTAssertFalse(runtime.debugHasActiveWorkSession)
+        XCTAssertEqual(recorder.endings.count, 1)
+        XCTAssertFalse(recorder.endings[0].succeeded, "Stopping from approval must end the session as unsuccessful.")
+    }
+
+    func testClearCurrentRunStateCancelsOwnershipAndLiveHandoffAtomically() async throws {
+        let recorder = RuntimeLifecycleEffectsRecorder()
+        let runtime = AgentRuntime(lifecycleEffects: recorder.effects)
+        runtime.simulateStreamingStress()
+        await Task.yield()
+        runtime.liveStream.finishHandoff(to: UUID())
+
+        XCTAssertTrue(runtime.debugHasTrackedTask)
+        XCTAssertTrue(runtime.debugHasActiveRunIdentity)
+        XCTAssertTrue(runtime.liveStream.isHandoffActive)
+
+        runtime.clearCurrentRunState(keepLastFailure: false)
+
+        XCTAssertEqual(runtime.runState, .idle)
+        XCTAssertFalse(runtime.isWorking)
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertFalse(runtime.debugHasActiveRunIdentity)
+        XCTAssertFalse(runtime.debugHasActiveWorkSession)
+        XCTAssertNil(runtime.activeConversationID)
+        XCTAssertNil(runtime.pendingTool)
+        XCTAssertTrue(runtime.liveStream.isEmpty)
+        XCTAssertNil(runtime.liveStream.handoffMessageID)
+        XCTAssertEqual(recorder.endings.count, 1)
+        XCTAssertFalse(recorder.endings[0].succeeded)
+
+        try await Task.sleep(for: .milliseconds(220))
+        XCTAssertEqual(runtime.runState, .idle)
+        XCTAssertTrue(runtime.liveStream.isEmpty, "Cancelled work must not repopulate the transcript after clear.")
+    }
+
+    func testWorkspaceSummaryCacheRescansOnlyAfterWorkspaceRevisionChanges() throws {
+        let workspace = SandboxWorkspace(name: "Summary-Cache-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: workspace.rootURL) }
+        try workspace.write("one.txt", contents: "one")
+        let runtime = AgentRuntime(workspace: workspace)
+
+        let first = runtime.debugWorkspaceSummary(for: .openAI)
+        let scansAfterFirstRead = runtime.debugWorkspaceSummaryManifestScanCount
+        let second = runtime.debugWorkspaceSummary(for: .openAI)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(scansAfterFirstRead, 1)
+        XCTAssertEqual(runtime.debugWorkspaceSummaryManifestScanCount, scansAfterFirstRead, "An unchanged workspace should use the revision-keyed summary without another manifest walk.")
+
+        try workspace.write("two.txt", contents: "two")
+        runtime.noteWorkspaceChanged()
+        let refreshed = runtime.debugWorkspaceSummary(for: .openAI)
+
+        XCTAssertEqual(runtime.debugWorkspaceSummaryManifestScanCount, scansAfterFirstRead + 1)
+        XCTAssertTrue(refreshed.contains("two.txt"))
     }
 
     func testActiveResponseStaysAttachedToOriginalConversation() throws {

@@ -12,6 +12,11 @@ RECORD_SECONDS="${RECORD_SECONDS:-10}"
 MIN_VIDEO_BYTES="${MIN_VIDEO_BYTES:-500000}"
 MIN_SCREENSHOT_BYTES="${MIN_SCREENSHOT_BYTES:-120000}"
 SHUTDOWN_SIMULATOR_AFTER_PROOF="${SHUTDOWN_SIMULATOR_AFTER_PROOF:-1}"
+MANAGED_DERIVED_DATA="QA/DerivedData/codex-ai-streaming-video-proof"
+DERIVED_DATA="${DERIVED_DATA:-$MANAGED_DERIVED_DATA}"
+KEEP_DERIVED_DATA="${KEEP_DERIVED_DATA:-0}"
+RESET_DERIVED_DATA_BEFORE_BUILD="${RESET_DERIVED_DATA_BEFORE_BUILD:-0}"
+MAX_DERIVED_DATA_GIB="${MAX_DERIVED_DATA_GIB:-4}"
 
 mkdir -p "$RUN_DIR" "$MEDIA_DIR"
 printf '%s\n' "$RUN_DIR" > QA/latest-ai-streaming-video-proof-dir.txt
@@ -27,7 +32,37 @@ STDERR_LOG="$RUN_DIR/app-stderr.log"
 LAUNCH_LOG="$RUN_DIR/launch.log"
 INSTALL_LOG="$RUN_DIR/install.log"
 BUILD_LOG="$RUN_DIR/xcodebuild-build.log"
-DERIVED_DATA="$RUN_DIR/DerivedData"
+
+prepare_managed_derived_data() {
+  [[ "$DERIVED_DATA" == "$MANAGED_DERIVED_DATA" ]] || return 0
+  if [[ ! "$MAX_DERIVED_DATA_GIB" =~ ^[0-9]+$ ]]; then
+    echo "MAX_DERIVED_DATA_GIB must be a non-negative integer." >&2
+    exit 2
+  fi
+
+  if [[ "$RESET_DERIVED_DATA_BEFORE_BUILD" == "1" ]]; then
+    echo "Resetting managed streaming-proof DerivedData: $DERIVED_DATA"
+    rm -rf -- "$DERIVED_DATA"
+  elif [[ -d "$DERIVED_DATA" ]]; then
+    local size_kib max_kib
+    size_kib="$(du -sk "$DERIVED_DATA" | cut -f1)"
+    max_kib=$(( MAX_DERIVED_DATA_GIB * 1024 * 1024 ))
+    if (( size_kib > max_kib )); then
+      echo "Managed streaming-proof DerivedData exceeded ${MAX_DERIVED_DATA_GIB} GiB; resetting it."
+      rm -rf -- "$DERIVED_DATA"
+    fi
+  fi
+  mkdir -p "$DERIVED_DATA"
+}
+
+cleanup_managed_derived_data() {
+  [[ "$BUILD_FIRST" == "1" ]] || return 0
+  [[ "$DERIVED_DATA" == "$MANAGED_DERIVED_DATA" ]] || return 0
+  [[ "$KEEP_DERIVED_DATA" != "1" ]] || return 0
+  echo "Removing managed streaming-proof DerivedData: $DERIVED_DATA"
+  rm -rf -- "$DERIVED_DATA" || true
+  rmdir QA/DerivedData 2>/dev/null || true
+}
 
 cleanup() {
   if [[ -n "${RECORDER_PID:-}" ]] && kill -0 "$RECORDER_PID" >/dev/null 2>&1; then
@@ -38,11 +73,12 @@ cleanup() {
   if [[ "$SHUTDOWN_SIMULATOR_AFTER_PROOF" == "1" ]]; then
     xcrun simctl shutdown "$SIM_ID" >/dev/null 2>&1 || true
   fi
+  cleanup_managed_derived_data
 }
 trap cleanup EXIT
 
 if [[ "$BUILD_FIRST" == "1" ]]; then
-  rm -rf "$DERIVED_DATA"
+  prepare_managed_derived_data
   scripts/codex-timeout-runner.pl 900 "$BUILD_LOG" \
     xcodebuild \
       -project AgentPad.xcodeproj \
@@ -82,8 +118,7 @@ xcrun simctl launch \
   "$BUNDLE_ID" \
   --reset-ui \
   --open-chat \
-  --stress-streaming \
-  --new-ai-streaming-stage-demo >"$LAUNCH_LOG" 2>&1
+  --stress-streaming >"$LAUNCH_LOG" 2>&1
 
 # Start recording after a verified launch; this avoids SBMainWorkspace launch
 # denials seen when ScreenCapture starts first on a freshly booted simulator.
@@ -136,7 +171,7 @@ Video: $VIDEO_PATH (${video_bytes} bytes)
 Mid screenshot: $MID_SCREENSHOT (${mid_bytes} bytes)
 Final screenshot: $FINAL_SCREENSHOT (${final_bytes} bytes)
 Contact sheet: $CONTACT_SHEET
-Launch args: --reset-ui --open-chat --stress-streaming --new-ai-streaming-stage-demo
+Launch args: --reset-ui --open-chat --stress-streaming
 EOF
 
 cat "$RUN_DIR/manifest.txt"

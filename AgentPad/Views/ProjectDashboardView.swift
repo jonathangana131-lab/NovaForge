@@ -23,9 +23,7 @@ struct ProjectDashboardView: View {
     @State var showsProjectDetails = false
     @SceneStorage("ProjectDashboardView.selectedDetailScope") var restoredDetailScopeRawValue = "review"
     @SceneStorage("ProjectDashboardView.showsProjectDetails") var restoredShowsProjectDetails = false
-    @State var showsProjectSwitcherSheet = false
-    @State var showsProjectIntakeSheet = false
-    @State var showsProjectEditSheet = false
+    @State var presentedProjectSheet: ProjectSheetDestination?
     @State var confirmingProjectDelete = false
     @State var runStartFeedback = false
     @State var dashboardSaveError: String?
@@ -39,6 +37,7 @@ struct ProjectDashboardView: View {
     let runtimeStatus: WorkspaceStatusSnapshot
     let autoContinueState: ProjectAutoContinueViewState
     let conversations: [Conversation]
+    let closeDossier: () -> Void
     let openTab: (AppTab) -> Void
     let stopWorkspaceRun: () -> Void
     let approvePendingTool: () -> Void
@@ -56,6 +55,14 @@ struct ProjectDashboardView: View {
     let isVisibleForFrameProfiling: Bool
     static let projectScrollTopID = "projectScrollTop"
     static let projectScrollBottomID = "projectScrollBottom"
+
+    enum ProjectSheetDestination: String, Identifiable {
+        case switcher
+        case intake
+        case edit
+
+        var id: String { rawValue }
+    }
 
     enum ProjectDetailScope: String, CaseIterable, Identifiable {
         case review
@@ -108,7 +115,7 @@ struct ProjectDashboardView: View {
             case .blocked: "Blocked"
             case .failed: "Failed"
             case .succeeded: "Succeeded"
-            case .resumed: "Resume"
+            case .resumed: "Interrupted"
             case .proofReady: "Proof"
             }
         }
@@ -165,6 +172,7 @@ struct ProjectDashboardView: View {
         runtimeStatus: WorkspaceStatusSnapshot,
         autoContinueState: ProjectAutoContinueViewState,
         conversations: [Conversation],
+        closeDossier: @escaping () -> Void,
         openTab: @escaping (AppTab) -> Void,
         stopWorkspaceRun: @escaping () -> Void,
         approvePendingTool: @escaping () -> Void,
@@ -186,6 +194,7 @@ struct ProjectDashboardView: View {
         self.runtimeStatus = runtimeStatus
         self.autoContinueState = autoContinueState
         self.conversations = conversations
+        self.closeDossier = closeDossier
         self.openTab = openTab
         self.stopWorkspaceRun = stopWorkspaceRun
         self.approvePendingTool = approvePendingTool
@@ -594,14 +603,27 @@ struct ProjectDashboardView: View {
         let _ = AgentPerformance.bodyEvaluation("Project Dashboard Body")
         Group {
             if AgentPerformance.shouldProfileFrameRate {
-                projectPerformanceProfileSurface
+                VStack(spacing: 0) {
+                    projectPinnedCommandCenter
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+                        .padding(.bottom, 4)
+
+                    projectPerformanceProfileSurface
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    projectPinnedActionDock
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+                        .padding(.bottom, 4)
+                }
             } else {
                 ZStack(alignment: .top) {
                     VStack(spacing: 0) {
                         projectPinnedCommandCenter
                             .padding(.horizontal)
-                            .padding(.top, 10)
-                            .padding(.bottom, 8)
+                            .padding(.top, 6)
+                            .padding(.bottom, 4)
                             .zIndex(3)
 
                         ScrollViewReader { scrollProxy in
@@ -612,11 +634,7 @@ struct ProjectDashboardView: View {
                                         .id(Self.projectScrollTopID)
                                         .accessibilityHidden(true)
 
-                                    ProjectStableSurface(key: primarySurfaceKey) {
-                                        projectOSControlCenter
-                                            .projectScrollResponse(enabled: !reduceMotion && AgentPerformance.allowsDecorativeMotion)
-                                    }
-                                    .equatable()
+                                    projectOSControlCenter
 
                                     projectOSWorkspaceSection
 
@@ -627,13 +645,10 @@ struct ProjectDashboardView: View {
                                 }
                                 .padding(.horizontal)
                                 .padding(.top, 6)
+                                .padding(.bottom, 12)
                             }
                             .scrollContentBackground(.hidden)
                             .scrollDismissesKeyboard(.interactively)
-                            .agentDockEdgeFade()
-                            .safeAreaInset(edge: .bottom, spacing: 0) {
-                                BottomDockContentShield(height: BottomDockMetrics.scrollClearance)
-                            }
                             .simultaneousGesture(projectScrollInstrumentationGesture)
                             .task(id: project.id) {
                                 await runProjectAutoScrollProfileIfNeeded(scrollProxy)
@@ -642,6 +657,12 @@ struct ProjectDashboardView: View {
                     }
 
                     projectFrameRateProbe
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    projectPinnedActionDock
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+                        .padding(.bottom, 4)
                 }
             }
         }
@@ -680,25 +701,25 @@ struct ProjectDashboardView: View {
         .sheet(item: $selectedProofItem) { item in
             proofDetailSheet(item)
         }
-        .sheet(isPresented: $showsProjectSwitcherSheet) {
-            projectSwitcherSheet
-        }
-        .sheet(isPresented: $showsProjectIntakeSheet) {
-            ProjectIntakeSheet { draft in
-                createProject(draft)
-                showsProjectIntakeSheet = false
-                showsProjectSwitcherSheet = false
+        .sheet(item: $presentedProjectSheet) { destination in
+            switch destination {
+            case .switcher:
+                projectSwitcherSheet
+            case .intake:
+                ProjectIntakeSheet { draft in
+                    createProject(draft)
+                    presentedProjectSheet = nil
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            case .edit:
+                ProjectEditSheet(project: project) { draft in
+                    updateProject(project, draft)
+                    presentedProjectSheet = nil
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showsProjectEditSheet) {
-            ProjectEditSheet(project: project) { draft in
-                updateProject(project, draft)
-                showsProjectEditSheet = false
-            }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
         }
         .confirmationDialog(
             "Delete \(project.name)?",
@@ -814,7 +835,7 @@ struct ProjectDashboardView: View {
             didPresentProjectIntakeDemo = true
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(350))
-                showsProjectIntakeSheet = true
+                presentedProjectSheet = .intake
             }
             return
         }
@@ -822,7 +843,7 @@ struct ProjectDashboardView: View {
             didPresentProjectIntakeDemo = true
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(350))
-                showsProjectEditSheet = true
+                presentedProjectSheet = .edit
             }
             return
         }

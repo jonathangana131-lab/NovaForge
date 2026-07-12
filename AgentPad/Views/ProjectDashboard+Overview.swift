@@ -12,14 +12,23 @@ import SwiftUI
 
 extension ProjectDashboardView {
     var projectPinnedCommandCenter: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .center, spacing: 11) {
-                NovaReticleGlyph(
-                    symbol: statusSymbol,
-                    tint: statusTint,
-                    size: 40,
-                    isActive: runtimeStatus.isWorking
-                )
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    NovaHaptics.surfaceRevealed()
+                    closeDossier()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                        .background(Circle().fill(AgentPalette.controlFill.opacity(0.42)))
+                        .overlay(Circle().strokeBorder(AgentPalette.controlBorder.opacity(0.58), lineWidth: 0.7))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close mission dossier")
+                .accessibilityIdentifier("missionDossierClose")
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project.name)
@@ -28,30 +37,28 @@ extension ProjectDashboardView {
                         .lineLimit(1)
                         .minimumScaleFactor(0.58)
                         .truncationMode(.tail)
-                    HStack(spacing: 6) {
-                        Text(pinnedRunEyebrow)
-                            .novaLabel(pinnedRunTint)
-                        Text("· \(summary.statusText)")
-                            .font(NovaType.caption)
-                            .foregroundStyle(AgentPalette.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .layoutPriority(1)
+                        .accessibilityIdentifier("projectOSProjectName")
 
-                Spacer(minLength: 0)
+                    HStack(spacing: 5) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 8.5, weight: .black))
+                        Text("Mission dossier")
+                    }
+                    .novaLabel(AgentPalette.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
 
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showsProjectSwitcherSheet = true
+                    presentedProjectSheet = .switcher
                 } label: {
                     Image(systemName: "rectangle.stack.fill")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(AgentPalette.cyan)
-                        .frame(width: 40, height: 40)
+                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
                         .background(Circle().fill(AgentPalette.cyan.opacity(0.10)))
-                        .overlay(Circle().strokeBorder(AgentPalette.cyan.opacity(0.24), lineWidth: 0.9))
+                        .overlay(Circle().strokeBorder(AgentPalette.cyan.opacity(0.22), lineWidth: 0.7))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -60,7 +67,7 @@ extension ProjectDashboardView {
 
                 Menu {
                     Button {
-                        showsProjectEditSheet = true
+                        presentedProjectSheet = .edit
                     } label: {
                         Label("Edit Project", systemImage: "pencil")
                     }
@@ -73,53 +80,175 @@ extension ProjectDashboardView {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(AgentPalette.secondaryText)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(AgentPalette.controlFill.opacity(0.5)))
-                        .overlay(Circle().strokeBorder(AgentPalette.controlBorder.opacity(0.7), lineWidth: 0.9))
+                        .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+                        .background(Circle().fill(AgentPalette.controlFill.opacity(0.42)))
+                        .overlay(Circle().strokeBorder(AgentPalette.controlBorder.opacity(0.58), lineWidth: 0.7))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Project actions")
                 .accessibilityIdentifier("projectPinnedActionsMenu")
             }
+            .frame(minHeight: AgentDesign.minimumTouchTarget)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("missionDossierHeader")
 
-            HStack(alignment: .center, spacing: 12) {
-                Text(pinnedRunDetail)
-                    .font(NovaType.body)
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .layoutPriority(1)
-                    .accessibilityIdentifier("projectPinnedRunReason")
+            Rectangle()
+                .fill(AgentPalette.divider.opacity(0.42))
+                .frame(height: 0.7)
+                .padding(.top, 5)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("projectPinnedCommandCenter")
+    }
 
-                Button {
-                    handlePinnedRunButton()
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: pinnedRunButtonSymbol)
-                            .font(.system(size: 12, weight: .heavy))
-                        Text(pinnedRunButtonTitle)
-                            .font(NovaType.headline)
-                    }
-                    .frame(minWidth: 96, minHeight: AgentDesign.minimumTouchTarget)
-                    .padding(.horizontal, 6)
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(ProjectRunButtonStyle(tint: pinnedRunTint, isDisabled: pinnedRunButtonDisabled))
-                .disabled(pinnedRunButtonDisabled)
-                .accessibilityHint(pinnedRunButtonDisabled ? pinnedRunDisabledReason : pinnedRunAccessibilityHint)
-                .accessibilityIdentifier("projectPinnedRunButton")
+    var projectPinnedActionDock: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                projectPinnedActionContext
+                projectPinnedDockActions
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                projectPinnedActionContext
+                projectPinnedDockActions
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .agentGlass(radius: 24, interactive: false, tint: pinnedRunTint.opacity(0.10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(pinnedRunTint.opacity(0.20), lineWidth: 0.65)
-        )
-        .accessibilityIdentifier("projectPinnedCommandCenter")
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .agentGlass(radius: 22, interactive: false, tint: pinnedRunTint.opacity(0.11))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("projectPinnedActionDock")
+    }
+
+    private var projectPinnedActionContext: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(autoContinueState.isCountingDown ? "Scheduled action" : "Next action")
+                .novaLabel(autoContinueState.isCountingDown ? AgentPalette.cyan : pinnedRunTint)
+            Text(projectPinnedDockDetail)
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityIdentifier("projectPinnedRunReason")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
+    }
+
+    private var projectPinnedDockDetail: String {
+        if autoContinueState.isCountingDown {
+            return "Next step starts in \(autoContinueState.remainingSeconds)s"
+        }
+        return pinnedRunDetail
+    }
+
+    @ViewBuilder
+    private var projectPinnedDockActions: some View {
+        if autoContinueState.isCountingDown {
+            HStack(spacing: 8) {
+                projectDockSecondaryButton(
+                    title: "Cancel",
+                    symbol: "xmark",
+                    tint: AgentPalette.rose,
+                    identifier: "projectAutoContinueCancelButton"
+                ) {
+                    cancelAutoContinue(project)
+                }
+                projectDockPrimaryButton(
+                    title: "Pause",
+                    symbol: "pause.fill",
+                    tint: AgentPalette.cyan,
+                    disabled: false,
+                    hint: "Pause the auto-continue countdown.",
+                    identifier: "projectPinnedRunButton"
+                ) {
+                    pauseAutoContinue(project)
+                }
+            }
+        } else if runtimeStatus.tone == .approval {
+            HStack(spacing: 8) {
+                projectDockSecondaryButton(
+                    title: "Reject",
+                    symbol: "xmark.shield.fill",
+                    tint: AgentPalette.rose,
+                    identifier: "projectApprovalRejectButton"
+                ) {
+                    rejectPendingTool()
+                }
+                projectDockPrimaryButton(
+                    title: "Approve",
+                    symbol: "checkmark.shield.fill",
+                    tint: AgentPalette.cyan,
+                    disabled: false,
+                    hint: "Approve the pending project tool request.",
+                    identifier: "projectPinnedRunButton"
+                ) {
+                    approvePendingTool()
+                }
+            }
+            .accessibilityIdentifier("projectOSApprovalActions")
+        } else {
+            projectDockPrimaryButton(
+                title: pinnedRunButtonTitle,
+                symbol: pinnedRunButtonSymbol,
+                tint: pinnedRunTint,
+                disabled: pinnedRunButtonDisabled,
+                hint: pinnedRunButtonDisabled ? pinnedRunDisabledReason : pinnedRunAccessibilityHint,
+                identifier: "projectPinnedRunButton",
+                action: handlePinnedRunButton
+            )
+        }
+    }
+
+    private func projectDockSecondaryButton(
+        title: String,
+        symbol: String,
+        tint: Color,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            NovaHaptics.tick()
+            action()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(NovaType.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(tint)
+                .frame(minWidth: 76, minHeight: AgentDesign.minimumTouchTarget)
+                .padding(.horizontal, 4)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .agentControlSurface(radius: AgentDesign.minimumTouchTarget / 2, tint: tint.opacity(0.10), selected: false)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func projectDockPrimaryButton(
+        title: String,
+        symbol: String,
+        tint: Color,
+        disabled: Bool,
+        hint: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            NovaHaptics.tick()
+            action()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(NovaType.headline)
+                .frame(minWidth: 92, minHeight: AgentDesign.minimumTouchTarget)
+                .padding(.horizontal, 6)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(ProjectRunButtonStyle(tint: tint, isDisabled: disabled))
+        .disabled(disabled)
+        .accessibilityHint(hint)
+        .accessibilityIdentifier(identifier)
     }
 
     func handlePinnedRunButton() {
@@ -249,7 +378,7 @@ extension ProjectDashboardView {
 
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showsProjectSwitcherSheet = true
+                    presentedProjectSheet = .switcher
                 } label: {
                     Image(systemName: "rectangle.stack.fill")
                         .font(.system(size: 16, weight: .black))
@@ -808,10 +937,10 @@ extension ProjectDashboardView {
                     )
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Next Action")
+                    Text("Next Move")
                         .font(.system(size: 9, weight: .black, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.tertiaryText)
-                    Text("Agent-chosen step")
+                    Text(recommendedCommandIntent.displayName)
                         .font(.system(size: 14, weight: .black, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
@@ -851,32 +980,9 @@ extension ProjectDashboardView {
             }
 
             self.autoContinueControl
-
-            HStack(spacing: 9) {
-                Button {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    runProjectCommand(project, recommendedCommandIntent, trimmedCommandContext)
-                } label: {
-                    Label(projectRunButtonTitle, systemImage: projectRunButtonSymbol)
-                        .font(.system(size: 11.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                        .frame(minWidth: AgentDesign.minimumTouchTarget, maxWidth: .infinity, minHeight: 40)
-                }
-                .buttonStyle(ProjectRunButtonStyle(tint: projectRunButtonTint, isDisabled: commandRunBlocked))
-                .disabled(commandRunBlocked)
-                .accessibilityHint(commandRunBlocked ? "Finish the current run before starting another project command." : recommendedCommandIntent.instructionFocus)
-                .accessibilityIdentifier("projectHeroRunButton")
-            }
         }
-        .padding(10)
-        .frame(minHeight: 214, alignment: .top)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(AgentPalette.row.opacity(0.64))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(commandTint(for: recommendedCommandIntent).opacity(0.18), lineWidth: 0.55)
-        )
+        .padding(12)
+        .agentSurface(radius: 18, tint: commandTint(for: recommendedCommandIntent).opacity(0.08))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectHeroNextAction")
     }

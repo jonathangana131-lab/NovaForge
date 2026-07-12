@@ -21,23 +21,100 @@ PREBOOT_SIMULATOR="${PREBOOT_SIMULATOR:-1}"
 REBOOT_SIMULATOR_BETWEEN_SUITES="${REBOOT_SIMULATOR_BETWEEN_SUITES:-1}"
 SHUTDOWN_SIMULATOR_AFTER_TESTS="${SHUTDOWN_SIMULATOR_AFTER_TESTS:-1}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/QA/codex-focused-tests-$(date +%Y%m%d-%H%M%S)}"
-DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$LOG_DIR/DerivedData}"
+MANAGED_DERIVED_DATA_PATH="$ROOT_DIR/QA/DerivedData/codex-focused-tests"
+MANAGED_DERIVED_DATA_LOCK_DIR="$ROOT_DIR/QA/DerivedData/.codex-focused-tests.lock"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$MANAGED_DERIVED_DATA_PATH}"
+KEEP_DERIVED_DATA="${KEEP_DERIVED_DATA:-1}"
+RESET_DERIVED_DATA_BEFORE_BUILD="${RESET_DERIVED_DATA_BEFORE_BUILD:-0}"
+MAX_DERIVED_DATA_GIB="${MAX_DERIVED_DATA_GIB:-4}"
 XCTESTRUN_PATH="${XCTESTRUN_PATH:-}"
 TIMEOUT_RUNNER="$ROOT_DIR/scripts/codex-timeout-runner.pl"
+MANAGED_DERIVED_DATA_LOCKED=0
 
 mkdir -p "$LOG_DIR"
+
+acquire_managed_derived_data_lock() {
+  [[ "$DERIVED_DATA_PATH" == "$MANAGED_DERIVED_DATA_PATH" ]] || return 0
+  mkdir -p "$ROOT_DIR/QA/DerivedData"
+
+  if mkdir "$MANAGED_DERIVED_DATA_LOCK_DIR" 2>/dev/null; then
+    print -r -- "$$" > "$MANAGED_DERIVED_DATA_LOCK_DIR/pid"
+    MANAGED_DERIVED_DATA_LOCKED=1
+    return 0
+  fi
+
+  local owner_pid=""
+  [[ -f "$MANAGED_DERIVED_DATA_LOCK_DIR/pid" ]] && owner_pid="$(<"$MANAGED_DERIVED_DATA_LOCK_DIR/pid")"
+  if [[ "$owner_pid" != <-> ]] || ! kill -0 "$owner_pid" 2>/dev/null; then
+    echo "Removing stale focused-test DerivedData lock${owner_pid:+ from PID $owner_pid}."
+    rm -rf -- "$MANAGED_DERIVED_DATA_LOCK_DIR"
+    mkdir "$MANAGED_DERIVED_DATA_LOCK_DIR"
+    print -r -- "$$" > "$MANAGED_DERIVED_DATA_LOCK_DIR/pid"
+    MANAGED_DERIVED_DATA_LOCKED=1
+    return 0
+  fi
+
+  echo "Another focused-test run owns the managed DerivedData cache${owner_pid:+ (PID $owner_pid)}; refusing to collide." >&2
+  exit 75
+}
+
+release_managed_derived_data_lock() {
+  (( MANAGED_DERIVED_DATA_LOCKED == 1 )) || return 0
+  rm -rf -- "$MANAGED_DERIVED_DATA_LOCK_DIR" || true
+  MANAGED_DERIVED_DATA_LOCKED=0
+}
+
+prepare_managed_derived_data() {
+  [[ "$DERIVED_DATA_PATH" == "$MANAGED_DERIVED_DATA_PATH" ]] || return 0
+
+  if [[ "$RESET_DERIVED_DATA_BEFORE_BUILD" == "1" ]]; then
+    echo "Resetting managed DerivedData before focused tests: $DERIVED_DATA_PATH"
+    rm -rf -- "$DERIVED_DATA_PATH"
+  elif [[ -d "$DERIVED_DATA_PATH" ]]; then
+    if [[ "$MAX_DERIVED_DATA_GIB" != <-> ]]; then
+      echo "MAX_DERIVED_DATA_GIB must be a non-negative integer." >&2
+      exit 2
+    fi
+    local size_kib
+    local max_kib=$(( MAX_DERIVED_DATA_GIB * 1024 * 1024 ))
+    size_kib="$(du -sk "$DERIVED_DATA_PATH" | cut -f1)"
+    if (( size_kib > max_kib )); then
+      echo "Managed DerivedData exceeded ${MAX_DERIVED_DATA_GIB} GiB; resetting it before focused tests."
+      rm -rf -- "$DERIVED_DATA_PATH"
+    fi
+  fi
+
+  mkdir -p "$DERIVED_DATA_PATH"
+}
+
+cleanup_managed_derived_data() {
+  (( MANAGED_DERIVED_DATA_LOCKED == 1 )) || return 0
+  [[ "$DERIVED_DATA_PATH" == "$MANAGED_DERIVED_DATA_PATH" ]] || return 0
+  if [[ "$KEEP_DERIVED_DATA" == "1" ]]; then
+    echo "Keeping bounded focused-test DerivedData for the performance gate: $DERIVED_DATA_PATH"
+    return 0
+  fi
+  echo "Removing managed focused-test DerivedData: $DERIVED_DATA_PATH"
+  rm -rf -- "$DERIVED_DATA_PATH" || true
+  rmdir "$ROOT_DIR/QA/DerivedData" 2>/dev/null || true
+}
 
 cleanup_on_exit() {
   local exit_status=$?
   if [[ "$SHUTDOWN_SIMULATOR_AFTER_TESTS" == "1" ]]; then
     "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$LOG_DIR/simulator-shutdown-final.log" xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
   fi
+  cleanup_managed_derived_data
+  release_managed_derived_data_lock
   return "$exit_status"
 }
 
 trap cleanup_on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+acquire_managed_derived_data_lock
+prepare_managed_derived_data
 
 derived_data_args=()
 if [[ -n "$DERIVED_DATA_PATH" ]]; then

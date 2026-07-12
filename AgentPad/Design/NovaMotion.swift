@@ -8,7 +8,9 @@ import SwiftUI
 /// like it condenses into place, never like a cursor/progress-line gimmick.
 enum NovaMotion {
     static let glassArrivalDuration: TimeInterval = 0.54
-    static let phraseArrivalDuration: TimeInterval = 0.22
+    // Keep the one-shot phrase resolve shorter than the normal 110 ms
+    // publication cadence so consecutive phrases never stack animations.
+    static let phraseArrivalDuration: TimeInterval = 0.095
     static let phraseStagger: TimeInterval = 0.018
     static let dustLifetime: TimeInterval = 0.72
     static let sheenDuration: TimeInterval = 1.35

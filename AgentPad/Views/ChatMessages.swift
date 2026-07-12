@@ -274,6 +274,10 @@ struct ChatMessageSnapshot: Identifiable, Equatable, Sendable {
             } else {
                 assistantBlocks = []
             }
+            let toolCallSnapshots = calls.map {
+                ToolCallSnapshot(call: $0, result: resultsByCallID[$0.id])
+            }
+            let artifact = isTool ? WorkspaceArtifact.fromToolOutput(source.content) : nil
             return ChatMessageSnapshot(
                 id: source.id,
                 role: source.role,
@@ -281,16 +285,16 @@ struct ChatMessageSnapshot: Identifiable, Equatable, Sendable {
                 createdAt: source.createdAt,
                 toolName: toolName,
                 toolDetail: detail,
-                toolCalls: calls.map { ToolCallSnapshot(call: $0, result: resultsByCallID[$0.id]) },
+                toolCalls: toolCallSnapshots,
                 blocks: assistantBlocks,
                 isToolError: isTool && source.content.localizedCaseInsensitiveContains("error"),
-                artifact: isTool ? WorkspaceArtifact.fromToolOutput(source.content) : nil,
+                artifact: artifact,
                 referenceHints: MessageReferenceHint.make(
                     role: source.role,
                     content: source.content,
                     toolName: toolName,
-                    toolCalls: calls.map { ToolCallSnapshot(call: $0, result: resultsByCallID[$0.id]) },
-                    artifact: isTool ? WorkspaceArtifact.fromToolOutput(source.content) : nil
+                    toolCalls: toolCallSnapshots,
+                    artifact: artifact
                 )
             )
         }
@@ -302,13 +306,18 @@ struct MessageBubble: View, Equatable {
     var workspace: SandboxWorkspace
     let tint: Color
     let tintID: String
+    /// Equatable views must account for the scope captured by their actions.
+    /// Otherwise a reused bubble can keep opening artifacts in the previously
+    /// selected conversation even though its visible content is unchanged.
+    let actionScopeID: String
     let openArtifact: (WorkspaceArtifact) -> Void
 
     nonisolated static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
         lhs.message == rhs.message &&
             lhs.workspace.rootURL == rhs.workspace.rootURL &&
             lhs.workspace.maxReadableBytes == rhs.workspace.maxReadableBytes &&
-            lhs.tintID == rhs.tintID
+            lhs.tintID == rhs.tintID &&
+            lhs.actionScopeID == rhs.actionScopeID
     }
 
     var body: some View {
@@ -381,9 +390,13 @@ struct AssistantMessageBubble: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .top, spacing: 11) {
-                    NovaReticleGlyph(symbol: "sparkles", tint: tint, size: 30)
-                        .padding(.top, 1)
+                HStack(alignment: .top, spacing: 9) {
+                    // The live glass bead dissolves at completion, but its
+                    // fixed gutter remains. Live and durable text therefore
+                    // share the same horizontal geometry during handoff.
+                    Color.clear
+                        .frame(width: 24, height: 1)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 10) {
                         if blocks.isEmpty {
@@ -404,9 +417,7 @@ struct AssistantMessageBubble: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(13)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .chatMessageSurface(radius: 20, tint: tint, emphasis: .assistant)
 
                 MessageActionMenu(
                     // Preserve the source exactly. Reconstructing parsed blocks
@@ -416,12 +427,13 @@ struct AssistantMessageBubble: View {
                     createdAt: createdAt,
                     roleLabel: "NovaForge response"
                 )
+                .padding(.leading, 33)
             }
             Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chatAssistantMessageBubble")
+        .accessibilityIdentifier("chatAssistantResponse")
     }
 }
 
@@ -531,12 +543,12 @@ struct AssistantTextBlockView: View {
         VStack(alignment: .leading, spacing: 8) {
             if renderedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(" ")
-                    .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                    .font(.system(.body, design: .default, weight: .regular))
                     .frame(height: 10)
                     .accessibilityHidden(true)
             } else {
                 renderedText
-                    .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
+                    .font(.system(.body, design: .default, weight: .regular))
                     .lineSpacing(5)
                     .foregroundStyle(AgentPalette.ink)
                     .textSelection(.enabled)

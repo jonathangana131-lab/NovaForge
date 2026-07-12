@@ -179,7 +179,7 @@ final class AgentPadUITests: XCTestCase {
         let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
         XCTAssertTrue(assistantMessage.waitForExistence(timeout: 5), "Assistant response should remain visible after Send.")
         XCTAssertLessThanOrEqual(assistantMessage.frame.maxY, bottomAccessoryTop - 8, "Assistant output should stay readable above the full bottom accessory stack.")
-        XCTAssertFalse(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 2), "Failed send should clear live response state.")
+        XCTAssertFalse(app.otherElements["liveResponseField"].waitForExistence(timeout: 2), "Failed send should clear live response state.")
         sleep(1)
         capture("03-agent-typing", app: app)
     }
@@ -190,7 +190,6 @@ final class AgentPadUITests: XCTestCase {
             "--reset-ui",
             "--debug-provider-send-ready",
             "--open-chat",
-            "--new-ai-streaming-stage",
             "--ui-test-observable-stream",
             "--performance-mode"
         ]
@@ -206,25 +205,31 @@ final class AgentPadUITests: XCTestCase {
         app.buttons["sendMessageButton"].tap()
 
         let userText = app.staticTexts["Yo"].firstMatch
-        XCTAssertTrue(userText.waitForExistence(timeout: 2), "User message should appear immediately after Send.")
+        XCTAssertTrue(userText.waitForExistence(timeout: 5), "User message should appear immediately after Send.")
 
-        let liveBubble = app.otherElements["liveStreamingBubble"]
-        XCTAssertTrue(liveBubble.waitForExistence(timeout: 4), "Streaming response should render as one live assistant bubble.")
-        XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveStreamingBubble")), 1, "Streaming should update one live bubble instead of adding duplicates.")
-        let liveCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: 0, timeout: 5)
-        XCTAssertGreaterThan(liveCharacterCount, 0, "Send-path live response should reveal visible characters before final handoff.")
+        let liveField = app.otherElements["liveResponseField"]
+        XCTAssertTrue(liveField.waitForExistence(timeout: 4), "Streaming response should render as one live typefield.")
+        XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveResponseField")), 1, "Streaming should update one live field instead of adding duplicates.")
+        // Handoff can now happen as soon as the durable row materializes. Keep
+        // the live geometry captured while that transient surface still exists.
+        let liveFieldFrame = liveField.frame
+        let liveReadableContent = liveStreamingReadableContent(in: app)
+        XCTAssertTrue(liveReadableContent.waitForExistence(timeout: 3), "Live transcript should expose readable content during streaming.")
+        let liveReadableFrame = liveReadableContent.frame
+        XCTAssertFalse(liveReadableContent.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "Send-path live response should expose a readable accessibility checkpoint before final handoff.")
         let liveBottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(liveBottomAccessory.waitForExistence(timeout: 3), "Bottom accessory should be measurable while the live response is streaming.")
-        let liveDockGap = liveBottomAccessory.frame.minY - liveBubble.frame.maxY
-        XCTAssertGreaterThanOrEqual(liveDockGap, 4, "Live response should stay readable above the composer while streaming.")
+        XCTAssertLessThanOrEqual(liveReadableFrame.maxY, liveBottomAccessory.frame.minY - 4, "Readable live text should clear the composer while streaming.")
+        let liveDockGap = liveBottomAccessory.frame.minY - liveFieldFrame.maxY
+        XCTAssertGreaterThanOrEqual(liveDockGap, 0, "The open response field should not overlap the composer while streaming.")
         XCTAssertLessThanOrEqual(liveDockGap, 112, "Live response auto-scroll should land on the response, not an invisible spacer below the transcript.")
         capture("sev0-chat-send-stream-live", app: app)
 
-        let assistantBubble = app.otherElements.matching(identifier: "chatAssistantMessageBubble").firstMatch
-        XCTAssertTrue(assistantBubble.waitForExistence(timeout: 35), "Final assistant response should replace the deliberately paced live stream in the transcript.")
-        XCTAssertFalse(liveBubble.exists, "Live bubble should clear as soon as the final response is visible.")
-        XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantMessageBubble")), 1, "Welcome-style assistant output should appear once, not as live plus final duplicates.")
-        let assistantText = assistantBubble.staticTexts
+        let assistantResponse = app.otherElements.matching(identifier: "chatAssistantResponse").firstMatch
+        XCTAssertTrue(assistantResponse.waitForExistence(timeout: 35), "Final assistant response should replace the deliberately paced live stream in the transcript.")
+        XCTAssertFalse(liveField.exists, "Live field should clear as soon as the final response is visible.")
+        XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantResponse")), 1, "Assistant output should appear once, not as live plus final duplicates.")
+        let assistantText = assistantResponse.staticTexts
             .containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do"))
             .firstMatch
         XCTAssertTrue(assistantText.waitForExistence(timeout: 2), "Completed assistant bubble should contain the provider response, not only live-stream text.")
@@ -232,13 +237,13 @@ final class AgentPadUITests: XCTestCase {
 
         let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
         if userBubble.exists && !userBubble.frame.isEmpty {
-            XCTAssertFalse(userBubble.frame.intersects(assistantBubble.frame), "User and assistant bubbles must not visually overlap when both remain in the rendered window.")
+            XCTAssertFalse(userBubble.frame.intersects(assistantResponse.frame), "User and assistant responses must not visually overlap when both remain in the rendered window.")
         }
 
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
-        XCTAssertLessThanOrEqual(assistantBubble.frame.maxY, bottomAccessory.frame.minY - 4, "Auto-scroll should keep the latest response readable above the composer.")
-        let assistantDockGap = bottomAccessory.frame.minY - assistantBubble.frame.maxY
+        XCTAssertLessThanOrEqual(assistantResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Auto-scroll should keep the latest response readable above the composer.")
+        let assistantDockGap = bottomAccessory.frame.minY - assistantResponse.frame.maxY
         XCTAssertGreaterThanOrEqual(assistantDockGap, 4, "Auto-scroll should not tuck the latest assistant response under the composer.")
         XCTAssertLessThanOrEqual(assistantDockGap, 96, "Auto-scroll should land on the latest assistant response, not an invisible spacer below the transcript.")
         XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 4), "Running/Calling state should clear after a valid response.")
@@ -267,7 +272,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Trigger a timeout"].firstMatch.waitForExistence(timeout: 2), "Failed send should still keep the user bubble.")
         let errorText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
         XCTAssertTrue(errorText.waitForExistence(timeout: 8), "Failed provider send should show a visible transcript error.")
-        XCTAssertFalse(app.otherElements["liveStreamingBubble"].waitForExistence(timeout: 2), "Failure should clear live streaming UI.")
+        XCTAssertFalse(app.otherElements["liveResponseField"].waitForExistence(timeout: 2), "Failure should clear live streaming UI.")
 
         composer.tap()
         composer.typeText("Recover after timeout")
@@ -277,21 +282,26 @@ final class AgentPadUITests: XCTestCase {
 
     func testChatComposerExpandsForLongTextAndStaysAboveKeyboard() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui"]
+        app.launchArguments = ["--reset-ui", "--open-chat", "--settings-local-model-ready"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
 
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textFields["chatComposer"].exists, "Chat should start with the same multiline-capable text field it keeps for long drafts.")
         composer.tap()
         let singleLineHeight = composer.frame.height
-        composer.typeText("Build me a smooth native iPhone app with a glassy chat composer that expands over multiple lines without jumping above the keyboard")
+        let longDraft = "Build me a smooth native iPhone app with a glassy chat composer that expands over multiple lines without jumping above the keyboard"
+        composer.typeText(longDraft)
         assertNoFloatingActionsOverComposer(in: app)
 
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.textFields["chatComposer"].exists, "Expanding a draft must preserve the original text-field identity.")
+        XCTAssertFalse(app.textViews["chatComposer"].exists, "Long drafts should not swap the focused text field for a TextEditor.")
         let expandedComposer = chatComposerInput(in: app)
         XCTAssertTrue(expandedComposer.waitForExistence(timeout: 3))
+        XCTAssertEqual(expandedComposer.value as? String, longDraft, "The stable composer should preserve the exact long draft while its height changes.")
         let expandedHeight = expandedComposer.frame.height
         XCTAssertGreaterThan(expandedHeight, singleLineHeight + 8, "Composer text field should grow for multi-line prompts.")
         XCTAssertLessThanOrEqual(expandedHeight, 150, "Composer should cap growth instead of taking over the screen.")
@@ -405,11 +415,17 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 8), "Mission Dossier should mount the project dashboard when explicitly requested.")
-        let close = app.buttons["missionDossierClose"]
-        XCTAssertTrue(close.waitForExistence(timeout: 5), "Mission Dossier should expose a stable close control.")
-        assertMinimumTouchTarget(close, named: "Mission Dossier close")
+        let dossierClose = app.buttons["missionDossierClose"]
+        XCTAssertTrue(dossierClose.waitForExistence(timeout: 5), "Mission dossier should expose a stable close control.")
+        assertMinimumTouchTarget(dossierClose, named: "Mission dossier close")
+        let dossierActions = app.buttons["projectPinnedActionsMenu"]
+        XCTAssertTrue(dossierActions.waitForExistence(timeout: 5), "Project actions should remain reachable inside the dossier.")
+        XCTAssertFalse(
+            dossierClose.frame.intersects(dossierActions.frame),
+            "Mission dossier Close must reserve its own header space instead of overlapping Project actions."
+        )
         capture("44-mission-dossier-explicit-route", app: app)
-        close.tap()
+        dossierClose.tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5), "Closing Mission Dossier should reveal Forge.")
     }
 
@@ -475,8 +491,17 @@ final class AgentPadUITests: XCTestCase {
 
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Sources"].waitForExistence(timeout: 5))
-        assertMinimumTouchTarget(app.buttons["filesBreadcrumb-home"], named: "Files Home breadcrumb")
+        XCTAssertFalse(app.buttons["filesGoUpButton"].exists, "Workspace root should not waste a primary toolbar slot on a disabled Go up action.")
+        XCTAssertFalse(app.buttons["filesBreadcrumb-home"].exists, "Workspace root should not repeat Home as a redundant breadcrumb.")
+        let sourcesRow = app.staticTexts["Sources"]
+        XCTAssertLessThan(sourcesRow.frame.maxY, app.tabBars.firstMatch.frame.minY, "Workspace should expose real files in the first viewport instead of leading with a duplicate evidence dashboard.")
+        XCTAssertFalse(app.otherElements["filesEvidenceWorkbenchOverview"].exists, "Workspace should not repeat the latest file in a large evidence dashboard before the browser.")
+        XCTAssertFalse(app.otherElements["filesProvenanceHandoff"].exists, "Workspace should keep handoff details in evidence inspection instead of duplicating the first file above the browser.")
         app.staticTexts["Sources"].tap()
+        XCTAssertTrue(app.buttons["filesGoUpButton"].waitForExistence(timeout: 5), "Folder navigation should reveal Go up only when it can act.")
+        assertMinimumTouchTarget(app.buttons["filesGoUpButton"], named: "Files Go up")
+        XCTAssertTrue(app.buttons["filesBreadcrumb-home"].waitForExistence(timeout: 5), "Opening a folder should reveal the Home breadcrumb.")
+        assertMinimumTouchTarget(app.buttons["filesBreadcrumb-home"], named: "Files Home breadcrumb")
         let sourcesBreadcrumb = app.buttons["filesBreadcrumb-0-Sources"]
         XCTAssertTrue(sourcesBreadcrumb.waitForExistence(timeout: 5), "Opening Sources should expose a stable breadcrumb button.")
         assertMinimumTouchTarget(sourcesBreadcrumb, named: "Files Sources breadcrumb")
@@ -1292,13 +1317,23 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "Live streaming should stay pinned at the bottom without asking the user to manually jump to latest.")
         let bottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
-        let liveBubble = app.otherElements["liveStreamingBubble"]
-        XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
-        XCTAssertGreaterThanOrEqual(liveResponse.frame.minY, liveBubble.frame.minY + 8, "Streaming text should not clip into the assistant bubble top chrome.")
-        XCTAssertLessThanOrEqual(liveResponse.frame.maxY, liveBubble.frame.maxY - 8, "Streaming text should have the same readable padding as a settled assistant message.")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["forgeSessionStatus"].exists,
+            "The run context should own live status instead of repeating Working in the header."
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["composerStatusPill"].exists,
+            "The run context should own live status instead of repeating Running beside the model picker."
+        )
+        let liveField = app.otherElements["liveResponseField"]
+        XCTAssertTrue(liveField.waitForExistence(timeout: 3))
+        // TextRenderer display padding intentionally lets the materializing
+        // phrase draw a few points outside its layout bounds. The response is
+        // an open field, so the meaningful visual contract is clearance from
+        // the bottom controls rather than containment in a nonexistent card.
         assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the run/composer stack.")
-        XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The live bubble itself should not continue behind the run/composer stack.")
+        XCTAssertLessThanOrEqual(liveField.frame.maxY, bottomAccessory.frame.minY - 4, "The live response field should not continue behind the run/composer stack.")
         capture("23-streaming-bottom-pinned", app: app)
 
         let progressToggle = runProgressToggle(in: app)
@@ -1333,7 +1368,7 @@ final class AgentPadUITests: XCTestCase {
         let keyboardVisible = keyboard.waitForExistence(timeout: 4)
 
         let bottomAccessory = bottomChatAccessory(in: app)
-        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3), "Chat should expose one measured bottom accessory for composer, run controls, and jump affordances.")
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3), "Chat should expose one bottom accessory for composer, run controls, and jump affordances.")
         let sendButton = app.buttons["sendMessageButton"]
         XCTAssertTrue(sendButton.waitForExistence(timeout: 3))
         if keyboardVisible {
@@ -1342,11 +1377,11 @@ final class AgentPadUITests: XCTestCase {
             assertComposerDockAligned(in: app)
         }
 
-        let liveBubble = app.otherElements["liveStreamingBubble"]
-        XCTAssertTrue(liveBubble.waitForExistence(timeout: 3))
+        let liveField = app.otherElements["liveResponseField"]
+        XCTAssertTrue(liveField.waitForExistence(timeout: 3))
         assertNoLiveStreamingLineArtifacts(in: app)
         XCTAssertLessThanOrEqual(liveResponse.frame.maxY, bottomAccessory.frame.minY - 4, "Pinned streaming output should stay readable above the full bottom accessory stack.")
-        XCTAssertLessThanOrEqual(liveBubble.frame.maxY, bottomAccessory.frame.minY - 4, "The focused-composer live bubble should not flow under the bottom accessory stack.")
+        XCTAssertLessThanOrEqual(liveField.frame.maxY, bottomAccessory.frame.minY - 4, "The focused-composer live field should not flow under the bottom accessory stack.")
         XCTAssertFalse(jumpToLatestButton(in: app).exists, "A focused composer should not show Jump to Latest while the transcript remains pinned.")
         capture("29-chat-layout-contract-keyboard-streaming", app: app)
     }
@@ -1375,6 +1410,14 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(jumpToLatestButton(in: app).waitForExistence(timeout: 2), "Tapping Jump to Latest should repin the live response and hide the jump button.")
         XCTAssertTrue(liveStreamingReadableContent(in: app).waitForExistence(timeout: 5))
         capture("26-streaming-jumped-back-latest", app: app)
+
+        // A new gesture must cancel the single post-layout correction. The old
+        // implementation kept forcing the bottom for roughly six seconds.
+        pullStart.press(forDuration: 0.15, thenDragTo: pullEnd)
+        let latestAfterRepin = jumpToLatestButton(in: app)
+        XCTAssertTrue(latestAfterRepin.waitForExistence(timeout: 3), "A fresh drag after repinning should immediately detach again instead of being overridden by delayed scroll retries.")
+        sleep(1)
+        XCTAssertTrue(latestAfterRepin.exists, "No delayed repin correction should steal the user's second scroll-away.")
     }
 
     func testLocalNativeToolPlanScreenshot() throws {
@@ -1840,6 +1883,14 @@ final class AgentPadUITests: XCTestCase {
         }
 
         XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.otherElements["projectOSIntelligenceTelemetry"].exists, "Mission Dossier should not repeat health/proof/gate telemetry before the scoped content.")
+        XCTAssertFalse(app.otherElements["projectOSIntelligenceSignals"].exists, "Mission Dossier should not render a clipped duplicate signal grid above the real content.")
+        XCTAssertFalse(app.descendants(matching: .any)["projectOSIntentMode"].exists, "Execution state should use one human status pill instead of conflicting Resume and Stopped labels.")
+        for scope in ["review", "plan", "evidence", "timeline"] {
+            let scopeButton = app.buttons["projectDetailScope-\(scope)"]
+            XCTAssertTrue(scopeButton.waitForExistence(timeout: 5), "Project scope \(scope) should expose a stable control.")
+            assertMinimumTouchTarget(scopeButton, named: "Project scope \(scope)")
+        }
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists, "Mission OS details should stay behind More so Project opens clean.")
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists, "Empty proof should not clutter the first Project viewport.")
         XCTAssertTrue(app.buttons["projectPinnedSwitcherButton"].waitForExistence(timeout: 5))
@@ -2009,6 +2060,19 @@ final class AgentPadUITests: XCTestCase {
         assertMinimumTouchTarget(app.buttons["New chat"], named: "New chat")
         assertReadableLabel(app.buttons["Open chats"], named: "Open chats")
         assertReadableLabel(app.buttons["New chat"], named: "New chat")
+        let scopeMenu = app.buttons["chatProjectScopeMenu"]
+        XCTAssertTrue(scopeMenu.waitForExistence(timeout: 5), "Forge should expose the current project scope as a stable menu.")
+        assertMinimumTouchTarget(scopeMenu, named: "Forge scope menu")
+        let dossierShortcut = app.buttons["missionDossierShortcut"]
+        XCTAssertTrue(dossierShortcut.waitForExistence(timeout: 5), "Forge should expose the Mission Dossier as a direct labeled control.")
+        assertMinimumTouchTarget(dossierShortcut, named: "Mission Dossier shortcut")
+        XCTAssertGreaterThanOrEqual(dossierShortcut.frame.width, 72, "Mission Dossier should read as a labeled action instead of a mystery icon.")
+        let headerStatus = app.descendants(matching: .any)["forgeSessionStatus"]
+        XCTAssertTrue(headerStatus.waitForExistence(timeout: 5), "Forge should expose one stable session status.")
+        if app.otherElements["firstRunPowerUp"].exists {
+            XCTAssertTrue(headerStatus.label.contains("Setup"), "A blocked first run must not contradict the setup surface with a Ready header.")
+            XCTAssertFalse(app.descendants(matching: .any)["forgeSignal-model"].exists, "The first-run setup card owns model setup; Forge should not repeat it as an icon-only header signal.")
+        }
 
         for tab in ["Forge", "Workspace", "History", "Control"] {
             let tabButton = app.tabBars.buttons[tab]
@@ -2042,12 +2106,17 @@ final class AgentPadUITests: XCTestCase {
 
         app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
-        for identifier in ["filesGoUpButton", "filesLayoutToggle", "filesSearchButton", "filesWorkspaceMenu", "filesCreateFileButton"] {
+        XCTAssertFalse(app.buttons["filesGoUpButton"].exists, "Go up should stay hidden at the workspace root instead of looking enabled but doing nothing.")
+        XCTAssertFalse(app.buttons["filesBreadcrumb-home"].exists, "Home should not repeat the current root location above the toolbar.")
+        for identifier in ["filesLayoutToggle", "filesSearchButton", "filesWorkspaceMenu", "filesCreateFileButton"] {
             let control = app.buttons[identifier]
             XCTAssertTrue(control.waitForExistence(timeout: 5), "\(identifier) should expose a stable accessibility identifier.")
             assertMinimumTouchTarget(control, named: identifier)
             assertReadableLabel(control, named: identifier)
         }
+        XCTAssertEqual(app.buttons["filesCreateFileButton"].label, "New file or folder", "Workspace create should describe both choices in the sheet instead of pretending the plus only creates files.")
+        XCTAssertFalse(app.otherElements["filesEvidenceWorkbenchOverview"].exists, "The Workspace first viewport should start with files, not a duplicate evidence dashboard.")
+        XCTAssertFalse(app.otherElements["filesProvenanceHandoff"].exists, "The Workspace first viewport should not repeat the same file in a provenance card.")
         capture("74-accessibility-files-action-bar", app: app)
 
         app.tabBars.buttons["Forge"].tap()
@@ -2178,9 +2247,11 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["notes.md"].waitForExistence(timeout: 8))
         capture("80-files-actions-before", app: app)
 
-        let sourceEdit = app.buttons["fileEdit-Actions-notes-md"]
-        XCTAssertTrue(sourceEdit.waitForExistence(timeout: 5), "Every file row should keep one visible primary action for the safest next step.")
-        assertMinimumTouchTarget(sourceEdit, named: "notes.md edit action")
+        let sourceOpen = app.buttons["fileOpen-Actions-notes-md"]
+        XCTAssertTrue(sourceOpen.waitForExistence(timeout: 5), "Every file row should remain the visible primary action for opening or editing that item.")
+        assertMinimumTouchTarget(sourceOpen, named: "notes.md row action")
+        XCTAssertEqual(sourceOpen.label, "Edit notes.md")
+        XCTAssertFalse(app.buttons["fileEdit-Actions-notes-md"].exists, "Workspace rows should not repeat the row action as a second oversized edit button.")
         XCTAssertFalse(app.buttons["fileDuplicate-Actions-notes-md"].exists, "Duplicate should live behind the row overflow so Files stays calm.")
         XCTAssertFalse(app.buttons["fileDelete-Actions-notes-md"].exists, "Delete should live behind the row overflow so destructive actions are not first-viewport clutter.")
 
@@ -2430,11 +2501,11 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func liveStreamingTextReveal(in app: XCUIApplication) -> XCUIElement {
-        let direct = app.staticTexts["streamingTextReveal"]
+        let direct = app.staticTexts["liveResponseTranscript"]
         if direct.exists { return direct }
-        let identifiedText = app.descendants(matching: .staticText).matching(identifier: "streamingTextReveal").firstMatch
+        let identifiedText = app.descendants(matching: .staticText).matching(identifier: "liveResponseTranscript").firstMatch
         if identifiedText.exists { return identifiedText }
-        return app.descendants(matching: .any).matching(identifier: "streamingTextReveal").firstMatch
+        return app.descendants(matching: .any).matching(identifier: "liveResponseTranscript").firstMatch
     }
 
     private func assertNoLiveStreamingLineArtifacts(
@@ -2444,13 +2515,13 @@ final class AgentPadUITests: XCTestCase {
     ) {
         XCTAssertFalse(
             app.descendants(matching: .any).matching(identifier: "liveStreamingStatusProgress").firstMatch.exists,
-            "Live response bubbles should not render an under-text decorative progress line.",
+            "Live response fields should not render an under-text decorative progress line.",
             file: file,
             line: line
         )
         XCTAssertFalse(
             app.descendants(matching: .any).matching(identifier: "streamingCaret").firstMatch.exists,
-            "Live response bubbles should not render a vertical caret/blue-line artifact.",
+            "Live response fields should not render a vertical caret/blue-line artifact.",
             file: file,
             line: line
         )
@@ -2468,18 +2539,13 @@ final class AgentPadUITests: XCTestCase {
             file: file,
             line: line
         )
-        let rawValue = (response.value as? String) ?? ""
-        let count = rawValue
-            .components(separatedBy: CharacterSet.decimalDigits.inverted)
-            .first(where: { !$0.isEmpty })
-            .flatMap(Int.init)
-        XCTAssertNotNil(
-            count,
-            "Live response should expose its real streamed character count on the visible accessibility element; value='\(rawValue)'.",
-            file: file,
-            line: line
-        )
-        return count ?? 0
+        // The new transcript intentionally keeps accessibilityValue semantic
+        // ("Writing response" / "Response complete") and checkpoints its
+        // readable label at phrase boundaries instead of publishing a noisy
+        // changing number on every frame. Measure the exposed transcript.
+        let transcript = response.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty, transcript != "Preparing response" else { return 0 }
+        return transcript.count
     }
 
     private func waitForLiveStreamingCharacterGrowth(

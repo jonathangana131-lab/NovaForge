@@ -126,6 +126,7 @@ struct AppRootView: View {
     @State private var selectedConversationID: UUID?
     @State private var optimisticSelectedConversation: Conversation?
     @State private var landscapeGameArtifact: WorkspaceArtifact?
+    @State private var pendingDossierArtifact: WorkspaceArtifact?
     @State private var terminalFocus: TerminalConsoleFocusRequest?
     @State private var rootPrompt = ""
     @State private var rootPromptRevision = 0
@@ -379,6 +380,9 @@ struct AppRootView: View {
 
     private var rootContentPresentationLifecycle: some View {
         rootContentAppearanceLifecycle
+            .fullScreenCover(isPresented: $showingMissionDossier, onDismiss: presentPendingDossierArtifact) {
+                missionDossierCover
+            }
             .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
             .alert(
                 "NovaForge Save Failed",
@@ -405,10 +409,9 @@ struct AppRootView: View {
 
             if let conversation = selectedConversation, let settings, let activeProject {
                 if showingMissionDossier {
-                    // The Mission Dossier owns the full screen. Keep the covered
-                    // Forge/chat tree out of layout and compositing while the
-                    // dossier is open so menu presentation feels immediate and
-                    // Project performance measures only the visible surface.
+                    // The system cover owns the visible transition, while this
+                    // lightweight backing keeps the covered Forge transcript
+                    // from re-rendering alongside a live mission dashboard.
                     AgentPalette.surface.ignoresSafeArea()
                 } else if usesDebugTerminalSurface {
                     TerminalConsoleView(runtime: runtime, project: activeProject, openChat: {
@@ -432,12 +435,6 @@ struct AppRootView: View {
             .allowsHitTesting(false)
 
             rootToastLayer
-
-            if showingMissionDossier {
-                missionDossierCover
-                    .transition((reduceMotion || AgentPerformance.prefersReducedVisualEffects) ? .identity : .opacity.combined(with: .move(edge: .bottom)))
-                    .zIndex(20)
-            }
         }
     }
 
@@ -1238,6 +1235,17 @@ struct AppRootView: View {
         landscapeGameArtifact = artifact
     }
 
+    private func openDossierArtifactLandscapeFullScreen(_ artifact: WorkspaceArtifact) {
+        pendingDossierArtifact = artifact
+        dismissMissionDossier()
+    }
+
+    private func presentPendingDossierArtifact() {
+        guard let artifact = pendingDossierArtifact else { return }
+        pendingDossierArtifact = nil
+        openArtifactLandscapeFullScreen(artifact)
+    }
+
     private func openTerminalRecord(id: UUID, command: String, query: String) {
         terminalFocus = TerminalConsoleFocusRequest(id: id, command: command, query: query)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1248,22 +1256,13 @@ struct AppRootView: View {
         setMissionDossierPresented(true)
     }
 
-    private func dismissMissionDossier(animated: Bool = true) {
-        setMissionDossierPresented(false, animated: animated)
+    private func dismissMissionDossier() {
+        setMissionDossierPresented(false)
     }
 
-    private func setMissionDossierPresented(_ isPresented: Bool, animated: Bool = true) {
+    private func setMissionDossierPresented(_ isPresented: Bool) {
         guard showingMissionDossier != isPresented else { return }
-        let update = {
-            showingMissionDossier = isPresented
-        }
-        if animated && !reduceMotion && !AgentPerformance.prefersReducedVisualEffects {
-            withAnimation(.snappy(duration: isPresented ? 0.18 : 0.15)) {
-                update()
-            }
-        } else {
-            update()
-        }
+        showingMissionDossier = isPresented
     }
 
     /// The project deep dive (plan, ledger, proof, project switching) as a
@@ -1279,15 +1278,16 @@ struct AppRootView: View {
                 selectedConversation: conversation,
                 usesChatRuntime: usesChatRuntime
             )
-            MissionDossierCover(close: { dismissMissionDossier() }) {
+            MissionDossierCover {
                 ProjectDashboardView(
                     project: activeProject,
                     projects: projects,
                     runtimeStatus: WorkspaceStatusSnapshot(runtime: activeMissionRuntime),
                     autoContinueState: autoContinueViewState(for: activeProject, settings: settings),
                     conversations: conversations,
+                    closeDossier: { dismissMissionDossier() },
                     openTab: { tab in
-                        dismissMissionDossier(animated: false)
+                        dismissMissionDossier()
                         openTab(tab)
                     },
                     stopWorkspaceRun: {
@@ -1320,9 +1320,10 @@ struct AppRootView: View {
                     deleteProject: deleteProject,
                     runProjectCommand: runProjectCommand,
                     draftProjectCommand: draftProjectCommand,
-                    openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
+                    openArtifactLandscapeFullScreen: openDossierArtifactLandscapeFullScreen,
                     isVisibleForFrameProfiling: AgentPerformance.shouldProfileFrameRate
                 )
+                .id(activeProject.id)
             }
         }
     }
@@ -4132,7 +4133,7 @@ struct AppRootView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
-            setMissionDossierPresented(true, animated: false)
+            setMissionDossierPresented(true)
         }
     }
 

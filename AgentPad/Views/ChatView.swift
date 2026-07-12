@@ -55,8 +55,6 @@ struct ChatView: View {
     @State private var jumpToLatestRequest = 0
     @State private var jumpToLatestAnimated = true
     @StateObject private var transient = ChatTransientState()
-    @State private var measuredAccessoryHeight: CGFloat = 0
-    @State private var measuredBottomChromeCoverage: CGFloat = 0
     @StateObject private var keyboard = ChatKeyboardState()
     @AppStorage("codexTerminalPaired") private var codexTerminalPaired = false
     @AppStorage("novaForgeChatDraftsByConversation") private var persistedDraftsJSON = "{}"
@@ -67,7 +65,12 @@ struct ChatView: View {
     private let messageRenderWindowSize = 80
     private let bottomPinnedThreshold: CGFloat = 160
     private let detachedRepinThreshold: CGFloat = 28
-    private let latestResponseClearance: CGFloat = 64
+    /// A growing response needs room for the run controls that join the dock.
+    /// Once handoff completes, collapse that room immediately so the durable
+    /// answer does not sit above a large invisible tail.
+    private var latestResponseClearance: CGFloat {
+        ownsActiveRunState && runtime.isWorking ? 84 : 28
+    }
 
     private var shouldAnimateDecorative: Bool {
         AgentPerformance.allowsDecorativeMotion && !reduceMotion
@@ -97,8 +100,19 @@ struct ChatView: View {
         var rows = visibleMessages.map(ChatTranscriptRow.message)
         guard shouldShowLiveResponseIsland else { return rows }
 
-        let liveResponseID = runtime.liveStream.responseID
         let handoffMessageID = runtime.liveStream.handoffMessageID
+
+        // As soon as the durable response enters the cache, let it replace the
+        // live content under the same response identity. Its row's onAppear is
+        // the deterministic acknowledgement that the handoff really rendered.
+        // Waiting on a fixed timer here can clear the only visible response on
+        // a busy frame or a slower device.
+        if let handoffMessageID,
+           rows.contains(where: { $0.messageID == handoffMessageID }) {
+            return rows
+        }
+
+        let liveResponseID = handoffMessageID ?? runtime.liveStream.responseID
         rows.removeAll { row in
             guard let messageID = row.messageID else { return false }
             return messageID == liveResponseID || messageID == handoffMessageID
@@ -188,9 +202,7 @@ struct ChatView: View {
 
     private var activeLayoutContract: ChatLayoutContract {
         ChatLayoutContract(
-            accessoryHeight: measuredAccessoryHeight,
-            bottomChromeCoverage: measuredBottomChromeCoverage,
-            keyboardHeight: keyboard.isVisible ? keyboard.overlapHeight : 0,
+            keyboardVisible: keyboard.isVisible,
             composerMode: composerMode,
             runAccessory: runAccessoryState
         )
@@ -208,9 +220,13 @@ struct ChatView: View {
 
     private var composerMode: ChatComposerMode {
         if hasForeignActiveRun || hasForeignProjectMission || (ownsActiveRunState && runtime.pendingTool != nil) { return .disabled }
-        if prompt.contains("\n") || prompt.count > 72 { return .expanded }
+        if draftUsesExpandedComposer { return .expanded }
         if composerFocused { return .focused }
         return .compact
+    }
+
+    private var draftUsesExpandedComposer: Bool {
+        prompt.contains("\n") || prompt.count > 28
     }
 
     private var runAccessoryState: ChatRunAccessoryState {
@@ -239,11 +255,6 @@ struct ChatView: View {
 
     private var showJumpToLatest: Bool {
         scrollAttachment == .detached && hasLatestJumpTarget
-    }
-
-    private var hasRenderedLiveHandoff: Bool {
-        guard let handoffMessageID = runtime.liveStream.handoffMessageID else { return false }
-        return cachedMessages.contains { $0.id == handoffMessageID }
     }
 
     private var shouldTopAnchorEmptyTranscript: Bool {
@@ -434,45 +445,21 @@ struct ChatView: View {
     }
 
     private var durableRunRefreshID: String {
-        let scopedArtifacts = scopedProject?.artifacts ?? []
-        let scopedRuns = scopedProject?.toolRuns ?? []
-        let scopedFileChanges = scopedProject?.fileChanges ?? []
-        let scopedTerminalCommands = scopedProject?.terminalCommands ?? []
-        let scopedProjectOSRuns = scopedProject?.projectOSRuns ?? []
-        let scopedEvents = scopedProject?.events ?? []
-        let latestArtifactUpdate = scopedArtifacts
-            .map(\.updatedAt.timeIntervalSince1970)
-            .max() ?? 0
-        let latestRunUpdate = scopedRuns
-            .map { ($0.completedAt ?? $0.createdAt).timeIntervalSince1970 }
-            .max() ?? 0
-        let latestFileChangeUpdate = scopedFileChanges
-            .map(\.createdAt.timeIntervalSince1970)
-            .max() ?? 0
-        let latestTerminalUpdate = scopedTerminalCommands
-            .map(\.completedAt.timeIntervalSince1970)
-            .max() ?? 0
-        let latestProjectOSUpdate = scopedProjectOSRuns
-            .map(\.updatedAt.timeIntervalSince1970)
-            .max() ?? 0
-        let latestEventUpdate = scopedEvents
-            .map(\.createdAt.timeIntervalSince1970)
-            .max() ?? 0
-        let scopeSnapshot = [
-            evidenceScopeIdentity,
-            String(scopedRuns.count),
-            String(scopedArtifacts.count),
-            String(scopedFileChanges.count),
-            String(scopedTerminalCommands.count),
-            String(scopedProjectOSRuns.count),
-            String(scopedEvents.count),
-            String(latestRunUpdate),
-            String(latestArtifactUpdate),
-            String(latestFileChangeUpdate),
-            String(latestTerminalUpdate),
-            String(latestProjectOSUpdate),
-            String(latestEventUpdate)
-        ].joined(separator: "-")
+        // ProjectEventRecorder advances both timestamps whenever project-scoped
+        // evidence changes. Use that canonical revision instead of faulting six
+        // relationships and scanning every child timestamp during each Chat
+        // body evaluation.
+        let scopeSnapshot: String
+        if let scopedProject {
+            scopeSnapshot = [
+                evidenceScopeIdentity,
+                scopedProject.statusRawValue,
+                String(scopedProject.updatedAt.timeIntervalSince1970),
+                String(scopedProject.lastActivityAt.timeIntervalSince1970)
+            ].joined(separator: "-")
+        } else {
+            scopeSnapshot = "\(evidenceScopeIdentity)-general"
+        }
         let runtimeSnapshot: String
         if runtimeIsBoundToSelectedConversation {
             runtimeSnapshot = [
@@ -538,13 +525,11 @@ struct ChatView: View {
             defer {
                 AgentPerformance.end("Chat Message Cache", id: signpostID)
             }
-            let snapshots = await Task.detached(priority: .userInitiated) {
-                ChatMessageSnapshot.make(
-                    from: sources,
-                    parseAllMessages: parseAllMessages,
-                    parseWindowSize: parseWindowSize
-                )
-            }.value
+            let snapshots = await Self.buildMessageSnapshots(
+                from: sources,
+                parseAllMessages: parseAllMessages,
+                parseWindowSize: parseWindowSize
+            )
             guard !Task.isCancelled,
                   transient.messageCacheGeneration == generation,
                   conversation.id == conversationID,
@@ -555,11 +540,26 @@ struct ChatView: View {
             cachedMessages = snapshots
             cachedSourceMessageCount = sources.count
             updateCachedArtifacts(from: snapshots, runtimeArtifacts: runtimeArtifacts)
-            if let handoffMessageID = runtime.liveStream.handoffMessageID,
-               snapshots.contains(where: { $0.id == handoffMessageID }) {
-                runtime.liveStream.clearHandoffIfRendered(messageID: handoffMessageID)
-            }
         }
+    }
+
+    private nonisolated static func buildMessageSnapshots(
+        from sources: [ChatMessageSource],
+        parseAllMessages: Bool,
+        parseWindowSize: Int
+    ) async -> [ChatMessageSnapshot] {
+        // A nonisolated async helper runs on the cooperative executor while
+        // remaining a structured child of messageCacheTask. Cancellation can
+        // no longer leave an unowned detached markdown parse running behind a
+        // newer conversation refresh.
+        await Task.yield()
+        guard !Task.isCancelled else { return [] }
+        let snapshots = ChatMessageSnapshot.make(
+            from: sources,
+            parseAllMessages: parseAllMessages,
+            parseWindowSize: parseWindowSize
+        )
+        return Task.isCancelled ? [] : snapshots
     }
 
     private func refreshMissionContract() {
@@ -718,14 +718,11 @@ struct ChatView: View {
         #endif
         let _ = AgentPerformance.bodyEvaluation("Chat Body")
         GeometryReader { rootProxy in
-            chatLayout(
-                topSafeArea: rootProxy.safeAreaInsets.top,
-                rootBottom: rootProxy.frame(in: .global).maxY
-            )
+            chatLayout(topSafeArea: rootProxy.safeAreaInsets.top)
         }
     }
 
-    private func chatLayout(topSafeArea: CGFloat, rootBottom: CGFloat) -> some View {
+    private func chatLayout(topSafeArea: CGFloat) -> some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Layout")
         let showsMissionStrip = missionStripIsVisible
         return ZStack {
@@ -745,7 +742,7 @@ struct ChatView: View {
                             durableSnapshot: cachedDurableRunSnapshot,
                             workflowSpine: cachedWorkflowSpine,
                             ownsActiveRunState: ownsActiveRunState,
-                            missionStripOwnsLiveState: showsMissionStrip,
+                            secondarySurfaceOwnsLiveState: showsMissionStrip || shouldShowContextBar,
                             hasForeignActiveRun: hasForeignActiveRun,
                             foreignActiveTitle: activeElsewhereTitle,
                             newChat: newChat,
@@ -857,11 +854,11 @@ struct ChatView: View {
                                 Color.clear
                                     .frame(height: latestResponseClearance)
                                     .accessibilityHidden(true)
-                                    .id(Self.chatLatestAnchorID)
 
                                 Color.clear
                                     .frame(height: transcriptBottomPadding)
                                     .accessibilityHidden(true)
+                                    .id(Self.chatLatestAnchorID)
 
                                 Color.clear
                                     .frame(height: 1)
@@ -920,7 +917,7 @@ struct ChatView: View {
                         .onChange(of: runtime.runState) { _, newState in
                             handleRunStateChange(newState)
                         }
-                        .onReceive(runtime.liveStream.objectWillChange) { _ in
+                        .onReceive(runtime.liveStream.$layoutRevision) { _ in
                             keepLiveStreamReadableDuringGrowth()
                         }
                         .onChange(of: composerFocused) {
@@ -1006,6 +1003,9 @@ struct ChatView: View {
             }
             .onDisappear {
                 flushDraftPersistence(prompt, for: conversation.id)
+                transient.messageCacheGeneration += 1
+                transient.messageCacheTask?.cancel()
+                transient.messageCacheTask = nil
                 transient.cancelLayoutTasks()
             }
 
@@ -1016,17 +1016,6 @@ struct ChatView: View {
                 .padding(.top, 4)
                 .padding(.bottom, accessoryBottomPadding)
                 .background { ChatDockBackground() }
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: ChatAccessoryGeometryPreferenceKey.self,
-                            value: ChatAccessoryGeometry(
-                                height: proxy.size.height,
-                                minY: proxy.frame(in: .global).minY
-                            )
-                        )
-                    }
-                }
                 .zIndex(5)
         }
         .overlay(alignment: .leading) {
@@ -1055,11 +1044,6 @@ struct ChatView: View {
             }
         }
         .toolbar((keyboard.isVisible || showingChatDrawer) ? .hidden : .visible, for: .tabBar)
-        .onChange(of: keyboard.revision) {
-            guard keyboard.isVisible, shouldAutoScrollForKeyboard else { return }
-            guard shouldKeepTranscriptPinned else { return }
-            requestJumpToLatest(animated: true, delay: .milliseconds(80))
-        }
         .onChange(of: projectResumeDraftRevision) {
             applyProjectResumeDraftIfNeeded(focusComposer: true)
         }
@@ -1068,9 +1052,6 @@ struct ChatView: View {
         }
         .onChange(of: chatMode) {
             AgentPerformance.event("Chat Mode Update")
-        }
-        .onPreferenceChange(ChatAccessoryGeometryPreferenceKey.self) { geometry in
-            scheduleAccessoryGeometryUpdate(geometry, rootBottom: rootBottom)
         }
         .onChange(of: evidenceScopeIdentity) {
             // Scope can change without changing the conversation (for example,
@@ -1092,13 +1073,10 @@ struct ChatView: View {
             showingChatDrawer = false
             progressExpanded = false
             messageRenderLimit = messageRenderWindowSize
-            measuredAccessoryHeight = 0
-            measuredBottomChromeCoverage = 0
             transient.lastReportedBottomDistance = .infinity
             transient.accessoryResizeFollowUpTask?.cancel()
             transient.scrollRequestTask?.cancel()
             transient.manualRepinTask?.cancel()
-            transient.manualRepinUntil = .distantPast
             keyboard.reset()
             scrollAttachment = .pinned
             forceScrollToBottom = conversation.messageCount > 0 || (ownsActiveRunState && runtime.isWorking)
@@ -1147,10 +1125,27 @@ struct ChatView: View {
             workspace: runtime.workspace,
             tint: chatChromeTint,
             tintID: chatChromeTintID,
+            actionScopeID: evidenceScopeIdentity,
             openArtifact: previewArtifact
         )
         .equatable()
         .id(message.id)
+        .onAppear {
+            acknowledgeLiveHandoffIfNeeded(for: message)
+        }
+    }
+
+    private func acknowledgeLiveHandoffIfNeeded(for message: ChatMessageSnapshot) {
+        guard message.role == .assistant,
+              runtime.liveStream.handoffMessageID == message.id else { return }
+
+        runtime.liveStream.clearHandoffIfRendered(messageID: message.id)
+        guard shouldKeepTranscriptPinned else { return }
+
+        // onAppear is the render acknowledgement. Queue one scroll request for
+        // the next main-actor turn so it observes the durable row's final size.
+        scrollAttachment = .restoring
+        requestJumpToLatest(animated: false)
     }
 
     private func previewArtifact(_ artifact: WorkspaceArtifact) {
@@ -1366,15 +1361,23 @@ struct ChatView: View {
     /// The inline mission strip is the decision surface for an approval. When
     /// it is visible, repeating the same state in the composer turns the
     /// bottom dock into visual noise without adding an action. Keep the pill
-    /// for General/fallback cases where the strip is not present.
+    /// for General/fallback cases where the strip is not present. The empty
+    /// first-run surface likewise owns provider setup, including the action;
+    /// repeating a decorative Setup pill above a disabled field adds no help.
     private var showsComposerStatusPill: Bool {
-        !(ownsActiveRunState && runtime.pendingTool != nil && missionStripIsVisible)
+        if providerSetupBlocksComposer && cachedMessages.isEmpty { return false }
+        // The expanded/collapsed run context already owns live, paused, failed,
+        // queued, and approval state. Repeating that state beside the model
+        // picker produced three simultaneous labels (Working / Live / Running)
+        // in the iPhone 12 streaming proof.
+        if shouldShowContextBar && hasActionableRunState { return false }
+        return !(ownsActiveRunState && runtime.pendingTool != nil && missionStripIsVisible)
     }
 
     private var composer: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Composer Body")
         let compactStreamingComposer = usesCompactStreamingComposer
-        let usesMultilineComposer = !compactStreamingComposer && (prompt.contains("\n") || prompt.count > 28)
+        let usesMultilineComposer = !compactStreamingComposer && draftUsesExpandedComposer
         let fieldHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 74 : 46)
         let fieldMaxHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 148 : 84)
         let textLaneVerticalPadding: CGFloat = compactStreamingComposer ? 2 : (usesMultilineComposer ? 3 : 4)
@@ -1399,39 +1402,25 @@ struct ChatView: View {
                 }
 
                 HStack(alignment: .bottom, spacing: 6) {
-                    Group {
-                        if usesMultilineComposer {
-                            TextEditor(text: $prompt)
-                                .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
-                                .foregroundStyle(AgentPalette.ink)
-                                .lineSpacing(2)
-                                .scrollContentBackground(.hidden)
-                                .background(Color.clear)
-                                .focused($composerFocused)
-                                .accessibilityIdentifier("chatComposer")
-                                .tint(chatChromeTint)
-                                .frame(minHeight: fieldHeight, idealHeight: 96, maxHeight: fieldMaxHeight, alignment: .topLeading)
-                                .padding(.leading, 9)
-                                .padding(.trailing, 3)
-                                .padding(.vertical, 5)
-                        } else {
-                            TextField(composerPlaceholder, text: $prompt, axis: .vertical)
-                                .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
-                                .foregroundStyle(AgentPalette.ink)
-                                .textFieldStyle(.plain)
-                                .lineLimit(1...3)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .focused($composerFocused)
-                                .accessibilityIdentifier("chatComposer")
-                                .submitLabel(.return)
-                                .tint(chatChromeTint)
-                                .frame(minHeight: fieldHeight, alignment: .topLeading)
-                                .frame(maxHeight: fieldMaxHeight, alignment: .topLeading)
-                                .padding(.leading, 14)
-                                .padding(.trailing, 3)
-                                .padding(.vertical, 0)
-                        }
-                    }
+                    // Keep one native input alive for the entire draft. Swapping
+                    // TextField for TextEditor at a character threshold destroys
+                    // selection/IME state and was the reason the old code needed
+                    // delayed focus-repair tasks on every long-prompt keystroke.
+                    TextField(composerPlaceholder, text: $prompt, axis: .vertical)
+                        .font(.system(.body, design: AgentPalette.interfaceFontDesign, weight: .regular))
+                        .foregroundStyle(AgentPalette.ink)
+                        .textFieldStyle(.plain)
+                        .lineLimit(usesMultilineComposer ? 1...8 : 1...3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .focused($composerFocused)
+                        .accessibilityIdentifier("chatComposer")
+                        .submitLabel(.return)
+                        .tint(chatChromeTint)
+                        .frame(minHeight: fieldHeight, alignment: .topLeading)
+                        .frame(maxHeight: fieldMaxHeight, alignment: .topLeading)
+                        .padding(.leading, 14)
+                        .padding(.trailing, 3)
+                        .padding(.vertical, usesMultilineComposer ? 5 : 0)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if !composerInputDisabled {
@@ -1494,6 +1483,7 @@ struct ChatView: View {
             .fixedSize(horizontal: false, vertical: true)
             .contentShape(RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous))
             .accessibilityElement(children: .contain)
+            .accessibilityLabel("Chat composer dock")
             .accessibilityIdentifier("chatComposerDock")
             .onTapGesture {
                 if !composerInputDisabled {
@@ -1502,21 +1492,6 @@ struct ChatView: View {
             }
             .composerGlassSurface(focused: composerFocused, tint: chatChromeTint, style: style)
             .glassIDIfAvailable("composer", namespace: glassNamespace)
-            .overlay {
-                RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
-                    .fill(Color.clear)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Chat composer dock")
-                    .accessibilityIdentifier("chatComposerDock")
-                    .allowsHitTesting(false)
-            }
-        .accessibilityIdentifier("chatComposerDock")
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.20) : nil, value: usesMultilineComposer)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.20) : nil, value: compactStreamingComposer)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: composerFocused)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: runtime.isWorking)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: hasForeignActiveRun)
-        .animation(shouldAnimateDecorative ? .smooth(duration: 0.18) : nil, value: hasForeignProjectMission)
     }
 
     private var trimmedPrompt: String {
@@ -1539,14 +1514,9 @@ struct ChatView: View {
         // soon as a newline appears made the composer feel unstable and caused
         // accidental half-prompts. The explicit send button / submit action owns
         // sending now.
-        if prompt.contains("\n") {
+        if prompt.contains("\r\n") {
             prompt = prompt.replacingOccurrences(of: "\r\n", with: "\n")
-        }
-        if (prompt.contains("\n") || prompt.count > 38), composerFocused, !hasForeignActiveRun {
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(80))
-                composerFocused = true
-            }
+            return
         }
     }
 
@@ -1665,43 +1635,10 @@ struct ChatView: View {
         }
     }
 
-    private func scheduleAccessoryGeometryUpdate(_ geometry: ChatAccessoryGeometry, rootBottom: CGFloat) {
-        let sanitizedHeight = min(max(geometry.height, 0), keyboard.isVisible ? 260 : 492)
-        let rawCoverage = rootBottom.isFinite && geometry.minY.isFinite
-            ? rootBottom - geometry.minY
-            : sanitizedHeight
-        // Geometry from a safe-area inset can transiently include tab/keyboard/full-screen
-        // coverage while the keyboard or Run Control is settling. Cap it to the actual
-        // accessory plus the real keyboard overlap so those spikes do not become scroll
-        // clearance and push the latest message below an invisible spacer.
-        let keyboardClearance = keyboard.isVisible ? max(keyboard.overlapHeight, 0) : 0
-        let coverageCeiling = sanitizedHeight + keyboardClearance + 24
-        let sanitizedCoverage = min(max(rawCoverage, sanitizedHeight, 0), max(coverageCeiling, sanitizedHeight, 0))
-        let threshold: CGFloat = AgentPerformance.isPerformanceMode ? 6 : 1
-        let heightChanged = abs(measuredAccessoryHeight - sanitizedHeight) > threshold
-        let coverageChanged = abs(measuredBottomChromeCoverage - sanitizedCoverage) > threshold
-        guard heightChanged || coverageChanged else { return }
-        transient.accessoryHeightUpdateTask?.cancel()
-        transient.accessoryHeightUpdateTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(AgentPerformance.isPerformanceMode ? 48 : 24))
-            guard !Task.isCancelled else { return }
-            let heightChanged = abs(measuredAccessoryHeight - sanitizedHeight) > threshold
-            let coverageChanged = abs(measuredBottomChromeCoverage - sanitizedCoverage) > threshold
-            guard heightChanged || coverageChanged else { return }
-            AgentPerformance.event("Composer Height Update")
-            AgentPerformance.value("Composer Height", Double(sanitizedHeight))
-            AgentPerformance.value("Chat Bottom Chrome Coverage", Double(sanitizedCoverage))
-            measuredAccessoryHeight = sanitizedHeight
-            measuredBottomChromeCoverage = sanitizedCoverage
-            keepLatestReadableAfterAccessoryResize()
-        }
-    }
-
     private func handleLayoutContractChange(oldValue: ChatLayoutContract, newValue: ChatLayoutContract) {
         guard oldValue != newValue else { return }
         AgentPerformance.event("Chat Layout Contract Update")
-        AgentPerformance.value("Chat Bottom Accessory Height", Double(newValue.accessoryHeight))
-        AgentPerformance.value("Chat Keyboard Height", Double(newValue.keyboardHeight))
+        AgentPerformance.value("Chat Keyboard Visible", newValue.keyboardVisible ? 1 : 0)
         AgentPerformance.value("Chat Accessory Bottom Padding", Double(newValue.accessoryBottomPadding))
         AgentPerformance.value("Chat Transcript Breathing Room", Double(newValue.transcriptBreathingRoom))
         guard shouldKeepTranscriptPinned else { return }
@@ -1762,17 +1699,6 @@ struct ChatView: View {
         let isLiveRunGrowing = ownsActiveRunState && runtime.isWorking
         let hasRecentUserScrollIntent = now < transient.userScrollIntentUntil
 
-        if now < transient.manualRepinUntil {
-            if distance <= detachedRepinThreshold {
-                scrollAttachment = .pinned
-                forceScrollToBottom = false
-                transient.manualRepinUntil = .distantPast
-            } else {
-                scrollAttachment = .restoring
-            }
-            return
-        }
-
         if isLiveRunGrowing,
            scrollAttachment != .detached,
            !forceScrollToBottom,
@@ -1818,7 +1744,6 @@ struct ChatView: View {
     }
 
     private func handleUserScrollGesture(_ value: DragGesture.Value) {
-        guard ownsActiveRunState, runtime.isWorking else { return }
         // In a chat transcript, a downward finger drag means the user is pulling
         // away from the live bottom to read older content. Once that happens,
         // streaming/tool growth must stop forcing the scroll position until the
@@ -1828,12 +1753,10 @@ struct ChatView: View {
     }
 
     private func handleScrollPhaseChange(_ phase: ScrollPhase, context: ScrollPhaseChangeContext) {
-        guard ownsActiveRunState, runtime.isWorking else { return }
-        guard Date() >= transient.manualRepinUntil else {
-            scrollAttachment = .restoring
-            return
-        }
         guard phase == .tracking || phase == .interacting || phase == .decelerating else { return }
+
+        // A new gesture always wins over a pending one-shot Latest correction.
+        transient.manualRepinTask?.cancel()
 
         let distance = max(0, context.geometry.contentSize.height - context.geometry.visibleRect.maxY)
         if distance <= detachedRepinThreshold {
@@ -1847,10 +1770,7 @@ struct ChatView: View {
     }
 
     private func markUserDetached() {
-        guard Date() >= transient.manualRepinUntil else {
-            scrollAttachment = .restoring
-            return
-        }
+        transient.manualRepinTask?.cancel()
         transient.scrollRequestTask?.cancel()
         transient.accessoryResizeFollowUpTask?.cancel()
         scrollAttachment = .detached
@@ -1866,35 +1786,22 @@ struct ChatView: View {
         transient.manualRepinTask?.cancel()
         transient.userDetachedUntil = .distantPast
         transient.userScrollIntentUntil = .distantPast
-        transient.manualRepinUntil = Date().addingTimeInterval(6)
         forceScrollToBottom = true
         scrollAttachment = .restoring
         requestJumpToLatest(animated: true)
 
+        // One correction on the next settled layout is enough. It remains
+        // cancellable, and the first new user drag cancels it immediately.
         transient.manualRepinTask = Task { @MainActor in
-            let followUps: [Duration] = [
-                .milliseconds(140),
-                .milliseconds(380),
-                .milliseconds(900),
-                .milliseconds(1_600),
-                .milliseconds(2_400)
-            ]
-            for delay in followUps {
-                do {
-                    try await Task.sleep(for: delay)
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                requestJumpToLatest(animated: false)
-            }
-
             do {
-                try await Task.sleep(for: .milliseconds(180))
+                try await Task.sleep(for: .milliseconds(140))
             } catch {
                 return
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, scrollAttachment != .detached else { return }
+            requestJumpToLatest(animated: false)
+            await Task.yield()
+            guard !Task.isCancelled, scrollAttachment != .detached else { return }
             forceScrollToBottom = false
             scrollAttachment = .pinned
         }
@@ -1917,7 +1824,7 @@ struct ChatView: View {
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool) {
-        guard scrollAttachment != .detached || Date() < transient.manualRepinUntil else { return }
+        guard scrollAttachment != .detached else { return }
         guard let targetID = latestScrollTargetID else { return }
 
         let action = {
@@ -2011,9 +1918,11 @@ private enum ChatTranscriptRow: Identifiable, Equatable {
     var id: String {
         switch self {
         case .message(let message):
-            return "message-\(message.id.uuidString)"
+            return message.role == .assistant
+                ? "response-\(message.id.uuidString)"
+                : "message-\(message.id.uuidString)"
         case .live(let responseID):
-            return "live-\(responseID.uuidString)"
+            return "response-\(responseID.uuidString)"
         }
     }
 
@@ -2032,7 +1941,6 @@ private final class ChatTransientState: ObservableObject {
     var messageCacheGeneration = 0
     var messageCacheTask: Task<Void, Never>?
     var bottomDistanceUpdateTask: Task<Void, Never>?
-    var accessoryHeightUpdateTask: Task<Void, Never>?
     var accessoryResizeFollowUpTask: Task<Void, Never>?
     var scrollRequestTask: Task<Void, Never>?
     var manualRepinTask: Task<Void, Never>?
@@ -2041,11 +1949,9 @@ private final class ChatTransientState: ObservableObject {
     var lastReportedBottomDistance: CGFloat = .infinity
     var userDetachedUntil = Date.distantPast
     var userScrollIntentUntil = Date.distantPast
-    var manualRepinUntil = Date.distantPast
 
     func cancelLayoutTasks() {
         bottomDistanceUpdateTask?.cancel()
-        accessoryHeightUpdateTask?.cancel()
         accessoryResizeFollowUpTask?.cancel()
         scrollRequestTask?.cancel()
         manualRepinTask?.cancel()
@@ -2054,28 +1960,18 @@ private final class ChatTransientState: ObservableObject {
 }
 
 private struct ChatLayoutContract: Equatable {
-    let accessoryHeight: CGFloat
-    let bottomChromeCoverage: CGFloat
-    let keyboardHeight: CGFloat
+    let keyboardVisible: Bool
     let composerMode: ChatComposerMode
     let runAccessory: ChatRunAccessoryState
 
     init(
-        accessoryHeight: CGFloat = 0,
-        bottomChromeCoverage: CGFloat = 0,
-        keyboardHeight: CGFloat = 0,
+        keyboardVisible: Bool = false,
         composerMode: ChatComposerMode = .compact,
         runAccessory: ChatRunAccessoryState = .hidden
     ) {
-        self.accessoryHeight = Self.quantize(accessoryHeight)
-        self.bottomChromeCoverage = Self.quantize(bottomChromeCoverage)
-        self.keyboardHeight = Self.quantize(keyboardHeight)
+        self.keyboardVisible = keyboardVisible
         self.composerMode = composerMode
         self.runAccessory = runAccessory
-    }
-
-    var isKeyboardVisible: Bool {
-        keyboardHeight > 1
     }
 
     var transcriptBreathingRoom: CGFloat {
@@ -2096,12 +1992,7 @@ private struct ChatLayoutContract: Equatable {
     }
 
     var accessoryBottomPadding: CGFloat {
-        isKeyboardVisible ? 10 : 8
-    }
-
-    private static func quantize(_ value: CGFloat) -> CGFloat {
-        guard value.isFinite else { return 0 }
-        return (value / 2).rounded(.toNearestOrAwayFromZero) * 2
+        keyboardVisible ? 10 : 8
     }
 }
 
@@ -2128,19 +2019,6 @@ private struct ChatTranscriptBackdrop: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-    }
-}
-
-private struct ChatAccessoryGeometry: Equatable {
-    var height: CGFloat = 0
-    var minY: CGFloat = .infinity
-}
-
-private struct ChatAccessoryGeometryPreferenceKey: PreferenceKey {
-    static let defaultValue = ChatAccessoryGeometry()
-
-    static func reduce(value: inout ChatAccessoryGeometry, nextValue: () -> ChatAccessoryGeometry) {
-        value = nextValue()
     }
 }
 
