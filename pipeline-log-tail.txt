@@ -1,0 +1,400 @@
+		Migration Elapsed:00:56 seconds
+
+[2026-07-14 12:53:13 +0000] Status=2, isTerminal=NO, Elapsed=01:16.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:57 seconds
+
+[2026-07-14 12:53:14 +0000] Status=2, isTerminal=NO, Elapsed=01:17.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:58 seconds
+
+[2026-07-14 12:53:16 +0000] Status=2, isTerminal=NO, Elapsed=01:18.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:59 seconds
+
+[2026-07-14 12:53:17 +0000] Status=2, isTerminal=NO, Elapsed=01:19.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:00 seconds
+
+[2026-07-14 12:53:17 +0000] Status=2, isTerminal=NO, Elapsed=01:20.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:01 seconds
+
+[2026-07-14 12:53:18 +0000] Status=2, isTerminal=NO, Elapsed=01:21.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:02 seconds
+
+[2026-07-14 12:53:19 +0000] Status=2, isTerminal=NO, Elapsed=01:22.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:03 seconds
+
+[2026-07-14 12:53:20 +0000] Status=2, isTerminal=NO, Elapsed=01:23.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:04 seconds
+
+[2026-07-14 12:53:21 +0000] Status=2, isTerminal=NO, Elapsed=01:24.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:05 seconds
+
+[2026-07-14 12:53:22 +0000] Status=2, isTerminal=NO, Elapsed=01:25.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:06 seconds
+
+[2026-07-14 12:53:23 +0000] Status=2, isTerminal=NO, Elapsed=01:26.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:07 seconds
+
+[2026-07-14 12:53:24 +0000] Status=2, isTerminal=NO, Elapsed=01:27.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:08 seconds
+
+[2026-07-14 12:53:25 +0000] Status=2, isTerminal=NO, Elapsed=01:28.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:09 seconds
+
+[2026-07-14 12:53:26 +0000] Status=2, isTerminal=NO, Elapsed=01:29.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:10 seconds
+
+[2026-07-14 12:53:27 +0000] Status=2, isTerminal=NO, Elapsed=01:30.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:11 seconds
+
+[2026-07-14 12:53:28 +0000] Status=2, isTerminal=NO, Elapsed=01:31.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:12 seconds
+
+[2026-07-14 12:53:29 +0000] Status=2, isTerminal=NO, Elapsed=01:32.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:13 seconds
+
+[2026-07-14 12:53:30 +0000] Status=2, isTerminal=NO, Elapsed=01:33.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:14 seconds
+
+[2026-07-14 12:53:32 +0000] Status=2, isTerminal=NO, Elapsed=01:34.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:15 seconds
+
+[2026-07-14 12:53:32 +0000] Status=2, isTerminal=NO, Elapsed=01:35.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:16 seconds
+
+[2026-07-14 12:53:33 +0000] Status=2, isTerminal=NO, Elapsed=01:36.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:17 seconds
+
+[2026-07-14 12:53:39 +0000] Status=2, isTerminal=NO, Elapsed=01:42.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.securityd.KeychainMigrator (KeychainMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:18 seconds
+
++ waited=60
+++ tail -1 build.log
+++ cut -c1-160
++ echo 'HEARTBEAT ipad-boot: 60s elapsed (cap 600s) — '
+HEARTBEAT ipad-boot: 60s elapsed (cap 600s) — 
++ kill -0 42208
++ '[' 60 -lt 600 ']'
++ sleep 30
+[2026-07-14 12:53:44 +0000] Status=2, isTerminal=NO, Elapsed=01:46.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:23 seconds
+
+[2026-07-14 12:53:46 +0000] Status=2, isTerminal=NO, Elapsed=01:48.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.WebBookmarks.migrator (WebBookmarks.migrator)
+		Migration Elapsed:01:28 seconds
+
+[2026-07-14 12:53:46 +0000] Status=2, isTerminal=NO, Elapsed=01:49.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:29 seconds
+
+[2026-07-14 12:53:47 +0000] Status=2, isTerminal=NO, Elapsed=01:49.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:30 seconds
+
+[2026-07-14 12:53:47 +0000] Status=2, isTerminal=NO, Elapsed=01:50.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:31 seconds
+
+[2026-07-14 12:53:48 +0000] Status=2, isTerminal=NO, Elapsed=01:51.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:32 seconds
+
+[2026-07-14 12:53:49 +0000] Status=2, isTerminal=NO, Elapsed=01:52.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:33 seconds
+
+[2026-07-14 12:53:50 +0000] Status=2, isTerminal=NO, Elapsed=01:53.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:34 seconds
+
+[2026-07-14 12:53:51 +0000] Status=2, isTerminal=NO, Elapsed=01:54.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:35 seconds
+
+[2026-07-14 12:53:52 +0000] Status=2, isTerminal=NO, Elapsed=01:55.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:36 seconds
+
+[2026-07-14 12:53:53 +0000] Status=2, isTerminal=NO, Elapsed=01:56.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:37 seconds
+
+[2026-07-14 12:53:54 +0000] Status=2, isTerminal=NO, Elapsed=01:57.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:38 seconds
+
+[2026-07-14 12:53:55 +0000] Status=2, isTerminal=NO, Elapsed=01:58.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:39 seconds
+
+[2026-07-14 12:53:56 +0000] Status=2, isTerminal=NO, Elapsed=01:59.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:40 seconds
+
+[2026-07-14 12:53:57 +0000] Status=2, isTerminal=NO, Elapsed=02:00.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:41 seconds
+
+[2026-07-14 12:53:58 +0000] Status=2, isTerminal=NO, Elapsed=02:01.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.migrator (AppleAccountMigrator.migrator)
+		Migration Elapsed:01:42 seconds
+
+[2026-07-14 12:54:03 +0000] Status=2, isTerminal=NO, Elapsed=02:05.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.message.LegacyAccountsMigrator (LegacyMessageAccountsMigrator.migrator)
+		Migration Elapsed:01:43 seconds
+
+[2026-07-14 12:54:08 +0000] Status=2, isTerminal=NO, Elapsed=02:11.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.languageasset.migrator (LanguageAssetMigrator.migrator)
+		Migration Elapsed:01:47 seconds
+
+[2026-07-14 12:54:10 +0000] Status=4, isTerminal=NO, Elapsed=02:13.
+	Waiting on System App
+
++ waited=90
+++ tail -1 build.log
+++ cut -c1-160
+[2026-07-14 12:54:15 +0000] Status=4, isTerminal=NO, Elapsed=02:18.
+	Waiting on System App
+
++ echo 'HEARTBEAT ipad-boot: 90s elapsed (cap 600s) — '
+HEARTBEAT ipad-boot: 90s elapsed (cap 600s) — 
++ kill -0 42208
++ '[' 90 -lt 600 ']'
++ sleep 30
+[2026-07-14 12:54:16 +0000] Status=4, isTerminal=NO, Elapsed=02:19.
+	Waiting on System App
+
+[2026-07-14 12:54:20 +0000] Status=4, isTerminal=NO, Elapsed=02:22.
+	Waiting on System App
+
+[2026-07-14 12:54:22 +0000] Status=4, isTerminal=NO, Elapsed=02:25.
+	Waiting on System App
+
+[2026-07-14 12:54:22 +0000] Status=4, isTerminal=NO, Elapsed=02:25.
+	Waiting on System App
+
+[2026-07-14 12:54:23 +0000] Status=4, isTerminal=NO, Elapsed=02:26.
+	Waiting on System App
+
+[2026-07-14 12:54:24 +0000] Status=4, isTerminal=NO, Elapsed=02:26.
+	Waiting on System App
+
+[2026-07-14 12:54:26 +0000] Status=4, isTerminal=NO, Elapsed=02:28.
+	Waiting on System App
+
+[2026-07-14 12:54:30 +0000] Status=4, isTerminal=NO, Elapsed=02:33.
+	Waiting on System App
+
++ waited=120
+++ tail -1 build.log
+++ cut -c1-160
+[2026-07-14 12:54:52 +0000] Status=4294967295, isTerminal=YES, Elapsed=02:54.
+	Finished
+
++ echo 'HEARTBEAT ipad-boot: 120s elapsed (cap 600s) — '
+HEARTBEAT ipad-boot: 120s elapsed (cap 600s) — 
++ kill -0 42208
++ '[' 120 -lt 600 ']'
++ sleep 30
++ kill 42209
++ wait 42209
++ true
++ echo 'ipad-boot finished with status 0'
+ipad-boot finished with status 0
++ return 0
++ xcrun simctl install 609C8F5B-690F-405C-B161-2B5B1235B459 DerivedData/Build/Products/Release-iphonesimulator/NovaForge.app
++ ipad_shot 45-ipad-project --reset-ui --open-project --project-proof-demo
++ NAME=45-ipad-project
++ shift
++ xcrun simctl terminate 609C8F5B-690F-405C-B161-2B5B1235B459 com.joey.NovaForge
++ true
++ sleep 1
++ xcrun simctl launch 609C8F5B-690F-405C-B161-2B5B1235B459 com.joey.NovaForge --reset-ui --open-project --project-proof-demo
+com.joey.NovaForge: 45495
++ sleep 11
++ xcrun simctl io 609C8F5B-690F-405C-B161-2B5B1235B459 screenshot captures/45-ipad-project.png
+Detected file type from extension: PNG
+Note: No display specified. Defaulting to display: 19D8D53A-6163-45B8-A106-9E05BFD31F3A (screenID: 1, name: LCD)
+Wrote screenshot to: /Users/runner/work/NovaForge/NovaForge/captures/45-ipad-project.png
++ echo 'captured 45-ipad-project'
+captured 45-ipad-project
++ ipad_shot 46-ipad-chat --reset-ui --open-chat --settings-local-model-ready
++ NAME=46-ipad-chat
++ shift
++ xcrun simctl terminate 609C8F5B-690F-405C-B161-2B5B1235B459 com.joey.NovaForge
++ sleep 1
++ xcrun simctl launch 609C8F5B-690F-405C-B161-2B5B1235B459 com.joey.NovaForge --reset-ui --open-chat --settings-local-model-ready
+com.joey.NovaForge: 46640
++ sleep 11
++ xcrun simctl io 609C8F5B-690F-405C-B161-2B5B1235B459 screenshot captures/46-ipad-chat.png
+Detected file type from extension: PNG
+Note: No display specified. Defaulting to display: 19D8D53A-6163-45B8-A106-9E05BFD31F3A (screenID: 1, name: LCD)
+Wrote screenshot to: /Users/runner/work/NovaForge/NovaForge/captures/46-ipad-chat.png
++ echo 'captured 46-ipad-chat'
+captured 46-ipad-chat
++ xcrun simctl shutdown 609C8F5B-690F-405C-B161-2B5B1235B459
++ record_clip matrix-rain 6 10 --reset-ui --open-project --theme=matrix
++ NAME=matrix-rain
++ SETTLE=6
++ DURATION=10
++ shift 3
++ echo '==> Recording matrix-rain (10s)'
+==> Recording matrix-rain (10s)
++ xcrun simctl terminate D66560FA-5A2D-4E26-BCAA-2759215E0E30 com.joey.NovaForge
++ sleep 1
++ xcrun simctl launch D66560FA-5A2D-4E26-BCAA-2759215E0E30 com.joey.NovaForge --reset-ui --open-project --theme=matrix
+com.joey.NovaForge: 47324
++ sleep 6
++ REC_PID=47556
++ sleep 10
++ xcrun simctl io D66560FA-5A2D-4E26-BCAA-2759215E0E30 recordVideo --codec h264 --force captures/matrix-rain.mp4
+Note: No display specified. Defaulting to display: 9A9E9E77-17E9-4F0F-A547-960C0CEB2864 (screenID: 1, name: LCD)
+Recording started
++ kill -INT 47556
++ sleep 3
+Recording completed. Writing to disk.
+
+Wrote video to: /Users/runner/work/NovaForge/NovaForge/captures/matrix-rain.mp4
++ wait 47556
++ record_clip chat-stream 4 8 --reset-ui --open-chat --stress-streaming
++ NAME=chat-stream
++ SETTLE=4
++ DURATION=8
++ shift 3
++ echo '==> Recording chat-stream (8s)'
+==> Recording chat-stream (8s)
++ xcrun simctl terminate D66560FA-5A2D-4E26-BCAA-2759215E0E30 com.joey.NovaForge
++ sleep 1
++ xcrun simctl launch D66560FA-5A2D-4E26-BCAA-2759215E0E30 com.joey.NovaForge --reset-ui --open-chat --stress-streaming
+com.joey.NovaForge: 48076
++ sleep 4
++ xcrun simctl io D66560FA-5A2D-4E26-BCAA-2759215E0E30 recordVideo --codec h264 --force captures/chat-stream.mp4
++ REC_PID=48087
++ sleep 8
+Note: No display specified. Defaulting to display: 9A9E9E77-17E9-4F0F-A547-960C0CEB2864 (screenID: 1, name: LCD)
+Recording started
++ kill -INT 48087
++ sleep 3
+Recording completed. Writing to disk.
+
+Wrote video to: /Users/runner/work/NovaForge/NovaForge/captures/chat-stream.mp4
++ wait 48087
++ ls -la captures/
+total 174320
+drwxr-xr-x  50 runner  staff     1600 Jul 14 13:01 .
+drwxr-xr-x  22 runner  staff      704 Jul 14 12:36 ..
+-rw-r--r--@  1 runner  staff  2150997 Jul 14 12:39 01-first-run.png
+-rw-r--r--@  1 runner  staff  2119314 Jul 14 12:39 02-project.png
+-rw-r--r--@  1 runner  staff  1548991 Jul 14 12:40 03-files.png
+-rw-r--r--@  1 runner  staff  2063782 Jul 14 12:40 04-chat-welcome.png
+-rw-r--r--@  1 runner  staff  1481879 Jul 14 12:40 05-runs.png
+-rw-r--r--@  1 runner  staff  2291253 Jul 14 12:41 06-settings.png
+-rw-r--r--@  1 runner  staff  1210062 Jul 14 12:41 07-terminal.png
+-rw-r--r--@  1 runner  staff  1765432 Jul 14 12:41 08-chat-stream.png
+-rw-r--r--@  1 runner  staff  2008516 Jul 14 12:41 09-chat-tools.png
+-rw-r--r--@  1 runner  staff  1924947 Jul 14 12:42 10-chat-code.png
+-rw-r--r--@  1 runner  staff  2075747 Jul 14 12:42 11-chat-failed.png
+-rw-r--r--@  1 runner  staff  2073694 Jul 14 12:42 12-chat-approval.png
+-rw-r--r--@  1 runner  staff  1684616 Jul 14 12:42 13-chat-keyboard.png
+-rw-r--r--@  1 runner  staff  2032769 Jul 14 12:42 14-project-running.png
+-rw-r--r--@  1 runner  staff  2106601 Jul 14 12:43 15-project-blocked.png
+-rw-r--r--@  1 runner  staff  2170382 Jul 14 12:43 16-project-waiting.png
+-rw-r--r--@  1 runner  staff  1737581 Jul 14 12:43 17-project-proof.png
+-rw-r--r--@  1 runner  staff  2127980 Jul 14 12:43 18-project-countdown.png
+-rw-r--r--@  1 runner  staff  1491206 Jul 14 12:44 19-runs-approval.png
+-rw-r--r--@  1 runner  staff  1515244 Jul 14 12:44 20-runs-populated.png
+-rw-r--r--@  1 runner  staff  1470439 Jul 14 12:44 21-terminal-live.png
+-rw-r--r--@  1 runner  staff   822673 Jul 14 12:44 22-artifact-preview.png
+-rw-r--r--@  1 runner  staff  1502314 Jul 14 12:45 23-files-stress.png
+-rw-r--r--@  1 runner  staff  2220678 Jul 14 12:45 24-settings-model-ready.png
+-rw-r--r--@  1 runner  staff  2278760 Jul 14 12:45 25-settings-model-partial.png
+-rw-r--r--@  1 runner  staff  1933711 Jul 14 12:46 26-matrix-project.png
+-rw-r--r--@  1 runner  staff  1631626 Jul 14 12:46 27-matrix-chat.png
+-rw-r--r--@  1 runner  staff  2523689 Jul 14 12:47 28-matrix-settings.png
+-rw-r--r--@  1 runner  staff  2403237 Jul 14 12:47 29-whitegold-project.png
+-rw-r--r--@  1 runner  staff  2317796 Jul 14 12:48 30-whitegold-chat.png
+-rw-r--r--@  1 runner  staff  1885265 Jul 14 12:48 31-arctic-project.png
+-rw-r--r--@  1 runner  staff  1532109 Jul 14 12:48 32-arctic-files.png
+-rw-r--r--@  1 runner  staff  1808861 Jul 14 12:49 33-ember-project.png
+-rw-r--r--@  1 runner  staff  1484119 Jul 14 12:49 34-ember-runs.png
+-rw-r--r--@  1 runner  staff  2142114 Jul 14 12:49 35-run-replay.png
+-rw-r--r--@  1 runner  staff  3033169 Jul 14 12:49 36-app-icon.png
+-rw-r--r--@  1 runner  staff   439793 Jul 14 12:49 37-chat-drawer.png
+-rw-r--r--@  1 runner  staff  1253449 Jul 14 12:50 38-code-editor.png
+-rw-r--r--@  1 runner  staff  1793475 Jul 14 12:50 39-file-comparison.png
+-rw-r--r--@  1 runner  staff  1686977 Jul 14 12:50 40-files-search.png
+-rw-r--r--@  1 runner  staff  2367967 Jul 14 12:50 41-model-picker.png
+-rw-r--r--@  1 runner  staff  1126081 Jul 14 12:51 42-project-intake.png
+-rw-r--r--@  1 runner  staff  2361453 Jul 14 12:51 43-delete-confirm.png
+-rw-r--r--@  1 runner  staff   285553 Jul 14 12:51 44-artifact-landscape.png
+-rw-r--r--@  1 runner  staff  2015977 Jul 14 12:59 45-ipad-project.png
+-rw-r--r--@  1 runner  staff  2155095 Jul 14 13:00 46-ipad-chat.png
+-rw-r--r--@  1 runner  staff  3323052 Jul 14 13:01 chat-stream.mp4
+-rw-r--r--@  1 runner  staff   895245 Jul 14 13:01 matrix-rain.mp4
++ echo '==> Pipeline complete'
+==> Pipeline complete
++ publish_captures
++ set +e
++ set +x
+==> Publishing captures to ci-shots branch
