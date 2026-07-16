@@ -643,6 +643,8 @@ final class AgentHostedProviderTransportTests: XCTestCase {
     }
 
     func testAttemptScopeRequiresExactCanonicalPositiveUIntSuffix() async throws {
+        let completion = responsesCompletionJSON(responseID: "resp-scope")
+        installSSE("data: \(completion)\n\n")
         let fixture = try makeFixture(
             dialect: .openAIResponses,
             requestID: "scope-rule"
@@ -685,8 +687,6 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         }
         XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 0)
 
-        let completion = responsesCompletionJSON(responseID: "resp-scope")
-        installSSE("data: \(completion)\n\n")
         let validScope = ProviderAttemptScope(
             requestID: "scope-rule",
             attemptID: .init(rawValue: "scope-rule:provider-attempt:42")
