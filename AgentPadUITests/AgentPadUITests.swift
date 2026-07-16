@@ -1635,6 +1635,10 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let initialLatestButton = jumpToLatestButton(in: app)
+        if initialLatestButton.waitForExistence(timeout: 4) {
+            initialLatestButton.tap()
+        }
         XCTAssertTrue(
             app.staticTexts.containing(NSPredicate(
                 format: "label CONTAINS %@",
