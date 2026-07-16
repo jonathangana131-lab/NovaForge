@@ -146,19 +146,69 @@ struct AppRootLaunchRepairResult {
     let createdConversation: Bool
 }
 
+enum AppRootLaunchRepairError: LocalizedError {
+    case settingsUnavailable
+
+    var errorDescription: String? {
+        "The persisted NovaForge settings record is unavailable for launch repair."
+    }
+}
+
 enum AppRootLaunchRepair {
+    struct Fetches {
+        var settings: (ModelContext) throws -> AgentSettings?
+        var conversations: (ModelContext) throws -> [Conversation]
+        var projectBootstrap: ProjectBootstrap.Fetches
+
+        static var live: Fetches {
+            Fetches(
+                settings: { context in
+                    var descriptor = FetchDescriptor<AgentSettings>()
+                    descriptor.fetchLimit = 1
+                    return try context.fetch(descriptor).first
+                },
+                conversations: { context in
+                    let descriptor = FetchDescriptor<Conversation>(
+                        sortBy: [SortDescriptor(\Conversation.updatedAt, order: .reverse)]
+                    )
+                    return try context.fetch(descriptor)
+                },
+                projectBootstrap: .live
+            )
+        }
+    }
+
     static func ensureLaunchRecords(
         in context: ModelContext,
         settings suppliedSettings: AgentSettings?,
         selectedConversation: Conversation? = nil,
-        now: Date = Date()
+        selectedConversationID: UUID? = nil,
+        now: Date = Date(),
+        migrationStore: UserDefaults = .standard,
+        fetches: Fetches = .live
     ) throws -> AppRootLaunchRepairResult {
+        // Complete every launch read before inserting or repairing anything.
+        // A fetch failure therefore cannot be mistaken for an empty store and
+        // cannot leave behind a partially-created launch graph.
+        let fetchedSettings: AgentSettings?
+        if let suppliedSettings {
+            fetchedSettings = suppliedSettings
+        } else {
+            fetchedSettings = try fetches.settings(context)
+        }
+        let existingConversations = try fetches.conversations(context)
+        let projectRecords = try ProjectBootstrap.prefetchRecords(
+            in: context,
+            migrationStore: migrationStore,
+            fetches: fetches.projectBootstrap
+        )
+
         let settings: AgentSettings
         let createdSettings: Bool
         if let suppliedSettings {
             settings = suppliedSettings
             createdSettings = false
-        } else if let existing = try fetchSettings(in: context) {
+        } else if let existing = fetchedSettings {
             settings = existing
             createdSettings = false
         } else {
@@ -168,16 +218,24 @@ enum AppRootLaunchRepair {
             createdSettings = true
         }
 
-        let project = ProjectBootstrap.ensureDefaultProject(in: context, settings: settings, now: now)
-        let existingConversations = try fetchConversations(in: context)
+        let project = ProjectBootstrap.ensureDefaultProject(
+            in: context,
+            settings: settings,
+            now: now,
+            prefetched: projectRecords
+        )
         let launchCandidates = existingConversations.filter { conversation in
             guard let owner = conversation.project else { return true }
             return owner.id == project.id
         }
         let selectedLaunchConversation: Conversation? = {
-            guard let selectedConversation else { return nil }
-            guard let owner = selectedConversation.project else { return selectedConversation }
-            return owner.id == project.id ? selectedConversation : nil
+            let requestedID = selectedConversation?.id ?? selectedConversationID
+            guard let requestedID,
+                  let selected = existingConversations.first(where: { $0.id == requestedID }) else {
+                return nil
+            }
+            guard let owner = selected.project else { return selected }
+            return owner.id == project.id ? selected : nil
         }()
         let readyConversation = launchCandidates.first {
             $0.project == nil &&
@@ -240,19 +298,6 @@ enum AppRootLaunchRepair {
             createdSettings: createdSettings,
             createdConversation: createdConversation
         )
-    }
-
-    private static func fetchSettings(in context: ModelContext) throws -> AgentSettings? {
-        var descriptor = FetchDescriptor<AgentSettings>()
-        descriptor.fetchLimit = 1
-        return try context.fetch(descriptor).first
-    }
-
-    private static func fetchConversations(in context: ModelContext) throws -> [Conversation] {
-        let descriptor = FetchDescriptor<Conversation>(
-            sortBy: [SortDescriptor(\Conversation.updatedAt, order: .reverse)]
-        )
-        return try context.fetch(descriptor)
     }
 
     private static func repairedActiveWorkspaceName(project: Project, settings: AgentSettings) -> String {

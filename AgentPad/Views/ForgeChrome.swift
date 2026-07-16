@@ -2,8 +2,8 @@
 //  ForgeChrome.swift
 //  NovaForge
 //
-//  The Forge surface chrome — the single-deck header, the one-signal
-//  context line, and the live mission strip.
+//  The Forge surface chrome — a compact navigation deck and the live
+//  mission strip.
 //
 //  Architecture note: NovaForge's core loop is "tell the agent → watch it
 //  work → approve the risky step → see the result". The old five-tab
@@ -12,9 +12,9 @@
 //  mid-word, stat rows of zeros, cross-tab pill buttons). Forge puts the
 //  whole loop on one surface:
 //
-//  - ForgeHeader: one deck that can never clip. Title + status dot on the
-//    first line; the project scope pill and exactly ONE prioritized signal
-//    chip on the second. No horizontal scroller, no chip train.
+//  - ForgeHeader: one row that can never clip. Chats, the current session
+//    and project scope, Mission Dossier, and New Chat are four stable
+//    controls. Runtime state stays beside the work it describes.
 //  - ForgeMissionStrip: the live project mission rendered as a slim strip
 //    under the header — status, current activity, and the contextual
 //    action (Approve / Reject, Stop, countdown) inline. What used to
@@ -28,85 +28,22 @@ import UIKit
 // MARK: - Forge header
 
 struct ForgeHeader: View {
-    let runtime: AgentRuntime
-    let project: Project
     let projects: [Project]
     let scopedProject: Project?
     let conversation: Conversation
-    @Bindable var settings: AgentSettings
-    let artifacts: [WorkspaceArtifact]
-    let durableSnapshot: ChatDurableRunSnapshot
-    let workflowSpine: ProjectWorkflowSpine?
-    let ownsActiveRunState: Bool
-    let secondarySurfaceOwnsLiveState: Bool
-    let hasForeignActiveRun: Bool
-    let foreignActiveTitle: String
     let newChat: () -> Void
     let changeScope: (Project?) -> Void
     let createProject: () -> Void
-    let openWorkspaceSurface: (AppTab) -> Void
-    let openArtifact: (WorkspaceArtifact) -> Void
     let openMissionDossier: () -> Void
     let openChatDrawer: () -> Void
     var glassNamespace: Namespace.ID? = nil
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var localGlassNamespace
 
     private var chromeTint: Color { AgentPalette.primaryAccent }
 
     private var sessionTitle: String {
-        let trimmed = conversation.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "NovaForge" }
-        if trimmed.localizedCaseInsensitiveCompare("NovaForge Session") == .orderedSame { return "NovaForge" }
-        if trimmed.localizedCaseInsensitiveCompare(LaunchConversationSelection.safeStartTitle) == .orderedSame { return "NovaForge" }
-        return trimmed
-    }
-
-    private var statusText: String {
-        if hasForeignActiveRun { return "Elsewhere" }
-        guard ownsActiveRunState else { return "Ready" }
-        if runtime.queuedPromptCount > 0 { return "\(runtime.queuedPromptCount) queued" }
-        if runtime.pendingTool != nil { return "Approval" }
-        if runtime.isWorking { return "Working" }
-        if runtime.lastError != nil { return "Failed" }
-        if providerSetupNeeded { return "Setup" }
-        return "Ready"
-    }
-
-    private var statusTint: Color {
-        if hasForeignActiveRun { return AgentPalette.cyan }
-        guard ownsActiveRunState else { return AgentPalette.accent }
-        if runtime.pendingTool != nil { return AgentPalette.cyan }
-        if runtime.lastError != nil { return AgentPalette.rose }
-        if runtime.isWorking { return chromeTint }
-        if providerSetupNeeded { return AgentPalette.cyan }
-        return AgentPalette.accent
-    }
-
-    private var statusSymbol: String {
-        if hasForeignActiveRun { return "arrow.up.right.circle.fill" }
-        guard ownsActiveRunState else { return "circle.fill" }
-        if runtime.queuedPromptCount > 0 { return "tray.full.fill" }
-        if runtime.pendingTool != nil { return "checkmark.shield.fill" }
-        if runtime.isWorking { return "waveform" }
-        if runtime.lastError != nil { return "exclamationmark.triangle.fill" }
-        if providerSetupNeeded {
-            return settings.provider == .local ? "arrow.down.circle.fill" : "key.slash.fill"
-        }
-        return "circle.fill"
-    }
-
-    private var providerSetupNeeded: Bool {
-        if settings.provider != .local {
-            return !runtime.hasUsableProviderCredential(settings: settings)
-        }
-        switch runtime.localModels.status {
-        case .missing, .partial, .downloading, .failed, .incompatible:
-            return true
-        case .checking, .ready:
-            return false
-        }
+        ForgeConversationTitle.displayTitle(conversation.title)
     }
 
     private var sortedProjects: [Project] {
@@ -118,21 +55,9 @@ struct ForgeHeader: View {
         }
     }
 
-    private var signal: ForgeSignal? {
-        ForgeSignal.top(
-            runtime: runtime,
-            artifacts: artifacts,
-            durableSnapshot: durableSnapshot,
-            ownsActiveRunState: ownsActiveRunState,
-            secondarySurfaceOwnsLiveState: secondarySurfaceOwnsLiveState,
-            hasForeignActiveRun: hasForeignActiveRun,
-            foreignActiveTitle: foreignActiveTitle
-        )
-    }
-
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Forge Header Body")
-        HStack(alignment: .center, spacing: 11) {
+        HStack(alignment: .center, spacing: 8) {
             chromeButton(
                 symbol: "bubble.left.and.bubble.right",
                 tint: chromeTint,
@@ -141,27 +66,11 @@ struct ForgeHeader: View {
                 action: openChatDrawer
             )
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(sessionTitle)
-                        .font(NovaType.title)
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityIdentifier("currentChatTitle")
+            scopeMenu
 
-                    if !secondarySurfaceOwnsLiveState {
-                        StatusDot(text: statusText, symbol: statusSymbol, tint: statusTint)
-                            .transition(.scale(scale: 0.88).combined(with: .opacity))
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("Session status: \(statusText)")
-                            .accessibilityIdentifier("forgeSessionStatus")
-                    }
-                }
-
-                contextLine
+            if scopedProject != nil {
+                dossierShortcut
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
             chromeButton(
                 symbol: "square.and.pencil",
@@ -171,53 +80,9 @@ struct ForgeHeader: View {
                 action: newChat
             )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .agentGlass(radius: 24, tint: chromeTint.opacity(0.08))
-        .agentGlassEffectID("forge-header", in: resolvedGlassNamespace)
-        .animation(
-            NovaMotion.enabled(reduceMotion: reduceMotion) ? .snappy(duration: 0.24) : nil,
-            value: secondarySurfaceOwnsLiveState
-        )
-    }
-
-    /// Second deck: the scope pill plus at most ONE prioritized signal.
-    /// Fixed content only — nothing here can scroll or clip mid-word.
-    @ViewBuilder
-    private var contextLine: some View {
-        if let signal {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 7) {
-                    scopeMenu
-                    dossierShortcut
-
-                    Text("·")
-                        .font(NovaType.caption)
-                        .foregroundStyle(AgentPalette.quaternaryText)
-
-                    ForgeSignalChip(signal: signal, glassNamespace: resolvedGlassNamespace) {
-                        activate(signal)
-                    }
-                    .layoutPriority(1)
-
-                    Spacer(minLength: 0)
-                }
-
-                HStack(spacing: 7) {
-                    scopeMenu
-                    dossierShortcut
-                    compactSignalButton(signal)
-                    Spacer(minLength: 0)
-                }
-            }
-        } else {
-            HStack(spacing: 7) {
-                scopeMenu
-                dossierShortcut
-                Spacer(minLength: 0)
-            }
-        }
+        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("forgeTopBar")
     }
 
     private var scopeMenu: some View {
@@ -244,23 +109,34 @@ struct ForgeHeader: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: scopedProject == nil ? "folder.fill" : "shippingbox.fill")
-                    .font(.system(size: 9, weight: .bold))
+            HStack(spacing: 9) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(scopeTitle)
+                        .font(NovaType.headline)
+                        .foregroundStyle(AgentPalette.ink)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    HStack(spacing: 5) {
+                        Image(systemName: "bubble.left.fill")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(sessionTitle)
+                            .font(NovaType.caption)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .accessibilityIdentifier("currentChatTitle")
+                    }
                     .foregroundStyle(scopeTint)
-                Text(scopeTitle)
-                    .font(NovaType.caption)
-                    .foregroundStyle(scopeTint)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .minimumScaleFactor(0.78)
-                    .frame(maxWidth: 82, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(AgentPalette.quaternaryText)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(scopeTint.opacity(0.78))
             }
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 12)
             .frame(minHeight: AgentDesign.minimumTouchTarget)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .agentInteractiveGlassButtonStyle(
@@ -270,7 +146,10 @@ struct ForgeHeader: View {
             glassID: "forge-scope",
             in: resolvedGlassNamespace
         )
-        .layoutPriority(2)
+        .frame(maxWidth: .infinity)
+        .layoutPriority(1)
+        .accessibilityLabel("Project scope \(scopeTitle), chat \(sessionTitle)")
+        .accessibilityHint("Double tap to change project scope")
         .accessibilityIdentifier("chatProjectScopeMenu")
     }
 
@@ -278,25 +157,11 @@ struct ForgeHeader: View {
         Button {
             openMissionDossier()
         } label: {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 5) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("Dossier")
-                        .font(NovaType.caption)
-                        .fontWeight(.bold)
-                        .lineLimit(1)
-                }
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 9)
-                .frame(minHeight: AgentDesign.minimumTouchTarget)
-
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 11, weight: .bold))
-                    .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-            }
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 13, weight: .bold))
+                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
             .foregroundStyle(AgentPalette.primaryAccent)
-            .contentShape(Capsule())
+            .contentShape(Circle())
         }
         .agentInteractiveGlassButtonStyle(
             radius: AgentDesign.minimumTouchTarget / 2,
@@ -305,29 +170,8 @@ struct ForgeHeader: View {
             glassID: "forge-dossier",
             in: resolvedGlassNamespace
         )
-        .accessibilityLabel("Open Mission Dossier")
+        .accessibilityLabel("Open Mission Dossier for \(scopeTitle)")
         .accessibilityIdentifier("missionDossierShortcut")
-    }
-
-    private func compactSignalButton(_ signal: ForgeSignal) -> some View {
-        Button {
-            activate(signal)
-        } label: {
-            Image(systemName: signal.symbol)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(signal.tint)
-                .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
-                .contentShape(Circle())
-        }
-        .agentInteractiveGlassButtonStyle(
-            radius: AgentDesign.minimumTouchTarget / 2,
-            tint: signal.tint,
-            selected: true,
-            glassID: "forge-signal-compact",
-            in: resolvedGlassNamespace
-        )
-        .accessibilityLabel("\(signal.title): \(signal.detail)")
-        .accessibilityIdentifier(signal.accessibilityID)
     }
 
     private var scopeTitle: String {
@@ -343,18 +187,6 @@ struct ForgeHeader: View {
 
     private var resolvedGlassNamespace: Namespace.ID {
         glassNamespace ?? localGlassNamespace
-    }
-
-    private func activate(_ signal: ForgeSignal) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        switch signal.destination {
-        case .tab(let tab):
-            openWorkspaceSurface(tab)
-        case .artifact(let path):
-            openArtifact(WorkspaceArtifact(path: path))
-        case .none:
-            break
-        }
     }
 
     private func chromeButton(
@@ -383,176 +215,28 @@ struct ForgeHeader: View {
     }
 }
 
-// MARK: - Forge signal
-
-enum ForgeSignalDestination: Equatable {
-    case tab(AppTab)
-    case artifact(String)
-    case none
-}
-
-/// The one thing worth surfacing in the header right now. Replaces the old
-/// seven-chip scroller: instead of a clipped train of everything, the
-/// header shows the single highest-priority signal and everything else
-/// lives where it belongs (runs in History, files in Workspace).
-struct ForgeSignal: Equatable {
-    let title: String
-    let detail: String
-    let symbol: String
-    let tint: Color
-    let destination: ForgeSignalDestination
-    let accessibilityID: String
-
-    @MainActor
-    static func top(
-        runtime: AgentRuntime,
-        artifacts: [WorkspaceArtifact],
-        durableSnapshot: ChatDurableRunSnapshot,
-        ownsActiveRunState: Bool,
-        secondarySurfaceOwnsLiveState: Bool,
-        hasForeignActiveRun: Bool,
-        foreignActiveTitle: String
-    ) -> ForgeSignal? {
-        if hasForeignActiveRun {
-            return ForgeSignal(
-                title: "Running",
-                detail: foreignActiveTitle,
-                symbol: "arrow.up.right.circle.fill",
-                tint: AgentPalette.cyan,
-                destination: .none,
-                accessibilityID: "forgeSignal-foreign"
-            )
+enum ForgeConversationTitle {
+    static func displayTitle(_ rawTitle: String) -> String {
+        let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "New chat" }
+        let genericTitles = [
+            "NovaForge",
+            "NovaForge Session",
+            LaunchConversationSelection.safeStartTitle,
+            "New chat"
+        ]
+        if genericTitles.contains(where: {
+            trimmed.localizedCaseInsensitiveCompare($0) == .orderedSame
+        }) {
+            return "New chat"
         }
-        if ownsActiveRunState && !secondarySurfaceOwnsLiveState {
-            if let pending = runtime.pendingTool {
-                return ForgeSignal(
-                    title: "Approval",
-                    detail: pendingDetail(for: pending),
-                    symbol: "checkmark.shield.fill",
-                    tint: AgentPalette.cyan,
-                    destination: .tab(.history),
-                    accessibilityID: "forgeSignal-approval"
-                )
-            }
-            if runtime.isWorking {
-                return ForgeSignal(
-                    title: "Active",
-                    detail: runtime.activityTitle,
-                    symbol: "waveform",
-                    tint: AgentPalette.primaryAccent,
-                    destination: .tab(.history),
-                    accessibilityID: "forgeSignal-active"
-                )
-            }
-            if runtime.lastError != nil || runtime.wasInterrupted {
-                return ForgeSignal(
-                    title: runtime.wasInterrupted ? "Paused" : "Failed",
-                    detail: runtime.lastError ?? "Continue from saved progress",
-                    symbol: runtime.wasInterrupted ? "pause.circle.fill" : "exclamationmark.triangle.fill",
-                    tint: runtime.wasInterrupted ? AgentPalette.blue : AgentPalette.rose,
-                    destination: .tab(.history),
-                    accessibilityID: "forgeSignal-recover"
-                )
-            }
-            if runtime.queuedPromptCount > 0 {
-                return ForgeSignal(
-                    title: "Queued",
-                    detail: "\(runtime.queuedPromptCount) follow-up\(runtime.queuedPromptCount == 1 ? "" : "s")",
-                    symbol: "tray.full.fill",
-                    tint: AgentPalette.primaryAccent,
-                    destination: .tab(.history),
-                    accessibilityID: "forgeSignal-queued"
-                )
-            }
+        if trimmed.range(
+            of: #"^NovaForge\s+[A-Z]{3}\s+\d{1,2},\s+\d{1,2}:\d{2}\s+[AP]M$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return "New chat"
         }
-        if !secondarySurfaceOwnsLiveState, durableSnapshot.pendingApprovalCount > 0 {
-            return ForgeSignal(
-                title: "Approval",
-                detail: "\(durableSnapshot.pendingApprovalCount) waiting",
-                symbol: "checkmark.shield.fill",
-                tint: AgentPalette.cyan,
-                destination: .tab(.history),
-                accessibilityID: "forgeSignal-durableApproval"
-            )
-        }
-        if let artifact = artifacts.first {
-            return ForgeSignal(
-                title: artifact.isSwiftGameArtifact || artifact.isPlayableWebArtifact ? "Playable" : "Artifact",
-                detail: artifact.title,
-                symbol: artifact.handoffSymbol,
-                tint: AgentPalette.green,
-                destination: .artifact(artifact.path),
-                accessibilityID: "forgeSignal-artifact"
-            )
-        }
-        return nil
-    }
-
-    @MainActor
-    private static func pendingDetail(for request: ToolRequest) -> String {
-        for key in ["path", "from", "to", "command", "query", "name"] {
-            guard let value = request.arguments[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !value.isEmpty else { continue }
-            if key == "path" {
-                let name = URL(fileURLWithPath: value).lastPathComponent
-                return name.isEmpty ? value : name
-            }
-            let flattened = value.replacingOccurrences(of: "\n", with: " ")
-            guard flattened.count > 40 else { return flattened }
-            return String(flattened.prefix(37)) + "..."
-        }
-        return plainToolName(request.name)
-    }
-}
-
-struct ForgeSignalChip: View {
-    let signal: ForgeSignal
-    var glassNamespace: Namespace.ID? = nil
-    let action: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var localGlassNamespace
-
-    var body: some View {
-        Button(action: action) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 5) {
-                    signalIcon
-                    Text(signal.title)
-                        .novaLabel(signal.tint)
-                    Text(signal.detail)
-                        .font(NovaType.caption)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                }
-                .fixedSize(horizontal: true, vertical: false)
-
-                HStack(spacing: 5) {
-                    signalIcon
-                    Text(signal.title)
-                        .novaLabel(signal.tint)
-                }
-                .fixedSize(horizontal: true, vertical: false)
-            }
-            .padding(.horizontal, 10)
-            .frame(minHeight: AgentDesign.minimumTouchTarget)
-            .contentShape(Rectangle())
-        }
-        .agentInteractiveGlassButtonStyle(
-            radius: AgentDesign.minimumTouchTarget / 2,
-            tint: signal.tint,
-            selected: true,
-            glassID: signal.accessibilityID,
-            in: glassNamespace ?? localGlassNamespace
-        )
-        .animation(NovaMotion.enabled(reduceMotion: reduceMotion) ? .snappy(duration: 0.25) : nil, value: signal)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(signal.title): \(signal.detail)")
-        .accessibilityIdentifier(signal.accessibilityID)
-    }
-
-    private var signalIcon: some View {
-        Image(systemName: signal.symbol)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(signal.tint)
+        return trimmed
     }
 }
 

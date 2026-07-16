@@ -5,6 +5,8 @@
 //  Browser chrome: action bar, grid/list layouts, file action menus.
 //
 
+import AgentPolicy
+import AgentTools
 import SwiftData
 import SwiftUI
 import UIKit
@@ -244,6 +246,7 @@ extension FilesView {
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(AgentPalette.secondaryText)
                         }
+                        .frame(minHeight: AgentDesign.minimumTouchTarget)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -699,45 +702,40 @@ extension FilesView {
         guard beginFileAction("Deleting \(item.name)…") else { return }
         let impact = UIImpactFeedbackGenerator(style: .medium)
         impact.impactOccurred()
-        let workspace = runtime.workspace
+        let operationID = UUID()
         let deletedKind = item.isDirectory ? "folder" : "file"
         let deletedPath = item.relativePath
-        withAnimation(reduceMotion ? nil : .smooth(duration: 0.16)) {
-            items.removeAll { $0.item.relativePath == deletedPath }
-        }
-        fileActionTask = Task.detached(priority: .userInitiated) {
+        fileActionTask = Task { @MainActor in
             do {
-                try Task.checkCancellation()
-                try workspace.delete(deletedPath)
-                try Task.checkCancellation()
+                _ = try await performFilesMutation(
+                    operationID: operationID,
+                    operation: FilesCanonicalMutationOperation.deletePath(
+                        PathArguments(path: deletedPath)
+                    )
+                )
             } catch {
-                await MainActor.run {
-                    if !(error is CancellationError) {
-                        fileActionError = "Could not delete \(deletedKind) \(item.name): \(error.localizedDescription)"
-                    }
-                    finishFileAction()
-                    reload()
+                if let message = filesMutationFailureMessage(
+                    action: "Could not delete \(deletedKind) \(item.name)",
+                    error: error
+                ) {
+                    fileActionError = message
                 }
-                return
-            }
-            await MainActor.run {
-                guard !Task.isCancelled else {
-                    finishFileAction()
-                    return
-                }
-                runtime.noteWorkspaceChanged()
-                ProjectEventRecorder.recordFileChange(
-                    project: scopeProject,
-                    action: item.isDirectory ? "Deleted folder" : "Deleted file",
-                    path: item.relativePath,
-                    context: modelContext
-                )
-                saveFileEvidence(
-                    failureMessage: "Deleted \(deletedKind) \(item.name), but NovaForge could not save the project proof record"
-                )
                 finishFileAction()
                 reload()
+                return
             }
+            runtime.noteWorkspaceChanged()
+            ProjectEventRecorder.recordFileChange(
+                project: scopeProject,
+                action: item.isDirectory ? "Deleted folder" : "Deleted file",
+                path: item.relativePath,
+                context: modelContext
+            )
+            saveFileEvidence(
+                failureMessage: "Deleted \(deletedKind) \(item.name), but NovaForge could not save the project proof record"
+            )
+            finishFileAction()
+            reload()
         }
     }
 
@@ -746,43 +744,41 @@ extension FilesView {
         guard beginFileAction("Duplicating \(item.name)…") else { return }
         let impact = UIImpactFeedbackGenerator(style: .light)
         impact.impactOccurred()
-        let workspace = runtime.workspace
+        let operationID = UUID()
         let path = item.relativePath
         let name = item.name
-        fileActionTask = Task.detached(priority: .userInitiated) {
+        fileActionTask = Task { @MainActor in
             let destination: String
             do {
-                try Task.checkCancellation()
-                destination = try Self.nextDuplicatePath(for: item, in: workspace)
-                try workspace.copy(from: path, to: destination)
-                try Task.checkCancellation()
+                destination = try Self.nextDuplicatePath(for: item, in: runtime.workspace)
+                _ = try await performFilesMutation(
+                    operationID: operationID,
+                    operation: FilesCanonicalMutationOperation.copyPath(
+                        MovePathArguments(from: path, to: destination)
+                    )
+                )
             } catch {
-                await MainActor.run {
-                    if !(error is CancellationError) {
-                        fileActionError = "Could not duplicate \(name): \(error.localizedDescription)"
-                    }
-                    finishFileAction()
+                if let message = filesMutationFailureMessage(
+                    action: "Could not duplicate \(name)",
+                    error: error
+                ) {
+                    fileActionError = message
                 }
+                finishFileAction()
                 return
             }
-            await MainActor.run {
-                guard !Task.isCancelled else {
-                    finishFileAction()
-                    return
-                }
-                runtime.noteWorkspaceChanged()
-                ProjectEventRecorder.recordFileChange(
-                    project: scopeProject,
-                    action: "Duplicated file",
-                    path: "\(path) -> \(destination)",
-                    context: modelContext
-                )
-                saveFileEvidence(
-                    failureMessage: "Duplicated \(name), but NovaForge could not save the project proof record"
-                )
-                finishFileAction()
-                reload()
-            }
+            runtime.noteWorkspaceChanged()
+            ProjectEventRecorder.recordFileChange(
+                project: scopeProject,
+                action: "Duplicated file",
+                path: "\(path) -> \(destination)",
+                context: modelContext
+            )
+            saveFileEvidence(
+                failureMessage: "Duplicated \(name), but NovaForge could not save the project proof record"
+            )
+            finishFileAction()
+            reload()
         }
     }
 

@@ -698,7 +698,10 @@ extension FilesView {
 
     func projectMemoryGalleryCard(_ item: ProjectMemoryItem) -> some View {
         Button {
-            selectedMemoryItemID = item.id
+            // Artifact shelf cards are launch surfaces, not selection-only rows.
+            // Opening the same card twice must still work even when SceneStorage
+            // already contains its ID from an earlier visit.
+            openMemoryItem(item)
         } label: {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 8) {

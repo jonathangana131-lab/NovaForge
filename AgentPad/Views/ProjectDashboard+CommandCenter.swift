@@ -265,20 +265,13 @@ extension ProjectDashboardView {
     @ViewBuilder
     var projectOSExecutionActionRow: some View {
         // Navigation-only by design: Run / Stop / Approve / Resume live in ONE
-        // place — the pinned command center at the top of the screen. This row
-        // only ever offers context jumps (plus Reject during approvals, whose
-        // affirmative twin is the pinned button).
+        // place — the pinned dock. This row only offers context jumps.
         switch dashboardExecutionState {
         case .approvalRequired:
-            HStack(spacing: 8) {
-                projectOSIntentSmallButton(title: "Reject", symbol: "xmark.shield.fill", tint: AgentPalette.rose) {
-                    rejectPendingTool()
-                }
-                projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
-                    openTab(.runs)
-                }
+            projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
+                openTab(.runs)
             }
-            .accessibilityIdentifier("projectOSApprovalActions")
+            .accessibilityIdentifier("projectOSApprovalNavigation")
         case .running, .planning:
             HStack(spacing: 8) {
                 projectOSIntentSmallButton(title: "History", symbol: "waveform.path.ecg", tint: AgentPalette.lilac) {
@@ -532,7 +525,10 @@ extension ProjectDashboardView {
     }
 
     var projectOSPlanPreviewPanel: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        let visibleSteps = Array(projectOSDisplaySteps.prefix(5))
+        let lastStepID = visibleSteps.last?.id
+
+        return VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Label("Agent Plan", systemImage: "list.bullet.clipboard.fill")
                     .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
@@ -545,8 +541,8 @@ extension ProjectDashboardView {
             }
 
             VStack(spacing: 0) {
-                ForEach(Array(projectOSDisplaySteps.prefix(5).enumerated()), id: \.element.id) { index, step in
-                    projectOSStepRow(step, isLast: index == min(projectOSDisplaySteps.count, 5) - 1)
+                ForEach(visibleSteps) { step in
+                    projectOSStepRow(step, isLast: step.id == lastStepID)
                 }
             }
             .background(AgentPalette.row.opacity(0.48), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
@@ -735,7 +731,7 @@ extension ProjectDashboardView {
     }
 
     var projectOSOverviewDetail: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             projectHeroNextAction
             projectReviewDashboard
             if runtimeStatus.isVisible {
@@ -746,7 +742,7 @@ extension ProjectDashboardView {
     }
 
     var projectOSPlanDetail: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             projectOSPlanPreviewPanel
             missionOSPanel
             missionOSGateSection
@@ -756,7 +752,7 @@ extension ProjectDashboardView {
     }
 
     var projectOSProofDetail: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             latestEvidenceSection
             proofLedgerSection
             artifactsSection
@@ -766,7 +762,7 @@ extension ProjectDashboardView {
     }
 
     var projectOSActivityDetail: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             projectOSExecutionTimelinePanel
             projectOSRunHistoryPanel
             projectSignals
@@ -776,7 +772,10 @@ extension ProjectDashboardView {
     }
 
     var projectOSExecutionTimelinePanel: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        let steps = projectOSDisplaySteps
+        let lastStepID = steps.last?.id
+
+        return VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Label("Execution Timeline", systemImage: "timeline.selection")
                     .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
@@ -790,8 +789,8 @@ extension ProjectDashboardView {
             }
 
             VStack(spacing: 0) {
-                ForEach(Array(projectOSDisplaySteps.enumerated()), id: \.element.id) { index, step in
-                    projectOSStepRow(step, isLast: index == projectOSDisplaySteps.count - 1)
+                ForEach(steps) { step in
+                    projectOSStepRow(step, isLast: step.id == lastStepID)
                 }
             }
             .background(AgentPalette.row.opacity(0.52), in: RoundedRectangle(cornerRadius: 15, style: .continuous))

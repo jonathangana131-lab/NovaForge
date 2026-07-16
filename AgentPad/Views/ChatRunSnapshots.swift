@@ -323,13 +323,25 @@ struct ChatDurableRunSnapshot: Equatable {
     }
 
     private static func traceDetail(for run: ToolRun) -> String {
-        if run.status == .failed, !run.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return run.output
+        // This is a compact V1 fallback, not an argument inspector. Raw JSON,
+        // command text, file contents, and output remain in the durable History
+        // receipt instead of being copied into the Forge progress timeline.
+        legacyTraceDetail(for: run.status)
+    }
+
+    static func legacyTraceDetail(for status: ToolRunStatus) -> String {
+        switch status {
+        case .pendingApproval:
+            return "Decision required before this action runs."
+        case .approved:
+            return "Approved action is ready to continue."
+        case .rejected:
+            return "The action was not applied."
+        case .completed:
+            return "Receipt saved in History."
+        case .failed:
+            return "Action failed. Open History for diagnostics."
         }
-        if !run.argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return run.argumentsJSON
-        }
-        return run.output
     }
 
     private static func traceStatus(for status: ToolRunStatus) -> AgentTraceStatus {

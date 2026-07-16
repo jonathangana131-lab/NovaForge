@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 
@@ -13,6 +14,7 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     let filename: String
     let downloadURL: URL
     let expectedBytes: Int64
+    let expectedSHA256: String
     let minimumPhysicalMemoryBytes: UInt64
     let recommendedFreeDiskBytes: Int64
     let contextTokens: UInt32
@@ -36,92 +38,78 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
 }
 
 enum LocalModelCatalog {
-    static let repository = "prithivMLmods/VibeThinker-3B-GGUF"
+    /// Official, tool-template-capable coding checkpoint. VibeThinker was
+    /// intentionally removed from the local-agent catalog because its own
+    /// model card says it was not trained for tool calling or agent work.
+    static let repository = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
+    static let verifiedRevision = "f86cb2c1fa58255f8052cc32aeede1b7482d4361"
 
     static let all: [LocalModelVariant] = [
         .init(
-            id: "WeiboAI/VibeThinker-3B-Q2_K",
-            displayName: "VibeThinker-3B iPhone 12",
-            shortName: "VibeThinker Q2",
-            quantization: "Q2_K",
-            filename: "VibeThinker-3B.Q2_K.gguf",
-            downloadURL: URL(string: "https://huggingface.co/prithivMLmods/VibeThinker-3B-GGUF/resolve/main/VibeThinker-3B.Q2_K.gguf?download=true")!,
-            expectedBytes: 1_274_755_776,
+            id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M",
+            displayName: "Qwen Coder 1.5B — iPhone 12",
+            shortName: "Qwen Coder Q4",
+            quantization: "Q4_K_M",
+            filename: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+            downloadURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/\(verifiedRevision)/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf?download=true")!,
+            expectedBytes: 1_117_320_768,
+            expectedSHA256: "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
             minimumPhysicalMemoryBytes: 3_000_000_000,
-            recommendedFreeDiskBytes: 2_000_000_000,
-            contextTokens: 256,
-            batchTokens: 8,
-            maxNewTokens: 24,
-            maxGenerationSeconds: 8,
-            useGPU: true,
-            gpuLayerCount: 2,
-            generationThreadCount: 1,
-            batchThreadCount: 1,
-            isIPhone12SafeDefault: true,
-            details: "Default for iPhone 12. Lower quantization, tiny context, one worker thread, and very limited Metal offload keep the UI responsive."
-        ),
-        .init(
-            id: "WeiboAI/VibeThinker-3B-Q3_K_M",
-            displayName: "VibeThinker-3B Higher Quality",
-            shortName: "VibeThinker Q3",
-            quantization: "Q3_K_M",
-            filename: "VibeThinker-3B.Q3_K_M.gguf",
-            downloadURL: URL(string: "https://huggingface.co/prithivMLmods/VibeThinker-3B-GGUF/resolve/main/VibeThinker-3B.Q3_K_M.gguf?download=true")!,
-            expectedBytes: 1_590_475_456,
-            minimumPhysicalMemoryBytes: 4_800_000_000,
-            recommendedFreeDiskBytes: 2_400_000_000,
-            contextTokens: 512,
-            batchTokens: 24,
-            maxNewTokens: 80,
-            maxGenerationSeconds: 28,
+            recommendedFreeDiskBytes: 1_800_000_000,
+            contextTokens: 2_048,
+            batchTokens: 64,
+            maxNewTokens: 256,
+            maxGenerationSeconds: 35,
             useGPU: true,
             gpuLayerCount: 4,
             generationThreadCount: 1,
             batchThreadCount: 1,
-            isIPhone12SafeDefault: false,
-            details: "Sharper output, but the iPhone 12/iOS 27 beta path can freeze under this memory pressure."
+            isIPhone12SafeDefault: true,
+            details: "Default for iPhone 12. This official instruction-tuned coding checkpoint is smaller than the former 3B Q2 model, includes Qwen's tool-call template, and runs behind NovaForge's constrained action grammar, schema validation, approvals, and sandbox."
         ),
         .init(
-            id: "WeiboAI/VibeThinker-3B-Q4_K_S",
-            displayName: "VibeThinker-3B Balanced",
-            shortName: "VibeThinker Q4S",
-            quantization: "Q4_K_S",
-            filename: "VibeThinker-3B.Q4_K_S.gguf",
-            downloadURL: URL(string: "https://huggingface.co/prithivMLmods/VibeThinker-3B-GGUF/resolve/main/VibeThinker-3B.Q4_K_S.gguf?download=true")!,
-            expectedBytes: 1_830_000_000,
-            minimumPhysicalMemoryBytes: 5_000_000_000,
-            recommendedFreeDiskBytes: 2_800_000_000,
-            contextTokens: 3_072,
-            batchTokens: 192,
-            maxNewTokens: 640,
-            maxGenerationSeconds: 60,
+            id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q3_K_M",
+            displayName: "Qwen Coder 1.5B — Low Memory",
+            shortName: "Qwen Coder Q3",
+            quantization: "Q3_K_M",
+            filename: "qwen2.5-coder-1.5b-instruct-q3_k_m.gguf",
+            downloadURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/\(verifiedRevision)/qwen2.5-coder-1.5b-instruct-q3_k_m.gguf?download=true")!,
+            expectedBytes: 924_456_000,
+            expectedSHA256: "d281a3a0010df03c8a0e3ffebd7f9444a95244fb518f132c5475e4b48d9adb5e",
+            minimumPhysicalMemoryBytes: 2_800_000_000,
+            recommendedFreeDiskBytes: 1_500_000_000,
+            contextTokens: 1_536,
+            batchTokens: 48,
+            maxNewTokens: 224,
+            maxGenerationSeconds: 35,
             useGPU: true,
-            gpuLayerCount: 99,
-            generationThreadCount: 2,
-            batchThreadCount: 3,
+            gpuLayerCount: 3,
+            generationThreadCount: 1,
+            batchThreadCount: 1,
             isIPhone12SafeDefault: false,
-            details: "Better quality, intended for newer devices with more memory headroom."
+            details: "A smaller fallback for devices under memory pressure. It keeps the same tool-trained Qwen checkpoint and the same constrained NovaForge agent boundary at a modest quality tradeoff."
         ),
         .init(
-            id: "WeiboAI/VibeThinker-3B-Q4_K_M",
-            displayName: "VibeThinker-3B Quality",
-            shortName: "VibeThinker Q4M",
-            quantization: "Q4_K_M",
-            filename: "VibeThinker-3B.Q4_K_M.gguf",
-            downloadURL: URL(string: "https://huggingface.co/prithivMLmods/VibeThinker-3B-GGUF/resolve/main/VibeThinker-3B.Q4_K_M.gguf?download=true")!,
-            expectedBytes: 1_930_000_000,
-            minimumPhysicalMemoryBytes: 5_500_000_000,
-            recommendedFreeDiskBytes: 3_000_000_000,
-            contextTokens: 3_072,
-            batchTokens: 192,
-            maxNewTokens: 640,
-            maxGenerationSeconds: 60,
+            id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q2_K",
+            displayName: "Qwen Coder 1.5B — Minimum Memory",
+            shortName: "Qwen Coder Q2",
+            quantization: "Q2_K",
+            filename: "qwen2.5-coder-1.5b-instruct-q2_k.gguf",
+            downloadURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/\(verifiedRevision)/qwen2.5-coder-1.5b-instruct-q2_k.gguf?download=true")!,
+            expectedBytes: 752_880_192,
+            expectedSHA256: "3ec56d48cc5acdb93c4323f0d01a3b5db0c73c54fe71831199223720d37f6fcd",
+            minimumPhysicalMemoryBytes: 2_500_000_000,
+            recommendedFreeDiskBytes: 1_250_000_000,
+            contextTokens: 1_536,
+            batchTokens: 48,
+            maxNewTokens: 192,
+            maxGenerationSeconds: 35,
             useGPU: true,
-            gpuLayerCount: 99,
-            generationThreadCount: 2,
-            batchThreadCount: 3,
+            gpuLayerCount: 2,
+            generationThreadCount: 1,
+            batchThreadCount: 1,
             isIPhone12SafeDefault: false,
-            details: "Highest local quality option here. Not the safe default for iPhone 12."
+            details: "Smallest supported emergency fallback. Tool selection remains grammar constrained, but code quality is lower than the recommended Q4 model."
         )
     ]
 
@@ -135,7 +123,8 @@ enum LocalModelCatalog {
 
     static func safestVariant(forPhysicalMemory physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> LocalModelVariant {
         all.first { $0.isIPhone12SafeDefault && physicalMemory >= $0.minimumPhysicalMemoryBytes }
-            ?? all[0]
+            ?? all.first { physicalMemory >= $0.minimumPhysicalMemoryBytes }
+            ?? all.last!
     }
 
     static func compatibilityMessage(
@@ -145,7 +134,7 @@ enum LocalModelCatalog {
         if physicalMemory < variant.minimumPhysicalMemoryBytes {
             let needed = ByteCountFormatter.string(fromByteCount: Int64(variant.minimumPhysicalMemoryBytes), countStyle: .memory)
             let current = ByteCountFormatter.string(fromByteCount: Int64(physicalMemory), countStyle: .memory)
-            return "\(variant.shortName) needs about \(needed) RAM. This device reports \(current). Use VibeThinker Q2 for iPhone 12."
+            return "\(variant.shortName) needs about \(needed) RAM. This device reports \(current). Use Qwen Coder Q3 or Q2."
         }
 
         return nil
@@ -217,6 +206,8 @@ enum LocalModelRuntimeError: LocalizedError {
     case runtimeUnavailable
     case incompatibleDevice(String)
     case downloadFailed(String)
+    case invalidAgentDecision
+    case invalidAgentDecisionOutput(String)
 
     var errorDescription: String? {
         switch self {
@@ -228,6 +219,8 @@ enum LocalModelRuntimeError: LocalizedError {
             message
         case .downloadFailed(let message):
             message
+        case .invalidAgentDecision, .invalidAgentDecisionOutput:
+            "The local model could not produce a valid constrained agent decision. Nothing was executed."
         }
     }
 }
@@ -313,7 +306,7 @@ final class LocalModelManager {
 
         statusTask = Task(priority: .utility) { [weak self, variant] in
             let result = await Task.detached(priority: .utility) {
-                LocalModelStatusProbe.probe(variant: variant)
+                await LocalModelStatusProbe.probe(variant: variant)
             }.value
             await MainActor.run {
                 guard let self, self.selectedVariantID == variant.id, !Task.isCancelled else { return }
@@ -433,6 +426,9 @@ final class LocalModelManager {
                     return error.localizedDescription
                 }
             }.value
+            await LocalModelArtifactVerifier.shared.invalidate(
+                variantID: variant.id
+            )
             await MainActor.run {
                 guard self?.selectedVariantID == variant.id else { return }
                 if let deleteError {
@@ -444,13 +440,13 @@ final class LocalModelManager {
         }
     }
 
-    func localFileURL(for variant: LocalModelVariant? = nil) throws -> URL {
+    func localFileURL(
+        for variant: LocalModelVariant? = nil
+    ) async throws -> URL {
         let variant = variant ?? selectedVariant
-        let url = try LocalModelCatalog.fileURL(for: variant)
-        guard let size = fileSize(at: url), size >= LocalModelDownloader.minimumCompleteBytes(for: variant) else {
-            throw LocalModelRuntimeError.modelNotDownloaded(variant.displayName)
-        }
-        return url
+        return try await LocalModelArtifactVerifier.shared.verifiedURL(
+            for: variant
+        )
     }
 
     private func compatibilityMessage(for variant: LocalModelVariant) -> String? {
@@ -489,7 +485,9 @@ private struct LocalModelStatusProbeResult: Sendable {
 }
 
 private enum LocalModelStatusProbe {
-    static func probe(variant: LocalModelVariant) -> LocalModelStatusProbeResult {
+    static func probe(
+        variant: LocalModelVariant
+    ) async -> LocalModelStatusProbeResult {
         let emptyProgress = LocalModelDownloadProgress(receivedBytes: 0, totalBytes: variant.expectedBytes)
         if let message = compatibilityMessage(for: variant) {
             return .init(status: .incompatible(message), progress: emptyProgress, downloadedBytes: 0)
@@ -498,7 +496,12 @@ private enum LocalModelStatusProbe {
         do {
             let url = try LocalModelCatalog.fileURL(for: variant)
             let partialURL = LocalModelDownloader.temporaryURL(for: url)
-            if let size = fileSize(at: url), size >= LocalModelDownloader.minimumCompleteBytes(for: variant) {
+            if let size = fileSize(at: url),
+               size == LocalModelDownloader.minimumCompleteBytes(for: variant)
+            {
+                _ = try await LocalModelArtifactVerifier.shared.verifiedURL(
+                    for: variant
+                )
                 return .init(
                     status: .ready,
                     progress: .init(receivedBytes: size, totalBytes: max(size, variant.expectedBytes)),
@@ -552,12 +555,17 @@ private enum LocalModelStatusProbe {
 }
 
 enum LocalModelDownloader {
+    enum PartialPreparation: Equatable, Sendable {
+        case promoted(receivedBytes: Int64)
+        case resume(startingBytes: Int64)
+    }
+
     static func temporaryURL(for destination: URL) -> URL {
         destination.appendingPathExtension("download")
     }
 
     static func minimumCompleteBytes(for variant: LocalModelVariant) -> Int64 {
-        Int64(Double(variant.expectedBytes) * 0.98)
+        variant.expectedBytes
     }
 
     static func preserveLargestPartialDownload(finalURL: URL, partialURL: URL) -> Int64 {
@@ -590,7 +598,21 @@ enum LocalModelDownloader {
         let directory = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let temporaryURL = temporaryURL(for: destination)
-        var startingBytes = fileSize(at: temporaryURL)
+        let preparation = try await prepareExistingPartial(
+            variant: variant,
+            destination: destination
+        )
+        let startingBytes: Int64
+        switch preparation {
+        case let .promoted(receivedBytes):
+            await progress(.init(
+                receivedBytes: receivedBytes,
+                totalBytes: variant.expectedBytes
+            ))
+            return
+        case let .resume(bytes):
+            startingBytes = bytes
+        }
 
         var request = URLRequest(url: variant.downloadURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -598,24 +620,19 @@ enum LocalModelDownloader {
             request.setValue("bytes=\(startingBytes)-", forHTTPHeaderField: "Range")
         }
 
-        let (downloadedURL, response) = try await URLSession.shared.download(for: request)
+        let transfer = LocalModelDownloadTransfer(
+            request: request,
+            partialURL: temporaryURL,
+            startingBytes: startingBytes,
+            expectedBytes: variant.expectedBytes,
+            progress: progress
+        )
+        let totalBytes = try await withTaskCancellationHandler {
+            try await transfer.start()
+        } onCancel: {
+            transfer.cancel()
+        }
         try Task.checkCancellation()
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw LocalModelRuntimeError.downloadFailed("Hugging Face returned an invalid response for \(variant.filename).")
-        }
-
-        if startingBytes > 0, http.statusCode == 206 {
-            if !FileManager.default.fileExists(atPath: temporaryURL.path) {
-                FileManager.default.createFile(atPath: temporaryURL.path, contents: nil)
-            }
-            try appendFile(downloadedURL, to: temporaryURL)
-        } else {
-            try? FileManager.default.removeItem(at: temporaryURL)
-            try FileManager.default.moveItem(at: downloadedURL, to: temporaryURL)
-            startingBytes = 0
-        }
-
-        let totalBytes = totalBytes(from: http, startingBytes: startingBytes, fallback: variant.expectedBytes)
         let received = fileSize(at: temporaryURL)
         await progress(.init(receivedBytes: received, totalBytes: max(received, totalBytes)))
 
@@ -624,48 +641,88 @@ enum LocalModelDownloader {
         }
 
         try validateCompleteDownload(variant: variant, receivedBytes: received)
+        try validateSHA256(variant: variant, fileURL: temporaryURL)
 
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: temporaryURL, to: destination)
+        await LocalModelArtifactVerifier.shared.recordVerified(
+            variant: variant,
+            fileURL: destination
+        )
         await progress(.init(receivedBytes: received, totalBytes: max(received, totalBytes)))
     }
 
+    /// Resolves the crash-at-100% edge before issuing any network request. A
+    /// complete verified partial is promoted immediately. A same-size corrupt
+    /// partial is discarded and restarted from byte zero; cancellation never
+    /// deletes resumable data.
+    static func prepareExistingPartial(
+        variant: LocalModelVariant,
+        destination: URL
+    ) async throws -> PartialPreparation {
+        let partialURL = temporaryURL(for: destination)
+        let existingBytes = fileSize(at: partialURL)
+        guard existingBytes > 0 else {
+            return .resume(startingBytes: 0)
+        }
+        guard existingBytes <= variant.expectedBytes else {
+            try FileManager.default.removeItem(at: partialURL)
+            return .resume(startingBytes: 0)
+        }
+        guard existingBytes == variant.expectedBytes else {
+            return .resume(startingBytes: existingBytes)
+        }
+
+        do {
+            try validateSHA256(variant: variant, fileURL: partialURL)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as LocalModelRuntimeError {
+            guard case .downloadFailed = error else { throw error }
+            try FileManager.default.removeItem(at: partialURL)
+            await LocalModelArtifactVerifier.shared.invalidate(
+                variantID: variant.id
+            )
+            return .resume(startingBytes: 0)
+        }
+
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: partialURL, to: destination)
+        await LocalModelArtifactVerifier.shared.recordVerified(
+            variant: variant,
+            fileURL: destination
+        )
+        return .promoted(receivedBytes: existingBytes)
+    }
+
     static func validateCompleteDownload(variant: LocalModelVariant, receivedBytes: Int64) throws {
-        let minimumBytes = minimumCompleteBytes(for: variant)
-        guard receivedBytes >= minimumBytes else {
+        let expectedBytes = variant.expectedBytes
+        guard receivedBytes == expectedBytes else {
             let receivedLabel = ByteCountFormatter.string(fromByteCount: receivedBytes, countStyle: .file)
-            let minimumLabel = ByteCountFormatter.string(fromByteCount: minimumBytes, countStyle: .file)
-            throw LocalModelRuntimeError.downloadFailed("Download stopped before \(variant.shortName) reached the minimum usable size (\(receivedLabel) of at least \(minimumLabel)). Tap Resume to continue.")
+            let expectedLabel = ByteCountFormatter.string(fromByteCount: expectedBytes, countStyle: .file)
+            throw LocalModelRuntimeError.downloadFailed("\(variant.shortName) is incomplete (\(receivedLabel) of \(expectedLabel)). Tap Resume to continue.")
         }
     }
 
-    private static func appendFile(_ source: URL, to destination: URL) throws {
-        let readHandle = try FileHandle(forReadingFrom: source)
-        defer { try? readHandle.close() }
-        let writeHandle = try FileHandle(forWritingTo: destination)
-        defer { try? writeHandle.close() }
-        try writeHandle.seekToEnd()
-
+    static func validateSHA256(
+        variant: LocalModelVariant,
+        fileURL: URL
+    ) throws {
+        let handle = try FileHandle(forReadingFrom: fileURL)
+        defer { try? handle.close() }
+        var hasher = SHA256()
         while true {
             try Task.checkCancellation()
-            let chunk = try readHandle.read(upToCount: 1024 * 1024) ?? Data()
+            let chunk = try handle.read(upToCount: 4 * 1_024 * 1_024) ?? Data()
             if chunk.isEmpty { break }
-            try writeHandle.write(contentsOf: chunk)
+            hasher.update(data: chunk)
         }
-    }
-
-    private static func totalBytes(from response: HTTPURLResponse, startingBytes: Int64, fallback: Int64) -> Int64 {
-        if let contentRange = response.value(forHTTPHeaderField: "Content-Range"),
-           let totalText = contentRange.split(separator: "/").last,
-           let total = Int64(totalText) {
-            return total
+        let actual = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard actual == variant.expectedSHA256 else {
+            throw LocalModelRuntimeError.downloadFailed(
+                "\(variant.shortName) did not pass its integrity check. Delete the download and try again."
+            )
         }
-
-        if response.expectedContentLength > 0 {
-            return response.expectedContentLength + startingBytes
-        }
-
-        return fallback
     }
 
     private static func fileSize(at url: URL) -> Int64 {
@@ -673,7 +730,364 @@ enum LocalModelDownloader {
     }
 }
 
-actor LocalModelClient {
+/// Process-wide proof that the bytes loaded by llama.cpp match the catalog's
+/// immutable digest. The fingerprint cache prevents re-hashing a 1+ GB model
+/// on every provider turn while still invalidating when the file changes.
+actor LocalModelArtifactVerifier {
+    static let shared = LocalModelArtifactVerifier()
+
+    private struct Fingerprint: Equatable, Sendable {
+        let byteCount: Int64
+        let modificationTime: TimeInterval
+    }
+
+    private var verified: [String: Fingerprint] = [:]
+    private var inFlight: [String: Task<(URL, Fingerprint), any Error>] = [:]
+
+    func verifiedURL(for variant: LocalModelVariant) async throws -> URL {
+        let fileURL = try LocalModelCatalog.fileURL(for: variant)
+        let fingerprint = try Self.fingerprint(
+            fileURL: fileURL,
+            variant: variant
+        )
+        if verified[variant.id] == fingerprint {
+            return fileURL
+        }
+        if let task = inFlight[variant.id] {
+            let (url, observed) = try await task.value
+            verified[variant.id] = observed
+            return url
+        }
+
+        let task = Task.detached(priority: .utility) {
+            try LocalModelDownloader.validateSHA256(
+                variant: variant,
+                fileURL: fileURL
+            )
+            let after = try Self.fingerprint(
+                fileURL: fileURL,
+                variant: variant
+            )
+            guard after == fingerprint else {
+                throw LocalModelRuntimeError.downloadFailed(
+                    "\(variant.shortName) changed during its integrity check. Try again."
+                )
+            }
+            return (fileURL, after)
+        }
+        inFlight[variant.id] = task
+        do {
+            let (url, observed) = try await task.value
+            inFlight[variant.id] = nil
+            verified[variant.id] = observed
+            return url
+        } catch {
+            inFlight[variant.id] = nil
+            verified[variant.id] = nil
+            throw error
+        }
+    }
+
+    func recordVerified(variant: LocalModelVariant, fileURL: URL) {
+        guard let fingerprint = try? Self.fingerprint(
+            fileURL: fileURL,
+            variant: variant
+        ) else {
+            verified[variant.id] = nil
+            return
+        }
+        verified[variant.id] = fingerprint
+    }
+
+    func invalidate(variantID: String) {
+        inFlight[variantID]?.cancel()
+        inFlight[variantID] = nil
+        verified[variantID] = nil
+    }
+
+    private static func fingerprint(
+        fileURL: URL,
+        variant: LocalModelVariant
+    ) throws -> Fingerprint {
+        let values = try fileURL.resourceValues(forKeys: [
+            .contentModificationDateKey,
+            .fileSizeKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ])
+        guard values.isRegularFile == true,
+              values.isSymbolicLink != true,
+              Int64(values.fileSize ?? 0) == variant.expectedBytes,
+              let modified = values.contentModificationDate else {
+            throw LocalModelRuntimeError.modelNotDownloaded(
+                variant.displayName
+            )
+        }
+        return Fingerprint(
+            byteCount: variant.expectedBytes,
+            modificationTime: modified.timeIntervalSinceReferenceDate
+        )
+    }
+}
+
+/// A single resumable transfer. URLSession delivers bounded Data chunks on a
+/// private serial delegate queue, so the model is persisted incrementally and
+/// cancellation leaves a usable `.download` file instead of losing a 1+ GB
+/// temporary system download.
+private final class LocalModelDownloadTransfer: NSObject, URLSessionDataDelegate,
+    URLSessionTaskDelegate, @unchecked Sendable
+{
+    private let request: URLRequest
+    private let partialURL: URL
+    private let initialStartingBytes: Int64
+    private let expectedBytes: Int64
+    private let progress: @Sendable (LocalModelDownloadProgress) async -> Void
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Int64, any Error>?
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var handle: FileHandle?
+    private var receivedBytes: Int64
+    private var totalBytes: Int64
+    private var lastReportedBytes: Int64
+    private var didFinish = false
+
+    init(
+        request: URLRequest,
+        partialURL: URL,
+        startingBytes: Int64,
+        expectedBytes: Int64,
+        progress: @escaping @Sendable (LocalModelDownloadProgress) async -> Void
+    ) {
+        self.request = request
+        self.partialURL = partialURL
+        initialStartingBytes = startingBytes
+        self.expectedBytes = expectedBytes
+        self.progress = progress
+        receivedBytes = startingBytes
+        totalBytes = expectedBytes
+        lastReportedBytes = startingBytes
+    }
+
+    func start() async throws -> Int64 {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            guard !didFinish else {
+                lock.unlock()
+                continuation.resume(throwing: CancellationError())
+                return
+            }
+            self.continuation = continuation
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            configuration.urlCache = nil
+            configuration.httpCookieStorage = nil
+            configuration.httpShouldSetCookies = false
+            configuration.timeoutIntervalForRequest = 120
+            configuration.timeoutIntervalForResource = 60 * 60 * 4
+            configuration.waitsForConnectivity = true
+            let session = URLSession(
+                configuration: configuration,
+                delegate: self,
+                delegateQueue: Self.serialDelegateQueue()
+            )
+            let task = session.dataTask(with: request)
+            self.session = session
+            self.task = task
+            lock.unlock()
+            task.resume()
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        task?.cancel()
+        lock.unlock()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        do {
+            guard let http = response as? HTTPURLResponse,
+                  (200 ..< 300).contains(http.statusCode)
+            else {
+                throw LocalModelRuntimeError.downloadFailed(
+                    "The local model host returned an invalid response."
+                )
+            }
+
+            let resumesExisting = initialStartingBytes > 0 && http.statusCode == 206
+            if resumesExisting {
+                guard Self.contentRangeStart(http) == initialStartingBytes else {
+                    throw LocalModelRuntimeError.downloadFailed(
+                        "The model host returned an invalid resume range. Tap Resume to retry."
+                    )
+                }
+            } else {
+                try? FileManager.default.removeItem(at: partialURL)
+                receivedBytes = 0
+                lastReportedBytes = 0
+            }
+
+            if !FileManager.default.fileExists(atPath: partialURL.path) {
+                guard FileManager.default.createFile(
+                    atPath: partialURL.path,
+                    contents: nil
+                ) else {
+                    throw LocalModelRuntimeError.downloadFailed(
+                        "NovaForge could not create the local model download file."
+                    )
+                }
+            }
+            let handle = try FileHandle(forWritingTo: partialURL)
+            try handle.seekToEnd()
+            self.handle = handle
+            totalBytes = Self.totalBytes(
+                from: http,
+                startingBytes: receivedBytes,
+                fallback: expectedBytes
+            )
+            completionHandler(.allow)
+        } catch {
+            completionHandler(.cancel)
+            finish(throwing: error)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        do {
+            try handle?.write(contentsOf: data)
+            receivedBytes += Int64(data.count)
+            if receivedBytes - lastReportedBytes >= 1_024 * 1_024 ||
+                receivedBytes >= totalBytes
+            {
+                lastReportedBytes = receivedBytes
+                let snapshot = LocalModelDownloadProgress(
+                    receivedBytes: receivedBytes,
+                    totalBytes: max(totalBytes, receivedBytes)
+                )
+                Task(priority: .utility) { [progress] in
+                    await progress(snapshot)
+                }
+            }
+        } catch {
+            dataTask.cancel()
+            finish(throwing: error)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: (any Error)?
+    ) {
+        if let error {
+            if (error as? URLError)?.code == .cancelled {
+                finish(throwing: CancellationError())
+            } else {
+                finish(throwing: error)
+            }
+        } else {
+            finish(returning: totalBytes)
+        }
+    }
+
+    private func finish(returning value: Int64) {
+        finish(.success(value))
+    }
+
+    private func finish(throwing error: any Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ result: Result<Int64, any Error>) {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let continuation = continuation
+        self.continuation = nil
+        let session = session
+        self.session = nil
+        self.task = nil
+        lock.unlock()
+
+        try? handle?.synchronize()
+        try? handle?.close()
+        handle = nil
+        session?.finishTasksAndInvalidate()
+        continuation?.resume(with: result)
+    }
+
+    private static func serialDelegateQueue() -> OperationQueue {
+        let queue = OperationQueue()
+        queue.name = "com.joey.NovaForge.local-model-download"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .utility
+        return queue
+    }
+
+    private static func contentRangeStart(_ response: HTTPURLResponse) -> Int64? {
+        guard let value = response.value(forHTTPHeaderField: "Content-Range"),
+              let rangePart = value.split(separator: " ").last?.split(separator: "/").first,
+              let startPart = rangePart.split(separator: "-").first
+        else { return nil }
+        return Int64(startPart)
+    }
+
+    private static func totalBytes(
+        from response: HTTPURLResponse,
+        startingBytes: Int64,
+        fallback: Int64
+    ) -> Int64 {
+        if let contentRange = response.value(forHTTPHeaderField: "Content-Range"),
+           let totalText = contentRange.split(separator: "/").last,
+           let total = Int64(totalText) {
+            return total
+        }
+        if response.expectedContentLength > 0 {
+            return response.expectedContentLength + startingBytes
+        }
+        return fallback
+    }
+}
+
+/// A single process-wide generation lease prevents two workspaces from
+/// loading or driving llama.cpp concurrently on memory-constrained phones.
+/// Waiting is cancellation-aware and does not cancel the current owner's run.
+private actor LocalModelInferenceGate {
+    static let shared = LocalModelInferenceGate()
+    private var isHeld = false
+
+    func acquire() async throws {
+        while isHeld {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        isHeld = true
+    }
+
+    func release() {
+        isHeld = false
+    }
+}
+
+actor LocalModelClient: AgentLocalModelInferenceStreaming,
+    AgentLocalModelActionPlanning,
+    AgentLocalModelArtifactVerifying
+{
+    static let shared = LocalModelClient()
+
     #if canImport(SwiftLlama)
     private var services: [String: LlamaService] = [:]
     #endif
@@ -687,7 +1101,354 @@ actor LocalModelClient {
         #endif
     }
 
+    func verifyLocalModelArtifact(modelID: String) async throws {
+        guard let variant = LocalModelCatalog.variant(for: modelID) else {
+            throw LocalModelRuntimeError.modelNotDownloaded(modelID)
+        }
+        _ = try await LocalModelArtifactVerifier.shared.verifiedURL(
+            for: variant
+        )
+    }
+
+    /// Runs the tool-trained checkpoint behind the exact GBNF bound into
+    /// `LocalToolsAuthority`. The model may choose one action, but it cannot
+    /// invent a tool name or argument shape; the transport validates the
+    /// decoded decision again before publishing a canonical tool call.
+    func decideLocalAgentTurn(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int
+    ) async throws -> LocalAgentModelDecision {
+        try await LocalModelInferenceGate.shared.acquire()
+        do {
+            let decision = try await performLocalAgentDecision(
+                request: request,
+                completedToolCallCount: completedToolCallCount
+            )
+            await LocalModelInferenceGate.shared.release()
+            return decision
+        } catch {
+            await LocalModelInferenceGate.shared.release()
+            throw error
+        }
+    }
+
+    private func performLocalAgentDecision(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int
+    ) async throws -> LocalAgentModelDecision {
+        guard let variant = LocalModelCatalog.variant(for: request.modelID),
+              completedToolCallCount >= 0,
+              completedToolCallCount <
+                LocalAgentModelGrammar.maximumModelPlannedToolCalls
+        else { throw LocalModelRuntimeError.invalidAgentDecision }
+        if let message = LocalModelCatalog.compatibilityMessage(for: variant) {
+            throw LocalModelRuntimeError.incompatibleDevice(message)
+        }
+
+        let modelURL = try await LocalModelArtifactVerifier.shared
+            .verifiedURL(for: variant)
+
+        #if canImport(SwiftLlama)
+        let service = services[variant.id] ?? LlamaService(
+            modelUrl: modelURL,
+            config: .init(
+                batchSize: variant.batchTokens,
+                maxTokenCount: variant.contextTokens,
+                useGPU: variant.useGPU,
+                gpuLayerCount: variant.gpuLayerCount,
+                generationThreadCount: variant.generationThreadCount,
+                batchThreadCount: variant.batchThreadCount,
+                yieldEveryTokenCount: 1
+            )
+        )
+        services[variant.id] = service
+
+        let latestUserIndex = request.messages.lastIndex(where: {
+            $0.role == .user
+        })
+        let latestUser = latestUserIndex.map {
+            request.messages[$0].content
+        } ?? ""
+        let recentContext = latestUserIndex.map { index in
+            Self.boundedPlannerTranscript(
+                Array(request.messages.dropFirst(index + 1))
+            )
+        } ?? ""
+        let contextLine = recentContext.isEmpty
+            ? ""
+            : "\nRecent validated actions and results:\n\(recentContext)"
+        let messages: [LlamaChatMessage] = [
+            .init(
+                role: .system,
+                content: LocalAgentModelGrammar.routerPrompt
+            ),
+            .init(
+                role: .user,
+                content: "Request: \(Self.boundedPlannerText(latestUser, limit: 600))\(contextLine)\nCompleted actions: \(completedToolCallCount)"
+            ),
+        ]
+        let sampling = LlamaSamplingConfig(
+            temperature: 0,
+            seed: 42,
+            topP: 1,
+            topK: 8,
+            grammarConfig: LlamaGrammarConfig(
+                grammar: LocalAgentModelGrammar.gbnf,
+                grammarRoot: "root"
+            ),
+            repetitionPenaltyConfig: nil
+        )
+        let stream = try await service.streamCompletion(
+            of: messages,
+            samplingConfig: sampling
+        )
+        let decoder = JSONDecoder()
+        let startedAt = ContinuousClock.now
+        let maximumTokens = min(192, variant.maxNewTokens)
+        var output = ""
+        var tokenCount = 0
+
+        do {
+            for try await token in stream {
+                try Task.checkCancellation()
+                output += token
+                tokenCount += 1
+                if let data = output.data(using: .utf8),
+                   let decision = try? decoder.decode(
+                       LocalAgentModelDecision.self,
+                       from: data
+                   ) {
+                    await service.stopCompletion()
+                    return decision
+                }
+                if tokenCount >= maximumTokens ||
+                    startedAt.duration(to: .now) >= .seconds(60)
+                {
+                    await service.stopCompletion()
+                    break
+                }
+            }
+        } catch is CancellationError {
+            await service.stopCompletion()
+            throw CancellationError()
+        } catch {
+            await service.stopCompletion()
+            throw error
+        }
+
+        guard let data = output.data(using: .utf8),
+              let decision = try? decoder.decode(
+                  LocalAgentModelDecision.self,
+                  from: data
+              ) else {
+            throw LocalModelRuntimeError.invalidAgentDecisionOutput(
+                Self.boundedPlannerText(output, limit: 1_500)
+            )
+        }
+        return decision
+        #else
+        throw LocalModelRuntimeError.runtimeUnavailable
+        #endif
+    }
+
+    private static func boundedPlannerText(
+        _ value: String,
+        limit: Int
+    ) -> String {
+        let compact = value
+            .replacingOccurrences(of: "\0", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard compact.count > limit else { return compact }
+        return String(compact.prefix(limit))
+    }
+
+    private static func boundedPlannerTranscript(
+        _ messages: [AgentLocalModelInferenceMessage]
+    ) -> String {
+        var remaining = 1_100
+        var lines: [String] = []
+        for message in messages.suffix(6) {
+            guard remaining > 0 else { break }
+            let prefix = message.role == .assistant ? "assistant" : message.role.rawValue
+            let available = max(0, remaining - prefix.count - 2)
+            guard available > 0 else { break }
+            let text = boundedPlannerText(
+                message.content,
+                limit: min(available, 500)
+            )
+            let line = "\(prefix): \(text)"
+            lines.append(line)
+            remaining -= line.count + 1
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Canonical V2 text stream. The existing `streamingResponse` method below
+    /// remains untouched for V1 parity and rollback until the V2 route ships.
+    func stream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        try await LocalModelInferenceGate.shared.acquire()
+        do {
+            try await performStream(request: request, onEvent: onEvent)
+            await LocalModelInferenceGate.shared.release()
+        } catch {
+            await LocalModelInferenceGate.shared.release()
+            throw error
+        }
+    }
+
+    private func performStream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        guard let variant = LocalModelCatalog.variant(for: request.modelID),
+              request.maximumOutputTokens > 0,
+              request.maximumOutputTokens <= UInt64(variant.maxNewTokens),
+              request.temperature.isFinite,
+              (0 ... 2).contains(request.temperature),
+              !request.messages.isEmpty
+        else { throw LocalModelRuntimeError.runtimeUnavailable }
+        if let message = LocalModelCatalog.compatibilityMessage(for: variant) {
+            throw LocalModelRuntimeError.incompatibleDevice(message)
+        }
+
+        let modelURL = try await LocalModelArtifactVerifier.shared
+            .verifiedURL(for: variant)
+
+        #if canImport(SwiftLlama)
+        let service = services[variant.id] ?? LlamaService(
+            modelUrl: modelURL,
+            config: .init(
+                batchSize: variant.batchTokens,
+                maxTokenCount: variant.contextTokens,
+                useGPU: variant.useGPU,
+                gpuLayerCount: variant.gpuLayerCount,
+                generationThreadCount: variant.generationThreadCount,
+                batchThreadCount: variant.batchThreadCount,
+                yieldEveryTokenCount: 1
+            )
+        )
+        services[variant.id] = service
+
+        let llamaMessages = request.messages.map { message in
+            let role: LlamaChatMessage.Role = switch message.role {
+            case .system, .developer: .system
+            case .user: .user
+            case .assistant: .assistant
+            }
+            return LlamaChatMessage(role: role, content: message.content)
+        }
+        let sampling = LlamaSamplingConfig(
+            temperature: CFloat(request.temperature),
+            seed: 42,
+            topP: 0.72,
+            topK: 12,
+            repetitionPenaltyConfig: LlamaRepetitionPenaltyConfig(
+                lastN: 48,
+                repeatPenalty: 1.22,
+                freqPenalty: 0.08
+            )
+        )
+        let stream = try await service.streamCompletion(
+            of: llamaMessages,
+            samplingConfig: sampling
+        )
+        var generatedTokenCount: UInt64 = 0
+        var lastChunkWasEmpty = false
+        var suppressingHiddenReasoning = false
+        var stoppedEarly = false
+        var finishReason: AgentLocalModelInferenceFinishReason = .completed
+        let generationStartedAt = ContinuousClock.now
+
+        do {
+            for try await token in stream {
+                try Task.checkCancellation()
+                generatedTokenCount += 1
+                lastChunkWasEmpty = token.isEmpty
+
+                if Self.isObviouslyUnstableToken(
+                    token,
+                    after: Int(clamping: generatedTokenCount)
+                ) {
+                    stoppedEarly = true
+                    finishReason = .length
+                    await service.stopCompletion()
+                    break
+                }
+
+                let visibleToken = Self.visibleLocalToken(
+                    from: token,
+                    suppressingHiddenReasoning: &suppressingHiddenReasoning
+                )
+                if !visibleToken.isEmpty {
+                    try await onEvent(.text(visibleToken))
+                }
+
+                if !token.isEmpty,
+                   (generatedTokenCount >= request.maximumOutputTokens ||
+                    generationStartedAt.duration(to: .now) >=
+                    .seconds(variant.maxGenerationSeconds)) {
+                    stoppedEarly = true
+                    finishReason = .length
+                    await service.stopCompletion()
+                    break
+                }
+            }
+        } catch is CancellationError {
+            await service.stopCompletion()
+            throw CancellationError()
+        } catch {
+            await service.stopCompletion()
+            throw error
+        }
+
+        // SwiftLlama emits one String per generated llama token, followed by
+        // one empty EOS flush. Remove only that known natural-terminal flush;
+        // early stops do not receive it.
+        if !stoppedEarly, lastChunkWasEmpty, generatedTokenCount > 0 {
+            generatedTokenCount -= 1
+        }
+        try Task.checkCancellation()
+        try await onEvent(.usage(generatedTokenCount: generatedTokenCount))
+        try await onEvent(.completed(reason: finishReason))
+        #else
+        throw LocalModelRuntimeError.runtimeUnavailable
+        #endif
+    }
+
+    func stop(request: AgentLocalModelInferenceRequest) async {
+        await stop(model: request.modelID)
+    }
+
     func streamingResponse(
+        messages: [ProviderMessageInput],
+        model: String,
+        temperature: Double,
+        customSystemPrompt: String?,
+        workspaceSummary: String,
+        onContentBatch: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws -> ProviderResponse {
+        try await LocalModelInferenceGate.shared.acquire()
+        do {
+            let response = try await performStreamingResponse(
+                messages: messages,
+                model: model,
+                temperature: temperature,
+                customSystemPrompt: customSystemPrompt,
+                workspaceSummary: workspaceSummary,
+                onContentBatch: onContentBatch
+            )
+            await LocalModelInferenceGate.shared.release()
+            return response
+        } catch {
+            await LocalModelInferenceGate.shared.release()
+            throw error
+        }
+    }
+
+    private func performStreamingResponse(
         messages: [ProviderMessageInput],
         model: String,
         temperature: Double,
@@ -700,10 +1461,8 @@ actor LocalModelClient {
             throw LocalModelRuntimeError.incompatibleDevice(message)
         }
 
-        let modelURL = try LocalModelCatalog.fileURL(for: variant)
-        guard fileSize(at: modelURL) >= LocalModelDownloader.minimumCompleteBytes(for: variant) else {
-            throw LocalModelRuntimeError.modelNotDownloaded(variant.displayName)
-        }
+        let modelURL = try await LocalModelArtifactVerifier.shared
+            .verifiedURL(for: variant)
 
         #if canImport(SwiftLlama)
         let service = services[variant.id] ?? LlamaService(
@@ -808,6 +1567,7 @@ actor LocalModelClient {
         return """
         You are NovaForge Local on iPhone.
         Reply in plain English, max 4 short sentences.
+        Do not greet, restate the request, or narrate obvious preparation.
         No hidden reasoning. No code blocks unless asked. No XML, JSON, logs, numbered dumps, or tool-call text.
         If you are unsure, say one short helpful sentence and stop.
         Native NovaForge code handles simple local file, search, command, and artifact actions before your reply.

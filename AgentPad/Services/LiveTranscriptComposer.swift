@@ -12,6 +12,12 @@ struct LiveTranscriptComposer: Sendable {
     /// Only this suffix of an unfinished paragraph is allowed to re-layout on
     /// every reveal. Older text is frozen into immutable renderer segments.
     static let maximumActiveSettledTailCharacters = 960
+    /// Valid Markdown may temporarily exceed the preferred tail while waiting
+    /// for its closing delimiter. Never let malformed or abandoned syntax keep
+    /// that leaf growing forever, though: beyond this ceiling it is frozen as a
+    /// stable literal segment and rendering work becomes bounded again.
+    static let maximumEmergencyActiveSettledTailCharacters = 2_048
+    private static let knownMarkdownClosureLookaheadCharacters = 1_024
     private static let preferredSettledSegmentCharacters = 720
 
     private enum AtomKind: Equatable, Sendable {
@@ -36,8 +42,8 @@ struct LiveTranscriptComposer: Sendable {
     private var nextSettledSegmentOrdinal = 0
     private var activePhrase: LiveTranscriptSnapshot.Phrase?
     private var nextPhraseOrdinal = 0
+    private var awaitsKnownMarkdownBoundary = false
 
-    private var visibleText = ""
     private var visibleCharacterCount = 0
     private var revision = 0
     private var lastPauseFrames = 0
@@ -77,7 +83,7 @@ struct LiveTranscriptComposer: Sendable {
         nextSettledSegmentOrdinal = 0
         activePhrase = nil
         nextPhraseOrdinal = 0
-        visibleText = ""
+        awaitsKnownMarkdownBoundary = false
         visibleCharacterCount = 0
         revision = 0
         lastPauseFrames = 0
@@ -348,8 +354,51 @@ struct LiveTranscriptComposer: Sendable {
         )
         nextPhraseOrdinal += 1
         activePhrase = phrase
-        visibleText += text
+        rebalanceOversizedMarkdownTailAcrossActivePhraseIfNeeded()
         visibleCharacterCount += text.count
+    }
+
+    /// A closing Markdown delimiter can arrive in the active phrase while the
+    /// oversized opening construct lives in `activeSettledTail`. Once the
+    /// construct becomes whole, move its stable prefix into one frozen segment
+    /// and leave only the genuinely new readable suffix active for dust.
+    private mutating func rebalanceOversizedMarkdownTailAcrossActivePhraseIfNeeded() {
+        guard activeSettledTail.count > Self.maximumActiveSettledTailCharacters,
+              let activePhrase else { return }
+        let combined = activeSettledTail + activePhrase.text
+        let settledEnd = combined.index(
+            combined.startIndex,
+            offsetBy: activeSettledTail.count
+        )
+        let cut = settledSegmentBoundary(
+            in: combined,
+            preferredCharacterCount: Self.preferredSettledSegmentCharacters
+        )
+        guard cut > settledEnd else { return }
+
+        let segmentText = String(combined[..<cut])
+        let remainingActiveText = String(combined[cut...])
+        activeSettledSegments.append(
+            LiveTranscriptSnapshot.SettledSegment(
+                id: .init(
+                    responseID: responseID,
+                    paragraphOrdinal: activeParagraphOrdinal,
+                    ordinal: nextSettledSegmentOrdinal
+                ),
+                ordinal: nextSettledSegmentOrdinal,
+                text: segmentText
+            )
+        )
+        nextSettledSegmentOrdinal += 1
+        activeSettledTail = ""
+        awaitsKnownMarkdownBoundary = false
+        self.activePhrase = remainingActiveText.isEmpty
+            ? nil
+            : LiveTranscriptSnapshot.Phrase(
+                id: activePhrase.id,
+                ordinal: activePhrase.ordinal,
+                text: remainingActiveText
+            )
     }
 
     private mutating func appendSettledPhrase(_ text: String) {
@@ -358,7 +407,6 @@ struct LiveTranscriptComposer: Sendable {
         activeSettledTail += text
         freezeSettledTailIfNeeded()
         nextPhraseOrdinal += 1
-        visibleText += text
         visibleCharacterCount += text.count
     }
 
@@ -378,7 +426,6 @@ struct LiveTranscriptComposer: Sendable {
             trailingSeparator: separator
         )
         settledParagraphs.append(paragraph)
-        visibleText += separator
         visibleCharacterCount += separator.count
         activeParagraphOrdinal += 1
         activeSettledSegments.removeAll(keepingCapacity: true)
@@ -386,6 +433,7 @@ struct LiveTranscriptComposer: Sendable {
         nextSettledSegmentOrdinal = 0
         activePhrase = nil
         nextPhraseOrdinal = 0
+        awaitsKnownMarkdownBoundary = false
     }
 
     /// Moves an older, semantically complete prefix into an immutable segment.
@@ -393,11 +441,28 @@ struct LiveTranscriptComposer: Sendable {
     /// character remains visible in a stable sibling view.
     private mutating func freezeSettledTailIfNeeded() {
         while activeSettledTail.count > Self.maximumActiveSettledTailCharacters {
-            let cut = settledSegmentBoundary(
+            var cut = settledSegmentBoundary(
                 in: activeSettledTail,
                 preferredCharacterCount: Self.preferredSettledSegmentCharacters
             )
+            var fallbackPresentationText: String?
+            if cut == activeSettledTail.startIndex {
+                guard activeSettledTail.count > Self.maximumEmergencyActiveSettledTailCharacters else {
+                    break
+                }
+                if awaitsKnownMarkdownBoundary || hasKnownMarkdownBoundaryAhead() {
+                    awaitsKnownMarkdownBoundary = true
+                    break
+                }
+                cut = emergencySettledSegmentBoundary(
+                    in: activeSettledTail,
+                    preferredCharacterCount: Self.preferredSettledSegmentCharacters
+                )
+                let source = String(activeSettledTail[..<cut])
+                fallbackPresentationText = Self.literalFallbackPresentation(for: source)
+            }
             guard cut > activeSettledTail.startIndex else { break }
+            awaitsKnownMarkdownBoundary = false
 
             let segmentText = String(activeSettledTail[..<cut])
             activeSettledTail = String(activeSettledTail[cut...])
@@ -409,17 +474,93 @@ struct LiveTranscriptComposer: Sendable {
                         ordinal: nextSettledSegmentOrdinal
                     ),
                     ordinal: nextSettledSegmentOrdinal,
-                    text: segmentText
+                    text: segmentText,
+                    fallbackPresentationText: fallbackPresentationText
                 )
             )
             nextSettledSegmentOrdinal += 1
         }
     }
 
+    /// When a closing delimiter is already buffered nearby, give the valid
+    /// construct a short grace window so it can freeze semantically whole. The
+    /// lookahead is bounded and memoized by `awaitsKnownMarkdownBoundary`; an
+    /// absent or very distant closure still takes the literal hard-cap path.
+    private func hasKnownMarkdownBoundaryAhead() -> Bool {
+        let lookaheadLimit = Self.knownMarkdownClosureLookaheadCharacters
+        var lookahead = ""
+        lookahead.reserveCapacity(lookaheadLimit)
+
+        var atomIndex = pendingHead
+        while atomIndex < pendingAtoms.count, lookahead.count < lookaheadLimit {
+            let remaining = lookaheadLimit - lookahead.count
+            let atomText = pendingAtoms[atomIndex].text
+            lookahead += atomText.count <= remaining
+                ? atomText
+                : String(atomText.prefix(remaining))
+            atomIndex += 1
+        }
+        guard !lookahead.isEmpty else { return false }
+
+        let preview = activeSettledTail + lookahead
+        let activeTailEnd = preview.index(
+            preview.startIndex,
+            offsetBy: activeSettledTail.count
+        )
+        let boundary = settledSegmentBoundary(
+            in: preview,
+            preferredCharacterCount: Self.preferredSettledSegmentCharacters
+        )
+        return boundary > activeTailEnd
+    }
+
+    /// The malformed-Markdown escape hatch still prefers a word boundary, but
+    /// unlike the semantic splitter it is deliberately independent of delimiter
+    /// state. It runs only after the emergency ceiling has been crossed.
+    private func emergencySettledSegmentBoundary(
+        in text: String,
+        preferredCharacterCount: Int
+    ) -> String.Index {
+        let preferredCount = min(max(1, preferredCharacterCount), text.count)
+        let preferredIndex = text.index(text.startIndex, offsetBy: preferredCount)
+        let searchStart = text.index(
+            text.startIndex,
+            offsetBy: max(1, preferredCount - 160)
+        )
+        var candidate = preferredIndex
+        while candidate > searchStart {
+            candidate = text.index(before: candidate)
+            guard text[candidate].isTranscriptWhitespace else { continue }
+            return text.index(after: candidate)
+        }
+        return preferredIndex
+    }
+
+    /// Broken Markdown is no longer reparsed forever, and its unmatched control
+    /// punctuation should not become the most visually prominent part of a long
+    /// answer. Keep the provider source in `SettledSegment.text`, but present the
+    /// emergency segment as readable literal prose/code.
+    private static func literalFallbackPresentation(for source: String) -> String {
+        var presentation = source
+        if presentation.hasPrefix("```") {
+            if let firstLineEnd = presentation.firstIndex(of: "\n") {
+                presentation.removeSubrange(presentation.startIndex...firstLineEnd)
+            } else {
+                presentation.removeFirst(min(3, presentation.count))
+            }
+        }
+        presentation = presentation.replacingOccurrences(of: "```", with: "")
+        presentation = presentation.replacingOccurrences(of: "`", with: "")
+        presentation = presentation.replacingOccurrences(of: "**", with: "")
+        presentation = presentation.replacingOccurrences(of: "__", with: "")
+        return presentation
+    }
+
     private func settledSegmentBoundary(
         in text: String,
         preferredCharacterCount: Int
     ) -> String.Index {
+        let markdownNeutralBoundaries = Self.markdownNeutralBoundaries(in: text)
         let preferredCount = min(max(1, preferredCharacterCount), text.count)
         let preferredIndex = text.index(text.startIndex, offsetBy: preferredCount)
         let semanticSearchStart = text.index(
@@ -427,27 +568,163 @@ struct LiveTranscriptComposer: Sendable {
             offsetBy: max(0, preferredCount / 2)
         )
 
-        if let boundary = text[semanticSearchStart..<preferredIndex].lastIndex(where: {
-            Self.isSettledSegmentBoundary($0)
-        }) {
-            var cut = text.index(after: boundary)
+        var candidate = preferredIndex
+        while candidate > semanticSearchStart {
+            candidate = text.index(before: candidate)
+            guard Self.isSettledSegmentBoundary(text[candidate]) else { continue }
+            var cut = text.index(after: candidate)
             while cut < text.endIndex, text[cut].isTranscriptWhitespace {
                 cut = text.index(after: cut)
             }
-            return cut
+            if markdownNeutralBoundaries.contains(cut) {
+                return cut
+            }
         }
 
         let whitespaceSearchStart = text.index(
             text.startIndex,
             offsetBy: max(0, preferredCount - 120)
         )
-        if let boundary = text[whitespaceSearchStart..<preferredIndex].lastIndex(where: {
-            $0.isTranscriptWhitespace
-        }) {
-            return text.index(after: boundary)
+        candidate = preferredIndex
+        while candidate > whitespaceSearchStart {
+            candidate = text.index(before: candidate)
+            guard text[candidate].isTranscriptWhitespace else { continue }
+            let cut = text.index(after: candidate)
+            if markdownNeutralBoundaries.contains(cut) {
+                return cut
+            }
         }
 
-        return preferredIndex
+        // A valid construct can begin before the preferred cut and close after
+        // it. Once that closing delimiter arrives, freeze the first safe
+        // boundary after the target instead of keeping the entire paragraph
+        // mutable forever.
+        candidate = preferredIndex
+        while candidate < text.endIndex {
+            if Self.isSettledSegmentBoundary(text[candidate]) || text[candidate].isTranscriptWhitespace {
+                var cut = text.index(after: candidate)
+                while cut < text.endIndex, text[cut].isTranscriptWhitespace {
+                    cut = text.index(after: cut)
+                }
+                if markdownNeutralBoundaries.contains(cut) {
+                    return cut
+                }
+            }
+            candidate = text.index(after: candidate)
+        }
+
+        // Never make an immutable renderer segment in the middle of inline
+        // code, emphasis, a link, or a fenced block. A rare oversized construct
+        // may temporarily exceed the normal tail bound, but it will recover as
+        // soon as the closing delimiter arrives instead of remaining visually
+        // malformed for the lifetime of the transcript.
+        return text.startIndex
+    }
+
+    private static func markdownNeutralBoundaries(in text: String) -> Set<String.Index> {
+        var boundaries: Set<String.Index> = [text.startIndex]
+        var index = text.startIndex
+        var escaped = false
+        var openBacktickRun = 0
+        var asteriskDelimiterRuns = 0
+        var underscoreDelimiterRuns = 0
+        var bracketDepth = 0
+        var linkDestinationDepth = 0
+        var justClosedBracket = false
+
+        func recordBoundary(_ boundary: String.Index) {
+            if !escaped,
+               openBacktickRun == 0,
+               asteriskDelimiterRuns.isMultiple(of: 2),
+               underscoreDelimiterRuns.isMultiple(of: 2),
+               bracketDepth == 0,
+               linkDestinationDepth == 0,
+               !justClosedBracket {
+                boundaries.insert(boundary)
+            }
+        }
+
+        while index < text.endIndex {
+            let character = text[index]
+            if escaped {
+                escaped = false
+                justClosedBracket = false
+                index = text.index(after: index)
+                recordBoundary(index)
+                continue
+            }
+            if character == "\\" {
+                escaped = true
+                index = text.index(after: index)
+                continue
+            }
+
+            if character == "`" {
+                var end = index
+                var runLength = 0
+                while end < text.endIndex, text[end] == "`" {
+                    runLength += 1
+                    end = text.index(after: end)
+                }
+                if openBacktickRun == 0 {
+                    openBacktickRun = runLength
+                } else if runLength == openBacktickRun {
+                    openBacktickRun = 0
+                }
+                justClosedBracket = false
+                index = end
+                recordBoundary(index)
+                continue
+            }
+
+            // Markdown inside code spans is literal. Do not let punctuation in
+            // source code alter the surrounding delimiter state.
+            if openBacktickRun > 0 {
+                index = text.index(after: index)
+                continue
+            }
+
+            if character == "*" || character == "_" {
+                var end = index
+                var runLength = 0
+                while end < text.endIndex, text[end] == character {
+                    runLength += 1
+                    end = text.index(after: end)
+                }
+                if character == "*" {
+                    asteriskDelimiterRuns += 1
+                } else if runLength >= 2 {
+                    // Single underscores are common in filenames and symbols;
+                    // double underscores are a much stronger emphasis signal.
+                    underscoreDelimiterRuns += 1
+                }
+                justClosedBracket = false
+                index = end
+                recordBoundary(index)
+                continue
+            }
+
+            if character == "[" {
+                bracketDepth += 1
+                justClosedBracket = false
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+                justClosedBracket = true
+            } else if character == "(", justClosedBracket || linkDestinationDepth > 0 {
+                linkDestinationDepth += 1
+                justClosedBracket = false
+            } else if character == ")", linkDestinationDepth > 0 {
+                linkDestinationDepth -= 1
+                justClosedBracket = false
+            } else if !character.isTranscriptWhitespace {
+                justClosedBracket = false
+            }
+
+            index = text.index(after: index)
+            recordBoundary(index)
+        }
+
+        return boundaries
     }
 
     private func completeActiveSettledText() -> String {
@@ -476,8 +753,7 @@ struct LiveTranscriptComposer: Sendable {
             backlogCharacters: backlogCharacters,
             revision: revision,
             cadence: cadence,
-            suggestedPauseFrames: pauseFrames,
-            visibleText: visibleText
+            suggestedPauseFrames: pauseFrames
         )
     }
 

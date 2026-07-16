@@ -1,0 +1,60 @@
+{
+  "dialect": "responses",
+  "rounds": [
+    {
+      "frames": [
+        {"kind": "json", "value": {"type": "response.created", "response": {"id": "round-1", "model": "fixture-model"}}},
+        {
+          "kind": "json",
+          "value": {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {"id": "item-round", "type": "function_call", "call_id": "call-round", "name": "read_file", "arguments": ""}
+          }
+        },
+        {"kind": "json", "value": {"type": "response.function_call_arguments.done", "output_index": 0, "item_id": "item-round", "arguments": "{\"path\":\"notes.md\"}"}},
+        {
+          "kind": "json",
+          "value": {
+            "type": "response.completed",
+            "response": {
+              "id": "round-1",
+              "model": "fixture-model",
+              "status": "completed",
+              "usage": {"input_tokens": 9, "output_tokens": 3},
+              "output": [{"type": "function_call", "id": "item-round", "call_id": "call-round", "name": "read_file", "arguments": "{\"path\":\"notes.md\"}"}]
+            }
+          }
+        },
+        {"kind": "done"}
+      ],
+      "expected": [
+        "started|round-1|fixture-model",
+        "toolStarted|0|item-round|call-round|read_file",
+        "toolCompleted|0|item-round|call-round|read_file|{\"path\":\"notes.md\"}",
+        "usage|9|0|3|0",
+        "completed|round-1|toolCalls"
+      ]
+    },
+    {
+      "frames": [
+        {"kind": "json", "value": {"type": "response.created", "response": {"id": "round-2", "model": "fixture-model"}}},
+        {"kind": "json", "value": {"type": "response.output_text.delta", "output_index": 0, "delta": "Notes loaded."}},
+        {
+          "kind": "json",
+          "value": {
+            "type": "response.completed",
+            "response": {"id": "round-2", "model": "fixture-model", "status": "completed", "usage": {"input_tokens": 15, "output_tokens": 4}, "output": []}
+          }
+        },
+        {"kind": "done"}
+      ],
+      "expected": [
+        "started|round-2|fixture-model",
+        "text|0|Notes loaded.",
+        "usage|15|0|4|0",
+        "completed|round-2|completed"
+      ]
+    }
+  ]
+}

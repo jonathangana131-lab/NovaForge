@@ -21,6 +21,7 @@ struct ChatContextBar: View {
     let stop: () -> Void
     let openWorkspaceSurface: (AppTab) -> Void
     let clear: () -> Void
+    var showsHeader = true
     var compact = false
     var glassNamespace: Namespace.ID? = nil
     @Binding var expanded: Bool
@@ -50,47 +51,49 @@ struct ChatContextBar: View {
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Context Bar Body")
         VStack(spacing: 10) {
-            Button {
-                toggleExpanded()
-            } label: {
-                HStack(spacing: 10) {
-                    contextIcon
+            if showsHeader {
+                Button {
+                    toggleExpanded()
+                } label: {
+                    HStack(spacing: 10) {
+                        contextIcon
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(NovaType.headline)
-                            .foregroundStyle(AgentPalette.ink)
-                            .lineLimit(1)
-                        if !compact {
-                            Text(subtitle)
-                                .font(NovaType.caption)
-                                .foregroundStyle(AgentPalette.secondaryText)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title)
+                                .font(NovaType.headline)
+                                .foregroundStyle(AgentPalette.ink)
                                 .lineLimit(1)
-                                .truncationMode(.tail)
+                            if !compact {
+                                Text(subtitle)
+                                    .font(NovaType.caption)
+                                    .foregroundStyle(AgentPalette.secondaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
                         }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                    if !compact {
-                        statusPill
-                    }
+                        if !compact {
+                            statusPill
+                        }
 
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(tint)
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
-                        .frame(width: 38, height: 38)
-                        .background(Circle().fill(tint.opacity(0.10)))
-                        .overlay(Circle().strokeBorder(tint.opacity(0.26), lineWidth: 0.9))
-                        .contentShape(Circle())
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(tint)
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                            .frame(width: 38, height: 38)
+                            .background(Circle().fill(tint.opacity(0.10)))
+                            .overlay(Circle().strokeBorder(tint.opacity(0.26), lineWidth: 0.9))
+                            .contentShape(Circle())
+                    }
+                    .padding(.leading, 2)
+                    .frame(minHeight: AgentDesign.minimumTouchTarget)
+                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                .padding(.leading, 2)
-                .frame(minHeight: AgentDesign.minimumTouchTarget)
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "Hide progress details" : "Show progress details")
+                .accessibilityIdentifier("runProgressToggle")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(expanded ? "Hide progress details" : "Show progress details")
-            .accessibilityIdentifier("runProgressToggle")
 
             if expanded {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -115,10 +118,15 @@ struct ChatContextBar: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, compact ? 4 : 9)
-        .frame(maxWidth: compact ? 290 : .infinity)
+        .padding(.vertical, showsHeader ? (compact ? 4 : 9) : 10)
+        .frame(maxWidth: showsHeader && compact ? 290 : .infinity)
         .runContextSurface(usesPolishedSurface: AgentPerformance.prefersReducedVisualEffects && runtime.isWorking && !expanded, tint: tint)
-        .agentGlassEffectID("chat-context", in: glassNamespace ?? localGlassNamespace)
+        .agentGlassEffectID(
+            NovaMotion.enabled(reduceMotion: reduceMotion) ? "chat-context" : nil,
+            in: NovaMotion.enabled(reduceMotion: reduceMotion)
+                ? (glassNamespace ?? localGlassNamespace)
+                : nil
+        )
     }
 
     @ViewBuilder
@@ -962,10 +970,7 @@ struct AgentTraceRow: View {
         if let humanDetail = AgentActivityPresentation.humanizedVisibleDetail(cleaned) {
             return humanDetail
         }
-        if let summary = jsonArgumentSummary(from: cleaned) {
-            return summary
-        }
-        return cleaned
+        return "Details saved in History."
     }
 
     private func completedTitle(for toolName: String) -> String {
@@ -988,11 +993,11 @@ struct AgentTraceRow: View {
 
     private func runningTitle(for toolName: String) -> String {
         switch toolName {
-        case "write_file": "Writing file"
-        case "append_file": "Updating file"
+        case "write_file": "Creating file"
+        case "append_file": "Editing file"
         case "read_file": "Reading file"
-        case "list_directory": "Listing folder"
-        case "search_text": "Searching workspace"
+        case "list_directory": "Browsing files"
+        case "search_text": "Searching files"
         case "validate_html_file": "Validating HTML"
         case "file_info": "Checking file info"
         case "run_command": "Running command"
@@ -1012,65 +1017,6 @@ struct AgentTraceRow: View {
         return toolName
             .replacingOccurrences(of: "_", with: " ")
             .capitalized
-    }
-
-    private func jsonArgumentSummary(from text: String) -> String? {
-        guard text.hasPrefix("{") else { return nil }
-        guard let data = text.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            if let path = roughJSONStringValue(for: "path", in: text) {
-                return "path: \(shorten(path))"
-            }
-            if let command = roughJSONStringValue(for: "command", in: text) {
-                return "command: \(shorten(command))"
-            }
-            if text.localizedCaseInsensitiveContains("contents") {
-                return "file contents prepared"
-            }
-            return nil
-        }
-        for key in ["path", "file", "filename", "command", "query", "url", "name"] {
-            if let value = object[key] as? String,
-               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "\(key): \(shorten(value))"
-            }
-        }
-        if let count = object["contents"].map({ "\($0)" })?.count {
-            return "content prepared · \(count) chars"
-        }
-        return "\(object.count) argument\(object.count == 1 ? "" : "s") ready"
-    }
-
-    private func roughJSONStringValue(for key: String, in text: String) -> String? {
-        let marker = "\"\(key)\":\""
-        guard let startRange = text.range(of: marker) else { return nil }
-        let valueStart = startRange.upperBound
-        var value = ""
-        var cursor = valueStart
-        var escaped = false
-        while cursor < text.endIndex {
-            let character = text[cursor]
-            if escaped {
-                value.append(character)
-                escaped = false
-            } else if character == "\\" {
-                escaped = true
-            } else if character == "\"" {
-                break
-            } else {
-                value.append(character)
-            }
-            cursor = text.index(after: cursor)
-        }
-        return value.isEmpty ? nil : value
-    }
-
-    private func shorten(_ text: String) -> String {
-        let oneLine = text
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-        guard oneLine.count > 88 else { return oneLine }
-        return String(oneLine.prefix(88)) + "…"
     }
 
     private var symbol: String {

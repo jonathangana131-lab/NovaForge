@@ -24,19 +24,32 @@ actor AgentExecutionCoordinator {
     struct Snapshot: Equatable, Sendable {
         let activeLocalInferenceOwner: String?
         let activeMutationOwnersByWorkspace: [String: String]
+        let queuedLocalInferenceCount: Int
+        let queuedMutationCountsByWorkspace: [String: Int]
 
         var hasActiveWork: Bool {
             activeLocalInferenceOwner != nil || !activeMutationOwnersByWorkspace.isEmpty
         }
+
+        var hasQueuedWork: Bool {
+            queuedLocalInferenceCount > 0 || !queuedMutationCountsByWorkspace.isEmpty
+        }
     }
 
-    private var activeLocalInferenceLease: Lease?
-    private var activeMutationLeases: [String: Lease] = [:]
-    private let pollInterval: Duration
-
-    init(pollInterval: Duration = .milliseconds(70)) {
-        self.pollInterval = pollInterval
+    private struct Waiter {
+        let id: UUID
+        let resource: Lease.Resource
+        let runID: UUID
+        let ownerDescription: String
+        let continuation: CheckedContinuation<Lease, Error>
     }
+
+    private var activeLeases: [Lease.Resource: Lease] = [:]
+    private var waiters: [Lease.Resource: [Waiter]] = [:]
+
+    /// `pollInterval` remains source-compatible with the V1 initializer while
+    /// callers migrate. Arbitration is continuation-driven and never polls.
+    init(pollInterval _: Duration = .milliseconds(70)) {}
 
     func acquireLocalInference(
         runID: UUID,
@@ -54,28 +67,63 @@ actor AgentExecutionCoordinator {
         runID: UUID,
         ownerDescription: String
     ) async throws -> Lease {
+        try await acquireMutation(
+            workspaceID: nil,
+            workspaceName: workspaceName,
+            runID: runID,
+            ownerDescription: ownerDescription
+        )
+    }
+
+    func acquireMutation(
+        workspaceID: UUID?,
+        workspaceName: String,
+        runID: UUID,
+        ownerDescription: String
+    ) async throws -> Lease {
         try await acquire(
-            resource: .workspaceMutation(Self.workspaceKey(workspaceName)),
+            resource: .workspaceMutation(
+                Self.workspaceKey(id: workspaceID, name: workspaceName)
+            ),
             runID: runID,
             ownerDescription: ownerDescription
         )
     }
 
     func release(_ lease: Lease) {
-        switch lease.resource {
-        case .localInference:
-            guard activeLocalInferenceLease?.id == lease.id else { return }
-            activeLocalInferenceLease = nil
-        case .workspaceMutation(let workspaceKey):
-            guard activeMutationLeases[workspaceKey]?.id == lease.id else { return }
-            activeMutationLeases[workspaceKey] = nil
-        }
+        guard activeLeases[lease.resource]?.id == lease.id else { return }
+        activeLeases[lease.resource] = nil
+        grantNextWaiter(for: lease.resource)
     }
 
     func snapshot() -> Snapshot {
-        Snapshot(
-            activeLocalInferenceOwner: activeLocalInferenceLease?.ownerDescription,
-            activeMutationOwnersByWorkspace: activeMutationLeases.mapValues(\.ownerDescription)
+        var activeLocalInferenceOwner: String?
+        var activeMutationOwnersByWorkspace: [String: String] = [:]
+        for (resource, lease) in activeLeases {
+            switch resource {
+            case .localInference:
+                activeLocalInferenceOwner = lease.ownerDescription
+            case .workspaceMutation(let workspaceKey):
+                activeMutationOwnersByWorkspace[workspaceKey] = lease.ownerDescription
+            }
+        }
+
+        var queuedLocalInferenceCount = 0
+        var queuedMutationCountsByWorkspace: [String: Int] = [:]
+        for (resource, resourceWaiters) in waiters where !resourceWaiters.isEmpty {
+            switch resource {
+            case .localInference:
+                queuedLocalInferenceCount = resourceWaiters.count
+            case .workspaceMutation(let workspaceKey):
+                queuedMutationCountsByWorkspace[workspaceKey] = resourceWaiters.count
+            }
+        }
+
+        return Snapshot(
+            activeLocalInferenceOwner: activeLocalInferenceOwner,
+            activeMutationOwnersByWorkspace: activeMutationOwnersByWorkspace,
+            queuedLocalInferenceCount: queuedLocalInferenceCount,
+            queuedMutationCountsByWorkspace: queuedMutationCountsByWorkspace
         )
     }
 
@@ -84,42 +132,82 @@ actor AgentExecutionCoordinator {
         runID: UUID,
         ownerDescription: String
     ) async throws -> Lease {
-        while lease(for: resource) != nil {
-            try Task.checkCancellation()
-            try await Task.sleep(for: pollInterval)
+        try Task.checkCancellation()
+        let waiterID = UUID()
+        return try await withTaskCancellationHandler {
+            let lease = try await withCheckedThrowingContinuation { continuation in
+                enqueue(
+                    Waiter(
+                        id: waiterID,
+                        resource: resource,
+                        runID: runID,
+                        ownerDescription: ownerDescription,
+                        continuation: continuation
+                    )
+                )
+            }
+
+            do {
+                // Cancellation can race the handoff. Never return an owned lease
+                // to a task that was cancelled while its continuation resumed.
+                try Task.checkCancellation()
+                return lease
+            } catch {
+                release(lease)
+                throw error
+            }
+        } onCancel: {
+            Task {
+                await self.cancelWaiter(id: waiterID, for: resource)
+            }
+        }
+    }
+
+    private func enqueue(_ waiter: Waiter) {
+        waiters[waiter.resource, default: []].append(waiter)
+        grantNextWaiter(for: waiter.resource)
+    }
+
+    private func cancelWaiter(id: UUID, for resource: Lease.Resource) {
+        if activeLeases[resource]?.id == id {
+            activeLeases[resource] = nil
+            grantNextWaiter(for: resource)
+            return
         }
 
-        try Task.checkCancellation()
+        guard var resourceWaiters = waiters[resource],
+              let index = resourceWaiters.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let waiter = resourceWaiters.remove(at: index)
+        waiters[resource] = resourceWaiters.isEmpty ? nil : resourceWaiters
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private func grantNextWaiter(for resource: Lease.Resource) {
+        guard activeLeases[resource] == nil,
+              var resourceWaiters = waiters[resource],
+              !resourceWaiters.isEmpty else {
+            return
+        }
+
+        let waiter = resourceWaiters.removeFirst()
+        waiters[resource] = resourceWaiters.isEmpty ? nil : resourceWaiters
         let lease = Lease(
-            id: UUID(),
-            resource: resource,
-            runID: runID,
-            ownerDescription: ownerDescription,
+            id: waiter.id,
+            resource: waiter.resource,
+            runID: waiter.runID,
+            ownerDescription: waiter.ownerDescription,
             acquiredAt: Date()
         )
-        install(lease)
-        return lease
+        activeLeases[resource] = lease
+        waiter.continuation.resume(returning: lease)
     }
 
-    private func lease(for resource: Lease.Resource) -> Lease? {
-        switch resource {
-        case .localInference:
-            activeLocalInferenceLease
-        case .workspaceMutation(let workspaceKey):
-            activeMutationLeases[workspaceKey]
+    static func workspaceKey(id: UUID?, name workspaceName: String) -> String {
+        if let id {
+            return "id:\(id.uuidString.lowercased())"
         }
-    }
-
-    private func install(_ lease: Lease) {
-        switch lease.resource {
-        case .localInference:
-            activeLocalInferenceLease = lease
-        case .workspaceMutation(let workspaceKey):
-            activeMutationLeases[workspaceKey] = lease
-        }
-    }
-
-    private static func workspaceKey(_ workspaceName: String) -> String {
         let trimmed = workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed.isEmpty ? "default" : trimmed).lowercased()
     }

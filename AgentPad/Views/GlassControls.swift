@@ -566,6 +566,66 @@ struct WorkspaceStatusSnapshot: Equatable, Sendable {
         progressSteps: []
     )
 
+    init(presentation: AgentSystemScopePresentation) {
+        let group = presentation.activeGroup
+        let failure = presentation.failure
+        let approval = presentation.pendingApproval
+        let artifactCount = group?.artifacts.count ?? 0
+
+        isVisible = presentation.isAccepting ||
+            presentation.isSynchronizing || group != nil || failure != nil
+        blocksCommand = presentation.blocksCommand
+        isWorking = presentation.isWorking
+
+        if approval != nil {
+            title = "Approval needed"
+        } else if presentation.isAccepting {
+            title = "Starting run"
+        } else if presentation.isSynchronizing {
+            title = "Restoring activity"
+        } else if failure != nil || group?.state == .failed ||
+            group?.state == .rejected {
+            title = "Recovery available"
+        } else if let group {
+            title = AgentCanonicalActivityPresentation.stateLabel(
+                for: group.state
+            )
+        } else {
+            title = "Workspace ready"
+        }
+
+        if let approval {
+            detail = approval.publicSummary
+        } else if let failure {
+            detail = failure.userMessage
+        } else if let group {
+            detail = group.summary
+        } else if presentation.isSynchronizing {
+            detail = "Rebuilding the durable run receipt."
+        } else {
+            detail = "Chat, files, runs, and terminal share this sandbox."
+        }
+
+        if approval != nil {
+            tone = .approval
+        } else if failure != nil || group?.state == .failed ||
+            group?.state == .rejected {
+            tone = .error
+        } else if group?.state == .cancelled ||
+            group?.state == .interrupted {
+            tone = .paused
+        } else if presentation.isWorking {
+            tone = .working
+        } else if group?.state == .succeeded && artifactCount > 0 {
+            tone = .changed
+        } else {
+            tone = .ready
+        }
+
+        changedText = artifactCount > 0 ? "\(artifactCount) changed" : nil
+        progressSteps = []
+    }
+
     @MainActor
     init(runtime: AgentRuntime) {
         let artifactCount = runtime.currentArtifacts.count
@@ -1041,11 +1101,14 @@ struct WorkspaceStatusStrip: View {
                     Image(systemName: "pause.fill")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(AgentPalette.rose)
-                        .frame(width: 38, height: 38)
+                        .frame(
+                            width: AgentDesign.minimumTouchTarget,
+                            height: AgentDesign.minimumTouchTarget
+                        )
                         .contentShape(Circle())
                 }
                 .agentInteractiveGlassButtonStyle(
-                    radius: 19,
+                    radius: AgentDesign.minimumTouchTarget / 2,
                     tint: AgentPalette.rose,
                     selected: true,
                     glassID: "workspace-status-pause",
@@ -1062,11 +1125,14 @@ struct WorkspaceStatusStrip: View {
                 Image(systemName: destinationSymbol)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(tint)
-                    .frame(width: 38, height: 38)
+                    .frame(
+                        width: AgentDesign.minimumTouchTarget,
+                        height: AgentDesign.minimumTouchTarget
+                    )
                     .contentShape(Circle())
             }
             .agentInteractiveGlassButtonStyle(
-                radius: 19,
+                radius: AgentDesign.minimumTouchTarget / 2,
                 tint: tint,
                 selected: false,
                 glassID: "workspace-status-destination",

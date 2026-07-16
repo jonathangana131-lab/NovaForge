@@ -1,3 +1,5 @@
+import AgentPolicy
+import AgentTools
 import SwiftData
 import SwiftUI
 
@@ -81,6 +83,61 @@ struct TerminalOutputLine: Identifiable, Hashable, Sendable {
 
 extension TerminalOutputLine: TerminalConsoleSearchableLineRepresenting {}
 
+private struct TerminalCommandExecutionOutcome: Sendable {
+    let output: String
+    let isError: Bool
+    let mutationDurablyCompleted: Bool
+    let mutationMayHaveApplied: Bool
+    let mutationOperationID: UUID?
+}
+
+private struct TerminalPolicyMutationDispatch: Sendable {
+    let coordinator: AgentPolicyMutationCoordinator
+    let context: AgentPolicyMutationExecutionContext
+    let operationID: UUID
+}
+
+private extension TerminalCommandDraft {
+    /// Terminal mutation output is intentionally reconstructed from the
+    /// already-visible, validated draft. The policy coordinator returns only a
+    /// digest receipt, so this text is published only after that receipt and
+    /// never by executing the command a second time.
+    var completedMutationSummary: String {
+        let arguments = Array(tokens.dropFirst())
+        switch commandName {
+        case "mkdir":
+            return "Created \(arguments.first ?? "path")"
+        case "touch":
+            return "Touched \(arguments.first ?? "path")"
+        case "rm":
+            return "Removed \(arguments.first ?? "path")"
+        case "mv":
+            guard arguments.count == 2 else { return "Move completed" }
+            return "Moved \(arguments[0]) to \(arguments[1])"
+        case "cp":
+            guard arguments.count == 2 else { return "Copy completed" }
+            return "Copied \(arguments[0]) to \(arguments[1])"
+        default:
+            return "Workspace command completed"
+        }
+    }
+}
+
+private extension AgentPolicyMutationServiceError {
+    var terminalEffectMayHaveApplied: Bool {
+        switch self {
+        case .effectFailed, .recoveryFailed:
+            true
+        case .invalidComposition, .cancelled, .requestRejected,
+             .policyDenied, .policyIndeterminate, .approvalRejected,
+             .approvalFailed, .authorizationFailed, .claimFailed,
+             .stagedAutomaticAuthorizationUnsupported,
+             .stagedPreparationMismatch, .approvalBindingMismatch:
+            false
+        }
+    }
+}
+
 struct TerminalConsoleFocusRequest: Identifiable, Equatable {
     let id: UUID
     let command: String
@@ -115,7 +172,7 @@ struct TerminalConsoleView: View {
     @State private var appliedFocusID: UUID?
     @State private var hasSeededTerminalStress = false
     @State private var commandTask: Task<Void, Never>?
-    @State private var pendingMutatingCommand: String?
+    @State private var activeCommandExecutionID: UUID?
     @State private var copiedOutputLineID: UUID?
     @State private var copyFeedbackTask: Task<Void, Never>?
     @State private var terminalSaveError: String?
@@ -177,26 +234,6 @@ struct TerminalConsoleView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        .confirmationDialog(
-            "Run file-changing command?",
-            isPresented: Binding(
-                get: { pendingMutatingCommand != nil },
-                set: { if !$0 { pendingMutatingCommand = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let command = pendingMutatingCommand {
-                Button("Run Command", role: .destructive) {
-                    pendingMutatingCommand = nil
-                    executeCommand(command)
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                pendingMutatingCommand = nil
-            }
-        } message: {
-            Text("NovaForge will run this inside the current workspace only, but it can still create, move, copy, or delete files.")
-        }
         .alert(
             "Terminal Proof Not Saved",
             isPresented: Binding(
@@ -244,6 +281,7 @@ struct TerminalConsoleView: View {
         .onDisappear {
             commandTask?.cancel()
             commandTask = nil
+            activeCommandExecutionID = nil
             copyFeedbackTask?.cancel()
             copyFeedbackTask = nil
             isExecuting = false
@@ -357,6 +395,7 @@ struct TerminalConsoleView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("terminalQuickChecks")
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminalCommandDeck")
     }
 
@@ -445,7 +484,10 @@ struct TerminalConsoleView: View {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(selected ? AgentPalette.ink : tint)
-                .frame(width: 40, height: 40)
+                .frame(
+                    width: AgentDesign.minimumTouchTarget,
+                    height: AgentDesign.minimumTouchTarget
+                )
                 .background(
                     Circle()
                         .fill(tint.opacity(selected ? 0.26 : 0.10))
@@ -519,7 +561,7 @@ struct TerminalConsoleView: View {
                     .minimumScaleFactor(0.82)
                     .foregroundStyle(AgentPalette.ink)
                     .padding(.horizontal, 9)
-                    .frame(height: 30)
+                    .frame(minHeight: AgentDesign.minimumTouchTarget)
                     .agentControlSurface(radius: 9, tint: AgentPalette.lilac.opacity(0.18), selected: true)
                 }
                 .buttonStyle(.plain)
@@ -540,7 +582,7 @@ struct TerminalConsoleView: View {
                 .lineLimit(1)
                 .foregroundStyle(AgentPalette.ink)
                 .padding(.horizontal, 9)
-                .frame(height: 30)
+                .frame(minHeight: AgentDesign.minimumTouchTarget)
                 .agentControlSurface(radius: 9, tint: AgentPalette.cyan.opacity(0.18), selected: true)
             }
             .buttonStyle(.plain)
@@ -645,6 +687,7 @@ struct TerminalConsoleView: View {
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .agentRowSurface(radius: 16, tint: line.isError ? AgentPalette.rose : AgentPalette.cyan, selected: line.isError || isFocused)
+                                .accessibilityElement(children: .contain)
                                 .accessibilityIdentifier("terminalOutputRecord")
                                 .id(line.id)
                             }
@@ -983,22 +1026,18 @@ struct TerminalConsoleView: View {
         return draftCommandIsMutating ? AgentPalette.lilac : AgentPalette.green
     }
 
-    private func shouldConfirmMutation(_ command: String) -> Bool {
-        TerminalCommandDraft(command).isMutating
-    }
-
     private func runCommand() {
         guard !isExecuting else { return }
         let cmd = trimmedInputCommand
-        guard TerminalCommandDraft(cmd).canRun else { return }
-        if shouldConfirmMutation(cmd) {
-            pendingMutatingCommand = cmd
+        let draft = TerminalCommandDraft(cmd)
+        guard draft.canRun else { return }
+        if draft.isMutating {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            return
         }
         executeCommand(cmd)
     }
 
+    @MainActor
     private func executeCommand(_ cmd: String) {
         inputCommand = ""
         commandFocused = false
@@ -1010,30 +1049,146 @@ struct TerminalConsoleView: View {
         }
         isExecuting = true
         let startTime = Date()
-        
+
         let workspace = runtime.workspace
-        commandTask?.cancel()
-        commandTask = Task.detached(priority: .userInitiated) {
-            let runner = CommandRunner(workspace: workspace)
-            let result: (output: String, isError: Bool)
-            
+        let draft = TerminalCommandDraft(cmd)
+        let isMutating = draft.isMutating
+        let projectID = project.id
+        let conversationID = runtime.activeConversationID
+        let mutationOperationID = isMutating ? UUID() : nil
+        let mutationDispatch: TerminalPolicyMutationDispatch?
+        let mutationPreparationError: String?
+
+        if let mutationOperationID {
             do {
-                result = (try runner.run(cmd), false)
+                let policyRuntime = AgentPolicyMutationRuntime.shared
+                let context = try policyRuntime.makeExecutionContext(
+                    workspace: workspace,
+                    operationID: mutationOperationID,
+                    idempotencyKey: Self.terminalMutationIdempotencyKey(
+                        operationID: mutationOperationID
+                    ),
+                    conversationID: conversationID,
+                    projectID: projectID,
+                    acceptedAt: startTime,
+                    sessionID: "terminal"
+                )
+                mutationDispatch = TerminalPolicyMutationDispatch(
+                    coordinator: try policyRuntime.coordinator(),
+                    context: context,
+                    operationID: mutationOperationID
+                )
+                mutationPreparationError = nil
             } catch {
-                result = (error.localizedDescription, true)
+                mutationDispatch = nil
+                mutationPreparationError = error.localizedDescription
             }
-            
+        } else {
+            mutationDispatch = nil
+            mutationPreparationError = nil
+        }
+
+        commandTask?.cancel()
+        let executionID = UUID()
+        activeCommandExecutionID = executionID
+        commandTask = Task.detached(priority: .userInitiated) {
+            let outcome: TerminalCommandExecutionOutcome
+
+            if isMutating, let mutationDispatch {
+                do {
+                    let receipt = try await mutationDispatch.coordinator
+                        .performTerminal(
+                            context: mutationDispatch.context,
+                            operation: TerminalCanonicalMutationOperation
+                                .runCommand(RunCommandArguments(command: cmd))
+                        )
+                    outcome = TerminalCommandExecutionOutcome(
+                        output: draft.completedMutationSummary,
+                        isError: false,
+                        mutationDurablyCompleted: true,
+                        mutationMayHaveApplied: false,
+                        mutationOperationID: receipt.operationID
+                    )
+                } catch is CancellationError {
+                    await MainActor.run {
+                        guard activeCommandExecutionID == executionID else {
+                            return
+                        }
+                        activeCommandExecutionID = nil
+                        isExecuting = false
+                        commandTask = nil
+                    }
+                    return
+                } catch let policyError as AgentPolicyMutationServiceError
+                    where policyError == .cancelled
+                {
+                    await MainActor.run {
+                        guard activeCommandExecutionID == executionID else {
+                            return
+                        }
+                        activeCommandExecutionID = nil
+                        isExecuting = false
+                        commandTask = nil
+                    }
+                    return
+                } catch let policyError as AgentPolicyMutationServiceError {
+                    outcome = TerminalCommandExecutionOutcome(
+                        output: policyError.localizedDescription,
+                        isError: true,
+                        mutationDurablyCompleted: false,
+                        mutationMayHaveApplied: policyError.terminalEffectMayHaveApplied,
+                        mutationOperationID: mutationDispatch.operationID
+                    )
+                } catch {
+                    outcome = TerminalCommandExecutionOutcome(
+                        output: error.localizedDescription,
+                        isError: true,
+                        mutationDurablyCompleted: false,
+                        mutationMayHaveApplied: false,
+                        mutationOperationID: mutationDispatch.operationID
+                    )
+                }
+            } else if isMutating {
+                outcome = TerminalCommandExecutionOutcome(
+                    output: mutationPreparationError
+                        ?? "NovaForge could not prepare this workspace command.",
+                    isError: true,
+                    mutationDurablyCompleted: false,
+                    mutationMayHaveApplied: false,
+                    mutationOperationID: mutationOperationID
+                )
+            } else {
+                do {
+                    outcome = TerminalCommandExecutionOutcome(
+                        output: try CommandRunner(workspace: workspace).run(cmd),
+                        isError: false,
+                        mutationDurablyCompleted: false,
+                        mutationMayHaveApplied: false,
+                        mutationOperationID: nil
+                    )
+                } catch {
+                    outcome = TerminalCommandExecutionOutcome(
+                        output: error.localizedDescription,
+                        isError: true,
+                        mutationDurablyCompleted: false,
+                        mutationMayHaveApplied: false,
+                        mutationOperationID: nil
+                    )
+                }
+            }
+
             let duration = Date().timeIntervalSince(startTime) * 1000.0
             let completedAt = Date()
-            let output = result.output
-            let commandFailed = result.isError
             await MainActor.run {
-                guard !Task.isCancelled else { return }
+                let ownsExecution = activeCommandExecutionID == executionID
+                guard ownsExecution ||
+                        outcome.mutationDurablyCompleted ||
+                        outcome.mutationMayHaveApplied else { return }
                 let record = TerminalCommandRecord(
                     project: project,
                     command: cmd,
-                    output: output,
-                    status: commandFailed ? .failed : .completed,
+                    output: outcome.output,
+                    status: outcome.isError ? .failed : .completed,
                     workspaceName: workspace.workspaceName,
                     startedAt: startTime,
                     completedAt: completedAt,
@@ -1050,18 +1205,46 @@ struct TerminalConsoleView: View {
                 commandHistory = TerminalConsoleState.commandHistory(from: consoleLines, maxCount: Self.maxHistoryCount)
                 updateFilteredConsoleLines()
                 modelContext.insert(record)
+
+                var eventMetadata = [
+                    "command": cmd,
+                    "workspace": workspace.workspaceName
+                ]
+                if let operationID = outcome.mutationOperationID {
+                    eventMetadata["workspaceMutationID"] = operationID.uuidString
+                }
+                if outcome.mutationDurablyCompleted {
+                    eventMetadata["mutationOutcome"] = "completed"
+                } else if outcome.mutationMayHaveApplied {
+                    eventMetadata["mutationOutcome"] = "may_have_applied"
+                } else if isMutating {
+                    eventMetadata["mutationOutcome"] = "not_applied"
+                }
+
+                let eventTitle: String
+                let eventSeverity: ProjectEventSeverity
+                if outcome.mutationMayHaveApplied {
+                    eventTitle = "Terminal mutation needs inspection"
+                    eventSeverity = .warning
+                } else if outcome.isError {
+                    eventTitle = "Terminal command failed"
+                    eventSeverity = .failure
+                } else {
+                    eventTitle = "Terminal command completed"
+                    eventSeverity = .success
+                }
                 ProjectEventRecorder.record(
                     project: project,
                     kind: .terminalCommand,
-                    title: commandFailed ? "Terminal command failed" : "Terminal command completed",
+                    title: eventTitle,
                     detail: cmd,
-                    severity: commandFailed ? .failure : .success,
+                    severity: eventSeverity,
                     sourceType: .terminalCommand,
                     sourceID: record.id,
-                    metadata: ["command": cmd, "workspace": workspace.workspaceName],
+                    metadata: eventMetadata,
                     context: modelContext
                 )
-                if !commandFailed, shouldConfirmMutation(cmd) {
+                if outcome.mutationDurablyCompleted {
                     ProjectEventRecorder.recordFileChange(
                         project: project,
                         action: "Ran terminal mutation",
@@ -1070,18 +1253,28 @@ struct TerminalConsoleView: View {
                         context: modelContext
                     )
                     runtime.noteWorkspaceChanged()
+                } else if outcome.mutationMayHaveApplied {
+                    // A thrown effect or failed settlement is never ordinary
+                    // success, but cached file summaries must assume bytes may
+                    // have changed until the operator inspects the workspace.
+                    runtime.noteWorkspaceChanged()
                 }
                 do {
                     try modelContext.save()
                 } catch {
                     modelContext.rollback()
-                    terminalSaveError = "Command ran, but NovaForge could not save its terminal record or timeline event. The output remains visible only in this Terminal session. \(error.localizedDescription)"
+                    terminalSaveError = "NovaForge could not save this terminal result or timeline event. The output remains visible only in this Terminal session. \(error.localizedDescription)"
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                 }
-                isExecuting = false
-                commandTask = nil
+                if ownsExecution {
+                    activeCommandExecutionID = nil
+                    isExecuting = false
+                    commandTask = nil
+                }
 
-                if commandFailed {
+                if !ownsExecution {
+                    return
+                } else if outcome.isError {
                     let errorImpact = UINotificationFeedbackGenerator()
                     errorImpact.notificationOccurred(.error)
                 } else {
@@ -1090,6 +1283,12 @@ struct TerminalConsoleView: View {
                 }
             }
         }
+    }
+
+    private static func terminalMutationIdempotencyKey(
+        operationID: UUID
+    ) -> String {
+        "terminal.run-command.v1:\(operationID.uuidString.lowercased())"
     }
     
     private func clearConsole() {

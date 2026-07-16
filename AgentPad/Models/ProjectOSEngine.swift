@@ -15,6 +15,51 @@ enum ProjectBootstrap {
     /// project link as an orphan. This marker makes that conversion exactly
     /// once; after it is set, nil is an intentional General scope forever.
     static let legacyOwnershipMigrationKey = "NovaForge.legacyProjectOwnershipMigration.v2"
+    /// Set at every launch after the persistent container is selected. An
+    /// unknown-model compatibility store is a separate durable branch, not the
+    /// legacy source store, so it must neither consume nor perform the source
+    /// store's one-time ownership migration.
+    static let compatibilityFallbackActiveKey = "NovaForge.compatibilityFallbackActive.v1"
+
+    /// All storage reads needed to select a project and perform the one-time
+    /// ownership migration. Keeping these injectable makes a failed fetch a
+    /// first-class launch error instead of indistinguishable from an empty
+    /// store.
+    struct Fetches {
+        var projects: (ModelContext) throws -> [Project]
+        var runRecords: (ModelContext) throws -> [AgentRunRecord]
+        var toolRuns: (ModelContext) throws -> [ToolRun]
+        var terminalCommands: (ModelContext) throws -> [TerminalCommandRecord]
+        var artifacts: (ModelContext) throws -> [ProjectArtifact]
+        var fileChanges: (ModelContext) throws -> [ProjectFileChange]
+        var events: (ModelContext) throws -> [ProjectEvent]
+
+        static var live: Fetches {
+            Fetches(
+                projects: { try $0.fetch(FetchDescriptor<Project>()) },
+                runRecords: { try $0.fetch(FetchDescriptor<AgentRunRecord>()) },
+                toolRuns: { try $0.fetch(FetchDescriptor<ToolRun>()) },
+                terminalCommands: { try $0.fetch(FetchDescriptor<TerminalCommandRecord>()) },
+                artifacts: { try $0.fetch(FetchDescriptor<ProjectArtifact>()) },
+                fileChanges: { try $0.fetch(FetchDescriptor<ProjectFileChange>()) },
+                events: { try $0.fetch(FetchDescriptor<ProjectEvent>()) }
+            )
+        }
+    }
+
+    struct PrefetchedRecords {
+        fileprivate let projects: [Project]
+        fileprivate let legacyOwnership: LegacyOwnershipRecords?
+    }
+
+    fileprivate struct LegacyOwnershipRecords {
+        let runRecords: [AgentRunRecord]
+        let toolRuns: [ToolRun]
+        let terminalCommands: [TerminalCommandRecord]
+        let artifacts: [ProjectArtifact]
+        let fileChanges: [ProjectFileChange]
+        let events: [ProjectEvent]
+    }
 
     static func preferredProject(from projects: [Project], settings: AgentSettings?) -> Project? {
         if let activeProjectID = settings?.activeProjectID,
@@ -37,11 +82,59 @@ enum ProjectBootstrap {
         in context: ModelContext,
         settings: AgentSettings?,
         now: Date = Date(),
-        migrationStore: UserDefaults = .standard
+        migrationStore: UserDefaults = .standard,
+        fetches: Fetches = .live
+    ) throws -> Project {
+        let records = try prefetchRecords(
+            in: context,
+            migrationStore: migrationStore,
+            fetches: fetches
+        )
+        return ensureDefaultProject(
+            in: context,
+            settings: settings,
+            now: now,
+            prefetched: records
+        )
+    }
+
+    /// Read every legacy collection before applying any relationship changes.
+    /// If one read fails, the caller can abort the enclosing launch transaction
+    /// with no partial migration to unwind.
+    static func prefetchRecords(
+        in context: ModelContext,
+        migrationStore: UserDefaults = .standard,
+        fetches: Fetches = .live
+    ) throws -> PrefetchedRecords {
+        let projects = try fetches.projects(context)
+        let legacyOwnership: LegacyOwnershipRecords?
+        if migrationStore.bool(forKey: legacyOwnershipMigrationKey) ||
+            migrationStore.bool(forKey: compatibilityFallbackActiveKey) {
+            legacyOwnership = nil
+        } else {
+            // Evaluate these reads before returning the snapshot. Do not move
+            // any relationships until the entire legacy store is readable.
+            legacyOwnership = LegacyOwnershipRecords(
+                runRecords: try fetches.runRecords(context),
+                toolRuns: try fetches.toolRuns(context),
+                terminalCommands: try fetches.terminalCommands(context),
+                artifacts: try fetches.artifacts(context),
+                fileChanges: try fetches.fileChanges(context),
+                events: try fetches.events(context)
+            )
+        }
+        return PrefetchedRecords(projects: projects, legacyOwnership: legacyOwnership)
+    }
+
+    @discardableResult
+    static func ensureDefaultProject(
+        in context: ModelContext,
+        settings: AgentSettings?,
+        now: Date = Date(),
+        prefetched records: PrefetchedRecords
     ) -> Project {
-        let projects = (try? context.fetch(FetchDescriptor<Project>())) ?? []
         let project: Project
-        if let preferred = preferredProject(from: projects, settings: settings) {
+        if let preferred = preferredProject(from: records.projects, settings: settings) {
             project = preferred
         } else {
             let workspaceName = settings?.activeWorkspaceName ?? "Default"
@@ -60,8 +153,8 @@ enum ProjectBootstrap {
             )
         }
 
-        if !migrationStore.bool(forKey: legacyOwnershipMigrationKey) {
-            let linkedCount = linkLegacyOrphans(to: project, context: context)
+        if let legacyOwnership = records.legacyOwnership {
+            let linkedCount = linkLegacyOrphans(to: project, records: legacyOwnership)
             if linkedCount > 0 {
                 ProjectEventRecorder.record(
                     project: project,
@@ -91,20 +184,37 @@ enum ProjectBootstrap {
     /// this separate means a disk-full error cannot permanently skip the
     /// one-time legacy conversion just because UserDefaults wrote first.
     static func markLegacyOwnershipMigrationComplete(in store: UserDefaults = .standard) {
+        guard !store.bool(forKey: compatibilityFallbackActiveKey) else {
+            // AppRoot can finish additional launch repairs after App.init. Keep
+            // every such call from consuming the source store's migration while
+            // this process is rendering the separate compatibility branch. The
+            // source marker may already be true, so preserve it byte-for-byte.
+            return
+        }
         store.set(true, forKey: legacyOwnershipMigrationKey)
+    }
+
+    /// Must be called once per launch before bootstrap reads UserDefaults.
+    /// Compatibility mode must preserve the source store's migration marker:
+    /// false remains eligible for a later normal migration, while true prevents
+    /// modern General evidence from being mistaken for legacy ownership.
+    static func setCompatibilityFallbackActive(
+        _ isActive: Bool,
+        in store: UserDefaults = .standard
+    ) {
+        store.set(isActive, forKey: compatibilityFallbackActiveKey)
     }
 
     /// Old nil links are migrated once, but any evidence already tied to a
     /// nil-scoped canonical run is modern General work and must never move.
-    private static func linkLegacyOrphans(to project: Project, context: ModelContext) -> Int {
+    private static func linkLegacyOrphans(to project: Project, records: LegacyOwnershipRecords) -> Int {
         let generalRunIDs = Set(
-            ((try? context.fetch(FetchDescriptor<AgentRunRecord>())) ?? [])
+            records.runRecords
                 .filter { $0.projectIDString == nil }
                 .map { $0.id.uuidString }
         )
-        let toolRuns = (try? context.fetch(FetchDescriptor<ToolRun>())) ?? []
         let generalToolRunIDs = Set(
-            toolRuns
+            records.toolRuns
                 .filter { run in
                     guard let runIDString = normalizedUUIDString(run.runIDString) else { return false }
                     return generalRunIDs.contains(runIDString)
@@ -117,26 +227,26 @@ enum ProjectBootstrap {
         }
 
         var count = 0
-        for run in toolRuns where run.project == nil && !generalRunIDs.contains(normalizedUUIDString(run.runIDString) ?? "") {
+        for run in records.toolRuns where run.project == nil && !generalRunIDs.contains(normalizedUUIDString(run.runIDString) ?? "") {
             run.project = project
             count += 1
         }
-        for command in ((try? context.fetch(FetchDescriptor<TerminalCommandRecord>())) ?? [])
+        for command in records.terminalCommands
             where command.project == nil && !belongsToGeneralRun(command.sourceToolRunIDString) {
             command.project = project
             count += 1
         }
-        for artifact in ((try? context.fetch(FetchDescriptor<ProjectArtifact>())) ?? [])
+        for artifact in records.artifacts
             where artifact.project == nil && !belongsToGeneralRun(artifact.sourceToolRunIDString) {
             artifact.project = project
             count += 1
         }
-        for change in ((try? context.fetch(FetchDescriptor<ProjectFileChange>())) ?? [])
+        for change in records.fileChanges
             where change.project == nil && !belongsToGeneralRun(change.sourceToolRunIDString) {
             change.project = project
             count += 1
         }
-        for event in ((try? context.fetch(FetchDescriptor<ProjectEvent>())) ?? []) where event.project == nil {
+        for event in records.events where event.project == nil {
             event.project = project
             count += 1
         }

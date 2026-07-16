@@ -72,9 +72,20 @@ struct AgentPalette {
     static var lilac: Color { theme.lilac }
     static var green: Color { theme.green }
     static var rose: Color { theme.rose }
-    static var indigo: Color { theme.semanticWarning }
+    /// UltraCode keeps one recognizable violet identity across every theme.
+    /// This used to alias `semanticWarning`, turning the promised purple mode
+    /// amber/gold and making it read like an error state in Midnight and
+    /// White Gold. Keep contrast slightly deeper on light glass.
+    static var indigo: Color {
+        theme.isLight
+            ? Color(red: 0.390, green: 0.205, blue: 0.780)
+            : Color(red: 0.670, green: 0.455, blue: 1.000)
+    }
     static var surface: Color { theme.surface }
     static var surfaceElevated: Color { theme.surfaceElevated }
+    static var opaqueSurfaceElevated: Color {
+        Color(uiColor: UIColor(theme.surfaceElevated).withAlphaComponent(1))
+    }
     static var surfaceAlt: Color { theme.surfaceAlt }
     static var row: Color { theme.row }
     static var rowSelected: Color { theme.rowSelected }
@@ -204,42 +215,44 @@ enum AgentPerformance {
     static func frameAverage(_ surface: FrameSurface, fps: Double) {
         switch surface {
         case .projectIdle:
-            value("Project Idle FPS", fps)
-            trace("Project Idle FPS: \(fps)")
+            frameValue("Project Idle FPS", fps)
         case .projectScroll:
-            value("Project Scroll FPS", fps)
-            trace("Project Scroll FPS: \(fps)")
+            frameValue("Project Scroll FPS", fps)
         case .chatStreaming:
-            value("Chat Streaming FPS", fps)
-            trace("Chat Streaming FPS: \(fps)")
+            frameValue("Chat Streaming FPS", fps)
         }
     }
 
     static func worstFrame(_ surface: FrameSurface, milliseconds: Double) {
         switch surface {
         case .projectIdle:
-            value("Project Idle Worst Frame ms", milliseconds)
-            trace("Project Idle Worst Frame ms: \(milliseconds)")
+            frameValue("Project Idle Worst Frame ms", milliseconds)
         case .projectScroll:
-            value("Project Scroll Worst Frame ms", milliseconds)
-            trace("Project Scroll Worst Frame ms: \(milliseconds)")
+            frameValue("Project Scroll Worst Frame ms", milliseconds)
         case .chatStreaming:
-            value("Chat Streaming Worst Frame ms", milliseconds)
-            trace("Chat Streaming Worst Frame ms: \(milliseconds)")
+            frameValue("Chat Streaming Worst Frame ms", milliseconds)
         }
     }
 
     static func hitchCount(_ surface: FrameSurface, count: Int) {
         switch surface {
         case .projectIdle:
-            value("Project Idle Hitch Count", Double(count))
-            trace("Project Idle Hitch Count: \(Double(count))")
+            frameValue("Project Idle Hitch Count", Double(count))
         case .projectScroll:
-            value("Project Scroll Hitch Count", Double(count))
-            trace("Project Scroll Hitch Count: \(Double(count))")
+            frameValue("Project Scroll Hitch Count", Double(count))
         case .chatStreaming:
-            value("Chat Streaming Hitch Count", Double(count))
-            trace("Chat Streaming Hitch Count: \(Double(count))")
+            frameValue("Chat Streaming Hitch Count", Double(count))
+        }
+    }
+
+    /// Frame profiling must produce exactly one parseable text sample whether
+    /// or not detailed event tracing is enabled. `value` already traces in the
+    /// detailed-events lane, so emitting a second line here would add observer
+    /// I/O directly to the CADisplayLink window being measured.
+    private static func frameValue(_ name: StaticString, _ sample: Double) {
+        value(name, sample)
+        if !shouldTraceDetailedEvents {
+            trace("\(String(describing: name)): \(sample)")
         }
     }
 
@@ -272,7 +285,12 @@ enum AgentPerformance {
     private static func trace(_ message: @autoclosure () -> String) {
         guard shouldProfileFrameRate || shouldProfileBodyEvaluations || shouldTraceDetailedEvents else { return }
         let line = "[NovaForgePerformance] \(message())"
-        print(line)
+        // The performance gate consumes unified os_log output. Mirroring every
+        // detailed frame event to stdout synchronously doubles observer work on
+        // the main thread and can lower the cadence that the probe is measuring.
+        if !(shouldProfileFrameRate && shouldTraceDetailedEvents) {
+            print(line)
+        }
         os_log("%{public}@", log: log, type: .info, line)
     }
 }
@@ -349,7 +367,11 @@ struct PerformanceFrameProbe: UIViewRepresentable {
                 flushWindow(force: true)
                 resetWindow()
                 lastTimestamp = nil
-                warmupRemaining = warmupDuration
+                // Warm up only when the display link first starts. Reapplying
+                // the launch warmup to every idle/scroll label transition can
+                // consume most of a real swipe and discard the entire scroll
+                // window before it reaches the forced-flush minimum.
+                warmupRemaining = displayLink == nil ? warmupDuration : 0
             }
             self.surface = surface
             self.sampleInterval = sampleInterval
@@ -1419,6 +1441,15 @@ extension View {
                 .overlay(
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
                         .strokeBorder(AgentPalette.border.opacity(AgentDesign.borderOpacity * 0.92), lineWidth: 0.55)
+                )
+        } else if performanceMode {
+            // These cards move as part of long scrolling surfaces. A single
+            // solid fill avoids re-compositing a translucent three-stop
+            // gradient, border, and backdrop for every scroll frame.
+            self
+                .background(
+                    AgentPalette.opaqueSurfaceElevated,
+                    in: RoundedRectangle(cornerRadius: radius, style: .continuous)
                 )
         } else {
             self

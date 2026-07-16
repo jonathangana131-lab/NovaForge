@@ -851,70 +851,6 @@ private enum LocalModelDestructiveAction: String, Identifiable {
     }
 }
 
-struct CodexTerminalWindow: View {
-    let lines: [String]
-    let code: String
-    let isPaired: Bool
-    let isRunning: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    Circle().fill(AgentPalette.rose).frame(width: 7, height: 7)
-                    Circle().fill(AgentPalette.lilac).frame(width: 7, height: 7)
-                    Circle().fill(AgentPalette.green).frame(width: 7, height: 7)
-                }
-                Text("codex simulated terminal")
-                    .font(.caption2.monospaced().weight(.bold))
-                    .foregroundStyle(AgentPalette.terminalOutput)
-                Spacer(minLength: 0)
-                Text(isPaired ? "SIMULATED" : (isRunning ? "AUTH" : "IDLE"))
-                    .font(.caption2.monospaced().weight(.black))
-                    .foregroundStyle(isPaired ? AgentPalette.green : AgentPalette.cyan)
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(line.hasPrefix("✓") ? AgentPalette.green : AgentPalette.terminalText)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
-                }
-            }
-
-            HStack(spacing: 8) {
-                Text("CODE")
-                    .font(.caption2.monospaced().weight(.black))
-                    .foregroundStyle(AgentPalette.terminalOutput.opacity(0.72))
-                Text(code)
-                    .font(.system(size: 15, weight: .black, design: .monospaced))
-                    .foregroundStyle(AgentPalette.cyan)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(AgentPalette.terminalSelection, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .padding(12)
-        .background(
-            LinearGradient(
-                colors: [AgentPalette.terminalBackground.opacity(0.96), AgentPalette.codeBackground.opacity(0.98)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(AgentPalette.terminalSelection.opacity(0.60), lineWidth: 1)
-        )
-        .shadow(color: AgentPalette.shadow.opacity(0.12), radius: 14, x: 0, y: 8)
-        .accessibilityIdentifier("codexTerminalWindow")
-    }
-}
-
 struct SettingsModelPickerButton: View {
     let provider: AIProvider
     let model: String
@@ -969,19 +905,27 @@ struct ProviderModelPickerSheet: View {
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
 
-    private var filteredModels: [String] {
-        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matches = query.isEmpty ? models : models.filter { $0.localizedCaseInsensitiveContains(query) }
-        return Array(matches.prefix(180))
+    private struct FilteredModelSnapshot {
+        let models: [String]
+        let hiddenCount: Int
     }
 
-    private var hiddenModelCount: Int {
+    private var filteredModelSnapshot: FilteredModelSnapshot {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matchCount = query.isEmpty ? models.count : models.lazy.filter { $0.localizedCaseInsensitiveContains(query) }.count
-        return max(0, matchCount - filteredModels.count)
+        let matches = query.isEmpty ? models : models.filter {
+            $0.localizedCaseInsensitiveContains(query)
+                || provider.modelDisplayName($0)
+                    .localizedCaseInsensitiveContains(query)
+        }
+        let visibleModels = Array(matches.prefix(180))
+        return FilteredModelSnapshot(
+            models: visibleModels,
+            hiddenCount: max(0, matches.count - visibleModels.count)
+        )
     }
 
     var body: some View {
+        let snapshot = filteredModelSnapshot
         ZStack {
             sheetBackground
 
@@ -997,7 +941,7 @@ struct ProviderModelPickerSheet: View {
                         hero
                         searchBar
                         refreshCard
-                        modelList
+                        modelList(snapshot)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
@@ -1012,9 +956,12 @@ struct ProviderModelPickerSheet: View {
         }
         .onAppear {
             debouncedSearchText = searchText
-            if models.count <= provider.modelOptions.count && !isLoading {
-                refresh()
-            }
+        }
+        .task {
+            guard models.count <= provider.modelOptions.count, !isLoading else { return }
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            refresh()
         }
     }
 
@@ -1133,14 +1080,15 @@ struct ProviderModelPickerSheet: View {
     }
 
     private var refreshCardTitle: String {
-        errorMessage == nil ? "Live provider models" : "API key required"
+        if provider == .openAICodex { return "Live ChatGPT models" }
+        return errorMessage == nil ? "Live provider models" : "API key required"
     }
 
     private var refreshCardDetail: String {
+        if provider == .openAICodex {
+            return errorMessage ?? "Refreshes the GPT models currently enabled for your signed-in ChatGPT account."
+        }
         if let errorMessage {
-            if provider == .openAICodex {
-                return "OpenAI API key needed. Built-in model IDs are examples only. ChatGPT subscriptions are unavailable to iOS apps."
-            }
             if errorMessage.contains("Built-in model IDs are examples only") {
                 return "API key needed. Built-in model IDs are examples only; add a key before running them."
             }
@@ -1149,13 +1097,13 @@ struct ProviderModelPickerSheet: View {
         return provider == .local ? "Local models are managed on-device" : "Built-in model IDs are listed; an API key is still required to run."
     }
 
-    private var modelList: some View {
+    private func modelList(_ snapshot: FilteredModelSnapshot) -> some View {
         LazyVStack(spacing: 8) {
-            ForEach(filteredModels, id: \.self) { model in
+            ForEach(snapshot.models, id: \.self) { model in
                 modelRow(model)
             }
-            if hiddenModelCount > 0 {
-                Text("Showing first 180 matches. Keep typing to narrow \(hiddenModelCount) more.")
+            if snapshot.hiddenCount > 0 {
+                Text("Showing first 180 matches. Keep typing to narrow \(snapshot.hiddenCount) more.")
                     .font(.system(size: 12, weight: .bold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -1165,7 +1113,8 @@ struct ProviderModelPickerSheet: View {
     }
 
     private func modelRow(_ model: String) -> some View {
-        let selected = selectedModel == model
+        let selected = provider.visibleModelIdentity(selectedModel)
+            == provider.visibleModelIdentity(model)
         return Button {
             if select(model) {
                 dismiss()
@@ -1179,7 +1128,10 @@ struct ProviderModelPickerSheet: View {
                     .background((selected ? provider.tint.opacity(0.14) : AgentPalette.row), in: Circle())
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(LocalModelCatalog.variant(for: model)?.shortName ?? model)
+                    Text(
+                        LocalModelCatalog.variant(for: model)?.shortName
+                            ?? provider.modelDisplayName(model)
+                    )
                         .font(.system(size: 15, weight: selected ? .black : .bold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
@@ -1206,7 +1158,6 @@ struct ProviderModelPickerSheet: View {
 
     private func modelSymbol(for model: String) -> String {
         if LocalModelCatalog.variant(for: model) != nil { return "iphone.gen3" }
-        if model.localizedCaseInsensitiveContains("codex") { return "terminal.fill" }
         if model.localizedCaseInsensitiveContains("gpt") { return "sparkles" }
         return "cube.transparent"
     }

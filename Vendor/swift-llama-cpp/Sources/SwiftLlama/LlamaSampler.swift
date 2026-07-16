@@ -26,18 +26,22 @@ public final class LlamaSampler {
     /// - Parameters:
     ///   - config: The `LlamaSamplingConfig` that defines which samplers to use and their parameters.
     ///   - model: The `LlamaModel` is required to access the vocabulary for the grammar sampler.
-    public init(config: LlamaSamplingConfig, model: LlamaModel) {
-        print(config)
+    public init(config: LlamaSamplingConfig, model: LlamaModel) throws {
         let sparams = llama_sampler_chain_default_params()
-        self.samplerPointer = llama_sampler_chain_init(sparams)
+        guard let samplerPointer = llama_sampler_chain_init(sparams) else {
+            throw LlamaError.couldNotInitializeContext
+        }
 
         if let grammarConfig = config.grammarConfig {
-            if let grammarSampler = llama_sampler_init_grammar(model.vocabPointer, grammarConfig.grammar, grammarConfig.grammarRoot) {
-                llama_sampler_chain_add(samplerPointer, grammarSampler)
-            } else {
-                // If grammar init fails, we skip adding it to the chain.
-                // Consider surfacing this as a thrown error in the initializer signature.
+            guard let grammarSampler = llama_sampler_init_grammar(
+                model.vocabPointer,
+                grammarConfig.grammar,
+                grammarConfig.grammarRoot
+            ) else {
+                llama_sampler_free(samplerPointer)
+                throw LlamaError.invalidGrammar
             }
+            llama_sampler_chain_add(samplerPointer, grammarSampler)
         }
 
         // Add samplers based on the configuration
@@ -66,6 +70,7 @@ public final class LlamaSampler {
         let seed = config.seed
         let distSampler = llama_sampler_init_dist(seed)
         llama_sampler_chain_add(samplerPointer, distSampler)
+        self.samplerPointer = samplerPointer
     }
 
     deinit {

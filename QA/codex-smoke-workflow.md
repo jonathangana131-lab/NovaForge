@@ -1,6 +1,30 @@
-# NovaForge Fast Smoke And Tour Workflow
+# NovaForge Test Lanes And Visual Proof
 
-This is the authoritative release QA matrix for fast NovaForge trust checks. Keep this file current when adding or removing smoke screenshots, focused suites, launch fixtures, or cleanup gates.
+This is the authoritative NovaForge verification guide. The test system builds one reusable XCTest bundle, boots one simulator, and separates fast behavioral proof from exhaustive release and screenshot work.
+
+## Test Lanes
+
+Use one entry point:
+
+```sh
+scripts/codex-test.sh smoke
+scripts/codex-test.sh critical
+scripts/codex-test.sh unit
+scripts/codex-test.sh visual
+scripts/codex-test.sh release
+```
+
+| Lane | Purpose | Contents | Screenshots |
+| --- | --- | --- | --- |
+| `smoke` | Tight edit loop | Four launch/chat/provider/reasoning journeys | Off except required pixel proof |
+| `critical` | Pull request and pre-release gate | Source contracts, 382 package tests, all app unit tests, and at most 16 high-value UI journeys | Off; XCTest retains failure shots |
+| `unit` | Agent/runtime work | Source contracts, package tests, and all app unit tests | Off |
+| `visual` | UI review | Ten synchronized journeys covering the major surfaces | Written to the lane's `screenshots/` folder |
+| `release` | Scheduled/manual exhaustive gate | Source contracts, package tests, every unit test, and every UI journey | Off; failures still retain XCTest diagnostics |
+
+The runner incrementally uses `QA/DerivedData/codex-tests/`, writes the reusable `.xctestrun` path into each timestamped log folder, and runs `test-without-building`. A PID lock prevents two Apple-tooling lanes from colliding. Local smoke/critical/unit lanes skip the expensive post-test `.xcresult` archive; CI can request one by setting `RESULT_BUNDLE_PATH`, and release enables it by default. `scripts/codex-focused-tests.sh` remains only as a compatibility alias for the `unit` lane.
+
+The critical lane is deliberately capped at 16 UI journeys and smoke at five. Add exhaustive permutations to release, and add screenshot-only coverage to visual. Do not grow the everyday lane just because a test exists.
 
 Use this when NovaForge needs quick simulator proof without opening Xcode.
 
@@ -80,12 +104,12 @@ Tour fixture matrix:
 | `10-settings-local-ready` | `--reset-ui --settings-local-model-ready --open-settings` | Settings surface with deterministic local model ready state. |
 | `11-chat-pending-approval` | `--reset-ui --pending-approval-demo --open-chat` | Chat remains conversation-first while approval state belongs to the correct run. |
 
-## Ten-Minute Trust Gate
+## Fast Trust Gate
 
 Run this bounded sequence before trusting a release-hardening change:
 
 ```sh
-scripts/codex-focused-tests.sh
+scripts/codex-test.sh critical
 scripts/codex-performance-gate.sh
 WAIT_SECONDS=1 BUILD_FIRST=1 CONFIGURATION=Release SHUTDOWN_SIMULATOR_AFTER_TOUR=1 scripts/codex-sim-tour.sh
 scripts/codex-sim-clean-check.sh
@@ -93,39 +117,21 @@ scripts/codex-sim-clean-check.sh
 
 Expected proof:
 
-- `scripts/codex-focused-tests.sh` prints `Focused tests passed`, leaves logs in `QA/codex-focused-tests-<timestamp>/`, and reuses one bounded `QA/DerivedData/codex-focused-tests/` cache instead of creating a new build tree per run.
-- `scripts/codex-performance-gate.sh` reuses the focused `.xctestrun`, prints `Performance budgets passed`, and leaves `performance-summary.txt` plus raw OSLog output in `QA/codex-performance-gate-<timestamp>/`. If it must build for itself, its managed DerivedData is removed on exit by default.
+- `scripts/codex-test.sh critical` prints `PASS: NovaForge critical lane`, leaves logs and an `.xcresult` in `QA/codex-tests-<timestamp>-critical/`, and reuses one bounded build cache.
+- `scripts/codex-performance-gate.sh` reuses that `.xctestrun`, prints `Performance budgets passed`, and leaves `performance-summary.txt` plus raw OSLog output in `QA/codex-performance-gate-<timestamp>/`.
 - `scripts/codex-ai-streaming-video-proof.sh` preserves video, screenshots, contact sheet, and logs while removing its managed `QA/DerivedData/codex-ai-streaming-video-proof/` build cache on exit by default. Set `KEEP_DERIVED_DATA=1` only for debugging; custom `DERIVED_DATA` paths are preserved.
 - `scripts/codex-sim-tour.sh` prints `Tour passed`, leaves eleven required screenshots in `NovaForgeScreenshots/codex-tour-<timestamp>/`, and writes `tour-verification-summary.txt`.
 - `scripts/codex-sim-clean-check.sh` reports the proof simulator is shutdown and no NovaForge, `xcodebuild`, `simctl`, fast screenshot, or tour helper is lingering.
 
-## Focused Code Proof
+## Unit-Only Proof
 
 Run these before trusting workflow changes:
 
 ```sh
-scripts/codex-focused-tests.sh
+scripts/codex-test.sh unit
 ```
 
-The helper runs the focused suites below with bounded logs under `QA/codex-focused-tests-<timestamp>/`.
-By default it runs one project-based `build-for-testing` phase first in the bounded managed cache `QA/DerivedData/codex-focused-tests/`, discovers the generated `.xctestrun`, writes that path to the timestamped run's `xctestrun.path`, restarts and waits for the proof simulator with `simctl bootstatus`, then runs all focused suites in one `test-without-building` invocation from that file. Reusing one project-local cache keeps the trust gate fast, avoids package graph resolution in every suite, avoids locking the shared Xcode DerivedData database, and prevents every timestamped QA run from retaining another ~0.8-1 GiB build tree. A PID lock makes concurrent focused-test runs fail closed instead of corrupting the shared cache, and stale locks are repaired automatically. The cache resets automatically before a run if it exceeds `MAX_DERIVED_DATA_GIB=4`. Set `RESET_DERIVED_DATA_BEFORE_BUILD=1` for intentionally fresh proof, or `KEEP_DERIVED_DATA=0` when no follow-on performance gate needs the `.xctestrun`. Custom `DERIVED_DATA_PATH` values are never automatically removed. Xcode and simulator boot/shutdown commands run through `scripts/codex-timeout-runner.pl`, which records logs and terminates its own process group on timeout. The helper shuts the proof simulator down on exit unless `SHUTDOWN_SIMULATOR_AFTER_TESTS=0`.
-
-For testmanagerd triage, use the slower isolated mode:
-
-```sh
-FOCUSED_TEST_MODE=per-suite scripts/codex-focused-tests.sh
-```
-
-Manual equivalent:
-
-```sh
-scripts/codex-timeout-runner.pl 480 QA/manual-build-for-testing.log xcodebuild -project AgentPad.xcodeproj -scheme AgentPad -configuration Debug -sdk iphonesimulator -destination 'id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' -skipPackageUpdates -skipPackagePluginValidation -skipMacroValidation ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build-for-testing
-XCTESTRUN_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path '*AgentPad-*/Build/Products/AgentPad_*.xctestrun' -print | sort | tail -n 1)"
-scripts/codex-timeout-runner.pl 240 QA/manual-AgentRuntimeLifecycleTests.log xcodebuild -xctestrun "$XCTESTRUN_PATH" -destination 'id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' test-without-building -only-testing:AgentPadTests/AgentRuntimeLifecycleTests
-scripts/codex-timeout-runner.pl 240 QA/manual-ProjectFoundationTests.log xcodebuild -xctestrun "$XCTESTRUN_PATH" -destination 'id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' test-without-building -only-testing:AgentPadTests/ProjectFoundationTests
-scripts/codex-timeout-runner.pl 240 QA/manual-CommandRunnerTests.log xcodebuild -xctestrun "$XCTESTRUN_PATH" -destination 'id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' test-without-building -only-testing:AgentPadTests/CommandRunnerTests
-scripts/codex-timeout-runner.pl 240 QA/manual-FilesWorkspacePersistenceTests.log xcodebuild -xctestrun "$XCTESTRUN_PATH" -destination 'id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' test-without-building -only-testing:AgentPadTests/FilesWorkspacePersistenceTests
-```
+The unit lane still compiles the UI target into the reusable bundle so the next smoke, performance, or visual lane does not rebuild the app. It selects only `AgentPadTests` at execution time. Set `RESET_DERIVED_DATA_BEFORE_BUILD=1` only for an intentionally clean proof; normal runs should keep the incremental cache. All build, test, package, boot, and shutdown work remains bounded by `scripts/codex-timeout-runner.pl`.
 
 Coverage map:
 
@@ -144,7 +150,7 @@ Coverage map:
 
 ## Performance Budget Proof
 
-Run this after `scripts/codex-focused-tests.sh` so it can reuse the freshly built `.xctestrun` without another build:
+Run this after any `scripts/codex-test.sh` app lane so it can reuse the freshly built `.xctestrun` without another build:
 
 ```sh
 scripts/codex-performance-gate.sh
@@ -152,6 +158,7 @@ scripts/codex-performance-gate.sh
 
 The gate runs `AgentPadUITests/testProjectLiquidGlassPerformanceTraceFlow` with `--profile-frame-rate`, `--profile-events`, and deterministic project auto-scroll, captures NovaForge performance OSLog output, then fails if any required metric is missing or above/below budget.
 It ignores the first tab-switch timing sample by default (`IGNORE_INITIAL_TAB_SWITCH_SAMPLES=1`) because launch arguments route the app from its default Chat tab to the requested opening tab before the user-tab-switch loop begins.
+Before booting Simulator, the gate also checks the shared Mac's one-minute load against `MAX_HOST_LOAD_PER_CPU=4`. It exits 75 instead of publishing misleading FPS when unrelated host work has saturated the machine. `REQUIRE_QUIET_HOST=0` is diagnostic-only and must not be used for release proof.
 
 Default budgets:
 
@@ -168,13 +175,13 @@ Default budgets:
 | Project scroll hitches | max <= `MAX_PROJECT_SCROLL_HITCH_COUNT=30` |
 | Chat streaming hitches | max <= `MAX_CHAT_STREAMING_HITCH_COUNT=30` |
 
-If no reusable focused test bundle exists, run `BUILD_IF_NEEDED=1 scripts/codex-performance-gate.sh`; that is slower and should stay outside the default fast trust gate unless necessary. Self-builds use `QA/DerivedData/codex-performance-gate/` and remove that managed cache on exit by default. Set `KEEP_DERIVED_DATA=1` only when debugging the self-built bundle, `RESET_DERIVED_DATA_BEFORE_BUILD=1` for a clean rebuild, or adjust the integer `MAX_DERIVED_DATA_GIB` cap when there is a measured need. Caller-supplied custom DerivedData paths are preserved.
+If no reusable test bundle exists, run `BUILD_IF_NEEDED=1 scripts/codex-performance-gate.sh`; that is slower and should stay outside the default fast trust gate unless necessary. Self-builds use `QA/DerivedData/codex-performance-gate/` and remove that managed cache on exit by default.
 
 Fast gate does not fully cover:
 
 - Real paid-provider requests, revoked API keys, or custom endpoint outages beyond unit-level/provider-sanitizer behavior.
 - Real multi-gigabyte local model inference on physical hardware; the fast tour uses deterministic local model fixtures.
-- Full XCUITest regression inventory; the fast tour favors bounded screenshot proof over every long UI test.
+- Full XCUITest regression inventory; the weekly/manual `release` lane owns all 68 UI journeys.
 - Physical iPhone install/signing/provisioning.
 - Full accessibility audit across every Dynamic Type size and VoiceOver rotor path.
 - Exhaustive Liquid Glass frame-time analysis across every device/runtime; the fast performance gate enforces the Project scroll, tab switch, and Chat streaming budgets on the proof simulator, while deep performance sweeps remain separate.

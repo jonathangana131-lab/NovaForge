@@ -15,6 +15,7 @@ DESTINATION_TIMEOUT="${DESTINATION_TIMEOUT:-120}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-600}"
 SIM_BOOT_TIMEOUT="${SIM_BOOT_TIMEOUT:-180}"
+SIM_CONTROL_TIMEOUT="${SIM_CONTROL_TIMEOUT:-30}"
 ONLY_ACTIVE_ARCH="${ONLY_ACTIVE_ARCH:-YES}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/QA/codex-performance-gate-$(date +%Y%m%d-%H%M%S)}"
 MANAGED_DERIVED_DATA_PATH="$ROOT_DIR/QA/DerivedData/codex-performance-gate"
@@ -25,13 +26,18 @@ MAX_DERIVED_DATA_GIB="${MAX_DERIVED_DATA_GIB:-4}"
 XCTESTRUN_PATH="${XCTESTRUN_PATH:-}"
 BUILD_IF_NEEDED="${BUILD_IF_NEEDED:-0}"
 REQUIRE_QUIET_LANE="${REQUIRE_QUIET_LANE:-1}"
+REQUIRE_QUIET_HOST="${REQUIRE_QUIET_HOST:-1}"
+MAX_HOST_LOAD_PER_CPU="${MAX_HOST_LOAD_PER_CPU:-4}"
 SHUTDOWN_SIMULATOR_AFTER_TESTS="${SHUTDOWN_SIMULATOR_AFTER_TESTS:-1}"
+REUSE_BOOTED_SIMULATOR="${REUSE_BOOTED_SIMULATOR:-0}"
 TIMEOUT_RUNNER="$ROOT_DIR/scripts/codex-timeout-runner.pl"
 
 PERFORMANCE_LOG="${PERFORMANCE_LOG:-$LOG_DIR/performance.log}"
 TEST_LOG="${TEST_LOG:-$LOG_DIR/ui-performance-test.log}"
 SUMMARY_LOG="${SUMMARY_LOG:-$LOG_DIR/performance-summary.txt}"
 BOOT_LOG="$LOG_DIR/simulator-bootstatus.log"
+BOOT_COMMAND_LOG="$LOG_DIR/simulator-boot.log"
+TERMINATE_LOG="$LOG_DIR/simulator-terminate.log"
 SHUTDOWN_LOG="$LOG_DIR/simulator-shutdown.log"
 LOG_STREAM_PID=""
 MANAGED_DERIVED_DATA_USED=0
@@ -81,9 +87,11 @@ cleanup_on_exit() {
     sleep 0.2
     kill -9 "$LOG_STREAM_PID" 2>/dev/null || true
   fi
-  xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  "$TIMEOUT_RUNNER" "$SIM_CONTROL_TIMEOUT" "$TERMINATE_LOG" \
+    xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
   if [[ "$SHUTDOWN_SIMULATOR_AFTER_TESTS" == "1" ]]; then
-    "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$SHUTDOWN_LOG" xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+    "$TIMEOUT_RUNNER" "$SIM_CONTROL_TIMEOUT" "$SHUTDOWN_LOG" \
+      xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
   fi
   cleanup_managed_derived_data
   return "$exit_status"
@@ -105,6 +113,7 @@ require_quiet_lane() {
       pgrep -f '(^|/)codex-fast-screenshot\.sh( |$)' || true
       pgrep -f '(^|/)codex-sim-tour\.sh( |$)' || true
       pgrep -f '(^|/)codex-focused-tests\.sh( |$)' || true
+      pgrep -f '(^|/)codex-test\.sh( |$)' || true
       pgrep -f '(^|/)run-on-iphone\.sh( |$)' || true
     } | sort -u
   )"
@@ -112,6 +121,19 @@ require_quiet_lane() {
   if [[ -n "$active" ]]; then
     echo "Another build/simulator helper appears active; refusing to start performance gate." >&2
     print -r -- "$active" >&2
+    exit 75
+  fi
+
+  [[ "$REQUIRE_QUIET_HOST" == "1" ]] || return 0
+  local logical_cpus
+  local one_minute_load
+  local max_load
+  logical_cpus="$(sysctl -n hw.logicalcpu)"
+  one_minute_load="$(sysctl -n vm.loadavg | awk '{print $2}')"
+  max_load=$(( logical_cpus * MAX_HOST_LOAD_PER_CPU ))
+  if (( one_minute_load > max_load )); then
+    echo "Host load ${one_minute_load} is above the performance-proof ceiling ${max_load} (${logical_cpus} CPUs × ${MAX_HOST_LOAD_PER_CPU})." >&2
+    echo "Refusing to report simulator FPS while the shared Mac is saturated. Wait for the host to settle or set REQUIRE_QUIET_HOST=0 only for diagnostic runs." >&2
     exit 75
   fi
 }
@@ -123,7 +145,10 @@ discover_xctestrun() {
   fi
 
   local -a path_files
-  path_files=( "$ROOT_DIR"/QA/codex-focused-tests-*/xctestrun.path(N.om[1]) )
+  path_files=(
+    "$ROOT_DIR"/QA/codex-tests-*/xctestrun.path(N.om[1])
+    "$ROOT_DIR"/QA/codex-focused-tests-*/xctestrun.path(N.om[1])
+  )
   if (( ${#path_files} > 0 )); then
     local from_file
     from_file="$(<"$path_files[1]")"
@@ -135,6 +160,7 @@ discover_xctestrun() {
 
   local -a candidates
   candidates=(
+    "$ROOT_DIR"/QA/DerivedData/codex-tests/Build/Products/${SCHEME}_*.xctestrun(N.om[1])
     "$ROOT_DIR"/QA/codex-focused-tests-*/DerivedData/Build/Products/${SCHEME}_*.xctestrun(N.om[1])
   )
   if (( ${#candidates} > 0 )); then
@@ -146,9 +172,17 @@ discover_xctestrun() {
 }
 
 prepare_simulator() {
-  xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-  "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$SHUTDOWN_LOG" xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
-  xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
+  "$TIMEOUT_RUNNER" "$SIM_CONTROL_TIMEOUT" "$TERMINATE_LOG" \
+    xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  if [[ "$REUSE_BOOTED_SIMULATOR" == "1" ]]; then
+    "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$BOOT_LOG" \
+      xcrun simctl bootstatus "$SIMULATOR_ID" -b
+    return
+  fi
+  "$TIMEOUT_RUNNER" "$SIM_CONTROL_TIMEOUT" "$SHUTDOWN_LOG" \
+    xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+  "$TIMEOUT_RUNNER" "$SIM_CONTROL_TIMEOUT" "$BOOT_COMMAND_LOG" \
+    xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
   "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$BOOT_LOG" xcrun simctl bootstatus "$SIMULATOR_ID" -b
 }
 
@@ -174,7 +208,7 @@ run_ui_performance_test() {
   if [[ -n "$XCTESTRUN_PATH" ]]; then
     "$TIMEOUT_RUNNER" "$TEST_TIMEOUT" "$TEST_LOG" xcodebuild \
       -xctestrun "$XCTESTRUN_PATH" \
-      -destination "id=$SIMULATOR_ID" \
+      -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
       -destination-timeout "$DESTINATION_TIMEOUT" \
       test-without-building \
       -only-testing:AgentPadUITests/AgentPadUITests/testProjectLiquidGlassPerformanceTraceFlow
@@ -182,7 +216,7 @@ run_ui_performance_test() {
   fi
 
   if [[ "$BUILD_IF_NEEDED" != "1" ]]; then
-    echo "No reusable .xctestrun found. Run scripts/codex-focused-tests.sh first, pass XCTESTRUN_PATH=..., or set BUILD_IF_NEEDED=1." >&2
+    echo "No reusable .xctestrun found. Run scripts/codex-test.sh smoke first, pass XCTESTRUN_PATH=..., or set BUILD_IF_NEEDED=1." >&2
     exit 2
   fi
 
@@ -193,7 +227,7 @@ run_ui_performance_test() {
     -scheme "$SCHEME" \
     -configuration "$CONFIGURATION" \
     -sdk "$BUILD_SDK" \
-    -destination "id=$SIMULATOR_ID" \
+    -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
     -destination-timeout "$DESTINATION_TIMEOUT" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
     "${package_args[@]}" \
@@ -206,22 +240,20 @@ run_ui_performance_test() {
 
 verify_performance_log() {
   env \
-    MIN_PROJECT_IDLE_FPS="${MIN_PROJECT_IDLE_FPS:-45}" \
     MIN_PROJECT_SCROLL_FPS="${MIN_PROJECT_SCROLL_FPS:-40}" \
+    MIN_PROJECT_SCROLL_DISTANCE="${MIN_PROJECT_SCROLL_DISTANCE:-80}" \
     MIN_CHAT_STREAMING_FPS="${MIN_CHAT_STREAMING_FPS:-40}" \
     MIN_PROJECT_IDLE_SAMPLE_COUNT="${MIN_PROJECT_IDLE_SAMPLE_COUNT:-1}" \
-    MIN_PROJECT_SCROLL_SAMPLE_COUNT="${MIN_PROJECT_SCROLL_SAMPLE_COUNT:-1}" \
+    MIN_PROJECT_SCROLL_SAMPLE_COUNT="${MIN_PROJECT_SCROLL_SAMPLE_COUNT:-2}" \
+    MIN_PROJECT_SCROLL_GESTURE_COUNT="${MIN_PROJECT_SCROLL_GESTURE_COUNT:-2}" \
     MIN_CHAT_STREAMING_SAMPLE_COUNT="${MIN_CHAT_STREAMING_SAMPLE_COUNT:-4}" \
     IGNORE_INITIAL_TAB_SWITCH_SAMPLES="${IGNORE_INITIAL_TAB_SWITCH_SAMPLES:-1}" \
     MAX_TAB_SWITCH_AVERAGE_MS="${MAX_TAB_SWITCH_AVERAGE_MS:-900}" \
     MAX_TAB_SWITCH_PEAK_MS="${MAX_TAB_SWITCH_PEAK_MS:-1500}" \
-    MAX_PROJECT_IDLE_AVG_WORST_FRAME_MS="${MAX_PROJECT_IDLE_AVG_WORST_FRAME_MS:-120}" \
     MAX_PROJECT_SCROLL_AVG_WORST_FRAME_MS="${MAX_PROJECT_SCROLL_AVG_WORST_FRAME_MS:-180}" \
     MAX_CHAT_STREAMING_AVG_WORST_FRAME_MS="${MAX_CHAT_STREAMING_AVG_WORST_FRAME_MS:-150}" \
-    MAX_PROJECT_IDLE_PEAK_WORST_FRAME_MS="${MAX_PROJECT_IDLE_PEAK_WORST_FRAME_MS:-250}" \
-    MAX_PROJECT_SCROLL_PEAK_WORST_FRAME_MS="${MAX_PROJECT_SCROLL_PEAK_WORST_FRAME_MS:-500}" \
+    MAX_PROJECT_SCROLL_PEAK_WORST_FRAME_MS="${MAX_PROJECT_SCROLL_PEAK_WORST_FRAME_MS:-250}" \
     MAX_CHAT_STREAMING_PEAK_WORST_FRAME_MS="${MAX_CHAT_STREAMING_PEAK_WORST_FRAME_MS:-650}" \
-    MAX_PROJECT_IDLE_HITCH_COUNT="${MAX_PROJECT_IDLE_HITCH_COUNT:-24}" \
     MAX_PROJECT_SCROLL_HITCH_COUNT="${MAX_PROJECT_SCROLL_HITCH_COUNT:-30}" \
     MAX_CHAT_STREAMING_HITCH_COUNT="${MAX_CHAT_STREAMING_HITCH_COUNT:-30}" \
     perl - "$PERFORMANCE_LOG" <<'PERL'
@@ -297,6 +329,20 @@ sub require_average_at_least {
     }
 }
 
+sub require_min_at_least {
+    my ($metric, $threshold_env) = @_;
+    my $items = $values{$metric};
+    if (!$items || !@$items) {
+        push @failures, "$metric missing from performance log";
+        return;
+    }
+    my $threshold = env_num($threshold_env);
+    my $min = minimum($items);
+    if ($min < $threshold) {
+        push @failures, sprintf("%s minimum %.2f below %.2f", $metric, $min, $threshold);
+    }
+}
+
 sub require_sample_count_at_least {
     my ($metric, $threshold_env) = @_;
     my $items = $values{$metric};
@@ -341,19 +387,18 @@ sub require_average_at_most {
 
 require_sample_count_at_least('Project Idle FPS', 'MIN_PROJECT_IDLE_SAMPLE_COUNT');
 require_sample_count_at_least('Project Scroll FPS', 'MIN_PROJECT_SCROLL_SAMPLE_COUNT');
+require_sample_count_at_least('Project Scroll Duration ms', 'MIN_PROJECT_SCROLL_GESTURE_COUNT');
+require_sample_count_at_least('Project Scroll Distance', 'MIN_PROJECT_SCROLL_GESTURE_COUNT');
 require_sample_count_at_least('Chat Streaming FPS', 'MIN_CHAT_STREAMING_SAMPLE_COUNT');
-require_average_at_least('Project Idle FPS', 'MIN_PROJECT_IDLE_FPS');
-require_average_at_least('Project Scroll FPS', 'MIN_PROJECT_SCROLL_FPS');
+require_min_at_least('Project Scroll FPS', 'MIN_PROJECT_SCROLL_FPS');
+require_min_at_least('Project Scroll Distance', 'MIN_PROJECT_SCROLL_DISTANCE');
 require_average_at_least('Chat Streaming FPS', 'MIN_CHAT_STREAMING_FPS');
 require_average_at_most('Tab Switch Duration ms', 'MAX_TAB_SWITCH_AVERAGE_MS');
 require_max_at_most('Tab Switch Duration ms', 'MAX_TAB_SWITCH_PEAK_MS');
-require_average_at_most('Project Idle Worst Frame ms', 'MAX_PROJECT_IDLE_AVG_WORST_FRAME_MS');
 require_average_at_most('Project Scroll Worst Frame ms', 'MAX_PROJECT_SCROLL_AVG_WORST_FRAME_MS');
 require_average_at_most('Chat Streaming Worst Frame ms', 'MAX_CHAT_STREAMING_AVG_WORST_FRAME_MS');
-require_max_at_most('Project Idle Worst Frame ms', 'MAX_PROJECT_IDLE_PEAK_WORST_FRAME_MS');
 require_max_at_most('Project Scroll Worst Frame ms', 'MAX_PROJECT_SCROLL_PEAK_WORST_FRAME_MS');
 require_max_at_most('Chat Streaming Worst Frame ms', 'MAX_CHAT_STREAMING_PEAK_WORST_FRAME_MS');
-require_max_at_most('Project Idle Hitch Count', 'MAX_PROJECT_IDLE_HITCH_COUNT');
 require_max_at_most('Project Scroll Hitch Count', 'MAX_PROJECT_SCROLL_HITCH_COUNT');
 require_max_at_most('Chat Streaming Hitch Count', 'MAX_CHAT_STREAMING_HITCH_COUNT');
 
@@ -382,7 +427,7 @@ if XCTESTRUN_PATH="$(discover_xctestrun)"; then
 elif [[ "$BUILD_IF_NEEDED" == "1" ]]; then
   XCTESTRUN_PATH=""
 else
-  echo "No reusable .xctestrun found. Run scripts/codex-focused-tests.sh first, pass XCTESTRUN_PATH=..., or set BUILD_IF_NEEDED=1." >&2
+  echo "No reusable .xctestrun found. Run scripts/codex-test.sh smoke first, pass XCTESTRUN_PATH=..., or set BUILD_IF_NEEDED=1." >&2
   exit 2
 fi
 

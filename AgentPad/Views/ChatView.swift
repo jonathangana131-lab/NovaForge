@@ -1,12 +1,414 @@
+import AgentDomain
+#if DEBUG
+import AgentPolicy
+#endif
 import SwiftData
 import SwiftUI
 import UIKit
+
+#if DEBUG
+/// Deterministic classified values for UI accessibility/layout qualification.
+///
+/// This fixture never decodes provider JSON, executes a tool, or enters a
+/// Release build. Production activity continues to come only from the
+/// canonical journal repository and the process-owned AgentSystem.
+enum AgentCanonicalActivityA11yFixture {
+    static let launchArgument = "--canonical-activity-a11y-demo"
+    static let approvalPendingDefaultsKey =
+        "novaForgeDebugCanonicalActivityApprovalPending"
+    static let approvalRequestID = ApprovalRequestID(rawValue: uuid(900))
+    static let approvalRunID = RunID(rawValue: uuid(901))
+    static let approvalCallID = ToolCallID(rawValue: uuid(902))
+    static let workspaceID = WorkspaceID(rawValue: uuid(903))
+    static let exactTarget =
+        "Sources/Accessibility/Deeply Nested/Canonical Activity/approval-demo-with-a-deliberately-long-name.swift"
+
+    static func pendingItem(now: Date = Date()) ->
+        AgentApprovalPromptCenter.PendingItem
+    {
+        AgentApprovalPromptCenter.PendingItem(
+            requestID: approvalRequestID,
+            runID: approvalRunID,
+            callID: approvalCallID,
+            workspaceID: workspaceID,
+            origin: .agentV2,
+            toolTitle: "Write one reviewed file",
+            toolName: "write_file",
+            toolVersion: "2",
+            effectClass: .scopedReversibleWrite,
+            operation: .writeFile(
+                path: exactTarget,
+                contentUTF8ByteCount: 4_096
+            ),
+            previewSHA256: digest("a"),
+            bindingSHA256: digest("b"),
+            issuedAt: AgentInstant(now),
+            expiresAt: AgentInstant(now.addingTimeInterval(10 * 60))
+        )
+    }
+
+    static func groups(
+        projectID: ProjectID?,
+        conversationID: ConversationID,
+        approvalPending: Bool
+    ) -> [AgentActivityGroup] {
+        let running = identity(
+            runID: RunID(rawValue: uuid(910)),
+            projectID: projectID,
+            conversationID: conversationID
+        )
+        let failed = identity(
+            runID: RunID(rawValue: uuid(920)),
+            projectID: projectID,
+            conversationID: conversationID
+        )
+        let approval = identity(
+            runID: approvalRunID,
+            projectID: projectID,
+            conversationID: conversationID
+        )
+
+        return [
+            runningGroup(identity: running),
+            failedGroup(identity: failed),
+            approvalGroup(identity: approval, isPending: approvalPending),
+        ]
+    }
+
+    private static func runningGroup(
+        identity: AgentActivityRunIdentity
+    ) -> AgentActivityGroup {
+        let items = (0 ..< 14).map { index in
+            let isRunning = index == 13
+            return item(
+                id: .tool(ToolCallID(rawValue: uuid(1_000 + index))),
+                kind: .tool,
+                state: isRunning ? .running : .succeeded,
+                summary: isRunning
+                    ? "Verifying the compact canonical activity presentation at the largest accessibility text size"
+                    : "Verified canonical activity checkpoint \(index + 1)",
+                target: exactTarget,
+                toolCallID: ToolCallID(rawValue: uuid(1_000 + index)),
+                sequence: UInt64(index + 1),
+                start: 1_800_000_100_000 + Int64(index * 400),
+                duration: isRunning ? 1_900 : 320
+            )
+        }
+        var attempts: [AgentActivityAttempt] = []
+        attempts.reserveCapacity(6)
+        for index in 0 ..< 6 {
+            let attemptID = AttemptID(rawValue: uuid(1_100 + index))
+            let retryOfAttemptID: AttemptID? = index == 0
+                ? nil
+                : AttemptID(rawValue: uuid(1_099 + index))
+            let nextAttemptID: AttemptID? = index == 5
+                ? nil
+                : AttemptID(rawValue: uuid(1_101 + index))
+            attempts.append(AgentActivityAttempt(
+                id: attemptID,
+                state: index == 5 ? .running : .failed,
+                route: AgentActivityRoute(
+                    provider: "classified-provider",
+                    model: "classified-model",
+                    adapter: "classified-adapter"
+                ),
+                span: span(
+                    sequence: UInt64(30 + index),
+                    start: 1_800_000_101_000 + Int64(index * 450),
+                    duration: 420
+                ),
+                itemIDs: [],
+                retryOfAttemptID: retryOfAttemptID,
+                nextAttemptID: nextAttemptID,
+                errorMessage: index == 5 ? nil : "A bounded retry was required."
+            ))
+        }
+        return group(
+            identity: identity,
+            state: .running,
+            summary: "Building and verifying the new compact activity experience",
+            span: span(
+                sequence: 1,
+                start: 1_800_000_100_000,
+                duration: 8_000
+            ),
+            items: items,
+            attempts: attempts
+        )
+    }
+
+    private static func failedGroup(
+        identity: AgentActivityRunIdentity
+    ) -> AgentActivityGroup {
+        let failedAttempt = AttemptID(rawValue: uuid(1_200))
+        let failure = "The verification receipt is incomplete; no workspace change was claimed."
+        let items = [
+            item(
+                id: .tool(ToolCallID(rawValue: uuid(1_201))),
+                kind: .tool,
+                state: .succeeded,
+                summary: "Inspected the accessibility fixture",
+                target: exactTarget,
+                toolCallID: ToolCallID(rawValue: uuid(1_201)),
+                sequence: 1,
+                start: 1_800_000_200_000,
+                duration: 750
+            ),
+            item(
+                id: .failure(EventID(rawValue: uuid(1_202))),
+                kind: .failure,
+                state: .failed,
+                summary: "Verification needs attention",
+                target: exactTarget,
+                sequence: 2,
+                start: 1_800_000_200_800,
+                duration: 900,
+                errorMessage: failure
+            ),
+        ]
+        let artifacts = (0 ..< 4).map { index in
+            let artifactID = ArtifactID(rawValue: uuid(1_220 + index))
+            return AgentActivityArtifact(
+                id: artifactID,
+                run: identity,
+                equivalentArtifactIDs: [artifactID],
+                contentDigest: "sha256:fixture-artifact-\(index)",
+                mediaType: "text/plain",
+                displayName: "Canonical accessibility artifact \(index + 1).txt",
+                firstSequence: EventSequence(rawValue: UInt64(10 + index)),
+                sourceToolCallIDs: []
+            )
+        }
+        return group(
+            identity: identity,
+            state: .failed,
+            summary: "One verification step needs attention",
+            span: span(
+                sequence: 1,
+                start: 1_800_000_200_000,
+                duration: 2_500
+            ),
+            items: items,
+            attempts: [
+                AgentActivityAttempt(
+                    id: failedAttempt,
+                    state: .failed,
+                    route: AgentActivityRoute(
+                        provider: "classified-provider",
+                        model: "classified-model",
+                        adapter: "classified-adapter"
+                    ),
+                    span: span(
+                        sequence: 3,
+                        start: 1_800_000_200_000,
+                        duration: 2_000
+                    ),
+                    itemIDs: items.map(\.id),
+                    retryOfAttemptID: nil,
+                    nextAttemptID: nil,
+                    errorMessage: failure
+                ),
+            ],
+            artifacts: artifacts,
+            errorMessage: failure
+        )
+    }
+
+    private static func approvalGroup(
+        identity: AgentActivityRunIdentity,
+        isPending: Bool
+    ) -> AgentActivityGroup {
+        let state: AgentActivityState = isPending ? .awaitingApproval : .rejected
+        let requestedAt = AgentInstant(rawValue: 1_800_000_300_000)
+        let action = item(
+            id: .tool(approvalCallID),
+            kind: .tool,
+            state: state,
+            summary: isPending
+                ? "Write one reviewed accessibility fixture"
+                : "Reviewed change was rejected without writing",
+            target: exactTarget,
+            toolCallID: approvalCallID,
+            sequence: 1,
+            start: requestedAt.rawValue,
+            duration: 1_200
+        )
+        return group(
+            identity: identity,
+            state: state,
+            summary: isPending
+                ? "A workspace change is waiting for review"
+                : "The reviewed workspace change was rejected",
+            span: span(
+                sequence: 1,
+                start: requestedAt.rawValue,
+                duration: 1_500
+            ),
+            items: [action],
+            approvals: [
+                AgentActivityApproval(
+                    id: approvalRequestID,
+                    run: identity,
+                    callID: approvalCallID,
+                    state: state,
+                    publicSummary: "Review the exact target before writing one file.",
+                    requestedAt: requestedAt,
+                    resolvedAt: isPending
+                        ? nil
+                        : AgentInstant(rawValue: requestedAt.rawValue + 1_500)
+                ),
+            ]
+        )
+    }
+
+    private static func identity(
+        runID: RunID,
+        projectID: ProjectID?,
+        conversationID: ConversationID
+    ) -> AgentActivityRunIdentity {
+        AgentActivityRunIdentity(
+            projectID: projectID,
+            conversationID: conversationID,
+            workspaceID: workspaceID,
+            runID: runID,
+            rootRunID: runID
+        )
+    }
+
+    private static func group(
+        identity: AgentActivityRunIdentity,
+        state: AgentActivityState,
+        summary: String,
+        span: AgentActivityEventSpan,
+        items: [AgentActivityItem],
+        attempts: [AgentActivityAttempt] = [],
+        approvals: [AgentActivityApproval] = [],
+        artifacts: [AgentActivityArtifact] = [],
+        errorMessage: String? = nil
+    ) -> AgentActivityGroup {
+        let sequences = items.map { $0.span.firstSequence }
+        return AgentActivityGroup(
+            identity: identity,
+            state: state,
+            summary: summary,
+            span: span,
+            items: items,
+            attempts: attempts,
+            approvals: approvals,
+            artifacts: artifacts,
+            evidence: [],
+            errorMessage: errorMessage,
+            replayIdentity: AgentActivityReplayIdentity(
+                orderedEventIDs: items.enumerated().map {
+                    EventID(rawValue: uuid(1_400 + $0.offset))
+                },
+                orderedSequences: sequences
+            )
+        )
+    }
+
+    private static func item(
+        id: AgentActivityItemID,
+        kind: AgentActivitySemanticKind,
+        state: AgentActivityState,
+        summary: String,
+        target: String?,
+        toolCallID: ToolCallID? = nil,
+        sequence: UInt64,
+        start: Int64,
+        duration: Int64,
+        errorMessage: String? = nil
+    ) -> AgentActivityItem {
+        AgentActivityItem(
+            id: id,
+            kind: kind,
+            state: state,
+            summary: summary,
+            target: target,
+            attemptID: nil,
+            toolCallID: toolCallID,
+            span: span(sequence: sequence, start: start, duration: duration),
+            errorMessage: errorMessage,
+            evidenceIDs: [],
+            artifactIDs: []
+        )
+    }
+
+    private static func span(
+        sequence: UInt64,
+        start: Int64,
+        duration: Int64
+    ) -> AgentActivityEventSpan {
+        AgentActivityEventSpan(
+            firstSequence: EventSequence(rawValue: sequence),
+            lastSequence: EventSequence(rawValue: sequence),
+            startedAt: AgentInstant(rawValue: start),
+            endedAt: AgentInstant(rawValue: start + duration)
+        )
+    }
+
+    private static func digest(_ digit: Character) -> SHA256Digest {
+        try! SHA256Digest("sha256:" + String(repeating: digit, count: 64))
+    }
+
+    private static func uuid(_ value: Int) -> UUID {
+        let suffix = String(format: "%012x", value)
+        return UUID(uuidString: "00000000-0000-4000-8000-\(suffix)")!
+    }
+}
+
+/// Adapts the deterministic simulator stress generator into the same
+/// classified live-text snapshot consumed by production AgentSystem runs.
+/// The retired runtime remains only the chunk clock for this DEBUG fixture;
+/// the transcript still renders exclusively through the canonical
+/// presentation contract and never reconstructs provider/tool payloads.
+private enum AgentCanonicalStreamingPerformanceFixture {
+    static let launchArgument = "--stress-streaming"
+    static let runID = RunID(rawValue: uuid(1_500))
+    static let attemptID = AttemptID(rawValue: uuid(1_501))
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains(
+        launchArgument
+    )
+
+    @MainActor
+    static func presentation(
+        scope: AgentSystemPresentationScope,
+        stream: LiveStreamBuffer,
+        isWorking: Bool
+    ) -> AgentSystemScopePresentation? {
+        guard isEnabled else { return nil }
+        let text = stream.displayText
+        guard isWorking || !text.isEmpty else { return nil }
+        let liveText = text.isEmpty ? nil : AgentSystemLiveTextSnapshot(
+            runID: runID,
+            attemptID: attemptID,
+            revision: UInt64(max(0, stream.revision)),
+            text: text
+        )
+        return AgentSystemScopePresentation(
+            scope: scope,
+            activeGroup: nil,
+            liveText: liveText,
+            isAccepting: false,
+            isSynchronizing: false,
+            failure: nil
+        )
+    }
+
+    private static func uuid(_ value: Int) -> UUID {
+        let suffix = String(format: "%012x", value)
+        return UUID(uuidString: "00000000-0000-4000-8000-\(suffix)")!
+    }
+}
+#endif
 
 struct ChatView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     var runtime: AgentRuntime
+    var hostedTextCanarySession: AgentHostedTextCanaryLiveSession
+    var agentSystemPresentation: AgentSystemPresentationStore
     var project: Project
     var projects: [Project]
     var conversation: Conversation
@@ -14,6 +416,7 @@ struct ChatView: View {
     var settings: AgentSettings
     let newChat: () -> Void
     let selectConversation: (Conversation) -> Void
+    let deleteConversationFromHistory: (UUID) -> Void
     let setConversationProjectScope: (Conversation, Project?) -> Void
     var projectResumeDraft: String = ""
     var projectResumeDraftRevision: Int = 0
@@ -39,12 +442,17 @@ struct ChatView: View {
     @State private var selectedArtifact: WorkspaceArtifact?
     @State private var chatSaveError: String?
     @State private var showingChatDrawer = false
-    @State private var progressExpanded = false
+    @State private var showingRunDetails = false
     @State private var messageRenderLimit = 80
+    #if DEBUG
+    @State private var debugSendDisposition = "idle"
+    #endif
     @FocusState private var composerFocused: Bool
     @Namespace private var glassNamespace
 
     @State private var cachedMessages: [ChatMessageSnapshot] = []
+    @State private var cachedActivityGroups: [AgentActivityGroup] = []
+    @State private var canonicalActivityLoadFailed = false
     @State private var cachedSourceMessageCount = 0
     @State private var cachedArtifacts: [WorkspaceArtifact] = []
     @State private var cachedDurableRunSnapshot = ChatDurableRunSnapshot.empty
@@ -56,7 +464,16 @@ struct ChatView: View {
     @State private var jumpToLatestAnimated = true
     @StateObject private var transient = ChatTransientState()
     @StateObject private var keyboard = ChatKeyboardState()
-    @AppStorage("codexTerminalPaired") private var codexTerminalPaired = false
+    @StateObject private var agentLiveStream = LiveStreamBuffer()
+    @State private var agentLiveRunID: RunID?
+    @State private var agentLiveAttemptID: AttemptID?
+    @State private var agentLiveIngestedText = ""
+    #if DEBUG
+    @AppStorage(AgentCanonicalActivityA11yFixture.approvalPendingDefaultsKey)
+    private var debugCanonicalActivityApprovalPending = false
+    @State private var hostedTextCanaryDraftToken = UUID()
+    @State private var lastHostedTextCanaryNoticeRevision: UInt64 = 0
+    #endif
     @AppStorage("novaForgeChatDraftsByConversation") private var persistedDraftsJSON = "{}"
 
     private static let chatLatestAnchorID = "chatLatestAnchor"
@@ -69,7 +486,7 @@ struct ChatView: View {
     /// Once handoff completes, collapse that room immediately so the durable
     /// answer does not sit above a large invisible tail.
     private var latestResponseClearance: CGFloat {
-        ownsActiveRunState && runtime.isWorking ? 84 : 28
+        composerOwnsWorkingRun ? 32 : 28
     }
 
     private var shouldAnimateDecorative: Bool {
@@ -81,14 +498,6 @@ struct ChatView: View {
         return max(conversation.messageCount - visibleCount, 0)
     }
 
-    private var showsCodexTerminalDemo: Bool {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--codex-terminal-demo")
-        #else
-        false
-        #endif
-    }
-
     private var visibleMessages: ArraySlice<ChatMessageSnapshot> {
         guard messageRenderLimit > 0, cachedMessages.count > messageRenderLimit else {
             return cachedMessages[...]
@@ -96,37 +505,59 @@ struct ChatView: View {
         return cachedMessages.suffix(messageRenderLimit)
     }
 
+    private var activityGroupsForPresentation: [AgentActivityGroup] {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(
+            AgentCanonicalActivityA11yFixture.launchArgument
+        ) {
+            return AgentCanonicalActivityA11yFixture.groups(
+                projectID: scopedProject.map { ProjectID(rawValue: $0.id) },
+                conversationID: ConversationID(rawValue: conversation.id),
+                approvalPending: debugCanonicalActivityApprovalPending
+            )
+        }
+        #endif
+        return cachedActivityGroups
+    }
+
     private var transcriptRows: [ChatTranscriptRow] {
-        var rows = visibleMessages.map(ChatTranscriptRow.message)
+        let activityGroups = activityGroupsForPresentation
+        let canonicalOwnsToolPresentation = !activityGroups.isEmpty ||
+            canonicalActivityLoadFailed
+        var rows = visibleMessages.compactMap { message -> ChatTranscriptRow? in
+            // Once this exact conversation has canonical activity, the journal
+            // owns tool presentation. Suppress legacy provider-call and tool
+            // result bubbles instead of showing the same work twice (or
+            // rebuilding it from untrusted JSON). User and final assistant
+            // prose remain the primary transcript.
+            if !ChatToolActivityCutoverPolicy.shouldRenderMessage(
+                role: message.role,
+                hasToolCalls: !message.toolCalls.isEmpty,
+                canonicalOwnsToolPresentation: canonicalOwnsToolPresentation
+            ) {
+                return nil
+            }
+            return .message(message)
+        }
+        rows.append(contentsOf: activityGroups.map(ChatTranscriptRow.activity))
+        if canonicalActivityLoadFailed {
+            rows.append(.activityUnavailable(scopeID: evidenceScopeIdentity))
+        }
+        rows.sort(by: ChatTranscriptRow.precedes)
         guard shouldShowLiveResponseIsland else { return rows }
+        guard let liveRunID = agentRunPresentation.liveText?.runID ??
+                agentRunPresentation.activeGroup?.identity.runID
+        else { return rows }
 
-        let handoffMessageID = runtime.liveStream.handoffMessageID
-
-        // As soon as the durable response enters the cache, let it replace the
-        // live content under the same response identity. Its row's onAppear is
-        // the deterministic acknowledgement that the handoff really rendered.
-        // Waiting on a fixed timer here can clear the only visible response on
-        // a busy frame or a slower device.
-        if let handoffMessageID,
-           rows.contains(where: { $0.messageID == handoffMessageID }) {
+        // The durable assistant row owns handoff as soon as the exact RunID is
+        // present. No timer or guessed message identity may clear the only
+        // readable response.
+        if rows.contains(where: {
+            $0.assistantRunID == liveRunID.rawValue
+        }) {
             return rows
         }
-
-        let liveResponseID = handoffMessageID ?? runtime.liveStream.responseID
-        rows.removeAll { row in
-            guard let messageID = row.messageID else { return false }
-            return messageID == liveResponseID || messageID == handoffMessageID
-        }
-
-        let liveRow = ChatTranscriptRow.live(responseID: liveResponseID)
-        if let firstQueuedFollowUpIndex = rows.firstIndex(where: { row in
-            guard let messageID = row.messageID else { return false }
-            return runtime.queuedFollowUpMessageIDs.contains(messageID)
-        }) {
-            rows.insert(liveRow, at: firstQueuedFollowUpIndex)
-        } else {
-            rows.append(liveRow)
-        }
+        rows.append(.live(runID: liveRunID))
         return rows
     }
 
@@ -143,6 +574,73 @@ struct ChatView: View {
 
     private var scopedProject: Project? {
         conversation.project
+    }
+
+    private var agentPresentationScope: AgentSystemPresentationScope {
+        AgentSystemPresentationScope(
+            project: scopedProject,
+            conversation: conversation
+        )
+    }
+
+    private var agentRunPresentation: AgentSystemScopePresentation {
+        #if DEBUG
+        if let fixture = AgentCanonicalStreamingPerformanceFixture
+            .presentation(
+                scope: agentPresentationScope,
+                stream: runtime.liveStream,
+                isWorking: runtime.isWorking
+            ) {
+            return fixture
+        }
+        #endif
+        return agentSystemPresentation.presentation(
+            for: agentPresentationScope
+        )
+    }
+
+    private var agentOrchestrationPresentation: AgentOrchestrationPresentation? {
+        agentSystemPresentation.orchestrationPresentation(
+            for: agentPresentationScope
+        )
+    }
+
+    private var agentWorkspace: SandboxWorkspace {
+        SandboxWorkspace(
+            name: scopedProject?.workspaceName ?? settings.activeWorkspaceName
+        )
+    }
+
+    private var selectedWorkspaceID: WorkspaceID? {
+        guard let identity = try? WorkspaceResourceIdentity(
+            workspace: agentWorkspace
+        ) else { return nil }
+        return WorkspaceID(rawValue: identity.persistentID)
+    }
+
+    private var workspaceAgentPresentation: AgentSystemScopePresentation? {
+        guard let selectedWorkspaceID else { return nil }
+        return agentSystemPresentation.activePresentation(
+            in: selectedWorkspaceID
+        )
+    }
+
+    private var canonicalRunOwnsSelectedConversation: Bool {
+        agentRunPresentation.activeGroup != nil ||
+            agentRunPresentation.isAccepting ||
+            agentRunPresentation.isSynchronizing
+    }
+
+    private var canonicalRunIsActive: Bool {
+        agentRunPresentation.blocksCommand
+    }
+
+    private var canonicalRunIsWorking: Bool {
+        agentRunPresentation.isWorking
+    }
+
+    private var canonicalPendingApproval: AgentActivityApproval? {
+        agentRunPresentation.pendingApproval
     }
 
     /// Durable evidence follows the selected conversation's scope, not the
@@ -197,7 +695,8 @@ struct ChatView: View {
     }
 
     private var shouldAutoScrollForKeyboard: Bool {
-        !cachedMessages.isEmpty || (ownsActiveRunState && runtime.isWorking)
+        !cachedMessages.isEmpty || canonicalRunIsWorking ||
+            (ownsActiveRunState && runtime.isWorking)
     }
 
     private var activeLayoutContract: ChatLayoutContract {
@@ -210,6 +709,22 @@ struct ChatView: View {
 
     private var chatMode: ChatMode {
         guard ownsActiveRunState else { return .idle }
+        if canonicalRunOwnsSelectedConversation {
+            if canonicalPendingApproval != nil { return .pendingApproval }
+            if agentRunPresentation.failure != nil ||
+                agentRunPresentation.activeGroup?.state == .failed ||
+                agentRunPresentation.activeGroup?.state == .rejected ||
+                agentRunPresentation.activeGroup?.state == .cancelled ||
+                agentRunPresentation.activeGroup?.state == .interrupted {
+                return .failed
+            }
+            if canonicalRunIsWorking { return .streaming }
+            if composerFocused || !trimmedPrompt.isEmpty { return .composing }
+            if agentRunPresentation.activeGroup?.state == .succeeded {
+                return .completed
+            }
+            return .idle
+        }
         if runtime.pendingTool != nil { return .pendingApproval }
         if runtime.lastError != nil { return .failed }
         if runtime.isWorking { return .streaming }
@@ -219,7 +734,11 @@ struct ChatView: View {
     }
 
     private var composerMode: ChatComposerMode {
-        if hasForeignActiveRun || hasForeignProjectMission || (ownsActiveRunState && runtime.pendingTool != nil) { return .disabled }
+        if hasForeignActiveRun || hasForeignProjectMission ||
+            canonicalRunIsActive ||
+            (ownsActiveRunState && runtime.pendingTool != nil) {
+            return .disabled
+        }
         if draftUsesExpandedComposer { return .expanded }
         if composerFocused { return .focused }
         return .compact
@@ -231,17 +750,27 @@ struct ChatView: View {
 
     private var runAccessoryState: ChatRunAccessoryState {
         guard ownsActiveRunState else { return .hidden }
+        if canonicalRunOwnsSelectedConversation {
+            if canonicalPendingApproval != nil { return .approval }
+            if agentRunPresentation.failure != nil ||
+                agentRunPresentation.activeGroup?.state == .failed ||
+                agentRunPresentation.activeGroup?.state == .rejected ||
+                agentRunPresentation.activeGroup?.state == .cancelled ||
+                agentRunPresentation.activeGroup?.state == .interrupted {
+                return .failure
+            }
+            if canonicalRunIsWorking { return .progress }
+            return .hidden
+        }
         if runtime.pendingTool != nil { return .approval }
         if runtime.lastError != nil || runtime.wasInterrupted { return .failure }
         if runtime.isWorking || runtime.queuedPromptCount > 0 { return .progress }
-        // Completion banners only make sense above a transcript that actually
-        // contains the completed work — never on a fresh, empty conversation.
-        if hasCompletedRunEvidence && !cachedMessages.isEmpty { return .completion }
         return .hidden
     }
 
     private var hasCompletedRunEvidence: Bool {
-        runtime.lastRunDuration != nil ||
+        agentRunPresentation.activeGroup?.state == .succeeded ||
+            runtime.lastRunDuration != nil ||
             runtime.runState == .completed ||
             runtime.hasSuccessfulTraceEvent ||
             !runtimeArtifactsForSelectedConversation.isEmpty ||
@@ -260,28 +789,34 @@ struct ChatView: View {
     private var shouldTopAnchorEmptyTranscript: Bool {
         cachedMessages.isEmpty &&
             !hasForeignActiveRun &&
+            !canonicalRunIsActive &&
             !(ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil))
     }
 
     private var shouldShowLiveResponseIsland: Bool {
         ownsActiveRunState &&
-            (runtime.isWorking || runtime.liveStream.isHandoffActive)
+            (agentRunPresentation.liveText != nil ||
+                (canonicalRunIsWorking &&
+                    agentRunPresentation.activeGroup != nil))
     }
 
     private var missionStripIsVisible: Bool {
-        ForgeMissionStrip.isVisible(
+        guard ForgeMissionStrip.isVisible(
             scopedProject: scopedProject,
             status: missionStatus,
             autoContinue: missionAutoContinue
-        )
-    }
+        ) else { return false }
 
-    private var usesCompactStreamingComposer: Bool {
-        AgentPerformance.prefersReducedVisualEffects &&
-            ownsActiveRunState &&
-            runtime.isWorking &&
-            !composerFocused &&
-            trimmedPrompt.isEmpty
+        // A selected chat's active response is controlled directly from the
+        // composer. Preserve the mission strip for approvals and countdowns,
+        // but do not repeat the same working state and Stop action at the top.
+        if missionUsesChatRuntime,
+           composerOwnsWorkingRun,
+           missionStatus.tone == .working,
+           !missionAutoContinue.isCountingDown {
+            return false
+        }
+        return true
     }
 
     private var hasUserMessageInVisibleThread: Bool {
@@ -323,13 +858,15 @@ struct ChatView: View {
         }
     }
 
-    /// The local brain still needs installing (or resuming/repairing).
-    /// `.checking` deliberately reads as ready so launch doesn't flash the
-    /// power-up hero for users who already installed the model.
+    /// The local brain still needs installing, verification, resuming, or
+    /// repair. Integrity checking is a real gate: no deterministic shortcut
+    /// may run before the selected GGUF digest is proven.
     private var needsLocalPowerUp: Bool {
         switch runtime.localModels.status {
-        case .missing, .partial, .downloading, .failed, .incompatible: return true
-        case .checking, .ready: return false
+        case .checking, .missing, .partial, .downloading, .failed, .incompatible:
+            return true
+        case .ready:
+            return false
         }
     }
 
@@ -338,12 +875,39 @@ struct ChatView: View {
             !runtime.hasUsableProviderCredential(settings: settings)
     }
 
+    private var unsupportedAgentRoute: Bool {
+        !settings.provider.supportsAgentRuntime ||
+            !settings.provider.modelOptions.contains(settings.modelID)
+    }
+
     private var providerSetupBlocksComposer: Bool {
-        missingCredentialSetup || (settings.provider == .local && needsLocalPowerUp)
+        unsupportedAgentRoute || missingCredentialSetup ||
+            (settings.provider == .local && needsLocalPowerUp)
     }
 
     private var firstMissionReadiness: CleanChatEmptyState.Readiness {
+        if unsupportedAgentRoute {
+            return CleanChatEmptyState.Readiness(
+                title: "Choose an agent-ready model",
+                detail: "This saved legacy route cannot run the new agent system. Choose Zen, Local, ChatGPT, or OpenAI in Control.",
+                symbol: "arrow.triangle.branch",
+                tint: AgentPalette.warning,
+                actionTitle: "Control",
+                badgeTitle: "CHOOSE"
+            )
+        }
+
         if missingCredentialSetup {
+            if settings.provider == .openAICodex {
+                return CleanChatEmptyState.Readiness(
+                    title: "Sign in with ChatGPT",
+                    detail: "Connect your ChatGPT subscription in Control, then supported GPT agent runs can use its included allowance.",
+                    symbol: "person.crop.circle.badge.checkmark",
+                    tint: AgentPalette.indigo,
+                    actionTitle: "Control",
+                    badgeTitle: "SIGN IN"
+                )
+            }
             return CleanChatEmptyState.Readiness(
                 title: "\(settings.provider.displayName) needs a key",
                 detail: "Add the key once in Control, then these starter missions can run for real.",
@@ -365,13 +929,25 @@ struct ChatView: View {
             )
         }
 
+        if settings.provider == .openCodeZen,
+           !settings.provider.requiresCredential(for: settings.modelID) {
+            return CleanChatEmptyState.Readiness(
+                title: "Zen Free ready",
+                detail: "This free model uses Zen's anonymous agent route, so a stale saved key cannot block it.",
+                symbol: settings.provider.symbol,
+                tint: settings.provider.tint,
+                actionTitle: nil,
+                badgeTitle: "READY"
+            )
+        }
+
         return CleanChatEmptyState.Readiness(
-            title: "\(settings.provider.displayName) ready",
-            detail: "Provider setup is complete. NovaForge can plan, run safe tools, and report proof.",
+            title: "\(settings.provider.displayName) key saved",
+            detail: "The model route is recognized. Use Check key in Control whenever you want a live provider check.",
             symbol: settings.provider.symbol,
             tint: settings.provider.tint,
             actionTitle: nil,
-            badgeTitle: "READY"
+            badgeTitle: "KEY SAVED"
         )
     }
 
@@ -379,8 +955,11 @@ struct ChatView: View {
         false
     }
 
-    private var hasRunState: Bool {
-        runtime.isWorking ||
+    private var hasLegacyRunState: Bool {
+        #if DEBUG
+        if hostedTextCanarySession.locksWorkspaceRouting { return true }
+        #endif
+        return runtime.isWorking ||
             runtime.pendingTool != nil ||
             runtime.lastError != nil ||
             runtime.queuedPromptCount > 0 ||
@@ -392,23 +971,66 @@ struct ChatView: View {
             cachedDurableRunSnapshot.hasCompletionEvidence
     }
 
+    private var hasRunState: Bool {
+        canonicalRunOwnsSelectedConversation || hasLegacyRunState
+    }
+
     private var ownsActiveRunState: Bool {
-        guard hasRunState else { return true }
-        guard let activeConversationID = runtime.activeConversationID else { return true }
+        if canonicalRunOwnsSelectedConversation { return true }
+        if let workspaceAgentPresentation,
+           workspaceAgentPresentation.blocksCommand {
+            return workspaceAgentPresentation.scope == agentPresentationScope
+        }
+        #if DEBUG
+        if hostedTextCanarySession.locksWorkspaceRouting {
+            return canaryOwnsSelectedConversation
+        }
+        guard hasLegacyRunState else { return true }
+        guard let activeConversationID = runtime.activeConversationID else {
+            return true
+        }
         return activeConversationID == conversation.id
+        #else
+        return true
+        #endif
     }
 
     private var hasForeignActiveRun: Bool {
-        hasRunState && !ownsActiveRunState
+        if let workspaceAgentPresentation,
+           workspaceAgentPresentation.blocksCommand,
+           workspaceAgentPresentation.scope != agentPresentationScope {
+            return true
+        }
+        #if DEBUG
+        return hasLegacyRunState && !ownsActiveRunState
+        #else
+        return false
+        #endif
     }
 
     private var hasForeignProjectMission: Bool {
-        scopedProject != nil &&
+        hasForeignActiveRun || (scopedProject != nil &&
             !missionUsesChatRuntime &&
-            missionStatus.blocksCommand
+            missionStatus.blocksCommand)
     }
 
     private var activeElsewhereTitle: String {
+        if let active = activeElsewhereConversation,
+           workspaceAgentPresentation?.blocksCommand == true {
+            let title = active.title.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            return title.isEmpty ? "NovaForge" : title
+        }
+        #if DEBUG
+        if hostedTextCanarySession.locksWorkspaceRouting,
+           let active = activeElsewhereConversation {
+            let title = active.title.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            return title.isEmpty ? "NovaForge" : title
+        }
+        #endif
         let title = runtime.activeConversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if title.isEmpty || title == LaunchConversationSelection.safeStartTitle {
             return "NovaForge"
@@ -417,9 +1039,60 @@ struct ChatView: View {
     }
 
     private var activeElsewhereConversation: Conversation? {
+        if let conversationID = workspaceAgentPresentation?.scope
+            .conversationID.rawValue,
+           conversationID != conversation.id,
+           let activeConversation = conversations.first(where: { $0.id == conversationID }) {
+            return activeConversation
+        }
+        #if DEBUG
+        if hostedTextCanarySession.locksWorkspaceRouting,
+           let conversationID = hostedTextCanarySession.activeDraftIdentity?.conversationID,
+           let activeConversation = conversations.first(where: { $0.id == conversationID }) {
+            return activeConversation
+        }
+        #endif
         guard let activeConversationID = runtime.activeConversationID else { return nil }
-        return conversations.first { $0.id == activeConversationID }
+        if let activeConversation = conversations.first(where: {
+            $0.id == activeConversationID
+        }) {
+            return activeConversation
+        }
+        return runtime.activeRunConversation
     }
+
+    private var protectedConversationID: UUID? {
+        if let workspaceAgentPresentation,
+           workspaceAgentPresentation.blocksCommand {
+            return workspaceAgentPresentation.scope.conversationID.rawValue
+        }
+        #if DEBUG
+        if hostedTextCanarySession.locksWorkspaceRouting {
+            return hostedTextCanarySession.activeDraftIdentity?.conversationID
+        }
+        #endif
+        guard runtime.isWorking || runtime.pendingTool != nil ||
+                runtime.queuedPromptCount > 0 else { return nil }
+        return runtime.activeConversationID ?? conversation.id
+    }
+
+    #if DEBUG
+    private var canaryOwnsSelectedConversation: Bool {
+        hostedTextCanarySession.locksWorkspaceRouting &&
+            hostedTextCanarySession.activeDraftIdentity?.conversationID ==
+                conversation.id
+    }
+
+    private var canaryIsActivelyWorking: Bool {
+        guard canaryOwnsSelectedConversation else { return false }
+        switch hostedTextCanarySession.phase {
+        case .accepting, .running, .stopping:
+            return true
+        case .idle, .blockedRecovery:
+            return false
+        }
+    }
+    #endif
 
     private var conversationRefreshID: String {
         "\(evidenceScopeIdentity)-\(conversation.messageCount)-\(conversation.updatedAt.timeIntervalSince1970)"
@@ -587,6 +1260,113 @@ struct ChatView: View {
         )
     }
 
+    private func refreshCanonicalActivity() async {
+        let scopeIdentity = evidenceScopeIdentity
+        let scope = AgentActivityProjectionScope(
+            projectID: scopedProject.map { ProjectID(rawValue: $0.id) },
+            conversationID: ConversationID(rawValue: conversation.id)
+        )
+        do {
+            let groups = try await AgentCanonicalActivityRepository(
+                container: modelContext.container
+            ).groups(in: scope)
+            guard !Task.isCancelled,
+                  evidenceScopeIdentity == scopeIdentity else { return }
+            cachedActivityGroups = groups
+            canonicalActivityLoadFailed = false
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled,
+                  evidenceScopeIdentity == scopeIdentity else { return }
+            // Canonical corruption or an intentionally bounded oversized
+            // scope must never fall back to reconstructing provider tool JSON.
+            cachedActivityGroups = []
+            canonicalActivityLoadFailed = true
+        }
+    }
+
+    private func handleActivityCommand(_ command: AgentActivityCommand) {
+        switch command {
+        case .cancel, .resolveApproval:
+            Task { @MainActor in
+                do {
+                    _ = try await agentSystemPresentation.route(command)
+                } catch {
+                    runtime.presentToast(
+                        AgentSystemPresentationFailure.commandUnavailable
+                            .userMessage,
+                        tone: .error
+                    )
+                }
+            }
+        case let .retry(retry):
+            Task { @MainActor in
+                do {
+                    let routed = try await agentSystemPresentation.route(
+                        command
+                    )
+                    guard routed == .navigation(.retry(retry)) else {
+                        throw AgentSystemActivityCommandRouterError
+                            .staleActivityCommand
+                    }
+                    let disposition = await agentSystemPresentation.retry(
+                        retry,
+                        conversation: conversation,
+                        project: scopedProject,
+                        workspace: agentWorkspace,
+                        settings: settings
+                    )
+                    switch disposition {
+                    case .accepted:
+                        forceScrollToBottom = true
+                        scrollAttachment = .restoring
+                        UIImpactFeedbackGenerator(style: .medium)
+                            .impactOccurred()
+                        requestJumpToLatest(
+                            animated: true,
+                            delay: .milliseconds(60)
+                        )
+                    case .busy:
+                        runtime.presentToast(
+                            AgentSystemPresentationFailure.workspaceBusy
+                                .userMessage,
+                            tone: .info
+                        )
+                    case .rejected(let failure):
+                        runtime.presentToast(
+                            failure.userMessage,
+                            tone: .error
+                        )
+                    }
+                } catch {
+                    runtime.presentToast(
+                        AgentSystemPresentationFailure.commandUnavailable
+                            .userMessage,
+                        tone: .error
+                    )
+                }
+            }
+        case .openReceipt:
+            openWorkspaceSurface(.history)
+        case .openArtifact:
+            openWorkspaceSurface(.workspace)
+        }
+    }
+
+    private func reviewActivityApproval(_ approval: AgentActivityApproval) {
+        let pending = AgentPolicyMutationRuntime.shared.approvalPromptCenter.pendingItem
+        guard pending?.requestID == approval.id,
+              pending?.runID == approval.run.runID,
+              pending?.callID == approval.callID else {
+            openWorkspaceSurface(.history)
+            return
+        }
+        // The exact request is already being presented by AppRoot's sheet.
+        // Keeping this method identity-only prevents the compact row from
+        // manufacturing or directly submitting approval authority.
+    }
+
     private static func placeholderMissionContract(for project: Project) -> MissionOSContract {
         let mission = project.mission.trimmingCharacters(in: .whitespacesAndNewlines)
         let missionText = mission.isEmpty ? "Build and verify useful work in NovaForge." : mission
@@ -705,6 +1485,8 @@ struct ChatView: View {
 
     private func clearScopedEvidenceCaches() {
         cachedArtifacts = []
+        cachedActivityGroups = []
+        canonicalActivityLoadFailed = false
         cachedDurableRunSnapshot = .empty
         cachedMissionContract = nil
         cachedWorkflowSpine = nil
@@ -732,26 +1514,14 @@ struct ChatView: View {
                 GlassGroup(spacing: 9) {
                     VStack(spacing: 9) {
                         ForgeHeader(
-                            runtime: runtime,
-                            project: project,
                             projects: projects,
                             scopedProject: scopedProject,
                             conversation: conversation,
-                            settings: settings,
-                            artifacts: cachedArtifacts,
-                            durableSnapshot: cachedDurableRunSnapshot,
-                            workflowSpine: cachedWorkflowSpine,
-                            ownsActiveRunState: ownsActiveRunState,
-                            secondarySurfaceOwnsLiveState: showsMissionStrip || shouldShowContextBar,
-                            hasForeignActiveRun: hasForeignActiveRun,
-                            foreignActiveTitle: activeElsewhereTitle,
                             newChat: newChat,
                             changeScope: { selectedProject in
                                 setConversationProjectScope(conversation, selectedProject)
                             },
                             createProject: createProject,
-                            openWorkspaceSurface: openWorkspaceSurface,
-                            openArtifact: previewArtifact,
                             openMissionDossier: openMissionDossier,
                             openChatDrawer: {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -800,7 +1570,10 @@ struct ChatView: View {
                                         EmptyView()
                                     }
 
-                                    if cachedMessages.isEmpty && !hasForeignActiveRun && !(ownsActiveRunState && (runtime.isWorking || runtime.pendingTool != nil)) {
+                                    if cachedMessages.isEmpty && !hasForeignActiveRun &&
+                                        !canonicalRunIsActive &&
+                                        !(ownsActiveRunState &&
+                                            (runtime.isWorking || runtime.pendingTool != nil)) {
                                         chatEmptyStateContent
                                             .padding(.horizontal)
                                             .transition(.opacity)
@@ -825,23 +1598,27 @@ struct ChatView: View {
                                         .transition(.opacity)
                                     }
 
-                                    if settings.provider == .openAICodex && showsCodexTerminalDemo {
-                                        CodexChatTerminalCard(isPaired: codexTerminalPaired) {
-                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                            openWorkspaceSurface(.settings)
-                                        }
-                                        .padding(.horizontal)
-                                        .transition(.opacity)
-                                    }
-
                                     ForEach(transcriptRows) { row in
                                         Group {
                                             switch row {
                                             case .message(let message):
                                                 messageBubble(for: message)
+                                            case .activity(let group):
+                                                AgentActivityGroupView(
+                                                    group: group,
+                                                    onCommand: handleActivityCommand,
+                                                    onReviewApproval: reviewActivityApproval
+                                                )
+                                                .padding(.horizontal, 18)
+                                            case .activityUnavailable:
+                                                CanonicalActivityUnavailableView {
+                                                    openWorkspaceSurface(.history)
+                                                }
+                                                .padding(.horizontal, 18)
                                             case .live:
                                                 ChatLiveResponseIsland(
-                                                    runtime: runtime,
+                                                    stream: agentLiveStream,
+                                                    isWorking: canonicalRunIsWorking,
                                                     isVisibleForFrameProfiling: isVisibleForFrameProfiling
                                                 )
                                             }
@@ -895,7 +1672,9 @@ struct ChatView: View {
                             handleScrollPhaseChange(newPhase, context: context)
                         }
                         .onAppear {
-                            let shouldInitialScroll = (ownsActiveRunState && runtime.isWorking) || forceScrollToBottom || !visibleMessages.isEmpty
+                            let shouldInitialScroll = canonicalRunIsWorking ||
+                                (ownsActiveRunState && runtime.isWorking) ||
+                                forceScrollToBottom || !visibleMessages.isEmpty
                             guard shouldInitialScroll else { return }
                             forceScrollToBottom = true
                             scrollAttachment = .restoring
@@ -918,6 +1697,18 @@ struct ChatView: View {
                             handleRunStateChange(newState)
                         }
                         .onReceive(runtime.liveStream.$layoutRevision) { _ in
+                            #if DEBUG
+                            if AgentCanonicalStreamingPerformanceFixture
+                                .isEnabled {
+                                synchronizeAgentLiveStream()
+                            }
+                            #endif
+                            keepLiveStreamReadableDuringGrowth()
+                        }
+                        .onReceive(agentLiveStream.$layoutRevision) { _ in
+                            // Canonical AgentSystem text grows in its own
+                            // buffer. Follow its actual layout revisions so a
+                            // new line cannot advance beneath the glass dock.
                             keepLiveStreamReadableDuringGrowth()
                         }
                         .onChange(of: composerFocused) {
@@ -952,6 +1743,25 @@ struct ChatView: View {
             }
             .task(id: durableRunRefreshID) {
                 refreshDurableRunSnapshot()
+            }
+            .task(id: "canonical-activity-\(durableRunRefreshID)") {
+                await refreshCanonicalActivity()
+            }
+            .onChange(
+                of: agentSystemPresentation.revision,
+                initial: true
+            ) {
+                synchronizeAgentLiveStream()
+            }
+            .onChange(
+                of: agentRunPresentation.activeGroup,
+                initial: true
+            ) {
+                updateCachedMessages()
+                refreshDurableRunSnapshot()
+                Task { @MainActor in
+                    await refreshCanonicalActivity()
+                }
             }
             .onAppear {
                 #if DEBUG || targetEnvironment(simulator)
@@ -1018,17 +1828,21 @@ struct ChatView: View {
                 .background { ChatDockBackground() }
                 .zIndex(5)
         }
+        .sheet(isPresented: $showingRunDetails) {
+            runDetailsSheet
+        }
         .overlay(alignment: .leading) {
             if showingChatDrawer {
                 ChatDrawerOverlay(
                     project: project,
                     conversations: projectConversations,
                     selectedConversationID: conversation.id,
-                    protectedConversationID: (runtime.isWorking || runtime.pendingTool != nil || runtime.queuedPromptCount > 0) ? (runtime.activeConversationID ?? conversation.id) : nil,
+                    protectedConversationID: protectedConversationID,
                     settings: settings,
                     selectConversation: { selected in
                         selectConversation(selected)
                     },
+                    deleteConversationFromHistory: deleteConversationFromHistory,
                     newChat: {
                         newChat()
                     },
@@ -1043,10 +1857,15 @@ struct ChatView: View {
                 .zIndex(10)
             }
         }
-        .toolbar((keyboard.isVisible || showingChatDrawer) ? .hidden : .visible, for: .tabBar)
+        .toolbar(showingChatDrawer ? .hidden : .visible, for: .tabBar)
         .onChange(of: projectResumeDraftRevision) {
             applyProjectResumeDraftIfNeeded(focusComposer: true)
         }
+        #if DEBUG
+        .onChange(of: hostedTextCanarySession.revision) {
+            handleHostedTextCanaryRevision()
+        }
+        #endif
         .onChange(of: activeLayoutContract) { oldValue, newValue in
             handleLayoutContractChange(oldValue: oldValue, newValue: newValue)
         }
@@ -1071,7 +1890,7 @@ struct ChatView: View {
             selectedArtifact = nil
             composerFocused = false
             showingChatDrawer = false
-            progressExpanded = false
+            showingRunDetails = false
             messageRenderLimit = messageRenderWindowSize
             transient.lastReportedBottomDistance = .infinity
             transient.accessoryResizeFollowUpTask?.cancel()
@@ -1079,8 +1898,17 @@ struct ChatView: View {
             transient.manualRepinTask?.cancel()
             keyboard.reset()
             scrollAttachment = .pinned
-            forceScrollToBottom = conversation.messageCount > 0 || (ownsActiveRunState && runtime.isWorking)
+            agentLiveStream.reset()
+            agentLiveRunID = nil
+            agentLiveAttemptID = nil
+            agentLiveIngestedText = ""
+            #if DEBUG
+            hostedTextCanaryDraftToken = UUID()
+            #endif
+            forceScrollToBottom = conversation.messageCount > 0 ||
+                composerOwnsWorkingRun
             restorePersistedDraftIfAvailable()
+            synchronizeAgentLiveStream()
         }
         .onChange(of: prompt) {
             handlePromptChanged()
@@ -1136,6 +1964,27 @@ struct ChatView: View {
     }
 
     private func acknowledgeLiveHandoffIfNeeded(for message: ChatMessageSnapshot) {
+        if message.role == .assistant,
+           let runID = message.runID,
+           agentLiveRunID?.rawValue == runID {
+            let completedRunID = agentLiveRunID
+            agentLiveStream.reset()
+            agentLiveRunID = nil
+            agentLiveAttemptID = nil
+            agentLiveIngestedText = ""
+            if let completedRunID {
+                Task { @MainActor in
+                    await agentSystemPresentation.acknowledgeLiveHandoff(
+                        runID: completedRunID
+                    )
+                }
+            }
+            if shouldKeepTranscriptPinned {
+                scrollAttachment = .restoring
+                requestJumpToLatest(animated: false)
+            }
+            return
+        }
         guard message.role == .assistant,
               runtime.liveStream.handoffMessageID == message.id else { return }
 
@@ -1146,6 +1995,41 @@ struct ChatView: View {
         // the next main-actor turn so it observes the durable row's final size.
         scrollAttachment = .restoring
         requestJumpToLatest(animated: false)
+    }
+
+    private func synchronizeAgentLiveStream() {
+        let presentation = agentRunPresentation
+        guard let runID = presentation.liveText?.runID ??
+                presentation.activeGroup?.identity.runID
+        else {
+            if agentLiveRunID != nil {
+                agentLiveStream.reset()
+                agentLiveRunID = nil
+                agentLiveAttemptID = nil
+                agentLiveIngestedText = ""
+            }
+            return
+        }
+
+        if agentLiveRunID != runID {
+            agentLiveStream.reset()
+            agentLiveRunID = runID
+            agentLiveAttemptID = nil
+            agentLiveIngestedText = ""
+        }
+        guard let live = presentation.liveText else { return }
+
+        if agentLiveAttemptID != live.attemptID ||
+            !live.text.hasPrefix(agentLiveIngestedText) {
+            agentLiveStream.reset()
+            agentLiveAttemptID = live.attemptID
+            agentLiveIngestedText = ""
+        }
+        guard live.text.count > agentLiveIngestedText.count else { return }
+        let suffix = live.text.dropFirst(agentLiveIngestedText.count)
+        agentLiveStream.append(String(suffix))
+        agentLiveIngestedText = live.text
+        keepLiveStreamReadableDuringGrowth()
     }
 
     private func previewArtifact(_ artifact: WorkspaceArtifact) {
@@ -1240,9 +2124,9 @@ struct ChatView: View {
         let _ = AgentPerformance.bodyEvaluation("Chat Bottom Accessory Body")
         return GlassGroup(spacing: 10) {
             VStack(spacing: 6) {
-            if hasForeignActiveRun {
-                ActiveResponseElsewhereDock(title: activeElsewhereTitle, open: openActiveConversation)
-            } else if shouldShowContextBar {
+                if hasForeignActiveRun {
+                    ActiveResponseElsewhereDock(title: activeElsewhereTitle, open: openActiveConversation)
+                } else if shouldShowStandaloneContextBar {
                     ChatContextBar(
                         runtime: runtime,
                         settings: settings,
@@ -1253,152 +2137,337 @@ struct ChatView: View {
                         retry: {
                             runtime.retryLastPrompt(conversation: conversation, settings: settings, context: modelContext, project: scopedProject)
                         },
-                    continueRun: {
-                        runtime.continueAfterInterruption(conversation: conversation, settings: settings, context: modelContext, project: scopedProject)
-                    },
-                    stop: { runtime.stopGenerating(context: modelContext) },
-                    openWorkspaceSurface: openWorkspaceSurface,
-                    clear: { runtime.clearCurrentRunState(keepLastFailure: false) },
-                    compact: shouldShowJumpToLatestAccessory && runtime.isWorking && !progressExpanded,
-                    glassNamespace: glassNamespace,
-                    expanded: $progressExpanded
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else if shouldShowQuickActions {
-                QuickDelegateRail(
-                    workflowSpine: scopedProject == nil ? nil : cachedWorkflowSpine,
-                    send: sendSuggestion
-                )
-            }
-
-            if shouldShowJumpToLatestAccessory {
-                JumpToLatestButton(tint: chatChromeTint, glassNamespace: glassNamespace) {
-                    jumpToLatestFromAccessory()
+                        continueRun: {
+                            runtime.continueAfterInterruption(conversation: conversation, settings: settings, context: modelContext, project: scopedProject)
+                        },
+                        stop: stopActiveRun,
+                        openWorkspaceSurface: openWorkspaceSurface,
+                        clear: { runtime.clearCurrentRunState(keepLastFailure: false) },
+                        compact: false,
+                        glassNamespace: glassNamespace,
+                        expanded: runDetailsDisclosureBinding
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 18)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
 
-            composer
+                composer
             }
         }
         .padding(.horizontal, composerHorizontalPadding)
         .padding(.vertical, 6)
         .fixedSize(horizontal: false, vertical: true)
-        .overlay(alignment: .topLeading) {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .allowsHitTesting(false)
-                .accessibilityIdentifier(hasForeignActiveRun ? "activeResponseElsewhereDock" : "chatBottomAccessory")
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatBottomAccessory")
+    }
+
+    private var composerOwnsWorkingRun: Bool {
+        if canonicalRunIsWorking { return true }
+        #if DEBUG
+        if canaryIsActivelyWorking { return true }
+        #endif
+        return ownsActiveRunState && runtime.isWorking
+    }
+
+    private var shouldShowStandaloneContextBar: Bool {
+        shouldShowContextBar && !composerOwnsWorkingRun
+    }
+
+    private var runDetailsDisclosureBinding: Binding<Bool> {
+        Binding(
+            get: { false },
+            set: { isPresented in
+                if isPresented {
+                    showingRunDetails = true
+                }
+            }
+        )
+    }
+
+    private var runDetailsSheet: some View {
+        NavigationStack {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 14) {
+                    if let orchestration = agentOrchestrationPresentation {
+                        AgentOrchestrationStatusCard(
+                            presentation: orchestration
+                        )
+                    }
+                    AgentProgressDrawer(
+                        runtime: runtime,
+                        tint: chatChromeTint,
+                        artifacts: cachedArtifacts,
+                        durableSnapshot: cachedDurableRunSnapshot,
+                        workflowSpine: cachedWorkflowSpine,
+                        openArtifact: previewArtifact,
+                        retry: {
+                            showingRunDetails = false
+                            runtime.retryLastPrompt(
+                                conversation: conversation,
+                                settings: settings,
+                                context: modelContext,
+                                project: scopedProject
+                            )
+                        },
+                        continueRun: {
+                            showingRunDetails = false
+                            runtime.continueAfterInterruption(
+                                conversation: conversation,
+                                settings: settings,
+                                context: modelContext,
+                                project: scopedProject
+                            )
+                        },
+                        stop: {
+                            stopActiveRun()
+                        },
+                        openWorkspaceSurface: { tab in
+                            showingRunDetails = false
+                            openWorkspaceSurface(tab)
+                        },
+                        clear: {
+                            runtime.clearCurrentRunState(keepLastFailure: false)
+                            showingRunDetails = false
+                        }
+                    )
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .background(ChatTranscriptBackdrop())
+            .navigationTitle("Run details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        showingRunDetails = false
+                    }
+                    .frame(
+                        minWidth: AgentDesign.minimumTouchTarget,
+                        minHeight: AgentDesign.minimumTouchTarget
+                    )
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("runControlCloseButton")
+                }
+            }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .accessibilityIdentifier("runControlSheet")
+    }
+
+    private var composerLiveRunTitle: String {
+        if let orchestration = agentOrchestrationPresentation,
+           orchestration.isActive {
+            return orchestration.headline
+        }
+        if agentRunPresentation.isAccepting { return "Saving request" }
+        if agentRunPresentation.isSynchronizing {
+            return "Restoring activity"
+        }
+        if let group = agentRunPresentation.activeGroup,
+           !group.state.isTerminal {
+            return AgentActivityPresentation.humanizedVisibleText(
+                group.summary,
+                fallback: "Working"
+            )
+        }
+        #if DEBUG
+        if canaryOwnsSelectedConversation {
+            switch hostedTextCanarySession.phase {
+            case .accepting:
+                return "Saving request"
+            case .running:
+                return "Hosted response"
+            case .stopping:
+                return "Stopping safely"
+            case .blockedRecovery:
+                return "Recovery required"
+            case .idle:
+                break
+            }
+        }
+        #endif
+        return AgentActivityPresentation.humanizedVisibleText(
+            runtime.activityTitle,
+            fallback: "Working"
+        )
+    }
+
+    private func toggleComposerRunDetails() {
+        if canonicalRunOwnsSelectedConversation {
+            composerFocused = false
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            scrollAttachment = .restoring
+            requestJumpToLatest(animated: true)
+            return
+        }
+        #if DEBUG
+        if canaryOwnsSelectedConversation {
+            runtime.presentToast(
+                "The hosted run receipt will appear in History after its durable projection finishes.",
+                tone: .info
+            )
+            return
+        }
+        #endif
+        composerFocused = false
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showingRunDetails = true
+    }
+
+    private func stopActiveRun() {
+        if agentOrchestrationPresentation?.isActive == true {
+            Task { @MainActor in
+                await agentSystemPresentation.cancelOrchestration(
+                    scope: agentPresentationScope
+                )
+            }
+            return
+        }
+        if let group = agentRunPresentation.activeGroup,
+           group.accepts(group.cancelCommand) {
+            handleActivityCommand(group.cancelCommand)
+            return
+        }
+        #if DEBUG
+        if canaryOwnsSelectedConversation,
+           hostedTextCanarySession.phase != .blockedRecovery {
+            hostedTextCanarySession.stop()
+            return
+        }
+        #endif
+        runtime.stopGenerating(context: modelContext)
     }
 
     private var shouldShowJumpToLatestAccessory: Bool {
         showJumpToLatest &&
             trimmedPrompt.isEmpty &&
-            (!composerFocused || (ownsActiveRunState && runtime.isWorking))
+            (!composerFocused || canonicalRunIsWorking ||
+                (ownsActiveRunState && runtime.isWorking))
     }
 
     private var composerInputDisabled: Bool {
         hasForeignActiveRun ||
             hasForeignProjectMission ||
             providerSetupBlocksComposer ||
+            hostedTextCanaryBlocksComposer ||
+            canonicalRunIsActive ||
             (ownsActiveRunState && runtime.pendingTool != nil)
     }
 
+    private var hostedTextCanaryBlocksComposer: Bool {
+        #if DEBUG
+        return hostedTextCanarySession.locksWorkspaceRouting
+        #else
+        return false
+        #endif
+    }
+
     private var composerCanSend: Bool {
-        !trimmedPrompt.isEmpty && !composerInputDisabled
+        !trimmedPrompt.isEmpty &&
+            !composerInputDisabled &&
+            agentSystemPresentation.phase == .ready
     }
 
     private var composerPlaceholder: String {
         if hasForeignActiveRun { return "Open the running chat to send" }
         if hasForeignProjectMission { return "Project mission is already running" }
+        #if DEBUG
+        if canaryOwnsSelectedConversation {
+            return hostedTextCanarySession.phase == .blockedRecovery
+                ? "Recovery must finish before another request"
+                : "Hosted request is already running"
+        }
+        #endif
         if ownsActiveRunState && runtime.pendingTool != nil { return "Approval needed before the next send" }
+        if canonicalPendingApproval != nil { return "Approval needed before the next send" }
+        if canonicalRunIsActive { return "NovaForge is finishing this run" }
         if ownsActiveRunState && runtime.isWorking { return "Queue a follow-up" }
-        if missingCredentialSetup { return "Add \(settings.provider.credentialDisplayName) key in Control" }
+        if missingCredentialSetup {
+            return settings.provider == .openAICodex
+                ? "Sign in with ChatGPT in Control"
+                : "Add \(settings.provider.credentialDisplayName) key in Control"
+        }
         if settings.provider == .local && needsLocalPowerUp { return "Download the local model, then ask" }
-        return "Ask NovaForge"
+        return "What should NovaForge do?"
     }
 
     private var composerSendAccessibilityLabel: String {
+        if agentSystemPresentation.phase != .ready {
+            return "Send disabled while NovaForge restores the agent runtime"
+        }
         if hasForeignActiveRun { return "Open running chat to send" }
         if hasForeignProjectMission { return "Send disabled while the project mission is active" }
-        if missingCredentialSetup { return "Send disabled until provider key is added" }
+        #if DEBUG
+        if canaryOwnsSelectedConversation {
+            return hostedTextCanarySession.phase == .blockedRecovery
+                ? "Send disabled until hosted run recovery completes"
+                : "Send disabled while the hosted request is active"
+        }
+        #endif
+        if missingCredentialSetup {
+            return settings.provider == .openAICodex
+                ? "Send disabled until ChatGPT sign-in is complete"
+                : "Send disabled until provider key is added"
+        }
         if settings.provider == .local && needsLocalPowerUp { return "Send disabled until local model is downloaded" }
+        if canonicalPendingApproval != nil { return "Send disabled while approval is pending" }
+        if canonicalRunIsActive { return "Send disabled while the current run is active" }
         if ownsActiveRunState && runtime.pendingTool != nil { return "Send disabled while approval is pending" }
         return ownsActiveRunState && runtime.isWorking ? "Queue follow-up" : "Send message"
     }
 
-    private var composerStatus: ComposerStatus {
-        if hasForeignActiveRun {
-            return ComposerStatus(title: "Elsewhere", symbol: "arrow.up.right.circle.fill", tint: AgentPalette.cyan)
+    private var composerSendAccessibilityValue: String {
+        #if DEBUG
+        if debugSendDisposition.hasPrefix("rejected-") {
+            return agentSystemPresentation.debugLastStartError
         }
-        if hasForeignProjectMission {
-            return ComposerStatus(title: "Mission", symbol: "shippingbox.fill", tint: missionStatus.tone == .approval ? AgentPalette.cyan : AgentPalette.lilac)
-        }
-        if ownsActiveRunState && runtime.pendingTool != nil {
-            return ComposerStatus(title: "Approval", symbol: "checkmark.shield.fill", tint: AgentPalette.cyan)
-        }
-        if ownsActiveRunState && runtime.isWorking {
-            return ComposerStatus(title: trimmedPrompt.isEmpty ? "Running" : "Queue", symbol: trimmedPrompt.isEmpty ? "waveform" : "plus.message.fill", tint: chatChromeTint)
-        }
-        if missingCredentialSetup {
-            return ComposerStatus(title: "Setup", symbol: "key.slash.fill", tint: AgentPalette.rose)
-        }
-        if settings.provider == .local && needsLocalPowerUp {
-            return ComposerStatus(title: "Setup", symbol: "arrow.down.circle.fill", tint: AgentPalette.lilac)
-        }
-        if !trimmedPrompt.isEmpty {
-            return ComposerStatus(title: prompt.contains("\n") || prompt.count > 72 ? "Long draft" : "Draft", symbol: "pencil.line", tint: AgentPalette.green)
-        }
-        if composerFocused {
-            return ComposerStatus(title: "Ready", symbol: "sparkles", tint: chatChromeTint)
-        }
-        return ComposerStatus(title: "Ready", symbol: "sparkles", tint: AgentPalette.cyan)
-    }
-
-    /// The inline mission strip is the decision surface for an approval. When
-    /// it is visible, repeating the same state in the composer turns the
-    /// bottom dock into visual noise without adding an action. Keep the pill
-    /// for General/fallback cases where the strip is not present. The empty
-    /// first-run surface likewise owns provider setup, including the action;
-    /// repeating a decorative Setup pill above a disabled field adds no help.
-    private var showsComposerStatusPill: Bool {
-        if providerSetupBlocksComposer && cachedMessages.isEmpty { return false }
-        // The expanded/collapsed run context already owns live, paused, failed,
-        // queued, and approval state. Repeating that state beside the model
-        // picker produced three simultaneous labels (Working / Live / Running)
-        // in the iPhone 12 streaming proof.
-        if shouldShowContextBar && hasActionableRunState { return false }
-        return !(ownsActiveRunState && runtime.pendingTool != nil && missionStripIsVisible)
+        return "\(agentSystemPresentation.phase.rawValue)|\(debugSendDisposition)"
+        #else
+        return agentSystemPresentation.phase.rawValue
+        #endif
     }
 
     private var composer: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Composer Body")
-        let compactStreamingComposer = usesCompactStreamingComposer
-        let usesMultilineComposer = !compactStreamingComposer && draftUsesExpandedComposer
-        let fieldHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 74 : 46)
-        let fieldMaxHeight: CGFloat = compactStreamingComposer ? 40 : (usesMultilineComposer ? 148 : 84)
-        let textLaneVerticalPadding: CGFloat = compactStreamingComposer ? 2 : (usesMultilineComposer ? 3 : 4)
-        let style = compactStreamingComposer ? ComposerChromeStyle.streamingCompact : .default
+        let usesMultilineComposer = draftUsesExpandedComposer
+        let fieldHeight: CGFloat = usesMultilineComposer ? 74 : 46
+        let fieldMaxHeight: CGFloat = usesMultilineComposer ? 148 : 84
+        let textLaneVerticalPadding: CGFloat = usesMultilineComposer ? 3 : 4
+        let style = ComposerChromeStyle.default
         let canSendPrompt = composerCanSend
-        let isQueueing = ownsActiveRunState && runtime.isWorking
+        let isQueueing = ownsActiveRunState && runtime.isWorking &&
+            !hostedTextCanaryBlocksComposer
         let isMatrix = AgentTheme.current == .matrixRain
+        let showsLiveRunRail = composerOwnsWorkingRun
+        let composerMinHeight = showsLiveRunRail ? 108.0 : 112.0
+        let composerMaxHeight = showsLiveRunRail ? 122.0 : 126.0
+        let composerExpandedMaxHeight = style.expandedMaxHeight + (showsLiveRunRail ? 52 : 0)
 
-        return VStack(alignment: .leading, spacing: 3) {
-                if !compactStreamingComposer {
+        return VStack(alignment: .leading, spacing: showsLiveRunRail ? 4 : 0) {
+                if showsLiveRunRail {
+                    ComposerLiveRunRail(
+                        title: composerLiveRunTitle,
+                        expanded: showingRunDetails,
+                        tint: chatChromeTint,
+                        showDetails: toggleComposerRunDetails,
+                        stop: stopActiveRun
+                    )
+                } else {
                     HStack(spacing: 8) {
-                        ComposerModelPickerAnchor(settings: settings)
-
-                        Spacer(minLength: 0)
-
-                        if showsComposerStatusPill {
-                            ComposerStatusPill(status: composerStatus)
-                        }
+                        ComposerModelPickerAnchor(
+                            settings: settings,
+                            localModels: runtime.localModels,
+                            compact: false,
+                            prepareToPresent: { composerFocused = false }
+                        )
+                        Spacer(minLength: 6)
+                        ComposerReasoningControl(
+                            provider: settings.provider,
+                            modelID: settings.modelID
+                        )
                     }
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("composerActionRail")
+                    .padding(.horizontal, 2)
                 }
 
                 HStack(alignment: .bottom, spacing: 6) {
@@ -1418,30 +2487,30 @@ struct ChatView: View {
                         .tint(chatChromeTint)
                         .frame(minHeight: fieldHeight, alignment: .topLeading)
                         .frame(maxHeight: fieldMaxHeight, alignment: .topLeading)
-                        .padding(.leading, 14)
+                        .padding(.leading, 12)
                         .padding(.trailing, 3)
                         .padding(.vertical, usesMultilineComposer ? 5 : 0)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if !composerInputDisabled {
-                            composerFocused = true
-                        }
-                    }
                     .disabled(composerInputDisabled)
                     .opacity(composerInputDisabled ? 0.58 : 1)
                     .layoutPriority(1)
+
+                    if shouldShowJumpToLatestAccessory {
+                        JumpToLatestButton(tint: chatChromeTint, glassNamespace: glassNamespace) {
+                            jumpToLatestFromAccessory()
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
 
                     ComposerSendButton(
                         title: nil,
                         isQueueing: isQueueing,
                         isEnabled: canSendPrompt,
                         tint: chatChromeTint,
+                        accessibilityLabel: composerSendAccessibilityLabel,
+                        accessibilityValue: composerSendAccessibilityValue,
                         action: sendPrompt
                     )
-                    .frame(width: 46, height: 46)
-                    .disabled(!canSendPrompt)
-                    .accessibilityLabel(composerSendAccessibilityLabel)
-                    .accessibilityIdentifier("sendMessageButton")
+                    .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
                 }
                 .padding(.leading, 1)
                 .padding(.trailing, 3)
@@ -1478,18 +2547,13 @@ struct ChatView: View {
             .padding(.leading, style.leadingPadding)
             .padding(.trailing, style.trailingPadding)
             .padding(.vertical, style.verticalPadding)
-            .frame(minHeight: style.minHeight)
-            .frame(maxHeight: usesMultilineComposer ? style.expandedMaxHeight : style.collapsedMaxHeight, alignment: .bottom)
+            .frame(minHeight: composerMinHeight)
+            .frame(maxHeight: usesMultilineComposer ? composerExpandedMaxHeight : composerMaxHeight, alignment: .bottom)
             .fixedSize(horizontal: false, vertical: true)
             .contentShape(RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Chat composer dock")
             .accessibilityIdentifier("chatComposerDock")
-            .onTapGesture {
-                if !composerInputDisabled {
-                    composerFocused = true
-                }
-            }
             .composerGlassSurface(focused: composerFocused, tint: chatChromeTint, style: style)
             .glassIDIfAvailable("composer", namespace: glassNamespace)
     }
@@ -1499,14 +2563,19 @@ struct ChatView: View {
     }
 
     private func handlePromptChanged() {
+        #if DEBUG
+        hostedTextCanaryDraftToken = UUID()
+        #endif
         // If the user starts typing a fresh request after a failed run, get the
         // failure banner out of the composer path immediately. Retry/Continue stay
         // available until the user actually begins a new draft.
-        if ownsActiveRunState && runtime.lastError != nil && !trimmedPrompt.isEmpty {
+        if !canonicalRunOwnsSelectedConversation &&
+            ownsActiveRunState && runtime.lastError != nil &&
+            !trimmedPrompt.isEmpty {
             runtime.clearCurrentRunState(keepLastFailure: false)
         }
         if !trimmedPrompt.isEmpty, !hasActionableRunState {
-            progressExpanded = false
+            showingRunDetails = false
         }
 
         // Preserve pasted or typed multiline prompts. Coding requests often carry
@@ -1521,46 +2590,228 @@ struct ChatView: View {
     }
 
     private func sendPrompt() {
+        #if DEBUG
+        debugSendDisposition = "invoked"
+        #endif
         let text = trimmedPrompt
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else {
+            #if DEBUG
+            debugSendDisposition = "empty"
+            #endif
+            return
+        }
         guard !hasForeignActiveRun else {
+            #if DEBUG
+            debugSendDisposition = "foreign-run"
+            #endif
             openActiveConversation()
             return
         }
         guard !hasForeignProjectMission else {
+            #if DEBUG
+            debugSendDisposition = "foreign-mission"
+            #endif
             runtime.presentToast("Finish, stop, or approve the active project mission before starting another run here.", tone: .info)
             return
         }
-        guard !(ownsActiveRunState && runtime.pendingTool != nil) else { return }
-        AgentPerformance.event("Chat Prompt Send")
-        if ownsActiveRunState && runtime.lastError != nil {
-            runtime.clearCurrentRunState(keepLastFailure: false)
+        guard !canonicalRunIsActive,
+              !(ownsActiveRunState && runtime.pendingTool != nil)
+        else {
+            #if DEBUG
+            debugSendDisposition = "active-run"
+            #endif
+            return
         }
-        let disposition = runtime.send(
-            prompt: text,
-            conversation: conversation,
-            settings: settings,
-            context: modelContext,
-            project: scopedProject
+        AgentPerformance.event("Chat Prompt Send")
+        let submittedDraft = prompt
+        let submittedConversationID = conversation.id
+        Task { @MainActor in
+            let disposition = await agentSystemPresentation.startConfigured(
+                prompt: text,
+                conversation: conversation,
+                project: scopedProject,
+                workspace: agentWorkspace,
+                settings: settings
+            )
+            switch disposition {
+            case .accepted:
+                #if DEBUG
+                debugSendDisposition = "accepted"
+                #endif
+                if conversation.id == submittedConversationID,
+                   prompt == submittedDraft {
+                    prompt = ""
+                    flushDraftPersistence("", for: submittedConversationID)
+                    composerFocused = false
+                    keyboard.reset()
+                }
+                forceScrollToBottom = true
+                scrollAttachment = .restoring
+                updateCachedMessages()
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                requestJumpToLatest(
+                    animated: true,
+                    delay: .milliseconds(60)
+                )
+            case .busy:
+                #if DEBUG
+                debugSendDisposition = "busy"
+                #endif
+                runtime.presentToast(
+                    AgentSystemPresentationFailure.workspaceBusy.userMessage,
+                    tone: .info
+                )
+                composerFocused = true
+            case .rejected(let failure):
+                #if DEBUG
+                debugSendDisposition = "rejected-\(failure.rawValue)-\(agentSystemPresentation.debugLastStartError)"
+                #endif
+                runtime.presentToast(failure.userMessage, tone: .error)
+                composerFocused = true
+            }
+        }
+    }
+
+    #if DEBUG
+    private func sendHostedTextCanary(
+        text: String,
+        routing: AgentRunRoutingMetadata
+    ) {
+        guard !hostedTextCanarySession.locksWorkspaceRouting else { return }
+        let requestMessageID = UUID()
+        let draftToken = hostedTextCanaryDraftToken
+        let history = conversation.messages
+            .sorted(by: Self.messageAscending)
+            .suffix(96)
+            .filter {
+                !runtime.queuedFollowUpMessageIDs.contains($0.id) &&
+                    $0.runStatus != .queued
+            }
+            .map(\.providerInput)
+        let workspaceSummary = ProviderContextWindow.workspaceSummary(
+            for: runtime.workspace,
+            provider: settings.provider
         )
-        guard disposition.wasAccepted else {
-            // Queue capacity and cross-chat arbitration can reject a send. Keep
-            // the exact draft in place so the user can shorten it or retry.
+        let request: AgentHostedTextCanaryLiveRequest
+        do {
+            request = try AgentHostedTextCanaryLiveRequest(
+                routing: routing,
+                selectedProvider: settings.provider,
+                modelID: settings.modelID,
+                temperature: settings.temperature,
+                prompt: text,
+                conversationID: conversation.id,
+                projectID: scopedProject?.id,
+                workspace: runtime.workspace,
+                history: history,
+                customSystemPrompt: settings.customSystemPrompt,
+                workspaceSummary: workspaceSummary,
+                requestMessageID: requestMessageID,
+                draftToken: draftToken
+            )
+        } catch {
+            runtime.presentToast(
+                AgentHostedTextCanaryLiveNotice.requestInvalid.userMessage,
+                tone: .error
+            )
             composerFocused = true
             return
         }
-        prompt = ""
-        flushDraftPersistence("", for: conversation.id)
-        composerFocused = false
-        keyboard.reset()
-        forceScrollToBottom = true
-        if case .started = disposition {
+
+        AgentPerformance.event("Hosted Text Canary Prompt Reserve")
+        let disposition = hostedTextCanarySession.submit(
+            request: request,
+            container: modelContext.container,
+            didAccept: { identity in
+                let resolution = identity.persistenceResolution(
+                    visibleConversationID: conversation.id,
+                    visibleDraftToken: hostedTextCanaryDraftToken,
+                    visibleText: trimmedPrompt,
+                    persistedText: persistedDrafts()[
+                        identity.conversationID.uuidString
+                    ]
+                )
+                switch resolution {
+                case .removeAndClearVisible:
+                    flushDraftPersistence("", for: identity.conversationID)
+                    prompt = ""
+                    composerFocused = false
+                    keyboard.reset()
+                case .replacePersistedWithVisible:
+                    // Durable acceptance raced a newer editor revision. Keep
+                    // the new text both visible and crash-recoverable.
+                    flushDraftPersistence(
+                        prompt,
+                        for: identity.conversationID
+                    )
+                case .removePersistedOnly:
+                    // Navigation already flushed this conversation's editor.
+                    // Remove only the accepted value and do not cancel the
+                    // selected conversation's independent debounce task.
+                    persistDraft("", for: identity.conversationID)
+                case .preservePersisted:
+                    // The background conversation already has a newer draft.
+                    break
+                }
+                forceScrollToBottom = true
+                scrollAttachment = .restoring
+                updateCachedMessages()
+                refreshDurableRunSnapshot()
+                requestJumpToLatest(
+                    animated: true,
+                    delay: .milliseconds(60)
+                )
+            }
+        )
+
+        switch disposition {
+        case .reserved:
+            composerFocused = false
+            keyboard.reset()
+            forceScrollToBottom = true
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case .busy:
+            runtime.presentToast(
+                "The hosted request is already active.",
+                tone: .info
+            )
+        case .blockedRecovery:
+            runtime.presentToast(
+                AgentHostedTextCanaryLiveNotice.recoveryRequired.userMessage,
+                tone: .error
+            )
         }
-        updateCachedMessages()
-        scrollAttachment = .restoring
-        requestJumpToLatest(animated: true, delay: .milliseconds(60))
     }
+
+    private func handleHostedTextCanaryRevision() {
+        updateCachedMessages()
+        refreshDurableRunSnapshot()
+
+        if let notice = hostedTextCanarySession.lastNotice,
+           lastHostedTextCanaryNoticeRevision !=
+               hostedTextCanarySession.revision {
+            lastHostedTextCanaryNoticeRevision =
+                hostedTextCanarySession.revision
+            if notice == .cancelled {
+                runtime.presentToast(notice.userMessage, tone: .info)
+            } else {
+                runtime.presentToast(notice.userMessage, tone: .error)
+            }
+            if notice == .routeUnavailable || notice == .credentialMissing ||
+                notice == .credentialInvalid || notice == .requestInvalid {
+                composerFocused = true
+            }
+        }
+
+        if canaryIsActivelyWorking {
+            forceScrollToBottom = true
+            scrollAttachment = .restoring
+            requestJumpToLatest(animated: true, delay: .milliseconds(60))
+        } else if !hostedTextCanarySession.locksWorkspaceRouting {
+            forceScrollToBottom = false
+        }
+    }
+    #endif
 
     private func sendSuggestion(_ suggestion: QuickDelegateSuggestion) {
         sendPromptText(suggestion.prompt)
@@ -1573,20 +2824,28 @@ struct ChatView: View {
 
     private var shouldShowContextBar: Bool {
         guard ownsActiveRunState else { return false }
+        if canonicalRunOwnsSelectedConversation { return false }
         // The Forge mission strip owns approval decisions. Keeping the old
         // compact run bar here would repeat the same state and could make its
         // non-actionable "Approve" badge look like the decision control.
-        if runtime.pendingTool != nil, missionStripIsVisible { return false }
-        if hasActionableRunState { return true }
-        guard !composerFocused, trimmedPrompt.isEmpty else { return false }
-        // Completion evidence only earns the bar above a transcript that
-        // actually contains the completed work. A fresh, empty conversation
-        // stays clean — the welcome state owns that moment.
-        return hasCompletedRunEvidence && !cachedMessages.isEmpty
+        if canonicalPendingApproval != nil ||
+            (runtime.pendingTool != nil && missionStripIsVisible) {
+            return false
+        }
+        // Completed work is already stated in the assistant handoff and in
+        // History. Keep the dock for states that still need a user decision.
+        return hasActionableRunState
     }
 
     private var hasActionableRunState: Bool {
         guard ownsActiveRunState else { return false }
+        if canonicalRunOwnsSelectedConversation {
+            return canonicalRunIsActive ||
+                agentRunPresentation.failure != nil ||
+                agentRunPresentation.activeGroup?.state == .failed ||
+                agentRunPresentation.activeGroup?.state == .cancelled ||
+                agentRunPresentation.activeGroup?.state == .interrupted
+        }
         return runtime.isWorking ||
             runtime.pendingTool != nil ||
             runtime.lastError != nil ||
@@ -1600,10 +2859,13 @@ struct ChatView: View {
         latestVisibleMessageSupportsQuickActions &&
         !composerFocused &&
         trimmedPrompt.isEmpty &&
+        !canonicalRunIsActive &&
+        canonicalPendingApproval == nil &&
         !runtime.isWorking &&
         runtime.pendingTool == nil &&
         runtime.lastError == nil &&
         runtime.queuedPromptCount == 0 &&
+        !hostedTextCanaryBlocksComposer &&
         !showJumpToLatest &&
         hiddenMessageCount == 0 &&
         hasUserMessageInVisibleThread &&
@@ -1612,7 +2874,10 @@ struct ChatView: View {
 
     private var hasLatestJumpTarget: Bool {
         !cachedMessages.isEmpty ||
-            (ownsActiveRunState && (runtime.isWorking || runtime.liveStream.isHandoffActive || runtime.hasTraceEvents || cachedDurableRunSnapshot.hasCompletionEvidence))
+            (ownsActiveRunState && (canonicalRunIsWorking ||
+                agentRunPresentation.liveText != nil || runtime.isWorking ||
+                runtime.liveStream.isHandoffActive || runtime.hasTraceEvents ||
+                cachedDurableRunSnapshot.hasCompletionEvidence))
     }
 
     private var shouldKeepTranscriptPinned: Bool {
@@ -1682,7 +2947,8 @@ struct ChatView: View {
     }
 
     private func keepLiveStreamReadableDuringGrowth() {
-        guard ownsActiveRunState, runtime.isWorking else { return }
+        guard ownsActiveRunState,
+              canonicalRunIsWorking || runtime.isWorking else { return }
         guard scrollAttachment != .detached else { return }
         let now = Date()
         guard now >= transient.userScrollIntentUntil,
@@ -1691,12 +2957,13 @@ struct ChatView: View {
         guard now.timeIntervalSince(transient.lastLiveStreamJumpRequestAt) >= minimumInterval else { return }
         transient.lastLiveStreamJumpRequestAt = now
         scrollAttachment = .restoring
-        requestJumpToLatest(animated: false, delay: .milliseconds(20))
+        requestJumpToLatest(animated: false)
     }
 
     private func updateBottomDistance(_ distance: CGFloat) {
         let now = Date()
-        let isLiveRunGrowing = ownsActiveRunState && runtime.isWorking
+        let isLiveRunGrowing = ownsActiveRunState &&
+            (canonicalRunIsWorking || runtime.isWorking)
         let hasRecentUserScrollIntent = now < transient.userScrollIntentUntil
 
         if isLiveRunGrowing,
@@ -1723,7 +2990,11 @@ struct ChatView: View {
 
         }
 
-        let activePinnedThreshold = ownsActiveRunState && runtime.isWorking && scrollAttachment != .detached ? max(bottomPinnedThreshold, 360) : bottomPinnedThreshold
+        let activePinnedThreshold = ownsActiveRunState &&
+            (canonicalRunIsWorking || runtime.isWorking) &&
+            scrollAttachment != .detached
+            ? max(bottomPinnedThreshold, 360)
+            : bottomPinnedThreshold
         let nearBottom = distance <= activePinnedThreshold
         if nearBottom {
             if scrollAttachment != .pinned {
@@ -1908,12 +3179,13 @@ private enum ChatRunAccessoryState: Equatable {
     case progress
     case approval
     case failure
-    case completion
 }
 
 private enum ChatTranscriptRow: Identifiable, Equatable {
     case message(ChatMessageSnapshot)
-    case live(responseID: UUID)
+    case activity(AgentActivityGroup)
+    case activityUnavailable(scopeID: String)
+    case live(runID: RunID)
 
     var id: String {
         switch self {
@@ -1921,8 +3193,12 @@ private enum ChatTranscriptRow: Identifiable, Equatable {
             return message.role == .assistant
                 ? "response-\(message.id.uuidString)"
                 : "message-\(message.id.uuidString)"
-        case .live(let responseID):
-            return "response-\(responseID.uuidString)"
+        case .activity(let group):
+            return "activity-\(group.id.description)"
+        case .activityUnavailable(let scopeID):
+            return "activity-unavailable-\(scopeID)"
+        case .live(let runID):
+            return "live-run-\(runID.rawValue.uuidString)"
         }
     }
 
@@ -1930,9 +3206,85 @@ private enum ChatTranscriptRow: Identifiable, Equatable {
         switch self {
         case .message(let message):
             return message.id
-        case .live:
+        case .activity, .activityUnavailable, .live:
             return nil
         }
+    }
+
+    var assistantRunID: UUID? {
+        guard case let .message(message) = self,
+              message.role == .assistant
+        else { return nil }
+        return message.runID
+    }
+
+    static func precedes(_ lhs: Self, _ rhs: Self) -> Bool {
+        if lhs.timestampMilliseconds != rhs.timestampMilliseconds {
+            return lhs.timestampMilliseconds < rhs.timestampMilliseconds
+        }
+        if lhs.orderingRank != rhs.orderingRank {
+            return lhs.orderingRank < rhs.orderingRank
+        }
+        return lhs.id < rhs.id
+    }
+
+    private var timestampMilliseconds: Int64 {
+        switch self {
+        case .message(let message):
+            let milliseconds = message.createdAt.timeIntervalSince1970 * 1_000
+            guard milliseconds.isFinite else { return 0 }
+            return Int64(clamping: Int(milliseconds.rounded()))
+        case .activity(let group):
+            return group.span.startedAt.rawValue
+        case .activityUnavailable:
+            return Int64.max - 1
+        case .live:
+            return Int64.max
+        }
+    }
+
+    private var orderingRank: Int {
+        switch self {
+        case .message(let message):
+            switch message.role {
+            case .user: return 0
+            case .assistant: return 2
+            case .tool: return 3
+            case .system: return 4
+            }
+        case .activity: return 1
+        case .activityUnavailable: return 3
+        case .live: return 2
+        }
+    }
+}
+
+private struct CanonicalActivityUnavailableView: View {
+    let openHistory: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .foregroundStyle(AgentPalette.rose)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Activity receipt needs recovery")
+                    .font(NovaType.headline)
+                    .foregroundStyle(AgentPalette.ink)
+                Text("Tool details are hidden until the canonical journal can be verified.")
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            Button("History", action: openHistory)
+                .buttonStyle(.bordered)
+                .frame(minHeight: AgentDesign.minimumTouchTarget)
+        }
+        .padding(12)
+        .agentGlass(radius: AgentDesign.rowRadius, tint: AgentPalette.rose.opacity(0.1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agentActivityUnavailable")
     }
 }
 
@@ -1984,8 +3336,8 @@ private struct ChatLayoutContract: Equatable {
         switch runAccessory {
         case .hidden:
             return composerMode == .expanded ? 30 : 22
-        case .progress, .completion:
-            return 58
+        case .progress:
+            return 26
         case .approval, .failure:
             return 64
         }
@@ -2039,13 +3391,12 @@ private struct ChatDockBackground: View {
         LinearGradient(
             stops: [
                 .init(color: AgentPalette.pearl.opacity(0), location: 0),
-                .init(color: AgentPalette.pearl.opacity(AgentTheme.current == .matrixRain ? 0.80 : 0.70), location: 0.28),
-                .init(color: AgentPalette.pearl.opacity(1.0), location: 1)
+                .init(color: AgentPalette.pearl.opacity(AgentTheme.current == .matrixRain ? 0.90 : 0.84), location: 0.18),
+                .init(color: AgentPalette.pearl.opacity(1.0), location: 0.64)
             ],
             startPoint: .top,
             endPoint: .bottom
         )
-        .ignoresSafeArea(edges: .bottom)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

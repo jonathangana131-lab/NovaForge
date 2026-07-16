@@ -218,6 +218,69 @@ final class LiveTranscriptComposerTests: XCTestCase {
         XCTAssertTrue(committed.activeParagraph.settledSegments.isEmpty)
     }
 
+    func testFrozenSegmentsNeverBisectLongInlineMarkdown() {
+        let emphasized = String(
+            repeating: "A long emphasized explanation remains semantically whole. ",
+            count: 42
+        )
+        let source = "**\(emphasized)** Final plain tail."
+        var composer = LiveTranscriptComposer(responseID: UUID())
+
+        composer.ingest(source)
+        let snapshot = tryUnwrap(composer.flush())
+
+        XCTAssertEqual(snapshot.activeParagraph.visibleText, source)
+        XCTAssertFalse(snapshot.activeParagraph.settledSegments.isEmpty)
+        XCTAssertLessThanOrEqual(
+            snapshot.activeParagraph.settledTail.count,
+            LiveTranscriptComposer.maximumActiveSettledTailCharacters
+        )
+        for segment in snapshot.activeParagraph.settledSegments {
+            let delimiterCount = segment.text.components(separatedBy: "**").count - 1
+            XCTAssertTrue(
+                delimiterCount.isMultiple(of: 2),
+                "Frozen segment split an emphasis delimiter: \(segment.text.suffix(80))"
+            )
+        }
+
+        let reconstructed = snapshot.activeParagraph.settledSegments.map(\.text).joined()
+            + snapshot.activeParagraph.settledTail
+            + (snapshot.activeParagraph.activePhrase?.text ?? "")
+        XCTAssertEqual(reconstructed, source)
+    }
+
+    func testMalformedMarkdownCannotGrowAnUnboundedMutableLeaf() {
+        let malformedSources = [
+            "`" + String(repeating: "unclosed inline code remains readable and bounded ", count: 70),
+            "**" + String(repeating: "unclosed emphasis remains readable and bounded ", count: 70),
+            "```swift\n" + String(repeating: "let value = expensiveStreamingWork()\n", count: 90)
+        ]
+
+        for source in malformedSources {
+            var composer = LiveTranscriptComposer(responseID: UUID())
+            composer.ingest(source)
+            let snapshot = tryUnwrap(composer.flush())
+
+            XCTAssertEqual(snapshot.visibleText, source)
+            XCTAssertLessThanOrEqual(
+                snapshot.activeParagraph.settledTail.count,
+                LiveTranscriptComposer.maximumEmergencyActiveSettledTailCharacters,
+                "Malformed Markdown must not retain an ever-growing live layout leaf."
+            )
+            XCTAssertTrue(
+                snapshot.activeParagraph.settledSegments.contains {
+                    $0.fallbackPresentationText != nil
+                },
+                "Crossing the emergency ceiling should freeze malformed Markdown as stable literal text."
+            )
+
+            let reconstructed = snapshot.activeParagraph.settledSegments.map(\.text).joined()
+                + snapshot.activeParagraph.settledTail
+                + (snapshot.activeParagraph.activePhrase?.text ?? "")
+            XCTAssertEqual(reconstructed, source)
+        }
+    }
+
     private func tryUnwrap<T>(
         _ value: T?,
         file: StaticString = #filePath,

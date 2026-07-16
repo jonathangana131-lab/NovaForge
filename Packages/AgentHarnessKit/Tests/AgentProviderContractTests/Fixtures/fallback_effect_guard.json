@@ -1,0 +1,6 @@
+{
+  "primaryFailure": "transport",
+  "expectedEffectStop": "sideEffectsMayHaveOccurred",
+  "expectedOutputStop": "outputAlreadyCommitted",
+  "expectedTransportCalls": 1
+}

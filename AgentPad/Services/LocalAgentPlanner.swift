@@ -1,9 +1,294 @@
+import AgentDomain
 import Foundation
 
 struct LocalAgentPlan: Sendable {
     let intro: String
     let toolCalls: [APIToolCall]
     let completion: String
+}
+
+/// One grammar-constrained decision emitted by the on-device coding model.
+/// Every field is present to keep the GBNF small and deterministic; only the
+/// fields required by `action` are compiled into canonical tool arguments.
+struct LocalAgentModelDecision: Codable, Equatable, Sendable {
+    let action: String
+    let path: String
+    let value: String
+    let replacement: String
+    let response: String
+
+    private enum CodingKeys: String, CodingKey {
+        case action
+        case path
+        case value
+        case replacement
+        case response
+    }
+
+    init(
+        action: String,
+        path: String = "",
+        value: String = "",
+        replacement: String = "",
+        response: String = ""
+    ) {
+        self.action = action
+        self.path = path
+        self.value = value
+        self.replacement = replacement
+        self.response = response
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        action = try container.decode(String.self, forKey: .action)
+        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        value = try container.decodeIfPresent(String.self, forKey: .value) ?? ""
+        replacement = try container.decodeIfPresent(
+            String.self,
+            forKey: .replacement
+        ) ?? ""
+        response = try container.decodeIfPresent(
+            String.self,
+            forKey: .response
+        ) ?? ""
+    }
+}
+
+enum LocalAgentModelTurn: Equatable, Sendable {
+    case respond(String)
+    case tool(preface: String, call: APIToolCall)
+}
+
+enum LocalAgentModelDecisionError: Error, Equatable, Sendable {
+    case invalidAction
+    case invalidPath
+    case missingArgument
+    case oversizedArgument
+}
+
+/// Exact GBNF and compiler used by the local-agent route. The authority digest
+/// binds these bytes, while llama.cpp enforces the grammar token by token.
+enum LocalAgentModelGrammar {
+    static let compilerID = "novaforge.local-agent-gbnf"
+    static let compilerVersion = "3.3.0"
+    static let maximumModelPlannedToolCalls = 6
+
+    static let routerPrompt = """
+    You are NovaForge Local's action router. Return exactly one compact JSON object. Put action first and include only the fields required by that action. respond requires response. list_tree and workspace_summary require no other field. list_directory, file_info, read_file require path. read_file_range, tail_file, search_text, write_file, append_file, validate_html_file require path and value. replace_text requires path, value, and replacement. run_command requires value. Allowed actions: respond, list_directory, list_tree, workspace_summary, file_info, read_file, read_file_range, tail_file, search_text, write_file, append_file, replace_text, validate_html_file, run_command. Use workspace-relative paths only. Use value for search text, file or appended contents, old replacement text, HTML profile, command, a read range written start,count, or a tail line count. Inspect before editing when file contents are unknown. Use read_file_range or tail_file when a complete file was truncated. Use append_file for a later chunk only after write_file succeeded. Choose respond for ordinary questions or when no safe action is justified. A response must be one short user-facing sentence and must never claim an action already succeeded.
+    """
+
+    static let gbnf = #"""
+    root ::= respond | noarg | patharg | valuearg | replacementarg | commandarg
+    respond ::= "{" ws "\"action\"" ws ":" ws "\"respond\"" "," ws "\"response\"" ws ":" ws string "}" ws
+    noarg ::= "{" ws "\"action\"" ws ":" ws noarg-action "}" ws
+    patharg ::= "{" ws "\"action\"" ws ":" ws path-action "," ws "\"path\"" ws ":" ws string "}" ws
+    valuearg ::= "{" ws "\"action\"" ws ":" ws value-action "," ws "\"path\"" ws ":" ws string "," ws "\"value\"" ws ":" ws string "}" ws
+    replacementarg ::= "{" ws "\"action\"" ws ":" ws "\"replace_text\"" "," ws "\"path\"" ws ":" ws string "," ws "\"value\"" ws ":" ws string "," ws "\"replacement\"" ws ":" ws string "}" ws
+    commandarg ::= "{" ws "\"action\"" ws ":" ws "\"run_command\"" "," ws "\"value\"" ws ":" ws string "}" ws
+    noarg-action ::= "\"list_tree\"" | "\"workspace_summary\""
+    path-action ::= "\"list_directory\"" | "\"file_info\"" | "\"read_file\""
+    value-action ::= "\"read_file_range\"" | "\"tail_file\"" | "\"search_text\"" | "\"write_file\"" | "\"append_file\"" | "\"validate_html_file\""
+    string ::= "\"" char* "\""
+    char ::= [^"\\\u0000-\u001f] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)
+    hex ::= [0-9a-fA-F]
+    ws ::= [ \t\n\r]*
+    """#
+
+    static func compile(
+        _ decision: LocalAgentModelDecision
+    ) throws -> LocalAgentModelTurn {
+        let action = decision.action
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let path = decision.path
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = decision.value
+        let replacement = decision.replacement
+        let response = compactResponse(decision.response)
+
+        guard value.utf8.count <= 16_384,
+              replacement.utf8.count <= 16_384 else {
+            throw LocalAgentModelDecisionError.oversizedArgument
+        }
+
+        if action == "respond" {
+            let text = response.isEmpty
+                ? "I couldn’t choose a safe local action for that request."
+                : response
+            return .respond(text)
+        }
+
+        let arguments: [String: JSONValue]
+        switch action {
+        case "list_directory":
+            try requireSafePath(path, allowRoot: true)
+            arguments = ["path": .string(path)]
+        case "list_tree":
+            arguments = [:]
+        case "workspace_summary":
+            arguments = [:]
+        case "file_info", "read_file":
+            try requireSafePath(path, allowRoot: false)
+            arguments = ["path": .string(path)]
+        case "read_file_range":
+            try requireSafePath(path, allowRoot: false)
+            let range = try boundedReadRange(value)
+            arguments = [
+                "path": .string(path),
+                "start_line": .number(.integer(Int64(range.start))),
+                "line_count": .number(.integer(Int64(range.count))),
+            ]
+        case "tail_file":
+            try requireSafePath(path, allowRoot: false)
+            let count = try boundedInteger(
+                value,
+                defaultValue: 120,
+                range: 1 ... 300
+            )
+            arguments = [
+                "path": .string(path),
+                "line_count": .number(.integer(Int64(count))),
+            ]
+        case "search_text":
+            guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw LocalAgentModelDecisionError.missingArgument
+            }
+            try requireSafePath(path, allowRoot: true)
+            arguments = ["query": .string(value), "path": .string(path)]
+        case "write_file", "append_file":
+            try requireSafePath(path, allowRoot: false)
+            arguments = ["path": .string(path), "contents": .string(value)]
+        case "replace_text":
+            try requireSafePath(path, allowRoot: false)
+            guard !value.isEmpty else {
+                throw LocalAgentModelDecisionError.missingArgument
+            }
+            arguments = [
+                "path": .string(path),
+                "old": .string(value),
+                "new": .string(replacement),
+            ]
+        case "validate_html_file":
+            try requireSafePath(path, allowRoot: false)
+            let profile = ["auto", "page", "game"].contains(value.lowercased())
+                ? value.lowercased()
+                : "auto"
+            arguments = ["path": .string(path), "profile": .string(profile)]
+        case "run_command":
+            guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw LocalAgentModelDecisionError.missingArgument
+            }
+            arguments = ["command": .string(value)]
+        default:
+            throw LocalAgentModelDecisionError.invalidAction
+        }
+
+        let call = APIToolCall(
+            id: "local-model-\(UUID().uuidString.prefix(12))",
+            type: "function",
+            function: APIFunctionCall(
+                name: action,
+                arguments: try encodedArguments(arguments)
+            )
+        )
+        return .tool(
+            preface: response.isEmpty ? defaultPreface(for: action) : response,
+            call: call
+        )
+    }
+
+    private static func encodedArguments(
+        _ arguments: [String: JSONValue]
+    ) throws -> String {
+        let data = try JSONEncoder().encode(JSONValue.object(arguments))
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw LocalAgentModelDecisionError.invalidAction
+        }
+        return text
+    }
+
+    private static func boundedReadRange(
+        _ value: String
+    ) throws -> (start: Int, count: Int) {
+        let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count <= 2 else {
+            throw LocalAgentModelDecisionError.missingArgument
+        }
+        let start = try boundedInteger(
+            parts.first.map(String.init) ?? "",
+            defaultValue: 1,
+            range: 1 ... 50_000
+        )
+        let count = try boundedInteger(
+            parts.count == 2 ? String(parts[1]) : "",
+            defaultValue: 200,
+            range: 1 ... 400
+        )
+        return (start, count)
+    }
+
+    private static func boundedInteger(
+        _ value: String,
+        defaultValue: Int,
+        range: ClosedRange<Int>
+    ) throws -> Int {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return defaultValue }
+        guard let parsed = Int(trimmed), range.contains(parsed) else {
+            throw LocalAgentModelDecisionError.missingArgument
+        }
+        return parsed
+    }
+
+    private static func requireSafePath(
+        _ path: String,
+        allowRoot: Bool
+    ) throws {
+        guard path.utf8.count <= 4_096,
+              (allowRoot || !path.isEmpty),
+              !path.hasPrefix("/"),
+              !path.hasPrefix("~"),
+              !path.unicodeScalars.contains(where: {
+                  CharacterSet.controlCharacters.contains($0)
+              }),
+              !path.split(separator: "/", omittingEmptySubsequences: false)
+                .contains(where: { $0 == ".." }) else {
+            throw LocalAgentModelDecisionError.invalidPath
+        }
+    }
+
+    private static func compactResponse(_ value: String) -> String {
+        let compact = value
+            .replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        guard compact.count > 240 else { return compact }
+        return String(compact.prefix(239)) + "…"
+    }
+
+    private static func defaultPreface(for action: String) -> String {
+        switch action {
+        case "list_directory", "list_tree", "workspace_summary":
+            "I’ll inspect the workspace."
+        case "file_info", "read_file", "read_file_range", "tail_file":
+            "I’ll read that file."
+        case "search_text":
+            "I’ll search the workspace."
+        case "write_file":
+            "I’ll create that file after you approve the write."
+        case "append_file":
+            "I’ll append the next chunk after you approve the change."
+        case "replace_text":
+            "I’ll edit that file after you approve the change."
+        case "validate_html_file":
+            "I’ll validate that artifact."
+        case "run_command":
+            "I’ll run that sandbox command after you approve it."
+        default:
+            "I’ll handle that locally."
+        }
+    }
 }
 
 enum LocalAgentPlanner {
@@ -38,10 +323,16 @@ enum LocalAgentPlanner {
             )
         }
 
-        if let query = searchIntent(from: trimmed, lower: lower) {
+        if let search = searchIntent(from: trimmed, lower: lower) {
+            var arguments = ["query": search.query]
+            if let path = search.path { arguments["path"] = path }
             return plan(
                 intro: "I’ll search the workspace for that.",
-                requests: [ToolRequest(id: id("local-search"), name: "search_text", arguments: ["query": query])],
+                requests: [ToolRequest(
+                    id: id("local-search"),
+                    name: "search_text",
+                    arguments: arguments
+                )],
                 completion: "Search finished. Open the result details if you want the matching lines."
             )
         }
@@ -92,14 +383,48 @@ enum LocalAgentPlanner {
             )
         }
 
-        // NOTE: "build/make me a game" and "make a web page" used to be intercepted
-        // here by hardcoded HTML generators (wantsGeneratedGame /
-        // wantsGeneratedWebArtifact), which meant the on-device model never actually
-        // generated anything for the most common creative prompts. Those shortcuts
-        // are removed so generation prompts fall through to `nil` and reach the real
-        // model. Only explicit, safe sandbox operations (run command, list/search/
-        // read/write files) keep their deterministic scripted plans, since those are
-        // correct and faster than model round-trips.
+        // The iPhone 12 profile intentionally has a small generation budget. Use a
+        // deterministic, audited starter for the two common artifact requests so
+        // Local mode creates something playable/useful offline instead of timing out
+        // halfway through an HTML file. Follow-up reads and explicit writes still use
+        // the same sandbox tools and approval policy as every other provider.
+        if wantsGeneratedGame(lower) {
+            let path = preferredHTMLPath(
+                from: trimmed,
+                lower: lower,
+                workspace: workspace
+            )
+            let title = gameTitle(from: trimmed)
+            return plan(
+                intro: "I’ll create a responsive offline game and validate it on this iPhone.",
+                requests: validatedHTMLRequests(
+                    path: path,
+                    contents: requestedGameHTML(title: title, lower: lower),
+                    idPrefix: "local-game",
+                    profile: "game"
+                ),
+                completion: "Game ready at \(path). Open the artifact, rotate sideways for full-screen play, or add its NovaForge Shortcut to the Home Screen."
+            )
+        }
+
+        if wantsGeneratedWebArtifact(lower) {
+            let path = preferredWebArtifactPath(
+                from: trimmed,
+                lower: lower,
+                workspace: workspace
+            )
+            let title = webArtifactTitle(from: trimmed, lower: lower)
+            return plan(
+                intro: "I’ll create a polished offline web artifact and validate it on this iPhone.",
+                requests: validatedHTMLRequests(
+                    path: path,
+                    contents: webArtifactHTML(title: title, lower: lower),
+                    idPrefix: "local-web",
+                    profile: "page"
+                ),
+                completion: "Artifact ready at \(path). Open it in Workspace to preview, share, or iterate."
+            )
+        }
 
         if let write = writeIntent(from: trimmed, lower: lower) {
             return plan(
@@ -259,22 +584,97 @@ enum LocalAgentPlanner {
         return nil
     }
 
-    private static func searchIntent(from prompt: String, lower: String) -> String? {
+    private struct SearchIntent {
+        let query: String
+        let path: String?
+    }
+
+    private static func searchIntent(
+        from prompt: String,
+        lower: String
+    ) -> SearchIntent? {
         guard lower.contains("search") || lower.contains("find text") else { return nil }
         let separators = ["search for ", "search ", "find text "]
         for separator in separators {
             if let range = lower.range(of: separator) {
                 let start = prompt.index(prompt.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.upperBound))
-                let query = String(prompt[start...]).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'")))
-                return query.isEmpty ? nil : query
+                let remainder = String(prompt[start...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let parsed = splitSearchRemainder(remainder)
+                return parsed.query.isEmpty ? nil : parsed
             }
         }
         return nil
     }
 
+    private static func splitSearchRemainder(
+        _ remainder: String
+    ) -> SearchIntent {
+        let pattern = #"^\s*[\"'`]([^\"'`]+)[\"'`](?:\s+(?:in|under|inside)\s+(.+))?\s*$"#
+        if let regex = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive]
+        ),
+           let match = regex.firstMatch(
+               in: remainder,
+               range: NSRange(remainder.startIndex..., in: remainder)
+           ),
+           let queryRange = Range(match.range(at: 1), in: remainder) {
+            let path: String?
+            if match.range(at: 2).location != NSNotFound,
+               let pathRange = Range(match.range(at: 2), in: remainder) {
+                path = cleanedSafePath(String(remainder[pathRange]))
+            } else {
+                path = nil
+            }
+            return SearchIntent(
+                query: String(remainder[queryRange]),
+                path: path
+            )
+        }
+
+        let lower = remainder.lowercased()
+        for marker in [" inside ", " under ", " in "] {
+            guard let range = lower.range(of: marker, options: .backwards)
+            else { continue }
+            let boundary = lower.distance(
+                from: lower.startIndex,
+                to: range.lowerBound
+            )
+            let queryEnd = remainder.index(
+                remainder.startIndex,
+                offsetBy: boundary
+            )
+            let pathStart = remainder.index(
+                queryEnd,
+                offsetBy: marker.count
+            )
+            let query = String(remainder[..<queryEnd])
+                .trimmingCharacters(in: .whitespacesAndNewlines
+                    .union(CharacterSet(charactersIn: "\"'`")))
+            if let path = cleanedSafePath(String(remainder[pathStart...])),
+               !query.isEmpty {
+                return SearchIntent(query: query, path: path)
+            }
+        }
+        return SearchIntent(
+            query: remainder.trimmingCharacters(
+                in: .whitespacesAndNewlines.union(
+                    CharacterSet(charactersIn: "\"'`")
+                )
+            ),
+            path: nil
+        )
+    }
+
     private static func readIntent(from prompt: String, lower: String) -> String? {
         guard lower.contains("read") || lower.contains("open") || lower.contains("show") else { return nil }
-        return firstPath(in: prompt)
+        if let path = firstPath(in: prompt) { return path }
+        for prefix in ["read file ", "open file ", "show file "] {
+            guard lower.hasPrefix(prefix) else { continue }
+            return cleanedSafePath(String(prompt.dropFirst(prefix.count)))
+        }
+        return nil
     }
 
     private static func writeIntent(from prompt: String, lower: String) -> (path: String, contents: String)? {
@@ -296,7 +696,9 @@ enum LocalAgentPlanner {
             "make", "build", "create", "write", "improve", "fix", "optimize",
             "tune", "refine", "continue", "update"
         ].contains { lower.contains($0) }
-        let game = lower.contains("game") || lower.contains("snake") || lower.contains("slither")
+        let game = lower.contains("game") || lower.contains("snake") ||
+            lower.contains("slither") || lower.contains("flappy") ||
+            lower.contains("tetris") || lower.contains("falling block")
         let web = lower.contains("html") || lower.contains("canvas") || lower.contains("browser") || game
         return action && game && web
     }
@@ -312,6 +714,12 @@ enum LocalAgentPlanner {
         }
         if lower.contains("slither") { return "slither-arena.html" }
         if lower.contains("snake") { return "snake.html" }
+        if lower.contains("flappy") || lower.contains("bird") {
+            return "flappy-flight.html"
+        }
+        if lower.contains("tetris") || lower.contains("falling block") {
+            return "falling-blocks.html"
+        }
         return "novaforge-arcade.html"
     }
 
@@ -351,13 +759,46 @@ enum LocalAgentPlanner {
     }
 
     private static func firstPath(in prompt: String) -> String? {
-        let pattern = #"[A-Za-z0-9_\-./]+\.(html|css|js|swift|md|txt|json|log)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let quotedPattern = #"[\"'`]([^\"'`\n]+)[\"'`]"#
+        if let regex = try? NSRegularExpression(pattern: quotedPattern),
+           let match = regex.firstMatch(
+               in: prompt,
+               range: NSRange(prompt.startIndex..., in: prompt)
+           ),
+           let range = Range(match.range(at: 1), in: prompt),
+           let path = cleanedSafePath(String(prompt[range])),
+           path.contains("/") || path.contains(".") {
+            return path
+        }
+
+        let extensions = "html|htm|css|js|jsx|ts|tsx|swift|md|txt|json|log|py|yaml|yml|plist|xml|toml|sh|c|cc|cpp|h|hpp|m|mm|kt|java|rs|go|rb|php|vue|svelte"
+        let pattern = #"[\p{L}\p{N}_@+\-./]+\.(__EXT__)"#
+            .replacingOccurrences(of: "__EXT__", with: extensions)
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive]
+        ) else { return nil }
         let range = NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)
         guard let match = regex.firstMatch(in: prompt, range: range),
               let swiftRange = Range(match.range, in: prompt) else { return nil }
-        let path = String(prompt[swiftRange]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'` "))
-        if path.hasPrefix("/") || path.contains("..") { return nil }
+        return cleanedSafePath(String(prompt[swiftRange]))
+    }
+
+    private static func cleanedSafePath(_ raw: String) -> String? {
+        let path = raw.trimmingCharacters(
+            in: .whitespacesAndNewlines.union(
+                CharacterSet(charactersIn: "\"'`")
+            )
+        )
+        guard !path.isEmpty,
+              path.utf8.count <= 4_096,
+              !path.hasPrefix("/"),
+              !path.hasPrefix("~"),
+              !path.unicodeScalars.contains(where: {
+                  CharacterSet.controlCharacters.contains($0)
+              }),
+              !path.split(separator: "/", omittingEmptySubsequences: false)
+                .contains(where: { $0 == ".." }) else { return nil }
         return path
     }
 
@@ -365,6 +806,12 @@ enum LocalAgentPlanner {
         let lower = prompt.lowercased()
         if lower.contains("slither") { return "Slither Arena" }
         if lower.contains("snake") { return "Snake Arena" }
+        if lower.contains("flappy") || lower.contains("bird") {
+            return "Flappy Flight"
+        }
+        if lower.contains("tetris") || lower.contains("falling block") {
+            return "Falling Blocks"
+        }
         return "NovaForge Arcade"
     }
 
@@ -539,6 +986,68 @@ enum LocalAgentPlanner {
           </main>
         </body>
         </html>
+        """
+    }
+
+    private static func requestedGameHTML(
+        title: String,
+        lower: String
+    ) -> String {
+        if lower.contains("flappy") || lower.contains("bird") {
+            return flappyGameHTML(title: title)
+        }
+        if lower.contains("tetris") || lower.contains("falling block") {
+            return fallingBlocksGameHTML(title: title)
+        }
+        return snakeGameHTML(title: title)
+    }
+
+    private static func flappyGameHTML(title: String) -> String {
+        """
+        <!doctype html>
+        <html lang="en"><head>
+        <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+        <title>\(title)</title>
+        <style>
+        *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#071522;color:#f7fbff;font-family:-apple-system,system-ui,sans-serif}main{height:100%;display:grid;grid-template-columns:minmax(150px,.28fr) 1fr;gap:12px;padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}header{display:grid;align-content:center;gap:10px}h1{font-size:clamp(24px,6vmin,58px);line-height:.9;margin:0}p{margin:0;color:#b8d8ee;line-height:1.3}.score{font-size:clamp(20px,4vmin,38px);font-weight:900;color:#ffe475}button{border:1px solid #ffffff40;border-radius:14px;background:#ffffff16;color:white;padding:10px 14px;font-weight:800}canvas{display:block;width:100%;height:100%;min-height:0;border-radius:22px;border:1px solid #ffffff30;background:#103a59;touch-action:none}@media(orientation:portrait){main{grid-template-columns:1fr;grid-template-rows:auto 1fr}header{display:flex;align-items:center;justify-content:space-between;gap:8px}header p{display:none}h1{font-size:clamp(22px,7vw,34px)}}@media(orientation:landscape) and (max-height:420px){main{display:block;padding:0}header{position:absolute;z-index:2;left:max(10px,env(safe-area-inset-left));top:max(10px,env(safe-area-inset-top));display:flex;align-items:center;gap:10px;text-shadow:0 2px 8px #000}header p{display:none}canvas{position:absolute;inset:0;border-radius:0}}
+        </style></head><body><main><header><div><h1>\(title)</h1><p>Tap, click, or press Space to fly through every gate.</p></div><div class="score">Score <span id="score">0</span></div><button id="restart">Restart</button></header><canvas id="game" aria-label="Flappy flight game"></canvas></main>
+        <script>
+        const c=document.querySelector('#game'),x=c.getContext('2d'),scoreEl=document.querySelector('#score');let dpr=1,w=1,h=1,bird,pipes,score,alive,last,spawn;
+        function resize(){const r=c.getBoundingClientRect();dpr=Math.min(3,devicePixelRatio||1);c.width=Math.max(1,r.width*dpr);c.height=Math.max(1,r.height*dpr);w=c.width;h=c.height;draw()}
+        function reset(){bird={x:w*.24,y:h*.45,v:0,r:Math.max(12*dpr,Math.min(w,h)*.025)};pipes=[];score=0;alive=true;last=performance.now();spawn=0;scoreEl.textContent=0}
+        function flap(){if(!alive){reset();return}bird.v=-Math.max(360*dpr,h*.62)}
+        function addPipe(){const gap=Math.max(125*dpr,h*.28),margin=gap*.65,center=margin+Math.random()*Math.max(1,h-margin*2);pipes.push({x:w+40*dpr,width:Math.max(54*dpr,w*.075),top:center-gap/2,bottom:center+gap/2,scored:false})}
+        function update(dt){if(!alive)return;bird.v+=Math.max(900*dpr,h*1.6)*dt;bird.y+=bird.v*dt;spawn-=dt;if(spawn<=0){addPipe();spawn=1.45}const speed=Math.max(190*dpr,w*.25);for(const p of pipes){p.x-=speed*dt;if(!p.scored&&p.x+p.width<bird.x){p.scored=true;score++;scoreEl.textContent=score}const hitX=bird.x+bird.r>p.x&&bird.x-bird.r<p.x+p.width;if(hitX&&(bird.y-bird.r<p.top||bird.y+bird.r>p.bottom))alive=false}pipes=pipes.filter(p=>p.x+p.width>-20*dpr);if(bird.y+bird.r>h||bird.y-bird.r<0)alive=false}
+        function draw(){const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,'#134b72');g.addColorStop(1,'#071522');x.fillStyle=g;x.fillRect(0,0,w,h);for(const p of pipes){x.fillStyle='#58e6a9';x.fillRect(p.x,0,p.width,p.top);x.fillRect(p.x,p.bottom,p.width,h-p.bottom);x.fillStyle='#b7ffd8';x.fillRect(p.x-4*dpr,p.top-14*dpr,p.width+8*dpr,14*dpr);x.fillRect(p.x-4*dpr,p.bottom,p.width+8*dpr,14*dpr)}x.save();x.translate(bird.x,bird.y);x.rotate(Math.max(-.5,Math.min(.9,bird.v/900)));x.fillStyle='#ffe475';x.beginPath();x.arc(0,0,bird.r,0,Math.PI*2);x.fill();x.fillStyle='#ff8a66';x.fillRect(bird.r*.55,-bird.r*.12,bird.r*.9,bird.r*.35);x.restore();if(!alive){x.fillStyle='#000a';x.fillRect(0,0,w,h);x.fillStyle='white';x.textAlign='center';x.font=`900 ${Math.max(28*dpr,h*.09)}px system-ui`;x.fillText('Tap to fly again',w/2,h/2)}}
+        function loop(t){const dt=Math.min(.034,(t-last)/1000);last=t;update(dt);draw();requestAnimationFrame(loop)}
+        c.addEventListener('pointerdown',e=>{e.preventDefault();flap()});addEventListener('keydown',e=>{if(e.code==='Space'||e.key==='ArrowUp'){e.preventDefault();flap()}});document.querySelector('#restart').onclick=reset;addEventListener('resize',resize);resize();reset();requestAnimationFrame(loop);
+        </script></body></html>
+        """
+    }
+
+    private static func fallingBlocksGameHTML(title: String) -> String {
+        """
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>\(title)</title>
+        <style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080813;color:#fff;font-family:-apple-system,system-ui,sans-serif}main{height:100%;display:grid;grid-template-columns:minmax(160px,.32fr) minmax(220px,1fr);gap:12px;padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}header{display:grid;align-content:center;gap:10px}h1{font-size:clamp(24px,6vmin,58px);line-height:.9;margin:0}.score{font-size:clamp(18px,4vmin,34px);font-weight:900;color:#76f4ff}.controls{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}button{border:1px solid #ffffff38;border-radius:13px;background:#ffffff13;color:white;min-height:44px;font-size:20px;font-weight:900;touch-action:manipulation}canvas{display:block;width:100%;height:100%;min-height:0;border:1px solid #ffffff2d;border-radius:22px;background:#0d0d1c;touch-action:none}@media(orientation:portrait){main{grid-template-columns:1fr;grid-template-rows:auto 1fr}header{display:grid;grid-template-columns:1fr auto;align-items:center}header p{display:none}.controls{grid-column:1/-1}h1{font-size:clamp(22px,7vw,34px)}}@media(orientation:landscape) and (max-height:420px){main{grid-template-columns:minmax(140px,.25fr) 1fr;padding:6px}}</style></head>
+        <body><main><header><div><h1>\(title)</h1><p>Clear lines with arrows, swipe, or the controls.</p></div><div class="score">Score <span id="score">0</span></div><div class="controls"><button data-a="left">←</button><button data-a="rotate">↻</button><button data-a="right">→</button><button data-a="drop">↓</button></div></header><canvas id="game" aria-label="Falling blocks game"></canvas></main>
+        <script>
+        const c=document.querySelector('#game'),x=c.getContext('2d'),scoreEl=document.querySelector('#score'),COLS=10,ROWS=20,colors=['','#5ee7ff','#ffd166','#b388ff','#ff7f8f','#66f2a3','#ff9f55','#72a5ff'];let board,piece,score,last,acc,over,dpr=1,cell=20,ox=0,oy=0;
+        const shapes=[[[1,1,1,1]],[[2,2],[2,2]],[[0,3,0],[3,3,3]],[[4,0,0],[4,4,4]],[[0,0,5],[5,5,5]],[[0,6,6],[6,6,0]],[[7,7,0],[0,7,7]]];
+        function resize(){const r=c.getBoundingClientRect();dpr=Math.min(3,devicePixelRatio||1);c.width=Math.max(1,r.width*dpr);c.height=Math.max(1,r.height*dpr);cell=Math.max(6,Math.min(c.width/COLS,c.height/ROWS));ox=(c.width-cell*COLS)/2;oy=(c.height-cell*ROWS)/2;draw()}
+        function reset(){board=Array.from({length:ROWS},()=>Array(COLS).fill(0));score=0;over=false;spawn();scoreEl.textContent=0;last=performance.now();acc=0}
+        function spawn(){const s=shapes[Math.floor(Math.random()*shapes.length)].map(r=>[...r]);piece={s,x:Math.floor((COLS-s[0].length)/2),y:0};if(hit(piece.s,piece.x,piece.y))over=true}
+        function hit(s,px,py){return s.some((r,y)=>r.some((v,q)=>v&&(px+q<0||px+q>=COLS||py+y>=ROWS||(py+y>=0&&board[py+y][px+q]))))}
+        function move(dx,dy){if(over)return false;if(!hit(piece.s,piece.x+dx,piece.y+dy)){piece.x+=dx;piece.y+=dy;return true}if(dy){merge();clear();spawn()}return false}
+        function rotate(){const s=piece.s[0].map((_,i)=>piece.s.map(r=>r[i]).reverse());if(!hit(s,piece.x,piece.y))piece.s=s}
+        function merge(){piece.s.forEach((r,y)=>r.forEach((v,q)=>{if(v&&piece.y+y>=0)board[piece.y+y][piece.x+q]=v}))}
+        function clear(){let lines=0;board=board.filter(r=>{if(r.every(Boolean)){lines++;return false}return true});while(board.length<ROWS)board.unshift(Array(COLS).fill(0));score+=[0,100,300,500,800][lines]||0;scoreEl.textContent=score}
+        function act(a){if(a==='left')move(-1,0);if(a==='right')move(1,0);if(a==='rotate')rotate();if(a==='drop'){while(move(0,1));score+=2;scoreEl.textContent=score}draw()}
+        function block(v,q,y){if(!v)return;x.fillStyle=colors[v];x.fillRect(ox+q*cell+1*dpr,oy+y*cell+1*dpr,cell-2*dpr,cell-2*dpr)}
+        function draw(){x.fillStyle='#0d0d1c';x.fillRect(0,0,c.width,c.height);board.forEach((r,y)=>r.forEach((v,q)=>block(v,q,y)));if(piece)piece.s.forEach((r,y)=>r.forEach((v,q)=>block(v,piece.x+q,piece.y+y)));if(over){x.fillStyle='#000c';x.fillRect(0,0,c.width,c.height);x.fillStyle='white';x.textAlign='center';x.font=`900 ${Math.max(28*dpr,c.height*.08)}px system-ui`;x.fillText('Game Over',c.width/2,c.height/2)}}
+        function loop(t){acc+=t-last;last=t;while(acc>520){move(0,1);acc-=520}draw();requestAnimationFrame(loop)}
+        addEventListener('keydown',e=>{const m={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'rotate',ArrowDown:'drop'}[e.key];if(m){e.preventDefault();act(m)}if(e.key==='r')reset()});document.querySelectorAll('button').forEach(b=>b.onclick=()=>act(b.dataset.a));let start;c.onpointerdown=e=>start=e;c.onpointerup=e=>{if(!start)return;const dx=e.clientX-start.clientX,dy=e.clientY-start.clientY;Math.abs(dx)>Math.abs(dy)?act(dx>0?'right':'left'):dy>35?act('drop'):act('rotate');start=null};addEventListener('resize',resize);resize();reset();requestAnimationFrame(loop);
+        </script></body></html>
         """
     }
 

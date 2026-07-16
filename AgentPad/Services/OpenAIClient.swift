@@ -23,47 +23,17 @@ struct AIProviderClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuthorization(to: &request, model: model)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if configuration.provider == .openRouter {
             request.setValue("NovaForge", forHTTPHeaderField: "X-Title")
         }
 
-        let systemPrompt: String
-        if let customPrompt = customSystemPrompt, !customPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            systemPrompt = customPrompt
-        } else {
-            systemPrompt = """
-            You are NovaForge, an iOS sandbox coding and file assistant.
-            You can inspect project structure, summarize workspaces, read whole files or line ranges, get file metadata, write/append/replace text, manage files/folders, diff files, validate JSON/HTML, extract code outlines, search text, and run safe commands in the sandbox using your tools.
-            When the user asks you to build an app, web page, or game, create or edit real workspace files with write_file/append_file/replace_text instead of pasting the project into chat.
-            Use tools in small inspect-edit-validate loops: list_tree or workspace_summary, read only relevant files/ranges, write changes, run targeted validators/checks, then fix any failure before the final response.
-            For HTML games/pages, write the file, then run validate_html <path>, wc <path>, head -n 40 <path>, and find . before the final response.
-            For code tasks, prefer tool actions over long chat output. Never stream full generated source into chat unless the user explicitly asks to see the source.
-            Keep final chat responses short: say what changed, which file to open, and what validation passed.
-            
-            Current workspace files:
-            \(workspaceSummary)
-            
-            Always output a clear final text response to the user once you have finished executing tools or if no tools are needed.
-            """
-        }
-
-        let sanitizedTranscript = ProviderMessageSanitizer.sanitize(
-            systemPrompt: systemPrompt,
-            history: messages
+        let sanitizedTranscript = try preparedTranscript(
+            messages: messages,
+            customSystemPrompt: customSystemPrompt,
+            workspaceSummary: workspaceSummary
         )
-        let validationIssues = ProviderMessageSanitizer.validate(sanitizedTranscript.messages)
-        guard validationIssues.isEmpty else {
-            throw OpenAIError.requestFailed("The provider message history is invalid after cleanup. Clear the current run state and retry.")
-        }
-        if !sanitizedTranscript.droppedMessages.isEmpty {
-            let reasons = sanitizedTranscript.droppedMessages
-                .map { "\($0.role): \($0.reason)" }
-                .joined(separator: "; ")
-            providerLogger.debug("Provider transcript sanitizer dropped \(sanitizedTranscript.droppedMessages.count, privacy: .public) message(s): \(reasons, privacy: .public)")
-        }
-        providerLogger.debug("Outgoing provider message roles: \(sanitizedTranscript.roleLog, privacy: .public)")
 
         let apiMessages = sanitizedTranscript.messages.map(\.chatCompletionsMessage)
 
@@ -109,47 +79,17 @@ struct AIProviderClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuthorization(to: &request, model: model)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if configuration.provider == .openRouter {
             request.setValue("NovaForge", forHTTPHeaderField: "X-Title")
         }
 
-        let systemPrompt: String
-        if let customPrompt = customSystemPrompt, !customPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            systemPrompt = customPrompt
-        } else {
-            systemPrompt = """
-            You are NovaForge, an iOS sandbox coding and file assistant.
-            You can inspect project structure, summarize workspaces, read whole files or line ranges, get file metadata, write/append/replace text, manage files/folders, diff files, validate JSON/HTML, extract code outlines, search text, and run safe commands in the sandbox using your tools.
-            When the user asks you to build an app, web page, or game, create or edit real workspace files with write_file/append_file/replace_text instead of pasting the project into chat.
-            Use tools in small inspect-edit-validate loops: list_tree or workspace_summary, read only relevant files/ranges, write changes, run targeted validators/checks, then fix any failure before the final response.
-            For HTML games/pages, write the file, then run validate_html <path>, wc <path>, head -n 40 <path>, and find . before the final response.
-            For code tasks, prefer tool actions over long chat output. Never stream full generated source into chat unless the user explicitly asks to see the source.
-            Keep final chat responses short: say what changed, which file to open, and what validation passed.
-            
-            Current workspace files:
-            \(workspaceSummary)
-            
-            Always output a clear final text response to the user once you have finished executing tools or if no tools are needed.
-            """
-        }
-
-        let sanitizedTranscript = ProviderMessageSanitizer.sanitize(
-            systemPrompt: systemPrompt,
-            history: messages
+        let sanitizedTranscript = try preparedTranscript(
+            messages: messages,
+            customSystemPrompt: customSystemPrompt,
+            workspaceSummary: workspaceSummary
         )
-        let validationIssues = ProviderMessageSanitizer.validate(sanitizedTranscript.messages)
-        guard validationIssues.isEmpty else {
-            throw OpenAIError.requestFailed("The provider message history is invalid after cleanup. Clear the current run state and retry.")
-        }
-        if !sanitizedTranscript.droppedMessages.isEmpty {
-            let reasons = sanitizedTranscript.droppedMessages
-                .map { "\($0.role): \($0.reason)" }
-                .joined(separator: "; ")
-            providerLogger.debug("Provider transcript sanitizer dropped \(sanitizedTranscript.droppedMessages.count, privacy: .public) message(s): \(reasons, privacy: .public)")
-        }
-        providerLogger.debug("Outgoing provider message roles: \(sanitizedTranscript.roleLog, privacy: .public)")
 
         let apiMessages = sanitizedTranscript.messages.map(\.chatCompletionsMessage)
         var body = ChatCompletionsRequest(
@@ -193,7 +133,7 @@ struct AIProviderClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuthorization(to: &request, model: model)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if configuration.provider == .openRouter {
             request.setValue("NovaForge", forHTTPHeaderField: "X-Title")
@@ -229,15 +169,34 @@ struct AIProviderClient {
     }
 
     func listModels() async throws -> [String] {
+        try await modelCatalog().map(\.id)
+    }
+
+    func modelCatalog() async throws -> [ProviderModelCatalogEntry] {
         guard let url = configuration.modelsURL else {
-            return configuration.provider.modelOptions
+            return configuration.provider.modelOptions.map {
+                ProviderModelCatalogEntry(
+                    id: $0,
+                    displayName: configuration.provider.modelDisplayName($0),
+                    supportedReasoningEfforts: configuration.provider
+                        .fallbackReasoningEfforts($0)
+                )
+            }
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if configuration.provider != .openCodeZen,
+           !configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        if configuration.provider == .openAICodex {
+            request.setValue("novaforge_ios", forHTTPHeaderField: "originator")
+            request.setValue("NovaForge/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
+            if let accountID = Self.chatGPTAccountID(fromJWT: configuration.apiKey) {
+                request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
+            }
         }
 
         let (data, response) = try await session.data(for: request)
@@ -247,17 +206,28 @@ struct AIProviderClient {
             )
         }
 
-        let decoded = try JSONDecoder().decode(ProviderModelsResponse.self, from: data)
-        let ids = decoded.data
-            .map(\.id)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .filter { id in
-                guard configuration.provider == .openAICodex else { return true }
-                let lower = id.lowercased()
-                return lower.contains("codex") || lower.contains("gpt-5")
-            }
-        return Array(NSOrderedSet(array: ids)) as? [String] ?? ids
+        return try ProviderModelCatalogParser.parse(
+            data,
+            provider: configuration.provider
+        )
+    }
+
+    private static func chatGPTAccountID(fromJWT token: String) -> String? {
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2 else { return nil }
+        var base64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64), data.count <= 64 * 1_024,
+              let object = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any],
+              let auth = object["https://api.openai.com/auth"]
+                as? [String: Any],
+              let accountID = auth["chatgpt_account_id"] as? String,
+              (1 ... 512).contains(accountID.utf8.count)
+        else { return nil }
+        return accountID
     }
 
     private func supportsTemperature(model: String) -> Bool {
@@ -267,14 +237,160 @@ struct AIProviderClient {
         if lower.contains("reasoning") { return false }
         return true
     }
-}
 
-private struct ProviderModelsResponse: Decodable {
-    struct Model: Decodable {
-        let id: String
+    private func applyAuthorization(
+        to request: inout URLRequest,
+        model: String
+    ) {
+        guard configuration.provider.requiresCredential(for: model) else {
+            request.setValue(nil, forHTTPHeaderField: "Authorization")
+            return
+        }
+        request.setValue(
+            "Bearer \(configuration.apiKey)",
+            forHTTPHeaderField: "Authorization"
+        )
     }
 
-    let data: [Model]
+    private func preparedTranscript(
+        messages: [ProviderMessageInput],
+        customSystemPrompt: String?,
+        workspaceSummary: String
+    ) throws -> SanitizedProviderTranscript {
+        let transcript: SanitizedProviderTranscript
+        do {
+            transcript = try ProviderContextWindow.prepareHostedTranscript(
+                history: messages,
+                customSystemPrompt: customSystemPrompt,
+                workspaceSummary: workspaceSummary
+            )
+        } catch {
+            throw OpenAIError.requestFailed(
+                "The provider message history is invalid after cleanup. Clear the current run state and retry."
+            )
+        }
+        if !transcript.droppedMessages.isEmpty {
+            let reasons = transcript.droppedMessages
+                .map { "\($0.role): \($0.reason)" }
+                .joined(separator: "; ")
+            providerLogger.debug(
+                "Provider transcript sanitizer dropped \(transcript.droppedMessages.count, privacy: .public) message(s): \(reasons, privacy: .public)"
+            )
+        }
+        providerLogger.debug(
+            "Outgoing provider message roles: \(transcript.roleLog, privacy: .public)"
+        )
+        return transcript
+    }
+}
+
+struct ProviderModelCatalogEntry: Equatable, Identifiable, Sendable {
+    let id: String
+    let displayName: String?
+    let supportedReasoningEfforts: [String]
+
+    init(
+        id: String,
+        displayName: String? = nil,
+        supportedReasoningEfforts: [String] = []
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.supportedReasoningEfforts = supportedReasoningEfforts
+    }
+}
+
+enum ProviderModelCatalogParser {
+    static func parse(
+        _ data: Data,
+        provider: AIProvider
+    ) throws -> [ProviderModelCatalogEntry] {
+        guard data.count <= 4 * 1_024 * 1_024,
+              let root = try JSONSerialization.jsonObject(with: data)
+                as? [String: Any],
+              let rawModels = (root["data"] ?? root["models"]) as? [Any]
+        else {
+            throw OpenAIError.requestFailed("The provider returned an invalid model catalog.")
+        }
+
+        var seen = Set<String>()
+        var result: [ProviderModelCatalogEntry] = []
+        for rawModel in rawModels.prefix(2_000) {
+            guard let model = rawModel as? [String: Any],
+                  let rawID = (model["id"] ?? model["slug"] ?? model["model"]) as? String
+            else { continue }
+            let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isSafeModelID(id), seen.insert(id).inserted else { continue }
+            if provider == .openAICodex, !isSupportedChatGPTModelID(id) {
+                continue
+            }
+            result.append(
+                ProviderModelCatalogEntry(
+                    id: id,
+                    displayName: safeDisplayName(
+                        model["display_name"] ?? model["displayName"] ?? model["name"]
+                    ),
+                    supportedReasoningEfforts: reasoningEfforts(
+                        model["supported_reasoning_efforts"]
+                            ?? model["supportedReasoningEfforts"]
+                            ?? model["reasoning_efforts"]
+                            ?? model["supported_reasoning_levels"]
+                    )
+                )
+            )
+        }
+        guard !result.isEmpty else {
+            throw OpenAIError.requestFailed("The provider returned no compatible agent models.")
+        }
+        return result
+    }
+
+    private static func reasoningEfforts(_ raw: Any?) -> [String] {
+        guard let rawValues = raw as? [Any] else { return [] }
+        let accepted = Set(["none", "low", "medium", "high", "xhigh", "max"])
+        var seen = Set<String>()
+        return rawValues.compactMap { rawValue in
+            let value: String?
+            if let string = rawValue as? String {
+                value = string
+            } else if let object = rawValue as? [String: Any] {
+                value = (object["reasoning_effort"]
+                    ?? object["reasoningEffort"]
+                    ?? object["effort"]) as? String
+            } else {
+                value = nil
+            }
+            guard let normalized = value?.lowercased(),
+                  accepted.contains(normalized),
+                  seen.insert(normalized).inserted
+            else { return nil }
+            return normalized
+        }
+    }
+
+    private static func safeDisplayName(_ raw: Any?) -> String? {
+        guard let value = raw as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1 ... 160).contains(trimmed.utf8.count),
+              !trimmed.unicodeScalars.contains(where: { $0.value == 0 })
+        else { return nil }
+        return trimmed
+    }
+
+    private static func isSafeModelID(_ value: String) -> Bool {
+        guard (1 ... 200).contains(value.utf8.count) else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && (
+                CharacterSet.alphanumerics.contains(scalar)
+                    || "-._/:".unicodeScalars.contains(scalar)
+            )
+        }
+    }
+
+    private static func isSupportedChatGPTModelID(_ value: String) -> Bool {
+        let lower = value.lowercased()
+        return lower.hasPrefix("gpt-5") && !lower.contains("auto-review")
+    }
 }
 
 struct ProviderResponse: Sendable {
