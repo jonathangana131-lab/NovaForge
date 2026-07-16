@@ -387,15 +387,15 @@ run_xctest_selection() {
   local result_path="$3"
   shift 3
   local previous_result_path="$RESULT_BUNDLE_PATH"
-  local status=0
+  local selection_status=0
 
   if [[ "$WRITE_RESULT_BUNDLE" == "1" ]]; then
     RESULT_BUNDLE_PATH="$result_path"
     rm -rf -- "$RESULT_BUNDLE_PATH"
   fi
-  xctestrun_xcodebuild "$timeout" "$log_path" "$@" || status=$?
+  xctestrun_xcodebuild "$timeout" "$log_path" "$@" || selection_status=$?
   RESULT_BUNDLE_PATH="$previous_result_path"
-  return "$status"
+  return "$selection_status"
 }
 
 run_critical_lane() {

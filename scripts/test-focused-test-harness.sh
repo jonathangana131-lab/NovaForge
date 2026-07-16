@@ -41,7 +41,11 @@ rg -q '1 unit runner.*isolated UI runners' "$RUNNER"
 rg -q 'test-ui-\$ordinal-\$test_name\.log' "$RUNNER"
 rg -q 'UI_TEST_RESTART_INTERVAL' "$RUNNER"
 rg -q 'refresh_simulator "\$batch"' "$RUNNER"
-rg -q 'xctestrun_xcodebuild.*|| status=\$?' "$RUNNER"
+rg -q 'xctestrun_xcodebuild.*|| selection_status=\$?' "$RUNNER"
+if rg -q 'local status=' "$RUNNER"; then
+  echo "Focused runner shadows zsh's read-only status parameter" >&2
+  exit 1
+fi
 rg -q 'swift test --package-path' "$RUNNER"
 rg -q 'test-focused-test-harness\.sh' "$RUNNER"
 rg -q 'MAX_HOST_LOAD_PER_CPU' "$ROOT_DIR/scripts/codex-performance-gate.sh"
