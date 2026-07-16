@@ -13,8 +13,9 @@ set -o pipefail
 #   release  Package contracts, all unit tests, and every UI journey.
 #
 # Every app lane incrementally builds one shared test bundle, then executes it
-# with test-without-building. The simulator boots once per lane and XCTest owns
-# readiness; the runner never sleeps for an arbitrary amount of time.
+# with test-without-building. Critical runs units once and gives each UI journey
+# a fresh XCTest runner so one poisoned accessibility session cannot strand the
+# rest of the lane. The runner never sleeps for an arbitrary amount of time.
 
 ROOT_DIR="${0:A:h:h}"
 LANE="${1:-critical}"
@@ -25,6 +26,9 @@ SIMULATOR_ID="${SIMULATOR_ID:-4B9AB34A-404C-485F-B0BC-964F24D0AE83}"
 DESTINATION_TIMEOUT="${DESTINATION_TIMEOUT:-120}"
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-720}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-1200}"
+UNIT_TEST_TIMEOUT="${UNIT_TEST_TIMEOUT:-600}"
+UI_TEST_TIMEOUT="${UI_TEST_TIMEOUT:-300}"
+UI_TEST_RESTART_INTERVAL="${UI_TEST_RESTART_INTERVAL:-4}"
 PACKAGE_TIMEOUT="${PACKAGE_TIMEOUT:-600}"
 SIM_BOOT_TIMEOUT="${SIM_BOOT_TIMEOUT:-180}"
 TIMEOUT_RUNNER="$ROOT_DIR/scripts/codex-timeout-runner.pl"
@@ -346,6 +350,18 @@ boot_simulator() {
     xcrun simctl bootstatus "$SIMULATOR_ID" -b
 }
 
+refresh_simulator() {
+  local batch="$1"
+  echo "==> Refreshing simulator before critical UI batch $batch"
+  TIMEOUT_RUNNER_LABEL="simulator-refresh-shutdown" \
+    "$TIMEOUT_RUNNER" 60 "$LOG_DIR/simulator-refresh-$batch-shutdown.log" \
+    xcrun simctl shutdown "$SIMULATOR_ID"
+  xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
+  TIMEOUT_RUNNER_LABEL="simulator-refresh-boot" \
+    "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$LOG_DIR/simulator-refresh-$batch-boot.log" \
+    xcrun simctl bootstatus "$SIMULATOR_ID" -b
+}
+
 build_test_bundle() {
   if [[ "$BUILD_FOR_TESTING_FIRST" == "1" ]]; then
     echo "==> Incremental build-for-testing"
@@ -365,6 +381,59 @@ build_test_bundle() {
   echo "Using $XCTESTRUN_PATH"
 }
 
+run_xctest_selection() {
+  local timeout="$1"
+  local log_path="$2"
+  local result_path="$3"
+  shift 3
+  local previous_result_path="$RESULT_BUNDLE_PATH"
+  local status=0
+
+  if [[ "$WRITE_RESULT_BUNDLE" == "1" ]]; then
+    RESULT_BUNDLE_PATH="$result_path"
+    rm -rf -- "$RESULT_BUNDLE_PATH"
+  fi
+  xctestrun_xcodebuild "$timeout" "$log_path" "$@" || status=$?
+  RESULT_BUNDLE_PATH="$previous_result_path"
+  return "$status"
+}
+
+run_critical_lane() {
+  if [[ "$UI_TEST_RESTART_INTERVAL" != <-> ]] || (( UI_TEST_RESTART_INTERVAL < 1 )); then
+    echo "UI_TEST_RESTART_INTERVAL must be a positive integer." >&2
+    return 2
+  fi
+
+  local result_prefix="${RESULT_BUNDLE_PATH%.xcresult}"
+  echo "==> Running critical units in one fresh XCTest runner"
+  run_xctest_selection \
+    "$UNIT_TEST_TIMEOUT" \
+    "$LOG_DIR/test-unit.log" \
+    "$result_prefix-unit.xcresult" \
+    test-without-building -only-testing:AgentPadTests
+
+  local index=0
+  local batch=1
+  local ordinal=""
+  local test_name=""
+  refresh_simulator "$batch"
+  for test_name in "${critical_ui_tests[@]}"; do
+    (( index += 1 ))
+    if (( index > 1 && (index - 1) % UI_TEST_RESTART_INTERVAL == 0 )); then
+      (( batch += 1 ))
+      refresh_simulator "$batch"
+    fi
+    printf -v ordinal '%02d' "$index"
+    echo "==> Running critical UI journey $index/${#critical_ui_tests}: $test_name"
+    run_xctest_selection \
+      "$UI_TEST_TIMEOUT" \
+      "$LOG_DIR/test-ui-$ordinal-$test_name.log" \
+      "$result_prefix-ui-$ordinal-$test_name.xcresult" \
+      test-without-building \
+      "-only-testing:AgentPadUITests/AgentPadUITests/$test_name"
+  done
+}
+
 run_lane() {
   local -a selectors=()
   local test_name=""
@@ -377,23 +446,24 @@ run_lane() {
         selectors+=( "-only-testing:AgentPadUITests/AgentPadUITests/$test_name" )
       done
       ;;
-    critical)
-      selectors+=( "-only-testing:AgentPadTests" )
-      for test_name in "${ui_tests[@]}"; do
-        selectors+=( "-only-testing:AgentPadUITests/AgentPadUITests/$test_name" )
-      done
-      ;;
+    critical) ;;
     release)
       selectors+=( "-only-testing:AgentPadTests" "-only-testing:AgentPadUITests" )
       ;;
   esac
 
-  if [[ "$WRITE_RESULT_BUNDLE" == "1" ]]; then
-    rm -rf -- "$RESULT_BUNDLE_PATH"
-  fi
   [[ "$NOVAFORGE_CAPTURE_MODE" == "all" ]] && mkdir -p "$NOVAFORGE_SCREENSHOT_DIR"
+  if [[ "$LANE" == "critical" ]]; then
+    echo "==> Running critical lane (1 unit runner + ${#critical_ui_tests} isolated UI runners, capture=$NOVAFORGE_CAPTURE_MODE, xcresult=$WRITE_RESULT_BUNDLE)"
+    run_critical_lane
+    return
+  fi
+
   echo "==> Running $LANE lane (${#selectors} selectors, capture=$NOVAFORGE_CAPTURE_MODE, xcresult=$WRITE_RESULT_BUNDLE)"
-  xctestrun_xcodebuild "$TEST_TIMEOUT" "$LOG_DIR/test.log" \
+  run_xctest_selection \
+    "$TEST_TIMEOUT" \
+    "$LOG_DIR/test.log" \
+    "$RESULT_BUNDLE_PATH" \
     test-without-building "${selectors[@]}"
 }
 

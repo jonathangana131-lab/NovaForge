@@ -30,7 +30,7 @@ jobs:
   verify:
     name: Critical verification
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - name: Install source-search dependency
