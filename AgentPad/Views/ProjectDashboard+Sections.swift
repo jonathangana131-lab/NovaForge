@@ -53,7 +53,7 @@ extension ProjectDashboardView {
 
     var projectSwitcherSheet: some View {
         ZStack {
-            AgentBackground()
+            AgentBackground(isAnimated: false)
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 14) {

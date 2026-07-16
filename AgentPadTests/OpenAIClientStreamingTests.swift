@@ -250,6 +250,57 @@ final class OpenAIClientStreamingTests: XCTestCase {
         )
     }
 
+    func testChatGPTModelCatalogParsesCurrentShapeAndReasoningOrder() throws {
+        let data = Data(#"""
+        {
+          "models": [
+            {
+              "slug": "gpt-5.6-sol",
+              "display_name": "GPT-5.6 Sol",
+              "supported_reasoning_efforts": [
+                {"reasoning_effort":"low"},
+                {"reasoning_effort":"medium"},
+                {"reasoning_effort":"high"},
+                {"reasoning_effort":"xhigh"},
+                {"reasoning_effort":"max"}
+              ]
+            },
+            {"slug":"gpt-4o"},
+            {"slug":"gpt-5.6-terra"}
+          ]
+        }
+        """#.utf8)
+
+        let catalog = try ProviderModelCatalogParser.parse(
+            data,
+            provider: .openAICodex
+        )
+
+        XCTAssertEqual(catalog.map(\.id), ["gpt-5.6-sol", "gpt-5.6-terra"])
+        XCTAssertEqual(catalog.first?.displayName, "GPT-5.6 Sol")
+        XCTAssertEqual(
+            catalog.first?.supportedReasoningEfforts,
+            ["low", "medium", "high", "xhigh", "max"]
+        )
+    }
+
+    func testOpenAIModelCatalogParsesDataShapeAndRejectsUnsafeIDs() throws {
+        let data = Data(#"""
+        {
+          "data": [
+            {"id":"gpt-5.4"},
+            {"id":"gpt-5.4\u0000leak"},
+            {"id":"gpt 5 unsafe"},
+            {"id":"gpt-5.4"}
+          ]
+        }
+        """#.utf8)
+
+        let catalog = try ProviderModelCatalogParser.parse(data, provider: .openAI)
+
+        XCTAssertEqual(catalog.map(\.id), ["gpt-5.4"])
+    }
+
     private func sseContent(_ text: String) -> String {
         let escaped = text
             .replacingOccurrences(of: "\\", with: "\\\\")

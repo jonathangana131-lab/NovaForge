@@ -31,6 +31,20 @@ struct SandboxToolExecutor: Sendable {
     private let maxOutlineScanBytes = 1_000_000
 
     func execute(_ request: ToolRequest) throws -> String {
+        guard !request.isMutating else {
+            throw SandboxError.workspaceMutationPermitRequired
+        }
+        return try execute(request, mutationPermit: nil)
+    }
+
+    func execute(_ request: ToolRequest, permit: WorkspaceMutationPermit) throws -> String {
+        try execute(request, mutationPermit: permit)
+    }
+
+    private func execute(
+        _ request: ToolRequest,
+        mutationPermit: WorkspaceMutationPermit?
+    ) throws -> String {
         switch request.name {
         case "list_directory":
             let path = request.arguments["path"] ?? ""
@@ -52,31 +66,47 @@ struct SandboxToolExecutor: Sendable {
             return try tailFile(request)
         case "write_file":
             let path = try required("path", in: request)
-            try workspace.write(path, contents: try present("contents", in: request))
+            try workspace.write(
+                path,
+                contents: try present("contents", in: request),
+                permit: try requiredPermit(mutationPermit)
+            )
             return "Wrote \(path)"
         case "append_file":
             let path = try required("path", in: request)
-            try workspace.append(path, contents: try present("contents", in: request))
+            try workspace.append(
+                path,
+                contents: try present("contents", in: request),
+                permit: try requiredPermit(mutationPermit)
+            )
             return "Appended \(path)"
         case "replace_text":
-            return try replaceText(request)
+            return try replaceText(request, permit: try requiredPermit(mutationPermit))
         case "delete_path":
             let path = try required("path", in: request)
-            try workspace.delete(path)
+            try workspace.delete(path, permit: try requiredPermit(mutationPermit))
             return "Deleted \(path)"
         case "move_path":
             let source = try required("from", in: request)
             let destination = try required("to", in: request)
-            try workspace.move(from: source, to: destination)
+            try workspace.move(
+                from: source,
+                to: destination,
+                permit: try requiredPermit(mutationPermit)
+            )
             return "Moved \(source) to \(destination)"
         case "copy_path":
             let source = try required("from", in: request)
             let destination = try required("to", in: request)
-            try workspace.copy(from: source, to: destination)
+            try workspace.copy(
+                from: source,
+                to: destination,
+                permit: try requiredPermit(mutationPermit)
+            )
             return "Copied \(source) to \(destination)"
         case "make_directory":
             let path = try required("path", in: request)
-            try workspace.makeDirectory(path)
+            try workspace.makeDirectory(path, permit: try requiredPermit(mutationPermit))
             return "Created folder \(path)"
         case "search_text":
             return try workspace.search(required("query", in: request), in: request.arguments["path"] ?? "")
@@ -91,10 +121,26 @@ struct SandboxToolExecutor: Sendable {
         case "extract_outline":
             return try extractOutline(request)
         case "run_command":
-            return try CommandRunner(workspace: workspace).run(required("command", in: request))
+            let command = try required("command", in: request)
+            if TerminalCommandDraft(command).isMutating {
+                return try CommandRunner(workspace: workspace).run(
+                    command,
+                    permit: try requiredPermit(mutationPermit)
+                )
+            }
+            return try CommandRunner(workspace: workspace).run(command)
         default:
             throw SandboxError.unsupportedCommand(request.name)
         }
+    }
+
+    private func requiredPermit(
+        _ permit: WorkspaceMutationPermit?
+    ) throws -> WorkspaceMutationPermit {
+        guard let permit else {
+            throw SandboxError.workspaceMutationPermitRequired
+        }
+        return permit
     }
 
     private func required(_ key: String, in request: ToolRequest) throws -> String {
@@ -303,7 +349,10 @@ struct SandboxToolExecutor: Sendable {
         return count
     }
 
-    private func replaceText(_ request: ToolRequest) throws -> String {
+    private func replaceText(
+        _ request: ToolRequest,
+        permit: WorkspaceMutationPermit
+    ) throws -> String {
         let path = try required("path", in: request)
         let old = try required("old", in: request)
         guard !old.isEmpty else { throw SandboxError.invalidArguments }
@@ -318,11 +367,28 @@ struct SandboxToolExecutor: Sendable {
 
         let temporaryURL = url.deletingLastPathComponent()
             .appendingPathComponent(".\(url.lastPathComponent).novaforge-replace-\(UUID().uuidString)")
+        let validateMutation = {
+            try permit.validate(workspace: workspace, operation: .replaceText(path: path))
+        }
         do {
-            _ = try streamReplace(in: url, oldData: oldData, newData: newData, replaceAll: replaceAll, outputURL: temporaryURL)
+            _ = try streamReplace(
+                in: url,
+                oldData: oldData,
+                newData: newData,
+                replaceAll: replaceAll,
+                outputURL: temporaryURL,
+                mutationValidation: validateMutation
+            )
+            try validateMutation()
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temporaryURL)
         } catch {
-            try? FileManager.default.removeItem(at: temporaryURL)
+            do {
+                try validateMutation()
+                try? FileManager.default.removeItem(at: temporaryURL)
+            } catch {
+                // An invalid or revoked capability must not be used even for
+                // cleanup; the app's temporary-file recovery owns that case.
+            }
             throw error
         }
         return "Replaced \(replaceAll ? matches : 1) occurrence(s) in \(path)."
@@ -334,7 +400,8 @@ struct SandboxToolExecutor: Sendable {
         oldData: Data,
         newData: Data,
         replaceAll: Bool,
-        outputURL: URL?
+        outputURL: URL?,
+        mutationValidation: (() throws -> Void)? = nil
     ) throws -> Int {
         guard !oldData.isEmpty else { throw SandboxError.invalidArguments }
         let input = try FileHandle(forReadingFrom: url)
@@ -342,6 +409,7 @@ struct SandboxToolExecutor: Sendable {
 
         let output: FileHandle?
         if let outputURL {
+            try mutationValidation?()
             FileManager.default.createFile(atPath: outputURL.path, contents: nil)
             output = try FileHandle(forWritingTo: outputURL)
         } else {
@@ -360,7 +428,9 @@ struct SandboxToolExecutor: Sendable {
 
             while let range = buffer.range(of: oldData) {
                 if let output {
+                    try mutationValidation?()
                     try output.write(contentsOf: buffer[..<range.lowerBound])
+                    try mutationValidation?()
                     try output.write(contentsOf: newData)
                 }
                 matches += 1
@@ -372,6 +442,7 @@ struct SandboxToolExecutor: Sendable {
             if buffer.count > overlap {
                 let flushEnd = buffer.index(buffer.endIndex, offsetBy: -overlap)
                 if let output {
+                    try mutationValidation?()
                     try output.write(contentsOf: buffer[..<flushEnd])
                 }
                 buffer.removeSubrange(buffer.startIndex..<flushEnd)
@@ -379,12 +450,14 @@ struct SandboxToolExecutor: Sendable {
         }
 
         if let output {
+            try mutationValidation?()
             try output.write(contentsOf: buffer)
             if !replaceAll, matches > 0 {
                 while true {
                     try Task.checkCancellation()
                     let chunk = try input.read(upToCount: 64 * 1024) ?? Data()
                     if chunk.isEmpty { break }
+                    try mutationValidation?()
                     try output.write(contentsOf: chunk)
                 }
             }

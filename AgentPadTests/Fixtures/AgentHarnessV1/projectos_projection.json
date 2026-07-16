@@ -1,0 +1,42 @@
+{
+  "formatVersion": 1,
+  "caseName": "v1-projectos-projection-and-relaunch",
+  "runID": "90000000-0000-4000-8000-000000000001",
+  "projectID": "30000000-0000-4000-8000-000000000001",
+  "sourceConversationID": "20000000-0000-4000-8000-000000000001",
+  "successProjection": {
+    "initialStatus": "planning",
+    "events": [
+      { "sequence": 0, "kind": "agentPlanCreated", "severity": "running", "at": "2026-07-13T07:01:01.000Z" },
+      { "sequence": 1, "kind": "terminalCommand", "severity": "success", "at": "2026-07-13T07:01:02.000Z" },
+      { "sequence": 2, "kind": "agentProofCreated", "severity": "success", "at": "2026-07-13T07:01:03.000Z" }
+    ],
+    "expected": {
+      "status": "completed",
+      "progressEventCount": 3,
+      "currentCommand": "xcodebuild test -only-testing:AgentPadTests/ProjectFoundationTests",
+      "proofSummary": "Focused ProjectOS tests passed with run history persisted.",
+      "allStepsTerminal": true,
+      "proofStepStatus": "completed",
+      "intentModesInOrder": ["readingContext", "runningTests", "completedProof"]
+    }
+  },
+  "relaunchRecovery": {
+    "at": "2026-07-13T07:02:00.000Z",
+    "before": {
+      "status": "running",
+      "stepStatuses": ["completed", "running", "pending"],
+      "intentMode": "runningTests"
+    },
+    "expected": {
+      "status": "stopped",
+      "nonterminalStepStatus": "stopped",
+      "previouslyCompletedStepStatus": "completed",
+      "intentMode": "stoppedResumable",
+      "intentSource": "recovery",
+      "resumeState": "Stopped after relaunch. Start or retry the mission from ProjectOS when ready.",
+      "completedAt": "2026-07-13T07:02:00.000Z",
+      "automaticallyResumed": false
+    }
+  }
+}

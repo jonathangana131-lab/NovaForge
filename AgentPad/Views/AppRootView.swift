@@ -1,3 +1,8 @@
+import AgentDomain
+import AgentPolicy
+import AgentProviders
+import AgentTools
+import CryptoKit
 import SwiftData
 import SwiftUI
 
@@ -23,6 +28,7 @@ private struct TabActivatedBackground: View {
     let tab: AppTab
     let runtime: AgentRuntime
     let projectRuntime: AgentRuntime
+    let agentSystemPresentation: AgentSystemPresentationStore
     @Environment(\.novaActiveTab) private var activeTab
     @Environment(\.scenePhase) private var scenePhase
 
@@ -30,7 +36,8 @@ private struct TabActivatedBackground: View {
         // Read the observable runtimes in this tiny leaf. Stable/equatable tab
         // shells can keep their heavy content cached while backdrop motion
         // still reacts immediately to work starting or ending anywhere.
-        let hasActiveWork = runtime.isWorking || projectRuntime.isWorking
+        let hasActiveWork = agentSystemPresentation.hasBlockingActivity ||
+            runtime.isWorking || projectRuntime.isWorking
         AgentBackground(
             isWorking: hasActiveWork,
             isAnimated: scenePhase == .active && activeTab == tab
@@ -108,10 +115,16 @@ private extension AppTab {
     }
 }
 
+private enum AgentSystemLaunchRecoveryError: LocalizedError {
+    case invalidCanonicalRunIdentity
+
+    var errorDescription: String? {
+        "NovaForge found an invalid canonical run identity and stopped launch recovery before changing legacy work."
+    }
+}
+
 @MainActor
 struct AppRootView: View {
-    private static let executionCoordinator = AgentExecutionCoordinator()
-
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -119,10 +132,17 @@ struct AppRootView: View {
     @Query private var projects: [Project]
     @Query private var conversations: [Conversation]
     @Query private var settingsList: [AgentSettings]
+    @Query private var materializedEvidenceRevisions: [ProjectMaterializedEvidenceRevisionRecord]
     @State private var selectedTab = Self.initialDebugLaunchTab()
     @State private var showingMissionDossier = false
-    @State private var runtime = AgentRuntime(executionCoordinator: AppRootView.executionCoordinator)
-    @State private var projectRuntime = AgentRuntime(executionCoordinator: AppRootView.executionCoordinator)
+    @State private var runtime = AgentRuntime()
+    @State private var projectRuntime = AgentRuntime()
+    @State private var hostedTextCanarySession = AgentHostedTextCanaryLiveSession()
+    @State private var agentSystemHost = AgentSystemProductionHost.shared
+    @State private var agentSystemPresentation =
+        AgentSystemPresentationStore.shared
+    @State private var approvalPromptCenter =
+        AgentPolicyMutationRuntime.shared.approvalPromptCenter
     @State private var selectedConversationID: UUID?
     @State private var optimisticSelectedConversation: Conversation?
     @State private var landscapeGameArtifact: WorkspaceArtifact?
@@ -141,12 +161,16 @@ struct AppRootView: View {
     @State private var autoContinueCountdownDetail = ""
     @State private var autoContinueCountdownTask: Task<Void, Never>?
     @State private var pendingProjectRunDispatchID: UUID?
+    @State private var workspacePreparationTask: Task<Void, Never>?
+    @State private var destructivePersistenceTask: Task<Void, Never>?
+    @State private var persistenceCommitRevision = 0
     #if DEBUG || targetEnvironment(simulator)
     @State private var didInjectNetworkFailureFixture = false
     @State private var didInjectPendingApprovalFixture = false
     @State private var didInjectLocalAgentBoundaryFixture = false
     @State private var didInjectArtifactDedupeFixture = false
     @State private var didInjectWebPageArtifactFixture = false
+    @State private var debugWebPageArtifactFixtureReady = false
     @State private var didInjectSwiftGameArtifactFixture = false
     @State private var didInjectProjectContinuationFixture = false
     @State private var didInjectLiveTerminalRecordFixture = false
@@ -160,12 +184,27 @@ struct AppRootView: View {
     @State private var didInjectRunsApprovalFixture = false
     @State private var didPresentDebugMissionDossier = false
     @State private var debugLaunchTaskRetryCount = 0
+    #if DEBUG
+    @State private var didInjectCanonicalActivityA11yFixture = false
+    @State private var canonicalActivityA11yApprovalItem:
+        AgentApprovalPromptCenter.PendingItem?
+    #endif
     #endif
     @AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue
     @AppStorage(AgentPerformance.storageKey) private var performanceModeEnabled = false
     @AppStorage(LaunchConversationSelection.persistedSelectionKey) private var persistedSelectedConversationID = ""
 
     init() {
+        #if DEBUG
+        _canonicalActivityA11yApprovalItem = State(
+            initialValue: ProcessInfo.processInfo.arguments.contains(
+                AgentCanonicalActivityA11yFixture.launchArgument
+            )
+                ? AgentCanonicalActivityA11yFixture.pendingItem()
+                : nil
+        )
+        #endif
+
         var projectsDescriptor = FetchDescriptor<Project>(
             sortBy: [SortDescriptor(\Project.lastActivityAt, order: .reverse)]
         )
@@ -249,10 +288,16 @@ struct AppRootView: View {
         ProjectBootstrap.preferredProject(from: projects, settings: settings)
     }
     private var workspaceRoutingIsLocked: Bool {
-        runtime.isWorking ||
+        #if DEBUG
+        if hostedTextCanarySession.locksWorkspaceRouting { return true }
+        #endif
+        return agentSystemPresentation.hasBlockingActivity ||
+            runtime.isWorking ||
             runtime.pendingTool != nil ||
             projectRuntime.isWorking ||
-            projectRuntime.pendingTool != nil
+            projectRuntime.pendingTool != nil ||
+            workspacePreparationTask != nil ||
+            destructivePersistenceTask != nil
     }
     private var usesDebugTerminalSurface: Bool {
         #if DEBUG || targetEnvironment(simulator)
@@ -262,7 +307,11 @@ struct AppRootView: View {
         #endif
     }
     private var autoContinueRuntimeSignature: AutoContinueRuntimeSignature {
-        AutoContinueRuntimeSignature(project: activeProject, runtime: projectRuntime)
+        AutoContinueRuntimeSignature(
+            project: activeProject,
+            runtime: projectRuntime,
+            canonicalRevision: agentSystemPresentation.revision
+        )
     }
 
     var body: some View {
@@ -290,7 +339,8 @@ struct AppRootView: View {
         rootContent
             .environment(\.novaActiveTab, selectedTab)
             .task {
-                runRootLaunchTasks()
+                await runRootLaunchTasks()
+                presentPendingArtifactShortcutIfAvailable()
             }
             .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.openTab)) { note in
                 guard let raw = note.userInfo?[NovaForgeIntentSignal.tabKey] as? String,
@@ -301,6 +351,39 @@ struct AppRootView: View {
                 // ChatView owns the composer prefill; the root just lands on Forge.
                 selectedTab = .forge
             }
+            .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.playArtifact)) { _ in
+                presentPendingArtifactShortcutIfAvailable()
+            }
+    }
+
+    private func presentPendingArtifactShortcutIfAvailable() {
+        guard let requested = NovaForgeIntentSignal.takePendingArtifact()
+        else { return }
+        let safeWorkspace = SandboxWorkspace.sanitizedWorkspaceName(
+            requested.workspaceName
+        )
+        guard safeWorkspace == requested.workspaceName,
+              runtime.restoreWorkspaceSelection(to: safeWorkspace)
+        else {
+            runtime.presentToast(
+                "Finish the active run before opening this Home Screen artifact.",
+                tone: .info
+            )
+            NovaForgeIntentSignal.storePendingArtifact(requested)
+            return
+        }
+        let workspace = SandboxWorkspace(name: safeWorkspace)
+        guard let resolved = try? workspace.resolve(requested.path),
+              FileManager.default.fileExists(atPath: resolved.path)
+        else {
+            runtime.presentToast(
+                "That saved artifact is no longer in its workspace.",
+                tone: .error
+            )
+            return
+        }
+        selectedTab = .workspace
+        landscapeGameArtifact = WorkspaceArtifact(path: requested.path)
     }
 
     private var rootContentSelectionLifecycle: some View {
@@ -384,6 +467,22 @@ struct AppRootView: View {
                 missionDossierCover
             }
             .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
+            .sheet(item: approvalPromptBinding) { item in
+                NavigationStack {
+                    AgentApprovalDecisionView(
+                        item: item,
+                        queuedRequestCount: approvalPromptCenter.queuedRequestCount,
+                        approve: {
+                            approvePresentedApproval(item)
+                        },
+                        reject: {
+                            rejectPresentedApproval(item)
+                        }
+                    )
+                    .id(item.requestID)
+                }
+                .presentationDragIndicator(.hidden)
+            }
             .alert(
                 "NovaForge Save Failed",
                 isPresented: Binding(
@@ -396,6 +495,74 @@ struct AppRootView: View {
                 Text(rootError ?? "NovaForge could not save this change.")
             }
     }
+
+    /// A system-initiated dismissal is a rejection-safe cancellation, never an
+    /// implicit approval. The review view disables interactive dismissal, and
+    /// every visible action still carries the exact durable request identity.
+    private var approvalPromptBinding:
+        Binding<AgentApprovalPromptCenter.PendingItem?>
+    {
+        Binding(
+            get: {
+                #if DEBUG
+                if let canonicalActivityA11yApprovalItem {
+                    return canonicalActivityA11yApprovalItem
+                }
+                #endif
+                return approvalPromptCenter.pendingItem
+            },
+            set: { proposedItem in
+                guard proposedItem == nil else { return }
+                #if DEBUG
+                if canonicalActivityA11yApprovalItem != nil {
+                    resolveCanonicalActivityA11yApprovalFixture()
+                    return
+                }
+                #endif
+                guard let pendingItem = approvalPromptCenter.pendingItem else {
+                    return
+                }
+                _ = approvalPromptCenter.cancelPending(
+                    requestID: pendingItem.requestID
+                )
+            }
+        )
+    }
+
+    private func approvePresentedApproval(
+        _ item: AgentApprovalPromptCenter.PendingItem
+    ) {
+        #if DEBUG
+        if canonicalActivityA11yApprovalItem?.requestID == item.requestID {
+            resolveCanonicalActivityA11yApprovalFixture()
+            return
+        }
+        #endif
+        _ = approvalPromptCenter.approve(requestID: item.requestID)
+    }
+
+    private func rejectPresentedApproval(
+        _ item: AgentApprovalPromptCenter.PendingItem
+    ) {
+        #if DEBUG
+        if canonicalActivityA11yApprovalItem?.requestID == item.requestID {
+            resolveCanonicalActivityA11yApprovalFixture()
+            return
+        }
+        #endif
+        _ = approvalPromptCenter.reject(requestID: item.requestID)
+    }
+
+    #if DEBUG
+    private func resolveCanonicalActivityA11yApprovalFixture() {
+        UserDefaults.standard.set(
+            false,
+            forKey: AgentCanonicalActivityA11yFixture
+                .approvalPendingDefaultsKey
+        )
+        canonicalActivityA11yApprovalItem = nil
+    }
+    #endif
 
     private var rootContent: some View {
         ZStack {
@@ -435,6 +602,17 @@ struct AppRootView: View {
             .allowsHitTesting(false)
 
             rootToastLayer
+
+            #if DEBUG
+            if debugWebPageArtifactFixtureReady {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Local web artifact fixture ready")
+                    .accessibilityIdentifier("localWebArtifactFixtureReady")
+                    .allowsHitTesting(false)
+            }
+            #endif
         }
     }
 
@@ -463,15 +641,40 @@ struct AppRootView: View {
         .allowsHitTesting(!runtime.toasts.isEmpty || !projectRuntime.toasts.isEmpty)
     }
 
-    private func runRootLaunchTasks() {
+    private func runRootLaunchTasks() async {
         AgentPerformance.event("App Launch")
-        repairRequiredLaunchRecords()
-        runtime.reconcileInterruptedDurableWork(context: modelContext)
+        guard repairRequiredLaunchRecords() else { return }
+        do {
+            // Canonical recovery must own every V2 projection before either
+            // legacy repair path can terminalize interrupted rows.
+            try await agentSystemHost.bootstrap(
+                container: modelContext.container
+            )
+            try await agentSystemPresentation.bind(
+                container: modelContext.container
+            )
+        } catch {
+            rootError = agentSystemHost.userFacingFailure
+                ?? AgentSystemProductionHostFailure
+                    .compositionUnavailable.userFacingMessage
+            return
+        }
+        do {
+            try reconcileLegacyWorkAfterCanonicalRecovery()
+        } catch {
+            rootError = "NovaForge could not durably reconcile interrupted work. \(error.localizedDescription)"
+            return
+        }
         repairActiveProjectIfNeeded()
         repairRootStaleModelSelection()
         reconcileLaunchSelection()
-        runtime.ensureSeedWorkspace()
-        projectRuntime.ensureSeedWorkspace()
+        do {
+            try await runtime.ensureSeedWorkspace(context: modelContext)
+            try await projectRuntime.ensureSeedWorkspace(context: modelContext)
+        } catch {
+            rootError = "NovaForge could not durably seed the workspace. \(error.localizedDescription)"
+            return
+        }
         #if DEBUG || targetEnvironment(simulator)
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--stress-streaming"), !runtime.isWorking {
@@ -484,8 +687,44 @@ struct AppRootView: View {
         #endif
         scheduleAutoTabSwitchProfileIfNeeded()
         #if DEBUG || targetEnvironment(simulator)
-        runDebugLaunchTasks(arguments: arguments)
+        await runDebugLaunchTasks(arguments: arguments)
         #endif
+    }
+
+    /// Runs V1-only launch cleanup after AgentSystem has reconciled and
+    /// recovered its exact accepted FIFO. Every V2 metadata identity is
+    /// excluded from both legacy approval repair and AgentRuntime repair.
+    private func reconcileLegacyWorkAfterCanonicalRecovery() throws {
+        let recoveryContext = ModelContext(modelContext.container)
+        recoveryContext.autosaveEnabled = false
+        let metadata = try recoveryContext.fetch(
+            FetchDescriptor<PersistedAgentRunMetadataRecord>()
+        )
+        var preservingRunIDs: Set<UUID> = []
+        preservingRunIDs.reserveCapacity(metadata.count)
+        for record in metadata {
+            guard let runID = UUID(uuidString: record.runIDString) else {
+                throw AgentSystemLaunchRecoveryError
+                    .invalidCanonicalRunIdentity
+            }
+            preservingRunIDs.insert(runID)
+        }
+
+        do {
+            try PersistentLaunchRecovery.recoverInterruptedToolRuns(
+                in: recoveryContext,
+                preservingRunIDs: preservingRunIDs
+            )
+            try recoveryContext.save()
+        } catch {
+            recoveryContext.rollback()
+            throw error
+        }
+
+        try runtime.reconcileInterruptedDurableWork(
+            context: modelContext,
+            preservingRunIDs: preservingRunIDs
+        )
     }
 
     #if DEBUG || targetEnvironment(simulator)
@@ -499,7 +738,7 @@ struct AppRootView: View {
         }
     }
 
-    private func runDebugLaunchTasks(arguments: [String]) {
+    private func runDebugLaunchTasks(arguments: [String]) async {
         if hasDebugLaunchFlag("--stress-chat", in: arguments),
            let conversation = selectedConversation {
             seedLongStressConversationIfNeeded(conversation)
@@ -508,6 +747,23 @@ struct AppRootView: View {
            runtime.lastError == nil,
            !didInjectNetworkFailureFixture {
             didInjectNetworkFailureFixture = true
+            if let settings {
+                settings.provider = .openAI
+                settings.modelID = AIProvider.openAI.defaultModel
+                settings.updatedAt = Date()
+                try? runtime.saveAPIKey("debug-network-recovery-key", for: .openAI)
+                runtime.debugInstallProviderResponses([
+                    ProviderResponse(
+                        message: ChatCompletionsResponse.Choice.Message(
+                            role: "assistant",
+                            content: "Workspace scan finished.",
+                            tool_calls: nil
+                        ),
+                        roleLog: "debug network recovery completion"
+                    )
+                ])
+                saveRootLaunchState("network failure ready composer fixture")
+            }
             runtime.simulateRecoverableFailure()
         }
         if arguments.contains("--active-status-strip") {
@@ -540,6 +796,26 @@ struct AppRootView: View {
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
             runtime.localModels.debugOverrideStatusForUITest(.ready)
             saveRootLaunchState("settings local model ready fixture")
+        }
+        if arguments.contains("--debug-provider-list-ready"),
+           let settings {
+            selectedTab = .chat
+            settings.provider = .openAI
+            settings.modelID = AIProvider.openAI.defaultModel
+            settings.temperature = min(settings.temperature, 0.2)
+            settings.updatedAt = Date()
+            try? runtime.saveAPIKey("debug-provider-key", for: .openAI)
+            runtime.debugInstallProviderResponses([
+                ProviderResponse(
+                    message: ChatCompletionsResponse.Choice.Message(
+                        role: "assistant",
+                        content: "Workspace scan finished.",
+                        tool_calls: nil
+                    ),
+                    roleLog: "debug completed workspace scan"
+                )
+            ])
+            saveRootLaunchState("debug provider list ready fixture")
         }
         if arguments.contains("--debug-provider-send-ready"),
            let settings {
@@ -634,8 +910,8 @@ struct AppRootView: View {
             }
             runtime.localModels.downloadSelected()
         }
-        runDebugChatLaunchTasks(arguments: arguments)
-        runDebugProjectLaunchTasks(arguments: arguments)
+        await runDebugChatLaunchTasks(arguments: arguments)
+        await runDebugProjectLaunchTasks(arguments: arguments)
         applyDebugLaunchTabArgument()
         scheduleDebugLaunchTaskRetryIfNeeded(arguments: arguments)
     }
@@ -683,24 +959,26 @@ struct AppRootView: View {
         projectRuntime.debugSimulateActiveStatusStripRun(conversation: conversation)
     }
 
-    private func runDebugChatLaunchTasks(arguments: [String]) {
+    private func runDebugChatLaunchTasks(arguments: [String]) async {
+        #if DEBUG
+        if hasDebugLaunchFlag(
+            AgentCanonicalActivityA11yFixture.launchArgument,
+            in: arguments
+        ),
+           let conversation = selectedConversation,
+           !didInjectCanonicalActivityA11yFixture {
+            didInjectCanonicalActivityA11yFixture = true
+            selectedTab = .chat
+            installCanonicalActivityA11yFixture(in: conversation)
+            saveRootLaunchState("canonical activity accessibility fixture")
+        }
+        #endif
         if arguments.contains("--local-smoke-test"),
            let conversation = selectedConversation,
-           let settings,
-           !runtime.isWorking {
-            selectedTab = .chat
-            settings.provider = .local
-            settings.modelID = LocalModelCatalog.defaultVariant.id
-            settings.temperature = min(settings.temperature, 0.2)
-            settings.updatedAt = Date()
-            saveRootLaunchState("local agent boundary provider fixture")
-            runtime.localModels.select(LocalModelCatalog.defaultVariant)
-            runtime.send(
-                prompt: "Reply with one short sentence: local model is working.",
+           let settings {
+            await runCanonicalLocalAgentSmoke(
                 conversation: conversation,
-                settings: settings,
-                context: modelContext,
-                project: activeProject
+                settings: settings
             )
         }
         if arguments.contains("--local-agent-boundary-test"),
@@ -709,8 +987,16 @@ struct AppRootView: View {
            !didInjectLocalAgentBoundaryFixture {
             didInjectLocalAgentBoundaryFixture = true
             selectedTab = .chat
-            installLocalAgentBoundaryFixture(in: conversation)
-            saveRootLaunchState("local agent boundary transcript fixture")
+            do {
+                try await installLocalAgentBoundaryFixture(in: conversation)
+                saveRootLaunchState("local agent boundary transcript fixture")
+            } catch {
+                reportDebugWorkspaceFixtureFailure(
+                    "local agent boundary",
+                    error: error,
+                    targetRuntime: runtime
+                )
+            }
         }
         if arguments.contains("--local-web-artifact-test"),
            let conversation = selectedConversation,
@@ -718,8 +1004,17 @@ struct AppRootView: View {
            !didInjectWebPageArtifactFixture {
             didInjectWebPageArtifactFixture = true
             selectedTab = .chat
-            installCompletedWebPageArtifactFixture(in: conversation)
-            saveRootLaunchState("local web artifact fixture")
+            do {
+                try await installCompletedWebPageArtifactFixture(in: conversation)
+                saveRootLaunchState("local web artifact fixture")
+                debugWebPageArtifactFixtureReady = true
+            } catch {
+                reportDebugWorkspaceFixtureFailure(
+                    "local web artifact",
+                    error: error,
+                    targetRuntime: runtime
+                )
+            }
         }
         if hasDebugLaunchFlag("--swift-game-artifact-demo", in: arguments),
            let conversation = selectedConversation,
@@ -727,8 +1022,16 @@ struct AppRootView: View {
            !didInjectSwiftGameArtifactFixture {
             didInjectSwiftGameArtifactFixture = true
             selectedTab = .chat
-            installCompletedSwiftGameArtifactFixture(in: conversation)
-            saveRootLaunchState("swift game artifact fixture")
+            do {
+                try await installCompletedSwiftGameArtifactFixture(in: conversation)
+                saveRootLaunchState("swift game artifact fixture")
+            } catch {
+                reportDebugWorkspaceFixtureFailure(
+                    "Swift game artifact",
+                    error: error,
+                    targetRuntime: runtime
+                )
+            }
         }
         if hasDebugLaunchFlag("--pending-approval-demo", in: arguments),
            !hasDebugLaunchFlag("--open-project", in: arguments),
@@ -767,7 +1070,224 @@ struct AppRootView: View {
         }
     }
 
-    private func runDebugProjectLaunchTasks(arguments: [String]) {
+    #if DEBUG || targetEnvironment(simulator)
+    private func runCanonicalLocalAgentSmoke(
+        conversation: Conversation,
+        settings: AgentSettings
+    ) async {
+        selectedTab = .chat
+        settings.provider = .local
+        settings.modelID = LocalModelCatalog.defaultVariant.id
+        settings.temperature = 0
+        settings.updatedAt = Date()
+        runtime.localModels.select(LocalModelCatalog.defaultVariant)
+        saveRootLaunchState("canonical local agent smoke")
+
+        let workspace = SandboxWorkspace(name: "Default")
+        let proofPath = "LocalAgentSmoke/canonical-tool-proof.txt"
+        var stage = "artifact-verification"
+        do {
+            try await LocalModelClient.shared.verifyLocalModelArtifact(
+                modelID: LocalModelCatalog.defaultVariant.id
+            )
+
+            stage = "direct-action-planner"
+            let preflightRequestID = "local-smoke-preflight-\(UUID().uuidString)"
+            let preflightDecision = try await LocalModelClient.shared
+                .decideLocalAgentTurn(
+                    request: AgentLocalModelInferenceRequest(
+                        scope: ProviderAttemptScope(
+                            requestID: preflightRequestID,
+                            attemptID: .init(
+                                rawValue: "\(preflightRequestID):attempt:1"
+                            )
+                        ),
+                        modelID: LocalModelCatalog.defaultVariant.id,
+                        messages: [
+                            .init(
+                                role: .user,
+                                content: "What number comes after three? Reply in one short sentence."
+                            ),
+                        ],
+                        temperature: 0,
+                        maximumOutputTokens: 96
+                    ),
+                    completedToolCallCount: 0
+                )
+            guard case let .respond(preflightText) = try LocalAgentModelGrammar
+                .compile(preflightDecision),
+                  !preflightText.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                  ).isEmpty else {
+                throw LocalAgentSmokeFailure.modelInferenceDidNotComplete
+            }
+
+            stage = "canonical-model-run"
+            let modelRunID = try await startLocalSmokeRun(
+                prompt: "Answer this ordinary question without using a tool: what number comes after three? Reply in one short sentence.",
+                conversation: conversation,
+                workspace: workspace,
+                settings: settings
+            )
+            let modelResult = try await waitForLocalSmokeRun(
+                modelRunID,
+                conversation: conversation,
+                approveMutation: false,
+                timeout: 120
+            )
+            guard modelResult.group.state == .succeeded,
+                  !modelResult.text
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty else {
+                throw LocalAgentSmokeFailure.modelInferenceDidNotComplete
+            }
+
+            stage = "canonical-tool-run"
+            let toolRunID = try await startLocalSmokeRun(
+                prompt: "create file \(proofPath) with canonical qwen local agent tool proof",
+                conversation: conversation,
+                workspace: workspace,
+                settings: settings
+            )
+            let toolResult = try await waitForLocalSmokeRun(
+                toolRunID,
+                conversation: conversation,
+                approveMutation: true,
+                timeout: 90
+            )
+            guard toolResult.group.state == .succeeded else {
+                throw LocalAgentSmokeFailure.toolRunDidNotComplete
+            }
+            let fileContents = try workspace.read(proofPath)
+            guard fileContents.contains("canonical qwen local agent tool proof")
+            else { throw LocalAgentSmokeFailure.toolOutputMissing }
+
+            try writeLocalSmokeProof([
+                "status": "passed",
+                "model_id": LocalModelCatalog.defaultVariant.id,
+                "model_sha256": LocalModelCatalog.defaultVariant.expectedSHA256,
+                "model_run_id": modelRunID.rawValue.uuidString,
+                "model_output": String(modelResult.text.prefix(500)),
+                "tool_run_id": toolRunID.rawValue.uuidString,
+                "tool_path": proofPath,
+                "tool_output_sha256": Self.sha256(fileContents),
+            ])
+            print("NOVAFORGE_LOCAL_SMOKE_PASS model=\(modelRunID.rawValue.uuidString) tool=\(toolRunID.rawValue.uuidString)")
+        } catch {
+            try? writeLocalSmokeProof([
+                "status": "failed",
+                "stage": stage,
+                "error": String(describing: error),
+                "model_id": LocalModelCatalog.defaultVariant.id,
+            ])
+            print("NOVAFORGE_LOCAL_SMOKE_FAIL \(String(describing: error))")
+        }
+    }
+
+    private func startLocalSmokeRun(
+        prompt: String,
+        conversation: Conversation,
+        workspace: SandboxWorkspace,
+        settings: AgentSettings
+    ) async throws -> RunID {
+        let disposition = await agentSystemPresentation.start(
+            prompt: prompt,
+            conversation: conversation,
+            project: nil,
+            workspace: workspace,
+            settings: settings,
+            publicRequestSummary: "Local agent device verification",
+            intent: .manual
+        )
+        switch disposition {
+        case .accepted(let runID):
+            return runID
+        case .busy:
+            throw LocalAgentSmokeFailure.startRejected(.workspaceBusy)
+        case .rejected(let failure):
+            throw LocalAgentSmokeFailure.startRejected(failure)
+        }
+    }
+
+    private func waitForLocalSmokeRun(
+        _ runID: RunID,
+        conversation: Conversation,
+        approveMutation: Bool,
+        timeout: TimeInterval
+    ) async throws -> (group: AgentActivityGroup, text: String) {
+        let scope = AgentSystemPresentationScope(
+            project: nil,
+            conversation: conversation
+        )
+        let deadline = Date().addingTimeInterval(timeout)
+        var capturedText = ""
+        var approvedRequestID: ApprovalRequestID?
+        while Date() < deadline {
+            try Task.checkCancellation()
+            let presentation = agentSystemPresentation.presentation(for: scope)
+            if presentation.activeGroup?.id == runID {
+                if let text = presentation.liveText?.text, !text.isEmpty {
+                    capturedText = text
+                }
+                if let approval = presentation.pendingApproval,
+                   approvedRequestID != approval.id {
+                    guard approveMutation else {
+                        throw LocalAgentSmokeFailure.unexpectedApproval
+                    }
+                    _ = try await agentSystemPresentation.route(
+                        approval.command(decision: .approved)
+                    )
+                    approvedRequestID = approval.id
+                }
+                if let group = presentation.activeGroup,
+                   group.state.isTerminal {
+                    return (group, capturedText)
+                }
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        throw LocalAgentSmokeFailure.timedOut
+    }
+
+    private func writeLocalSmokeProof(
+        _ values: [String: String]
+    ) throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: values,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        let directory = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let proofURL = directory.appendingPathComponent(
+            "LocalAgentSmokeProof.json",
+            isDirectory: false
+        )
+        try data.write(to: proofURL, options: .atomic)
+    }
+
+    private static func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+
+    private enum LocalAgentSmokeFailure: Error {
+        case startRejected(AgentSystemPresentationFailure)
+        case modelInferenceDidNotComplete
+        case unexpectedApproval
+        case toolRunDidNotComplete
+        case toolOutputMissing
+        case timedOut
+    }
+    #endif
+
+    private func runDebugProjectLaunchTasks(arguments: [String]) async {
         let shouldInstallProjectApprovalDemo = hasDebugLaunchFlag("--project-waiting-demo", in: arguments) ||
             (hasDebugLaunchFlag("--pending-approval-demo", in: arguments) && hasDebugLaunchFlag("--open-project", in: arguments))
         if hasDebugLaunchFlag("--project-running-demo", in: arguments),
@@ -837,42 +1357,56 @@ struct AppRootView: View {
            !didInjectProjectProofFixture {
             didInjectProjectProofFixture = true
             selectedTab = .project
-            let conversation = projectConversation(for: activeProject, now: Date())
-            installProjectProofFixture(for: activeProject, conversation: conversation)
-            let shouldFocusProjectProof = ["--open-chat", "--open-project", "--open-files", "--open-runs"]
-                .contains { hasDebugLaunchFlag($0, in: arguments) }
-            if shouldFocusProjectProof {
-                selectedConversationID = conversation.id
-                optimisticSelectedConversation = conversation
-                persistedSelectedConversationID = conversation.id.uuidString
-            } else {
-                preserveGeneralChatSelection()
+            do {
+                let conversation = try await installProjectProofFixture(for: activeProject)
+                let shouldFocusProjectProof = ["--open-chat", "--open-project", "--open-files", "--open-runs"]
+                    .contains { hasDebugLaunchFlag($0, in: arguments) }
+                if shouldFocusProjectProof {
+                    selectedConversationID = conversation.id
+                    optimisticSelectedConversation = conversation
+                    persistedSelectedConversationID = conversation.id.uuidString
+                } else {
+                    preserveGeneralChatSelection()
+                }
+                saveRootLaunchState("project proof mission dossier fixture")
+            } catch {
+                reportDebugWorkspaceFixtureFailure(
+                    "project proof",
+                    error: error,
+                    targetRuntime: projectRuntime
+                )
             }
-            saveRootLaunchState("project proof mission dossier fixture")
         }
         if hasDebugLaunchFlag("--project-spine-e2e-demo", in: arguments),
            let activeProject,
            !didInjectProjectSpineE2EFixture {
             didInjectProjectSpineE2EFixture = true
             selectedTab = hasDebugLaunchFlag("--open-chat", in: arguments) ? .chat : selectedTab
-            let conversation = projectConversation(for: activeProject, now: Date())
-            installProjectSpineE2EFixture(for: activeProject, conversation: conversation)
-            if hasDebugLaunchFlag("--open-project-chat", in: arguments) {
-                selectedConversationID = conversation.id
-                persistedSelectedConversationID = conversation.id.uuidString
-            } else {
-                preserveGeneralChatSelection()
-            }
-            if hasDebugLaunchFlag("--workbench-open-artifact-landscape-preview", in: arguments) {
-                selectedTab = .files
-                landscapeGameArtifact = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    if hasDebugLaunchFlag("--workbench-open-artifact-landscape-preview", in: ProcessInfo.processInfo.arguments) {
-                        landscapeGameArtifact = WorkspaceArtifact(path: "workflow-spine-proof.html")
+            do {
+                let conversation = try await installProjectSpineE2EFixture(for: activeProject)
+                if hasDebugLaunchFlag("--open-project-chat", in: arguments) {
+                    selectedConversationID = conversation.id
+                    persistedSelectedConversationID = conversation.id.uuidString
+                } else {
+                    preserveGeneralChatSelection()
+                }
+                if hasDebugLaunchFlag("--workbench-open-artifact-landscape-preview", in: arguments) {
+                    selectedTab = .files
+                    landscapeGameArtifact = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        if hasDebugLaunchFlag("--workbench-open-artifact-landscape-preview", in: ProcessInfo.processInfo.arguments) {
+                            landscapeGameArtifact = WorkspaceArtifact(path: "workflow-spine-proof.html")
+                        }
                     }
                 }
+                saveRootLaunchState("project spine e2e fixture")
+            } catch {
+                reportDebugWorkspaceFixtureFailure(
+                    "project spine proof",
+                    error: error,
+                    targetRuntime: projectRuntime
+                )
             }
-            saveRootLaunchState("project spine e2e fixture")
         }
         if hasDebugLaunchFlag("--auto-continue-countdown-demo", in: arguments),
            let activeProject,
@@ -896,11 +1430,19 @@ struct AppRootView: View {
         debugLaunchTaskRetryCount += 1
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(150))
-            runDebugLaunchTasks(arguments: arguments)
+            await runDebugLaunchTasks(arguments: arguments)
         }
     }
 
     private func hasPendingDebugLaunchFixture(_ arguments: [String]) -> Bool {
+        #if DEBUG
+        if hasDebugLaunchFlag(
+            AgentCanonicalActivityA11yFixture.launchArgument,
+            in: arguments
+        ), !didInjectCanonicalActivityA11yFixture {
+            return true
+        }
+        #endif
         if hasDebugLaunchFlag("--stress-chat", in: arguments),
            selectedConversation?.title.localizedCaseInsensitiveContains("NovaForge Stress") != true {
             return true
@@ -956,18 +1498,77 @@ struct AppRootView: View {
         // of scope. Project chats no longer snap back to a preferred General
         // thread after the drawer selection has already succeeded.
         let chatConversation = conversation
-        let missionUsesChatRuntime = chatRuntimeOwnsMission(for: activeProject, conversation: chatConversation)
-        let activeMissionRuntime = missionUsesChatRuntime ? runtime : projectRuntime
-        let activeMissionConversation = missionConversation(
+        let selectedAgentScope = AgentSystemPresentationScope(
+            project: chatConversation.project,
+            conversation: chatConversation
+        )
+        let selectedAgentPresentation = agentSystemPresentation.presentation(
+            for: selectedAgentScope
+        )
+        let projectMissionConversation = missionConversation(
             for: activeProject,
             selectedConversation: chatConversation,
-            usesChatRuntime: missionUsesChatRuntime
+            usesChatRuntime: false
         )
+        let projectAgentPresentation = agentSystemPresentation.presentation(
+            for: AgentSystemPresentationScope(
+                project: activeProject,
+                conversation: projectMissionConversation
+            )
+        )
+        let activeWorkspacePresentation: AgentSystemScopePresentation? = {
+            let workspace = SandboxWorkspace(name: activeProject.workspaceName)
+            guard let identity = try? WorkspaceResourceIdentity(
+                workspace: workspace
+            ) else { return nil }
+            return agentSystemPresentation.activePresentation(
+                in: WorkspaceID(rawValue: identity.persistentID)
+            )
+        }()
+        let canonicalMissionPresentation: AgentSystemScopePresentation? = {
+            if selectedAgentPresentation.blocksCommand {
+                return selectedAgentPresentation
+            }
+            if let activeWorkspacePresentation {
+                return activeWorkspacePresentation
+            }
+            if chatConversation.project?.id == activeProject.id,
+               selectedAgentPresentation.activeGroup != nil {
+                return selectedAgentPresentation
+            }
+            if projectAgentPresentation.activeGroup != nil {
+                return projectAgentPresentation
+            }
+            return selectedAgentPresentation.activeGroup == nil
+                ? nil
+                : selectedAgentPresentation
+        }()
+        let missionUsesChatRuntime = canonicalMissionPresentation?.scope ==
+            selectedAgentScope ||
+            (canonicalMissionPresentation == nil && runtime.isWorking)
+        let activeMissionRuntime = missionUsesChatRuntime ? runtime : projectRuntime
+        let activeMissionConversation = canonicalMissionPresentation.flatMap {
+            presentation in
+            (conversations + activeProject.conversations).first {
+                $0.id == presentation.scope.conversationID.rawValue
+            }
+        } ?? (missionUsesChatRuntime
+            ? chatConversation
+            : projectMissionConversation)
         // The mission strip lives on Forge, so project runtime status is
         // computed while Forge is front (and while the dossier is open).
-        let projectRuntimeStatus = selectedTab == .forge || selectedTab == .history || showingMissionDossier
-            ? WorkspaceStatusSnapshot(runtime: activeMissionRuntime)
-            : .hidden
+        let legacyMissionStatus = WorkspaceStatusSnapshot(
+            runtime: activeMissionRuntime
+        )
+        let canonicalMissionStatus = canonicalMissionPresentation.map {
+            WorkspaceStatusSnapshot(presentation: $0)
+        }
+        let projectRuntimeStatus = selectedTab == .forge ||
+            selectedTab == .history || showingMissionDossier
+                ? (canonicalMissionStatus?.isVisible == true
+                    ? canonicalMissionStatus!
+                    : legacyMissionStatus)
+                : .hidden
         // General is its own durable scope. Do not surface an unrelated
         // project's auto-continue state beside a General run.
         let projectAutoContinueState = missionUsesChatRuntime && chatConversation.project == nil
@@ -983,6 +1584,7 @@ struct AppRootView: View {
             selectedTab: selectedTab,
             projectResumeDraftRevision: rootPromptRevision,
             autoContinueState: projectAutoContinueState,
+            persistenceCommitRevision: persistenceCommitRevision,
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
         )
@@ -996,6 +1598,7 @@ struct AppRootView: View {
             missionAutoContinue: projectAutoContinueState,
             missionUsesChatRuntime: missionUsesChatRuntime,
             isVisibleForFrameProfiling: chatProfilingVisible,
+            persistenceCommitRevision: persistenceCommitRevision,
             themeRawValue: selectedThemeRawValue,
             performanceModeEnabled: performanceModeEnabled
         )
@@ -1036,6 +1639,7 @@ struct AppRootView: View {
                     conversation: chatConversation,
                     missionConversation: activeMissionConversation,
                     missionRuntime: activeMissionRuntime,
+                    missionPresentation: canonicalMissionPresentation,
                     settings: settings,
                     runtimeStatus: projectRuntimeStatus,
                     autoContinueState: projectAutoContinueState
@@ -1064,6 +1668,7 @@ struct AppRootView: View {
         conversation: Conversation,
         missionConversation: Conversation,
         missionRuntime: AgentRuntime,
+        missionPresentation: AgentSystemScopePresentation?,
         settings: AgentSettings,
         runtimeStatus: WorkspaceStatusSnapshot,
         autoContinueState: ProjectAutoContinueViewState
@@ -1072,6 +1677,8 @@ struct AppRootView: View {
             tabWorldSurface(for: .forge) {
                 ChatView(
                     runtime: runtime,
+                    hostedTextCanarySession: hostedTextCanarySession,
+                    agentSystemPresentation: agentSystemPresentation,
                     project: project,
                     projects: projects,
                     conversation: conversation,
@@ -1081,6 +1688,7 @@ struct AppRootView: View {
                     selectConversation: {
                         selectConversation($0)
                     },
+                    deleteConversationFromHistory: deleteConversationFromHistory,
                     setConversationProjectScope: setConversationProjectScope,
                     projectResumeDraft: rootPrompt,
                     projectResumeDraftRevision: rootPromptRevision,
@@ -1091,23 +1699,40 @@ struct AppRootView: View {
                     missionAutoContinue: autoContinueState,
                     missionUsesChatRuntime: key.missionUsesChatRuntime,
                     approveMissionTool: {
-                        missionRuntime.approvePendingTool(
-                            conversation: missionConversation,
-                            settings: settings,
-                            context: modelContext,
-                            project: missionConversation.project
-                        )
+                        resolveMissionApproval(
+                            missionPresentation,
+                            decision: .approved
+                        ) {
+                            missionRuntime.approvePendingTool(
+                                conversation: missionConversation,
+                                settings: settings,
+                                context: modelContext,
+                                project: missionConversation.project
+                            )
+                        }
                     },
                     rejectMissionTool: {
-                        missionRuntime.rejectPendingTool(
-                            conversation: missionConversation,
-                            settings: settings,
-                            context: modelContext,
-                            project: missionConversation.project
-                        )
+                        resolveMissionApproval(
+                            missionPresentation,
+                            decision: .rejected
+                        ) {
+                            missionRuntime.rejectPendingTool(
+                                conversation: missionConversation,
+                                settings: settings,
+                                context: modelContext,
+                                project: missionConversation.project
+                            )
+                        }
                     },
                     stopMissionRun: {
-                        missionRuntime.stopGenerating(context: modelContext)
+                        stopMission(
+                            missionPresentation,
+                            fallback: {
+                                missionRuntime.stopGenerating(
+                                    context: modelContext
+                                )
+                            }
+                        )
                     },
                     pauseMissionAutoContinue: { pauseAutoContinue(project) },
                     openMissionDossier: presentMissionDossier,
@@ -1119,6 +1744,54 @@ struct AppRootView: View {
         .onAppear { completeTabSwitch(to: .forge) }
         .tabItem { Label(AppTab.forge.title, systemImage: AppTab.forge.symbol) }
         .tag(AppTab.forge)
+    }
+
+    private func resolveMissionApproval(
+        _ presentation: AgentSystemScopePresentation?,
+        decision: ApprovalDecision,
+        fallback: @escaping () -> Void
+    ) {
+        guard let approval = presentation?.pendingApproval else {
+            fallback()
+            return
+        }
+        Task { @MainActor in
+            do {
+                _ = try await agentSystemPresentation.route(
+                    approval.command(decision: decision)
+                )
+            } catch {
+                runtime.presentToast(
+                    AgentSystemPresentationFailure.commandUnavailable
+                        .userMessage,
+                    tone: .error
+                )
+            }
+        }
+    }
+
+    private func stopMission(
+        _ presentation: AgentSystemScopePresentation?,
+        fallback: @escaping () -> Void
+    ) {
+        guard let group = presentation?.activeGroup,
+              group.accepts(group.cancelCommand) else {
+            fallback()
+            return
+        }
+        Task { @MainActor in
+            do {
+                _ = try await agentSystemPresentation.route(
+                    group.cancelCommand
+                )
+            } catch {
+                runtime.presentToast(
+                    AgentSystemPresentationFailure.commandUnavailable
+                        .userMessage,
+                    tone: .error
+                )
+            }
+        }
     }
 
     private func filesTab(key: FilesTabKey, project: Project, conversation: Conversation) -> some View {
@@ -1204,7 +1877,8 @@ struct AppRootView: View {
             TabActivatedBackground(
                 tab: tab,
                 runtime: runtime,
-                projectRuntime: projectRuntime
+                projectRuntime: projectRuntime,
+                agentSystemPresentation: agentSystemPresentation
             )
             .id("tab-\(tab.rawValue)-\(selectedThemeRawValue)-\(performanceModeEnabled)")
             .ignoresSafeArea()
@@ -1271,60 +1945,150 @@ struct AppRootView: View {
     @ViewBuilder
     private var missionDossierCover: some View {
         if let conversation = selectedConversation, let settings, let activeProject {
-            let usesChatRuntime = chatRuntimeOwnsMission(for: activeProject, conversation: conversation)
-            let activeMissionRuntime = usesChatRuntime ? runtime : projectRuntime
-            let activeMissionConversation = missionConversation(
+            // The dossier always represents the active project. A live General
+            // conversation must not steal its approval/run controls from the
+            // project runtime just because that chat happens to be selected.
+            let selectedScope = AgentSystemPresentationScope(
+                project: conversation.project,
+                conversation: conversation
+            )
+            let selectedPresentation = agentSystemPresentation.presentation(
+                for: selectedScope
+            )
+            let projectConversation = missionConversation(
                 for: activeProject,
                 selectedConversation: conversation,
-                usesChatRuntime: usesChatRuntime
+                usesChatRuntime: false
             )
-            MissionDossierCover {
-                ProjectDashboardView(
+            let projectPresentation = agentSystemPresentation.presentation(
+                for: AgentSystemPresentationScope(
                     project: activeProject,
-                    projects: projects,
-                    runtimeStatus: WorkspaceStatusSnapshot(runtime: activeMissionRuntime),
-                    autoContinueState: autoContinueViewState(for: activeProject, settings: settings),
-                    conversations: conversations,
-                    closeDossier: { dismissMissionDossier() },
-                    openTab: { tab in
-                        dismissMissionDossier()
-                        openTab(tab)
-                    },
-                    stopWorkspaceRun: {
-                        activeMissionRuntime.stopGenerating(context: modelContext)
-                    },
-                    approvePendingTool: {
-                        activeMissionRuntime.approvePendingTool(
-                            conversation: activeMissionConversation,
-                            settings: settings,
-                            context: modelContext,
-                            project: activeMissionConversation.project
-                        )
-                    },
-                    rejectPendingTool: {
-                        activeMissionRuntime.rejectPendingTool(
-                            conversation: activeMissionConversation,
-                            settings: settings,
-                            context: modelContext,
-                            project: activeMissionConversation.project
-                        )
-                    },
-                    setAutoContinueEnabled: setAutoContinueEnabled,
-                    pauseAutoContinue: pauseAutoContinue,
-                    cancelAutoContinue: cancelAutoContinue,
-                    createProject: createProject,
-                    selectProject: { project in
-                        _ = selectProject(project)
-                    },
-                    updateProject: updateProject,
-                    deleteProject: deleteProject,
-                    runProjectCommand: runProjectCommand,
-                    draftProjectCommand: draftProjectCommand,
-                    openArtifactLandscapeFullScreen: openDossierArtifactLandscapeFullScreen,
-                    isVisibleForFrameProfiling: AgentPerformance.shouldProfileFrameRate
+                    conversation: projectConversation
                 )
-                .id(activeProject.id)
+            )
+            let activeProjectPresentation: AgentSystemScopePresentation? = {
+                let workspace = SandboxWorkspace(
+                    name: activeProject.workspaceName
+                )
+                guard let identity = try? WorkspaceResourceIdentity(
+                    workspace: workspace
+                ) else { return nil }
+                return agentSystemPresentation.activePresentation(
+                    in: WorkspaceID(rawValue: identity.persistentID)
+                )
+            }()
+            let missionPresentation = activeProjectPresentation ??
+                (conversation.project?.id == activeProject.id &&
+                    selectedPresentation.activeGroup != nil
+                    ? selectedPresentation
+                    : (projectPresentation.activeGroup == nil
+                        ? nil
+                        : projectPresentation))
+            let usesChatRuntime = missionPresentation?.scope == selectedScope
+            let activeMissionRuntime = usesChatRuntime ? runtime : projectRuntime
+            let legacyRuntimeStatus = WorkspaceStatusSnapshot(
+                runtime: activeMissionRuntime
+            )
+            let canonicalRuntimeStatus = missionPresentation.map {
+                WorkspaceStatusSnapshot(presentation: $0)
             }
+            let runtimeStatus = canonicalRuntimeStatus?.isVisible == true
+                ? canonicalRuntimeStatus!
+                : legacyRuntimeStatus
+            let resolvedMissionConversation = missionPresentation.flatMap {
+                presentation in
+                (conversations + activeProject.conversations).first {
+                    $0.id == presentation.scope.conversationID.rawValue
+                }
+            } ?? (usesChatRuntime ? conversation : projectConversation)
+            let autoContinueState = autoContinueViewState(for: activeProject, settings: settings)
+            let materializedEvidenceRevision = materializedEvidenceRevisions.first {
+                $0.projectID == activeProject.id
+            }?.revision ?? 0
+            let renderKey = MissionDossierRenderKey(
+                project: activeProject,
+                materializedEvidenceRevision: materializedEvidenceRevision,
+                projects: projects,
+                conversations: conversations,
+                selectedConversation: conversation,
+                activeMissionConversationID: resolvedMissionConversation.id,
+                settings: settings,
+                runtimeStatus: runtimeStatus,
+                autoContinueState: autoContinueState,
+                usesChatRuntime: usesChatRuntime,
+                isVisibleForFrameProfiling: AgentPerformance.shouldProfileFrameRate,
+                themeRawValue: selectedThemeRawValue,
+                performanceModeEnabled: performanceModeEnabled
+            )
+            StableDossierSurface(key: renderKey) {
+                let activeMissionConversation = resolvedMissionConversation
+                MissionDossierCover {
+                    ProjectDashboardView(
+                        project: activeProject,
+                        materializedEvidenceRevision: materializedEvidenceRevision,
+                        projects: projects,
+                        runtimeStatus: runtimeStatus,
+                        autoContinueState: autoContinueState,
+                        conversations: conversations,
+                        closeDossier: { dismissMissionDossier() },
+                        openTab: { tab in
+                            dismissMissionDossier()
+                            openTab(tab)
+                        },
+                        stopWorkspaceRun: {
+                            stopMission(
+                                missionPresentation,
+                                fallback: {
+                                    activeMissionRuntime.stopGenerating(
+                                        context: modelContext
+                                    )
+                                }
+                            )
+                        },
+                        approvePendingTool: {
+                            resolveMissionApproval(
+                                missionPresentation,
+                                decision: .approved
+                            ) {
+                                activeMissionRuntime.approvePendingTool(
+                                    conversation: activeMissionConversation,
+                                    settings: settings,
+                                    context: modelContext,
+                                    project: activeMissionConversation.project
+                                )
+                            }
+                        },
+                        rejectPendingTool: {
+                            resolveMissionApproval(
+                                missionPresentation,
+                                decision: .rejected
+                            ) {
+                                activeMissionRuntime.rejectPendingTool(
+                                    conversation: activeMissionConversation,
+                                    settings: settings,
+                                    context: modelContext,
+                                    project: activeMissionConversation.project
+                                )
+                            }
+                        },
+                        setAutoContinueEnabled: setAutoContinueEnabled,
+                        pauseAutoContinue: pauseAutoContinue,
+                        cancelAutoContinue: cancelAutoContinue,
+                        createProject: createProject,
+                        selectProject: { project in
+                            _ = selectProject(project)
+                        },
+                        updateProject: updateProject,
+                        deleteProject: deleteProject,
+                        runProjectCommand: runProjectCommand,
+                        draftProjectCommand: draftProjectCommand,
+                        openArtifactLandscapeFullScreen: openDossierArtifactLandscapeFullScreen,
+                        isVisibleForFrameProfiling: renderKey.isVisibleForFrameProfiling
+                    )
+                    .id(activeProject.id)
+                }
+            }
+            .equatable()
         }
     }
 
@@ -1343,6 +2107,30 @@ struct AppRootView: View {
                     terminalFocus = nil
                 }
             )
+        }
+    }
+
+    private func startWorkspacePreparation(
+        failureTitle: String,
+        operation: @escaping @MainActor () async throws -> Void
+    ) {
+        guard workspacePreparationTask == nil else {
+            runtime.presentToast(
+                "NovaForge is already preparing another workspace.",
+                tone: .info
+            )
+            return
+        }
+        workspacePreparationTask = Task { @MainActor in
+            defer { workspacePreparationTask = nil }
+            do {
+                try await operation()
+            } catch is CancellationError {
+                modelContext.rollback()
+            } catch {
+                modelContext.rollback()
+                showRootSaveFailure(failureTitle, error)
+            }
         }
     }
 
@@ -1369,9 +2157,68 @@ struct AppRootView: View {
             return
         }
         persistedSelectedConversationID = ""
-        runtime.switchWorkspace(to: "Default")
+        runtime.restoreWorkspaceSelection(to: "Default")
         selectedTab = .chat
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    private func deleteConversationFromHistory(_ conversationID: UUID) {
+        guard destructivePersistenceTask == nil, !workspaceRoutingIsLocked else {
+            runtime.presentToast("Pause or finish the active run before deleting a chat.", tone: .info)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return
+        }
+
+        let deletedWasSelected = selectedConversationID == conversationID ||
+            selectedConversation?.id == conversationID
+        let fallbackConversationID = conversations
+            .filter { $0.id != conversationID }
+            .sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            .first?.id
+        let store = SwiftDataAgentStore(container: modelContext.container)
+        let deletedAt = Date()
+
+        destructivePersistenceTask = Task { @MainActor in
+            do {
+                try await store.deleteConversationFromHistory(
+                    conversationID: conversationID,
+                    deletedAt: deletedAt
+                )
+            } catch {
+                destructivePersistenceTask = nil
+                showRootSaveFailure("Could not delete this chat.", error)
+                return
+            }
+
+            optimisticSelectedConversation = nil
+            persistenceCommitRevision &+= 1
+            await Task.yield()
+            destructivePersistenceTask = nil
+
+            if deletedWasSelected {
+                let fallback = fallbackConversationID.flatMap { fallbackID in
+                    conversations.first(where: { $0.id == fallbackID }) ??
+                        fetchConversationForPostCommitRouting(fallbackID)
+                }
+                if let fallback {
+                    selectConversation(fallback)
+                } else {
+                    createConversation()
+                }
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
+    private func fetchConversationForPostCommitRouting(_ conversationID: UUID) -> Conversation? {
+        var descriptor = FetchDescriptor<Conversation>(
+            predicate: #Predicate { $0.id == conversationID }
+        )
+        descriptor.fetchLimit = 1
+        return try? modelContext.fetch(descriptor).first
     }
 
     private func preferredGeneralConversation() -> Conversation? {
@@ -1391,8 +2238,8 @@ struct AppRootView: View {
     }
 
     private func syncRuntimeWorkspaceForCurrentSurface(activeProject: Project) {
-        runtime.switchWorkspace(to: runtimeWorkspaceName(for: activeProject))
-        projectRuntime.switchWorkspace(to: SandboxWorkspace.sanitizedWorkspaceName(activeProject.workspaceName))
+        runtime.restoreWorkspaceSelection(to: runtimeWorkspaceName(for: activeProject))
+        projectRuntime.restoreWorkspaceSelection(to: SandboxWorkspace.sanitizedWorkspaceName(activeProject.workspaceName))
     }
 
     /// Navigation may update the selected surface while a run is finishing,
@@ -1414,32 +2261,41 @@ struct AppRootView: View {
         }
 
         let now = Date()
-        conversation.project = project
-        conversation.updatedAt = now
-        if let project {
-            project.lastActivityAt = now
-            project.updatedAt = now
-            settings?.activeProjectID = project.id
-            settings?.activeWorkspaceName = SandboxWorkspace.sanitizedWorkspaceName(project.workspaceName)
-            settings?.updatedAt = now
-            ProjectEventRecorder.record(
-                project: project,
-                kind: .projectSelected,
-                title: "Chat scope selected",
-                detail: "\(conversation.title) will use \(project.name).",
-                severity: .info,
-                sourceType: .conversation,
-                sourceID: conversation.id,
-                context: modelContext,
-                now: now
-            )
+        let targetWorkspaceName = project.map {
+            SandboxWorkspace.sanitizedWorkspaceName($0.workspaceName)
+        } ?? "Default"
+        startWorkspacePreparation(failureTitle: "Could not change chat scope.") {
+            let switched = try await runtime.switchWorkspace(
+                to: targetWorkspaceName,
+                context: modelContext
+            ) {
+                conversation.project = project
+                conversation.updatedAt = now
+                if let project {
+                    project.lastActivityAt = now
+                    project.updatedAt = now
+                    settings?.activeProjectID = project.id
+                    settings?.activeWorkspaceName = targetWorkspaceName
+                    settings?.updatedAt = now
+                    ProjectEventRecorder.record(
+                        project: project,
+                        kind: .projectSelected,
+                        title: "Chat scope selected",
+                        detail: "\(conversation.title) will use \(project.name).",
+                        severity: .info,
+                        sourceType: .conversation,
+                        sourceID: conversation.id,
+                        context: modelContext,
+                        now: now
+                    )
+                }
+                try modelContext.save()
+            }
+            guard switched else { return }
+            rootPrompt = ""
+            rootPromptRevision += 1
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
-
-        guard saveRootContext("Could not change chat scope.") else { return }
-        rootPrompt = ""
-        rootPromptRevision += 1
-        runtime.switchWorkspace(to: project.map { SandboxWorkspace.sanitizedWorkspaceName($0.workspaceName) } ?? "Default")
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     private func createProject(_ intake: ProjectIntakeDraft = .empty) {
@@ -1474,73 +2330,87 @@ struct AppRootView: View {
             now: now
         )
         project.nextStep = intake.isEmpty ? "Send the first project request." : intake.firstNextStep
-        modelContext.insert(project)
-        ProjectEventRecorder.record(
-            project: project,
-            kind: .projectCreated,
-            title: intake.isEmpty ? "Project created" : "Project brief captured",
-            detail: intake.isEmpty ? "\(projectName) is ready with its own workspace and mission history." : intake.seedPrompt,
-            severity: .success,
-            sourceType: .system,
-            context: modelContext,
-            now: now
-        )
-        ProjectEventRecorder.record(
-            project: project,
-            kind: .projectSelected,
-            title: "Project selected",
-            detail: "\(projectName) is now active in \(workspaceName).",
-            severity: .info,
-            sourceType: .system,
-            context: modelContext,
-            now: now
-        )
-        if !intake.isEmpty {
-            ProjectEventRecorder.record(
-                project: project,
-                kind: .agentPlanCreated,
-                title: "Intake plan ready",
-                detail: intake.initialTaskPreview,
-                severity: .info,
-                sourceType: .system,
-                metadata: [
-                    "projectKind": intake.projectKind,
-                    "platform": intake.platform,
-                    "taskCount": "\(intake.initialAgentTasks.count)"
-                ],
-                context: modelContext,
-                now: now.addingTimeInterval(0.001)
-            )
-        }
         let conversation = Conversation(title: projectName, project: project)
-        modelContext.insert(conversation)
-        ProjectEventRecorder.record(
-            project: project,
-            kind: .conversationStarted,
-            title: "Conversation started",
-            detail: conversation.title,
-            severity: .info,
-            sourceType: .conversation,
-            sourceID: conversation.id,
-            context: modelContext,
-            now: now
-        )
-        settings?.activeProjectID = project.id
-        settings?.activeWorkspaceName = workspaceName
-        settings?.updatedAt = now
-        guard saveRootContext("Could not create a new project.") else { return }
-        // A project conversation is a first-class Forge session. Select the
-        // session we just created immediately; launch restoration can still
-        // prefer a clean General chat on the next cold start.
-        selectedConversationID = conversation.id
-        optimisticSelectedConversation = conversation
-        persistedSelectedConversationID = ""
-        rootPrompt = ""
-        rootPromptRevision += 1
-        landscapeGameArtifact = nil
-        runtime.switchWorkspace(to: workspaceName)
-        selectedTab = .project
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        startWorkspacePreparation(failureTitle: "Could not create a new project.") {
+            let switched = try await runtime.switchWorkspace(
+                to: workspaceName,
+                context: modelContext
+            ) {
+                modelContext.insert(project)
+                ProjectEventRecorder.record(
+                    project: project,
+                    kind: .projectCreated,
+                    title: intake.isEmpty ? "Project created" : "Project brief captured",
+                    detail: intake.isEmpty ? "\(projectName) is ready with its own workspace and mission history." : intake.seedPrompt,
+                    severity: .success,
+                    sourceType: .system,
+                    context: modelContext,
+                    now: now
+                )
+                ProjectEventRecorder.record(
+                    project: project,
+                    kind: .projectSelected,
+                    title: "Project selected",
+                    detail: "\(projectName) is now active in \(workspaceName).",
+                    severity: .info,
+                    sourceType: .system,
+                    context: modelContext,
+                    now: now
+                )
+                if !intake.isEmpty {
+                    ProjectEventRecorder.record(
+                        project: project,
+                        kind: .agentPlanCreated,
+                        title: "Intake plan ready",
+                        detail: intake.initialTaskPreview,
+                        severity: .info,
+                        sourceType: .system,
+                        metadata: [
+                            "projectKind": intake.projectKind,
+                            "platform": intake.platform,
+                            "taskCount": "\(intake.initialAgentTasks.count)"
+                        ],
+                        context: modelContext,
+                        now: now.addingTimeInterval(0.001)
+                    )
+                }
+                modelContext.insert(conversation)
+                ProjectEventRecorder.record(
+                    project: project,
+                    kind: .conversationStarted,
+                    title: "Conversation started",
+                    detail: conversation.title,
+                    severity: .info,
+                    sourceType: .conversation,
+                    sourceID: conversation.id,
+                    context: modelContext,
+                    now: now
+                )
+                settings?.activeProjectID = project.id
+                settings?.activeWorkspaceName = workspaceName
+                settings?.updatedAt = now
+                try modelContext.save()
+            }
+            guard switched else {
+                runtime.presentToast(
+                    "Pause or finish the active run before creating and selecting a project.",
+                    tone: .info
+                )
+                return
+            }
+
+            // A project conversation is a first-class Forge session. Select the
+            // session only after both the seed receipt and model transaction commit.
+            selectedConversationID = conversation.id
+            optimisticSelectedConversation = conversation
+            persistedSelectedConversationID = ""
+            rootPrompt = ""
+            rootPromptRevision += 1
+            landscapeGameArtifact = nil
+            selectedTab = .project
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
     }
 
     private func uniqueProjectName(_ baseName: String) -> String {
@@ -1581,45 +2451,54 @@ struct AppRootView: View {
 
         let now = Date()
         let oldName = project.name
-        project.name = uniqueProjectNameForEdit(name, editing: project)
-        project.mission = mission
-        project.workspaceName = workspaceName
-        project.nextStep = draft.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let updatedName = uniqueProjectNameForEdit(name, editing: project)
+        let updatedNextStep = draft.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "Choose the next concrete project task."
             : draft.nextStep.trimmingCharacters(in: .whitespacesAndNewlines)
-        project.blocker = draft.blocker.trimmingCharacters(in: .whitespacesAndNewlines)
-        project.status = draft.status
-        project.updatedAt = now
-        project.lastActivityAt = now
+        let updatedBlocker = draft.blocker.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if settings?.activeProjectID == project.id {
-            settings?.activeWorkspaceName = workspaceName
-            settings?.updatedAt = now
-        }
-        for conversation in mergedProjectConversations(for: project)
-            where conversation.title == oldName || ProjectNamingEngine.isGenericName(conversation.title) {
-            conversation.title = project.name
-            conversation.updatedAt = now
-        }
-        ProjectEventRecorder.record(
-            project: project,
-            kind: .projectRenamed,
-            title: "Project updated",
-            detail: "\(oldName) -> \(project.name)",
-            severity: .info,
-            sourceType: .settings,
-            context: modelContext,
-            now: now
-        )
-        guard saveRootContext("Could not update project.") else { return }
-        if settings?.activeProjectID == project.id {
-            runtime.switchWorkspace(to: workspaceName)
-            if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
-                projectRuntime.switchWorkspace(to: workspaceName)
+        startWorkspacePreparation(failureTitle: "Could not update project.") {
+            try await runtime.prepareWorkspace(named: workspaceName, context: modelContext)
+
+            project.name = updatedName
+            project.mission = mission
+            project.workspaceName = workspaceName
+            project.nextStep = updatedNextStep
+            project.blocker = updatedBlocker
+            project.status = draft.status
+            project.updatedAt = now
+            project.lastActivityAt = now
+
+            if settings?.activeProjectID == project.id {
+                settings?.activeWorkspaceName = workspaceName
+                settings?.updatedAt = now
             }
+            for conversation in mergedProjectConversations(for: project)
+                where conversation.title == oldName || ProjectNamingEngine.isGenericName(conversation.title) {
+                conversation.title = project.name
+                conversation.updatedAt = now
+            }
+            ProjectEventRecorder.record(
+                project: project,
+                kind: .projectRenamed,
+                title: "Project updated",
+                detail: "\(oldName) -> \(project.name)",
+                severity: .info,
+                sourceType: .settings,
+                context: modelContext,
+                now: now
+            )
+            try modelContext.save()
+
+            if settings?.activeProjectID == project.id {
+                runtime.restoreWorkspaceSelection(to: workspaceName)
+                if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
+                    projectRuntime.restoreWorkspaceSelection(to: workspaceName)
+                }
+            }
+            runtime.presentToast("Project updated.", tone: .success)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
-        runtime.presentToast("Project updated.", tone: .success)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     private func uniqueProjectNameForEdit(_ baseName: String, editing project: Project) -> String {
@@ -1641,58 +2520,48 @@ struct AppRootView: View {
             return
         }
 
-        clearInactiveRuntimeForConversationSwitch()
-        let now = Date()
-        let deletingActiveProject = settings?.activeProjectID == project.id || activeProject?.id == project.id
-        let fallbackProject = projects
-            .filter { $0.id != project.id }
-            .sorted { lhs, rhs in
-                if lhs.lastActivityAt != rhs.lastActivityAt { return lhs.lastActivityAt > rhs.lastActivityAt }
-                return lhs.createdAt < rhs.createdAt
-            }
-            .first ?? {
-                let replacement = Project(
-                    name: ProjectBootstrap.defaultProjectName,
-                    mission: "Build and verify useful work in NovaForge.",
-                    workspaceName: "Default",
-                    now: now
+        let projectID = project.id
+        let deletingRenderedActiveProject = activeProject?.id == projectID
+        let selectedRuntimeWorkspace: String = {
+            guard let selectedProject = selectedConversation?.project,
+                  selectedProject.id != projectID
+            else { return "Default" }
+            return SandboxWorkspace.sanitizedWorkspaceName(selectedProject.workspaceName)
+        }()
+        let store = SwiftDataAgentStore(container: modelContext.container)
+        let deletedAt = Date()
+
+        destructivePersistenceTask = Task { @MainActor in
+            let receipt: SwiftDataProjectDeletionReceipt
+            do {
+                receipt = try await store.deleteProjectRetainingRunsInGeneral(
+                    projectID: projectID,
+                    deletedAt: deletedAt
                 )
-                modelContext.insert(replacement)
-                ProjectEventRecorder.record(
-                    project: replacement,
-                    kind: .projectCreated,
-                    title: "Fallback project created",
-                    detail: "NovaForge kept a safe project available after deletion.",
-                    severity: .success,
-                    sourceType: .system,
-                    context: modelContext,
-                    now: now
-                )
-                return replacement
-            }()
-
-        let deletedName = project.name
-        ProjectDeletionRetention.clearScalarProjectLinks(projectID: project.id, context: modelContext)
-        modelContext.delete(project)
-
-        if deletingActiveProject {
-            settings?.activeProjectID = fallbackProject.id
-            settings?.activeWorkspaceName = SandboxWorkspace.sanitizedWorkspaceName(fallbackProject.workspaceName)
-            settings?.updatedAt = now
-            selectedConversationID = preferredGeneralConversation()?.id ?? projectConversation(for: fallbackProject, now: now).id
-        }
-
-        guard saveRootContext("Could not delete project.") else { return }
-        if deletingActiveProject {
-            let fallbackWorkspace = SandboxWorkspace.sanitizedWorkspaceName(fallbackProject.workspaceName)
-            runtime.switchWorkspace(to: fallbackWorkspace)
-            if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
-                projectRuntime.switchWorkspace(to: fallbackWorkspace)
+            } catch {
+                destructivePersistenceTask = nil
+                showRootSaveFailure("Could not delete project.", error)
+                return
             }
-            selectedTab = .project
+
+            // Stop the deleted Project from rendering for another dossier
+            // frame before the same-container query publishes its removal.
+            setMissionDossierPresented(false)
+            optimisticSelectedConversation = nil
+            persistenceCommitRevision &+= 1
+            await Task.yield()
+            destructivePersistenceTask = nil
+
+            if receipt.replacedActiveProject || deletingRenderedActiveProject {
+                runtime.restoreWorkspaceSelection(to: selectedRuntimeWorkspace)
+                if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
+                    projectRuntime.restoreWorkspaceSelection(to: receipt.fallbackWorkspaceName)
+                }
+                selectedTab = .project
+            }
+            runtime.presentToast("Deleted \(receipt.deletedProjectName).", tone: .success)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
-        runtime.presentToast("Deleted \(deletedName).", tone: .success)
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     @discardableResult
@@ -1732,9 +2601,9 @@ struct AppRootView: View {
             if !shouldPreserveGeneralChat {
                 selectedConversationID = conversation.id
             }
-            runtime.switchWorkspace(to: persistedWorkspaceName)
+            runtime.restoreWorkspaceSelection(to: persistedWorkspaceName)
             if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
-                projectRuntime.switchWorkspace(to: persistedWorkspaceName)
+                projectRuntime.restoreWorkspaceSelection(to: persistedWorkspaceName)
             }
         } catch {
             modelContext.rollback()
@@ -1815,6 +2684,11 @@ struct AppRootView: View {
             intent: intent,
             operatorNote: operatorNote
         )
+        let publicRequestSummary = projectExecutionTranscriptLine(
+            project: project,
+            summary: summary,
+            intent: intent
+        )
         if shouldRunImmediately {
             ProjectOSRunLedger.startRun(
                 project: project,
@@ -1826,7 +2700,6 @@ struct AppRootView: View {
                 context: modelContext,
                 now: now
             )
-            projectRuntime.primeProjectRunProgress(project: project, summary: summary, intent: intent, operatorNote: operatorNote)
         }
         ProjectEventRecorder.record(
             project: project,
@@ -1866,9 +2739,6 @@ struct AppRootView: View {
             )
         }
         guard saveRootContext("Could not queue the project command.") else {
-            if shouldRunImmediately {
-                projectRuntime.clearPrimedProjectRunProgress()
-            }
             return
         }
         preserveGeneralChatSelection()
@@ -1876,14 +2746,25 @@ struct AppRootView: View {
         rootPrompt = ""
         rootPromptRevision += 1
         if shouldRunImmediately {
-            projectRuntime.send(
-                prompt: instruction,
-                conversation: conversation,
-                settings: settings,
-                context: modelContext,
-                project: project,
-                visiblePrompt: projectExecutionTranscriptLine(project: project, summary: summary, intent: intent)
-            )
+            Task { @MainActor in
+                let disposition = await agentSystemPresentation.start(
+                    prompt: instruction,
+                    conversation: conversation,
+                    project: project,
+                    workspace: SandboxWorkspace(
+                        name: project.workspaceName
+                    ),
+                    settings: settings,
+                    publicRequestSummary: publicRequestSummary,
+                    intent: .manual
+                )
+                handleProjectStartDisposition(
+                    disposition,
+                    project: project,
+                    conversation: conversation,
+                    title: "Project command"
+                )
+            }
         } else {
             runtime.presentToast("Project command drafted in the Project timeline.", tone: .success)
         }
@@ -1895,6 +2776,36 @@ struct AppRootView: View {
         intent: ProjectCommandIntent
     ) -> String {
         "ProjectOS run: \(intent.displayName) for \(project.name). Next: \(summary.nextStep)"
+    }
+
+    private func handleProjectStartDisposition(
+        _ disposition: AgentSystemPresentationStartDisposition,
+        project: Project,
+        conversation: Conversation,
+        title: String
+    ) {
+        let failure: AgentSystemPresentationFailure?
+        switch disposition {
+        case .accepted:
+            return
+        case .busy:
+            failure = .workspaceBusy
+        case .rejected(let value):
+            failure = value
+        }
+        guard let failure else { return }
+        ProjectEventRecorder.record(
+            project: project,
+            kind: .runFailed,
+            title: "\(title) did not start",
+            detail: failure.userMessage,
+            severity: .failure,
+            sourceType: .conversation,
+            sourceID: conversation.id,
+            context: modelContext
+        )
+        _ = saveRootContext("Could not save the rejected project run.")
+        runtime.presentToast(failure.userMessage, tone: .error)
     }
 
     private func preserveGeneralChatSelection() {
@@ -2005,17 +2916,61 @@ struct AppRootView: View {
 
     private func autoContinueEvaluation(for project: Project, settings: AgentSettings) -> ProjectAutoContinueEvaluation {
         let summary = makeProjectSummary(for: project)
+        let canonical = canonicalProjectPresentation(for: project)
+        let canonicalState = canonical?.activeGroup?.state
+        let canonicalCompleted = canonicalState == .succeeded
+        let canonicalFailedOrPaused = canonicalState == .failed ||
+            canonicalState == .rejected || canonicalState == .cancelled ||
+            canonicalState == .interrupted
+        let canonicalRunID = canonicalCompleted
+            ? canonical?.activeGroup?.identity.runID.rawValue.uuidString
+            : nil
         return ProjectAutoContinuePolicy.evaluate(
             project: project,
             summary: summary,
             settings: settings,
-            runtimeIsWorking: projectRuntime.isWorking,
-            hasPendingRuntimeApproval: projectRuntime.pendingTool != nil,
-            runCompleted: projectRuntime.runState == .completed,
-            runFailedOrPaused: runtimeRunFailedOrPaused,
+            runtimeIsWorking: canonical?.isWorking ?? projectRuntime.isWorking,
+            hasPendingRuntimeApproval: canonical?.pendingApproval != nil ||
+                projectRuntime.pendingTool != nil,
+            runCompleted: canonicalCompleted ||
+                projectRuntime.runState == .completed,
+            runFailedOrPaused: canonicalFailedOrPaused ||
+                runtimeRunFailedOrPaused,
             hasUsableProviderCredential: projectRuntime.hasUsableProviderCredential(settings: settings),
-            latestRunEventID: latestRunCompletedEvent(for: project)?.id.uuidString
+            latestRunEventID: canonicalRunID ??
+                latestRunCompletedEvent(for: project)?.id.uuidString
         )
+    }
+
+    private func canonicalProjectPresentation(
+        for project: Project
+    ) -> AgentSystemScopePresentation? {
+        let workspace = SandboxWorkspace(name: project.workspaceName)
+        if let identity = try? WorkspaceResourceIdentity(workspace: workspace),
+           let active = agentSystemPresentation.activePresentation(
+               in: WorkspaceID(rawValue: identity.persistentID)
+           ), active.scope.projectID == ProjectID(rawValue: project.id) {
+            return active
+        }
+        return mergedProjectConversations(for: project)
+            .compactMap { conversation -> AgentSystemScopePresentation? in
+                let value = agentSystemPresentation.presentation(
+                    for: AgentSystemPresentationScope(
+                        project: project,
+                        conversation: conversation
+                    )
+                )
+                return value.activeGroup == nil ? nil : value
+            }
+            .max { lhs, rhs in
+                guard let lhsGroup = lhs.activeGroup,
+                      let rhsGroup = rhs.activeGroup else { return false }
+                if lhsGroup.span.endedAt != rhsGroup.span.endedAt {
+                    return lhsGroup.span.endedAt < rhsGroup.span.endedAt
+                }
+                return lhsGroup.identity.runID.rawValue.uuidString <
+                    rhsGroup.identity.runID.rawValue.uuidString
+            }
     }
 
     private var runtimeRunFailedOrPaused: Bool {
@@ -2097,6 +3052,20 @@ struct AppRootView: View {
         autoContinueRemainingSeconds = ProjectAutoContinuePolicy.countdownSeconds
         autoContinueCountdownTitle = evaluation.title
         autoContinueCountdownDetail = evaluation.detail
+
+        #if DEBUG || targetEnvironment(simulator)
+        if hasDebugLaunchFlag(
+            "--auto-continue-countdown-demo",
+            in: ProcessInfo.processInfo.arguments
+        ) {
+            // Keep the visual fixture at the decision boundary. A real
+            // countdown still uses the five-second production policy, while
+            // screenshot/accessibility tests cannot lose its single Pause and
+            // Cancel owners to simulator launch latency.
+            autoContinueCountdownTask = nil
+            return
+        }
+        #endif
 
         autoContinueCountdownTask = Task { @MainActor in
             for remaining in stride(from: ProjectAutoContinuePolicy.countdownSeconds, through: 1, by: -1) {
@@ -2246,8 +3215,6 @@ struct AppRootView: View {
             stopAutoContinue(project: project, evaluation: evaluation)
             return
         }
-        guard !projectRuntime.isWorking, projectRuntime.pendingTool == nil else { return }
-
         let now = Date()
         let conversation = autoContinueConversation(for: project, sourceEventID: sourceEventID, now: now)
         let summary = makeProjectSummary(for: project)
@@ -2293,16 +3260,41 @@ struct AppRootView: View {
         selectedTab = .project
         rootPrompt = ""
         rootPromptRevision += 1
-        projectRuntime.primeProjectRunProgress(project: project, summary: summary, intent: evaluation.intent, operatorNote: note)
-        projectRuntime.send(
-            prompt: instruction,
-            conversation: conversation,
-            settings: settings,
-            context: modelContext,
+        let publicRequestSummary = projectExecutionTranscriptLine(
             project: project,
-            origin: .autoContinued,
-            visiblePrompt: projectExecutionTranscriptLine(project: project, summary: summary, intent: evaluation.intent)
+            summary: summary,
+            intent: evaluation.intent
         )
+        Task { @MainActor in
+            let disposition = await agentSystemPresentation.start(
+                prompt: instruction,
+                conversation: conversation,
+                project: project,
+                workspace: SandboxWorkspace(name: project.workspaceName),
+                settings: settings,
+                publicRequestSummary: publicRequestSummary,
+                intent: .autoContinued
+            )
+            if !disposition.wasAccepted {
+                let failure: AgentSystemPresentationFailure = switch disposition {
+                case .accepted:
+                    .runtimeUnavailable
+                case .busy:
+                    .workspaceBusy
+                case .rejected(let value):
+                    value
+                }
+                project.autoContinueState = .blocked
+                project.autoContinueDecision = failure.userMessage
+                project.autoContinueUpdatedAt = Date()
+            }
+            handleProjectStartDisposition(
+                disposition,
+                project: project,
+                conversation: conversation,
+                title: "Auto-continued run"
+            )
+        }
     }
 
     private func autoContinueConversation(for project: Project, sourceEventID: String, now: Date) -> Conversation {
@@ -2405,9 +3397,11 @@ struct AppRootView: View {
             return
         }
         clearInactiveRuntimeForConversationSwitch()
-        if optimisticSelectedConversation?.id != conversation.id {
-            optimisticSelectedConversation = nil
-        }
+        // Route with the exact object the user selected. SwiftData's query can
+        // refresh a cycle after an active run creates a second chat; keeping
+        // this object closes that gap so "Open running chat" never appears to
+        // be a no-op while the selected ID and visible transcript disagree.
+        optimisticSelectedConversation = conversation
         selectedConversationID = conversation.id
         if let project = conversation.project {
             let safeWorkspaceName = SandboxWorkspace.sanitizedWorkspaceName(project.workspaceName)
@@ -2420,16 +3414,16 @@ struct AppRootView: View {
                         settings: settings,
                         save: { try modelContext.save() }
                     )
-                    runtime.switchWorkspace(to: persistedWorkspaceName)
+                    runtime.restoreWorkspaceSelection(to: persistedWorkspaceName)
                     if !projectRuntime.isWorking, projectRuntime.pendingTool == nil {
-                        projectRuntime.switchWorkspace(to: persistedWorkspaceName)
+                        projectRuntime.restoreWorkspaceSelection(to: persistedWorkspaceName)
                     }
                 } catch {
                     showRootSaveFailure("Could not switch projects for this chat.", error)
                 }
             }
         } else {
-            runtime.switchWorkspace(to: "Default")
+            runtime.restoreWorkspaceSelection(to: "Default")
         }
         if LaunchConversationSelection.isLaunchRestorable(conversation) {
             persistedSelectedConversationID = conversation.id.uuidString
@@ -2503,8 +3497,8 @@ struct AppRootView: View {
                     return
                 }
             }
-            runtime.switchWorkspace(to: safeName)
-            projectRuntime.switchWorkspace(to: safeName)
+            runtime.restoreWorkspaceSelection(to: safeName)
+            projectRuntime.restoreWorkspaceSelection(to: safeName)
         } catch {
             showRootSaveFailure("Could not repair the active workspace name.", error)
         }
@@ -2523,28 +3517,47 @@ struct AppRootView: View {
 
     private func repairActiveProjectIfNeeded() {
         guard let settings else { return }
-        _ = ProjectBootstrap.ensureDefaultProject(in: modelContext, settings: settings)
+        let repairContext = ModelContext(modelContext.container)
+        repairContext.autosaveEnabled = false
         do {
-            try modelContext.save()
+            let settingsID = settings.id
+            var descriptor = FetchDescriptor<AgentSettings>(
+                predicate: #Predicate { candidate in candidate.id == settingsID }
+            )
+            descriptor.fetchLimit = 1
+            guard let repairSettings = try repairContext.fetch(descriptor).first else {
+                throw AppRootLaunchRepairError.settingsUnavailable
+            }
+            _ = try ProjectBootstrap.ensureDefaultProject(in: repairContext, settings: repairSettings)
+            try repairContext.save()
             ProjectBootstrap.markLegacyOwnershipMigrationComplete()
         } catch {
+            repairContext.rollback()
             showRootSaveFailure("Could not prepare the active project.", error)
         }
     }
 
-    private func repairRequiredLaunchRecords() {
+    @discardableResult
+    private func repairRequiredLaunchRecords() -> Bool {
+        let repairContext = ModelContext(modelContext.container)
+        repairContext.autosaveEnabled = false
         do {
             let result = try AppRootLaunchRepair.ensureLaunchRecords(
-                in: modelContext,
-                settings: settings,
-                selectedConversation: selectedConversation
+                in: repairContext,
+                settings: nil,
+                selectedConversationID: selectedConversation?.id
             )
-            if selectedConversationID == nil {
-                selectedConversationID = result.conversation.id
+            let repairedSelectionID = selectedConversationID == nil ? result.conversation.id : nil
+            try repairContext.save()
+            ProjectBootstrap.markLegacyOwnershipMigrationComplete()
+            if let repairedSelectionID {
+                selectedConversationID = repairedSelectionID
             }
-            try modelContext.save()
+            return true
         } catch {
+            repairContext.rollback()
             showRootSaveFailure("Could not repair NovaForge launch state.", error)
+            return false
         }
     }
 
@@ -2702,6 +3715,9 @@ struct AppRootView: View {
     #if DEBUG || targetEnvironment(simulator)
     private func scheduleLiveTerminalRecordFixture(for project: Project) {
         didInjectLiveTerminalRecordFixture = true
+        let conversation = projectConversation(for: project, now: Date())
+        selectedConversationID = conversation.id
+        persistedSelectedConversationID = conversation.id.uuidString
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(1_500))
             installLiveTerminalRecordFixture(for: project)
@@ -2811,6 +3827,39 @@ struct AppRootView: View {
         conversation.refreshMessageMetadata(updateTimestamp: Date())
     }
 
+    #if DEBUG
+    private func installCanonicalActivityA11yFixture(
+        in conversation: Conversation
+    ) {
+        if conversation.messageCount == 0 {
+            let user = ChatMessage(
+                role: .user,
+                content: "Exercise the compact canonical activity and approval experience at accessibility text sizes.",
+                conversation: conversation
+            )
+            let assistant = ChatMessage(
+                role: .assistant,
+                content: "The classified activity timeline is ready for accessibility review.",
+                conversation: conversation
+            )
+            conversation.appendMessages([user, assistant])
+            modelContext.insert(user)
+            modelContext.insert(assistant)
+        }
+        conversation.refreshMessageMetadata(updateTimestamp: Date())
+
+        UserDefaults.standard.set(
+            true,
+            forKey: AgentCanonicalActivityA11yFixture
+                .approvalPendingDefaultsKey
+        )
+        if canonicalActivityA11yApprovalItem == nil {
+            canonicalActivityA11yApprovalItem =
+                AgentCanonicalActivityA11yFixture.pendingItem()
+        }
+    }
+    #endif
+
     private func installCompletedArtifactFixture(in conversation: Conversation) {
         let artifact = WorkspaceArtifact(path: "playable-game-dedupe-demo.html")
         let user = ChatMessage(
@@ -2857,7 +3906,7 @@ struct AppRootView: View {
         conversation.refreshMessageMetadata(updateTimestamp: Date())
     }
 
-    private func installLocalAgentBoundaryFixture(in conversation: Conversation) {
+    private func installLocalAgentBoundaryFixture(in conversation: Conversation) async throws {
         let artifact = WorkspaceArtifact(path: "slither-arena.html")
         let html = """
         <!doctype html>
@@ -2923,7 +3972,13 @@ struct AppRootView: View {
         </script></body>
         </html>
         """
-        try? runtime.workspace.write(artifact.path, contents: html)
+        try await installDebugWorkspaceFixture(
+            files: [artifact.path: html],
+            workspace: runtime.workspace,
+            projectID: activeProject?.id,
+            conversationID: conversation.id,
+            ownerDescription: "Debug local agent boundary fixture"
+        )
 
         let calls: [APIToolCall] = [
             APIToolCall(
@@ -2969,7 +4024,13 @@ struct AppRootView: View {
         )
         let plan = ChatMessage(
             role: .assistant,
-            content: "I’ll build and verify the game with native tools.",
+            content: """
+            I’ll build and verify the game in **`slither-arena.html`** with native tools.
+
+            - **Write** the game
+            - **Validate** the HTML
+            - **Inspect** file metadata
+            """,
             toolCallsJSON: toolCallsJSON,
             conversation: conversation
         )
@@ -2993,7 +4054,7 @@ struct AppRootView: View {
         )
         let final = ChatMessage(
             role: .assistant,
-            content: "Playable game ready. Open slither-arena.html from Run Control.",
+            content: "Playable game ready. Open slither-arena.html from Workspace.",
             conversation: conversation
         )
         conversation.appendMessages([user, plan, writeResult, validateResult, infoResult, final])
@@ -3021,7 +4082,7 @@ struct AppRootView: View {
         conversation.refreshMessageMetadata(updateTimestamp: Date())
     }
 
-    private func installCompletedWebPageArtifactFixture(in conversation: Conversation) {
+    private func installCompletedWebPageArtifactFixture(in conversation: Conversation) async throws {
         let artifact = WorkspaceArtifact(path: "cron-18-landing.html")
         let html = """
         <!doctype html>
@@ -3040,7 +4101,13 @@ struct AppRootView: View {
         <body><main><h1>Robotics that ship.</h1><p>Autonomous launch page proof generated inside NovaForge.</p></main></body>
         </html>
         """
-        try? runtime.workspace.write(artifact.path, contents: html)
+        try await installDebugWorkspaceFixture(
+            files: [artifact.path: html],
+            workspace: runtime.workspace,
+            projectID: activeProject?.id,
+            conversationID: conversation.id,
+            ownerDescription: "Debug local web artifact fixture"
+        )
 
         let user = ChatMessage(
             role: .user,
@@ -3086,12 +4153,20 @@ struct AppRootView: View {
         conversation.refreshMessageMetadata(updateTimestamp: Date())
     }
 
-    private func installCompletedSwiftGameArtifactFixture(in conversation: Conversation) {
+    private func installCompletedSwiftGameArtifactFixture(in conversation: Conversation) async throws {
         let artifact = WorkspaceArtifact(path: SwiftGameArtifactFactory.sampleManifestPath)
         let manifestJSON = SwiftGameArtifactFactory.sampleManifestJSON()
-        try? runtime.workspace.write(SwiftGameArtifactFactory.sampleManifestPath, contents: manifestJSON)
-        try? runtime.workspace.write(SwiftGameArtifactFactory.sampleSourcePath, contents: SwiftGameArtifactFactory.exportSource())
-        try? runtime.workspace.write(SwiftGameArtifactFactory.sampleReadmePath, contents: SwiftGameArtifactFactory.readme())
+        try await installDebugWorkspaceFixture(
+            files: [
+                SwiftGameArtifactFactory.sampleManifestPath: manifestJSON,
+                SwiftGameArtifactFactory.sampleSourcePath: SwiftGameArtifactFactory.exportSource(),
+                SwiftGameArtifactFactory.sampleReadmePath: SwiftGameArtifactFactory.readme()
+            ],
+            workspace: runtime.workspace,
+            projectID: activeProject?.id,
+            conversationID: conversation.id,
+            ownerDescription: "Debug Swift game artifact fixture"
+        )
 
         let user = ChatMessage(
             role: .user,
@@ -3504,9 +4579,36 @@ struct AppRootView: View {
         }
     }
 
-    private func installProjectProofFixture(for project: Project, conversation: Conversation) {
+    private func installProjectProofFixture(for project: Project) async throws -> Conversation {
         let now = Date()
         let artifact = WorkspaceArtifact(path: "project-os-proof.html")
+        let html = """
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+          <title>Project OS Proof</title>
+          <style>
+            body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: #08121f; color: #e9fbff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+            main { width: min(86vw, 760px); border: 1px solid #75f6ff55; border-radius: 24px; padding: 28px; background: #ffffff12; }
+            h1 { margin: 0 0 10px; font-size: clamp(36px, 9vw, 74px); line-height: .9; }
+            p { margin: 0; color: #b8f8d8; font-weight: 800; }
+          </style>
+        </head>
+        <body><main><h1>Project OS Proof</h1><p>Verified run receipt saved by NovaForge.</p></main></body>
+        </html>
+        """
+        try await installDebugWorkspaceFixture(
+            files: [artifact.path: html],
+            workspace: projectRuntime.workspace,
+            projectID: project.id,
+            conversationID: project.conversations.first?.id,
+            origin: .projectOS,
+            ownerDescription: "Debug project proof fixture"
+        )
+
+        let conversation = projectConversation(for: project, now: now)
         project.name = "Proof Receipt"
         project.mission = "Capture a durable ProjectOS proof receipt and show the verified artifact as completion evidence."
         project.nextStep = "Review the proof receipt and decide whether to ship or continue."
@@ -3525,24 +4627,6 @@ struct AppRootView: View {
             context: modelContext,
             now: now.addingTimeInterval(-9)
         )
-        let html = """
-        <!doctype html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-          <title>Project OS Proof</title>
-          <style>
-            body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: #08121f; color: #e9fbff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
-            main { width: min(86vw, 760px); border: 1px solid #75f6ff55; border-radius: 24px; padding: 28px; background: #ffffff12; }
-            h1 { margin: 0 0 10px; font-size: clamp(36px, 9vw, 74px); line-height: .9; }
-            p { margin: 0; color: #b8f8d8; font-weight: 800; }
-          </style>
-        </head>
-        <body><main><h1>Project OS Proof</h1><p>Verified run receipt saved by NovaForge.</p></main></body>
-        </html>
-        """
-        try? projectRuntime.workspace.write(artifact.path, contents: html)
 
         let run = ToolRun(
             name: "validate_html_file",
@@ -3653,18 +4737,12 @@ struct AppRootView: View {
         )
         projectRuntime.debugInstallCompletedArtifact(artifact)
         conversation.refreshMessageMetadata(updateTimestamp: now)
+        return conversation
     }
 
-    private func installProjectSpineE2EFixture(for project: Project, conversation: Conversation) {
+    private func installProjectSpineE2EFixture(for project: Project) async throws -> Conversation {
         let now = Date()
         let artifact = WorkspaceArtifact(path: "workflow-spine-proof.html")
-        project.name = "Alpha Product Spine"
-        project.mission = "Build, inspect, iterate, recover, and prove a durable iPhone-native workbench artifact."
-        project.nextStep = "Review the latest proof, then ask for the next artifact iteration if needed."
-        project.status = .needsReview
-        project.blocker = ""
-        conversation.project = project
-
         let html = """
         <!doctype html>
         <html lang="en">
@@ -3702,7 +4780,22 @@ struct AppRootView: View {
         </body>
         </html>
         """
-        try? projectRuntime.workspace.write(artifact.path, contents: html)
+        try await installDebugWorkspaceFixture(
+            files: [artifact.path: html],
+            workspace: projectRuntime.workspace,
+            projectID: project.id,
+            conversationID: project.conversations.first?.id,
+            origin: .projectOS,
+            ownerDescription: "Debug project spine proof fixture"
+        )
+
+        let conversation = projectConversation(for: project, now: now)
+        project.name = "Alpha Product Spine"
+        project.mission = "Build, inspect, iterate, recover, and prove a durable iPhone-native workbench artifact."
+        project.nextStep = "Review the latest proof, then ask for the next artifact iteration if needed."
+        project.status = .needsReview
+        project.blocker = ""
+        conversation.project = project
 
         let summary = ProjectMissionSummarizer.summarize(project: project, context: modelContext)
         ProjectOSRunLedger.startRun(
@@ -3978,6 +5071,107 @@ struct AppRootView: View {
         project.nextStep = "Review the recovered proof, then ask for the next artifact iteration if needed."
         projectRuntime.debugInstallCompletedArtifact(artifact)
         conversation.refreshMessageMetadata(updateTimestamp: now)
+        return conversation
+    }
+
+    private enum DebugWorkspaceFixtureOrigin {
+        case trustedSystem
+        case projectOS
+    }
+
+    private func installDebugWorkspaceFixture(
+        files: [String: String],
+        workspace: SandboxWorkspace,
+        projectID: UUID?,
+        conversationID: UUID?,
+        origin: DebugWorkspaceFixtureOrigin = .trustedSystem,
+        ownerDescription: String
+    ) async throws {
+        let paths = files.keys.sorted()
+        guard !paths.isEmpty else {
+            throw SandboxError.invalidArguments
+        }
+        let entries = try paths.map { path in
+            guard let contents = files[path] else {
+                throw SandboxError.invalidArguments
+            }
+            return SeedWorkspaceEntry(path: path, contents: contents)
+        }
+        let operationID = UUID()
+        let policyRuntime = AgentPolicyMutationRuntime.shared
+        let executionContext = try policyRuntime.makeExecutionContext(
+            workspace: workspace,
+            operationID: operationID,
+            idempotencyKey: "app-root.debug-fixture.v1:\(operationID.uuidString.lowercased())",
+            conversationID: conversationID,
+            projectID: projectID,
+            sessionID: "debug-fixture:\(ownerDescription)"
+        )
+        let coordinator = try policyRuntime.coordinator()
+        try Task.checkCancellation()
+
+        // Debug fixtures still traverse the real policy pipeline and produce
+        // durable approval/effect receipts. They are predeclared test data,
+        // though, so approve only the exact seed preview this helper just
+        // requested; never consume an unrelated pending user decision.
+        let expectedMutationOrigin: MutationOrigin = switch origin {
+        case .trustedSystem: .trustedSystem
+        case .projectOS: .projectOS
+        }
+        let approvalTask = Task { @MainActor in
+            await approveDebugSeedRequest(
+                expectedPaths: paths,
+                expectedOrigin: expectedMutationOrigin
+            )
+        }
+        defer { approvalTask.cancel() }
+
+        switch origin {
+        case .trustedSystem:
+            _ = try await coordinator.performTrustedSystem(
+                context: executionContext,
+                operation: TrustedSystemPolicyMutationOperation.seedWorkspace(
+                    SeedWorkspaceMutationArguments(entries: entries)
+                )
+            )
+        case .projectOS:
+            _ = try await coordinator.performProjectOS(
+                context: executionContext,
+                operation: ProjectOSPolicyMutationOperation.seedWorkspace(
+                    SeedWorkspaceMutationArguments(entries: entries)
+                )
+            )
+        }
+    }
+
+    @MainActor
+    private func approveDebugSeedRequest(
+        expectedPaths: [String],
+        expectedOrigin: MutationOrigin
+    ) async {
+        let expected = expectedPaths.sorted()
+        for _ in 0 ..< 300 {
+            guard !Task.isCancelled else { return }
+            if let item = approvalPromptCenter.pendingItem,
+               item.origin == expectedOrigin,
+               case let .seedWorkspace(targets) = item.operation,
+               targets.map(\.path).sorted() == expected
+            {
+                _ = approvalPromptCenter.approve(requestID: item.requestID)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func reportDebugWorkspaceFixtureFailure(
+        _ fixtureName: String,
+        error: Error,
+        targetRuntime: AgentRuntime
+    ) {
+        let message = "NovaForge could not durably confirm the \(fixtureName) fixture. No completed fixture state was recorded. \(error.localizedDescription)"
+        rootError = message
+        targetRuntime.presentToast(message, tone: .error)
     }
 
     private func jsonString(_ values: [String: String]) -> String {
@@ -4169,14 +5363,8 @@ struct AppRootView: View {
     #endif
 
     private func makeConversationTitle() -> String {
-        "NovaForge \(Self.conversationTitleFormatter.string(from: Date()))"
+        "New chat"
     }
-
-    private static let conversationTitleFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d, h:mm a"
-        return formatter
-    }()
 }
 
 private struct AppTabsRenderKey: Equatable {
@@ -4202,6 +5390,7 @@ private struct AppTabsRenderKey: Equatable {
     let missionUsesChatRuntime: Bool
     let projectResumeDraftRevision: Int
     let autoContinueState: ProjectAutoContinueViewState
+    let persistenceCommitRevision: Int
     let themeRawValue: String
     let performanceModeEnabled: Bool
 
@@ -4214,6 +5403,7 @@ private struct AppTabsRenderKey: Equatable {
         selectedTab: AppTab,
         projectResumeDraftRevision: Int,
         autoContinueState: ProjectAutoContinueViewState,
+        persistenceCommitRevision: Int,
         themeRawValue: String,
         performanceModeEnabled: Bool
     ) {
@@ -4234,6 +5424,7 @@ private struct AppTabsRenderKey: Equatable {
         self.missionUsesChatRuntime = missionUsesChatRuntime
         self.projectResumeDraftRevision = projectResumeDraftRevision
         self.autoContinueState = autoContinueState
+        self.persistenceCommitRevision = persistenceCommitRevision
         self.themeRawValue = themeRawValue
         self.performanceModeEnabled = performanceModeEnabled
     }
@@ -4246,15 +5437,21 @@ private struct AutoContinueRuntimeSignature: Equatable {
     let isWorking: Bool
     let pendingToolName: String?
     let lastRunDuration: TimeInterval?
+    let canonicalRevision: UInt64
 
     @MainActor
-    init(project: Project?, runtime: AgentRuntime) {
+    init(
+        project: Project?,
+        runtime: AgentRuntime,
+        canonicalRevision: UInt64
+    ) {
         self.projectID = project?.id
         self.projectUpdatedAt = project?.updatedAt
         self.runState = runtime.runState
         self.isWorking = runtime.isWorking
         self.pendingToolName = runtime.pendingTool?.name
         self.lastRunDuration = runtime.lastRunDuration
+        self.canonicalRevision = canonicalRevision
     }
 }
 
@@ -4278,6 +5475,7 @@ private struct ConversationListSignature: Equatable {
             hasher.combine(conversation.id)
             hasher.combine(conversation.updatedAt)
             hasher.combine(conversation.messageCount)
+            hasher.combine(conversation.project?.id)
         }
 
         self.count = counted
@@ -4306,6 +5504,7 @@ private struct ChatTabKey: Equatable {
     let missionAutoContinue: ProjectAutoContinueViewState
     let missionUsesChatRuntime: Bool
     let isVisibleForFrameProfiling: Bool
+    let persistenceCommitRevision: Int
     let themeRawValue: String
     let performanceModeEnabled: Bool
 
@@ -4319,6 +5518,7 @@ private struct ChatTabKey: Equatable {
         missionAutoContinue: ProjectAutoContinueViewState,
         missionUsesChatRuntime: Bool,
         isVisibleForFrameProfiling: Bool,
+        persistenceCommitRevision: Int,
         themeRawValue: String,
         performanceModeEnabled: Bool
     ) {
@@ -4340,6 +5540,7 @@ private struct ChatTabKey: Equatable {
         self.missionAutoContinue = missionAutoContinue
         self.missionUsesChatRuntime = missionUsesChatRuntime
         self.isVisibleForFrameProfiling = isVisibleForFrameProfiling
+        self.persistenceCommitRevision = persistenceCommitRevision
         self.themeRawValue = themeRawValue
         self.performanceModeEnabled = performanceModeEnabled
     }
@@ -4428,6 +5629,107 @@ private struct SettingsTabKey: Equatable {
         self.isVisible = isVisible
         self.themeRawValue = themeRawValue
         self.performanceModeEnabled = performanceModeEnabled
+    }
+}
+
+private struct MissionDossierRenderKey: Equatable {
+    let projectID: UUID
+    let materializedEvidenceRevision: Int64
+    let projectName: String
+    let workspaceName: String
+    let projectStatusRawValue: String
+    let projectUpdatedAt: Date
+    let projectLastActivityAt: Date
+    let projectListSignature: ProjectListSignature
+    let conversationListSignature: ConversationListSignature
+    let selectedConversationID: UUID
+    let selectedConversationProjectID: UUID?
+    let selectedConversationUpdatedAt: Date
+    let selectedConversationMessageCount: Int
+    let activeMissionConversationID: UUID?
+    let settingsID: UUID
+    let settingsUpdatedAt: Date
+    let runtimeStatus: WorkspaceStatusSnapshot
+    let autoContinueState: ProjectAutoContinueViewState
+    let usesChatRuntime: Bool
+    let isVisibleForFrameProfiling: Bool
+    let themeRawValue: String
+    let performanceModeEnabled: Bool
+
+    init(
+        project: Project,
+        materializedEvidenceRevision: Int64,
+        projects: [Project],
+        conversations: [Conversation],
+        selectedConversation: Conversation,
+        activeMissionConversationID: UUID?,
+        settings: AgentSettings,
+        runtimeStatus: WorkspaceStatusSnapshot,
+        autoContinueState: ProjectAutoContinueViewState,
+        usesChatRuntime: Bool,
+        isVisibleForFrameProfiling: Bool,
+        themeRawValue: String,
+        performanceModeEnabled: Bool
+    ) {
+        self.projectID = project.id
+        self.materializedEvidenceRevision = materializedEvidenceRevision
+        self.projectName = project.name
+        self.workspaceName = project.workspaceName
+        self.projectStatusRawValue = project.statusRawValue
+        self.projectUpdatedAt = project.updatedAt
+        self.projectLastActivityAt = project.lastActivityAt
+        self.projectListSignature = ProjectListSignature(projects: projects)
+        self.conversationListSignature = ConversationListSignature(conversations: conversations)
+        self.selectedConversationID = selectedConversation.id
+        self.selectedConversationProjectID = selectedConversation.project?.id
+        self.selectedConversationUpdatedAt = selectedConversation.updatedAt
+        self.selectedConversationMessageCount = selectedConversation.messageCount
+        self.activeMissionConversationID = activeMissionConversationID
+        self.settingsID = settings.id
+        self.settingsUpdatedAt = settings.updatedAt
+        self.runtimeStatus = runtimeStatus
+        self.autoContinueState = autoContinueState
+        self.usesChatRuntime = usesChatRuntime
+        self.isVisibleForFrameProfiling = isVisibleForFrameProfiling
+        self.themeRawValue = themeRawValue
+        self.performanceModeEnabled = performanceModeEnabled
+    }
+}
+
+private struct ProjectListSignature: Equatable {
+    let count: Int
+    let fingerprint: Int
+
+    init(projects: [Project]) {
+        var hasher = Hasher()
+        for project in projects {
+            hasher.combine(project.id)
+            hasher.combine(project.name)
+            hasher.combine(project.workspaceName)
+            hasher.combine(project.statusRawValue)
+            hasher.combine(project.updatedAt)
+            hasher.combine(project.lastActivityAt)
+        }
+        self.count = projects.count
+        self.fingerprint = hasher.finalize()
+    }
+}
+
+private struct StableDossierSurface<Content: View>: View, Equatable {
+    let key: MissionDossierRenderKey
+    let content: () -> Content
+
+    init(key: MissionDossierRenderKey, @ViewBuilder content: @escaping () -> Content) {
+        self.key = key
+        self.content = content
+    }
+
+    nonisolated static func == (lhs: StableDossierSurface<Content>, rhs: StableDossierSurface<Content>) -> Bool {
+        lhs.key == rhs.key
+    }
+
+    var body: some View {
+        content()
     }
 }
 

@@ -1,3 +1,5 @@
+import AgentPolicy
+import AgentTools
 import SwiftUI
 import UIKit
 
@@ -60,6 +62,8 @@ struct CodeEditorView: View {
     let fileName: String
     let relativePath: String
     var workspace: SandboxWorkspace
+    let projectID: UUID
+    let conversationID: UUID
     var initialLineNumber: Int?
     var onSave: () -> Void
 
@@ -67,6 +71,9 @@ struct CodeEditorView: View {
     @State private var selectedRange = NSRange(location: 0, length: 0)
     @State private var showingSaveAlert = false
     @State private var saveMessage = ""
+    @State private var saveTask: Task<Void, Never>?
+    @State private var isSaving = false
+    @State private var dismissAfterSave = false
     
     // Config panel options
     @State private var theme: EditorTheme = .slate
@@ -113,9 +120,14 @@ struct CodeEditorView: View {
         .onChange(of: fileText) {
             updateDocumentMetrics()
         }
+        .interactiveDismissDisabled(isSaving)
+        .onDisappear {
+            saveTask?.cancel()
+            saveTask = nil
+        }
         .alert("Save Status", isPresented: $showingSaveAlert) {
             Button("OK", role: .cancel) {
-                if saveMessage.contains("successfully") {
+                if dismissAfterSave {
                     dismiss()
                 }
             }
@@ -130,6 +142,7 @@ struct CodeEditorView: View {
                 dismiss()
             }
             .buttonStyle(.borderless)
+            .disabled(isSaving)
             .frame(minWidth: AgentDesign.minimumTouchTarget + 8, minHeight: AgentDesign.minimumTouchTarget + 2)
             .contentShape(Rectangle())
             .agentControlSurface(radius: 12)
@@ -146,7 +159,7 @@ struct CodeEditorView: View {
 
             Spacer()
 
-            Button("Save") {
+            Button(isSaving ? "Saving…" : "Save") {
                 saveFile()
             }
             .buttonStyle(.borderless)
@@ -154,8 +167,8 @@ struct CodeEditorView: View {
             .contentShape(Rectangle())
             .agentControlSurface(radius: 12, tint: AgentPalette.green, selected: true)
             .accessibilityIdentifier("codeEditorSaveButton")
-            .disabled(loadFailed)
-            .opacity(loadFailed ? 0.45 : 1)
+            .disabled(loadFailed || isSaving)
+            .opacity(loadFailed || isSaving ? 0.45 : 1)
         }
         .padding(.horizontal)
         .padding(.top, 14)
@@ -488,15 +501,79 @@ struct CodeEditorView: View {
             showingSaveAlert = true
             return
         }
+        guard saveTask == nil else { return }
+
+        let textToSave = fileText
+        let operationID = UUID()
+        let policyRuntime = AgentPolicyMutationRuntime.shared
+        let executionContext: AgentPolicyMutationExecutionContext
+        let coordinator: AgentPolicyMutationCoordinator
         do {
-            try workspace.write(relativePath, contents: fileText)
-            lastSavedText = fileText
-            saveMessage = "File saved successfully."
-            onSave()
+            executionContext = try policyRuntime.makeExecutionContext(
+                workspace: workspace,
+                operationID: operationID,
+                idempotencyKey: Self.idempotencyKey(
+                    operation: "write-file",
+                    operationID: operationID
+                ),
+                conversationID: conversationID,
+                projectID: projectID,
+                sessionID: "editor"
+            )
+            coordinator = try policyRuntime.coordinator()
         } catch {
-            saveMessage = "Failed to save: \(error.localizedDescription)"
+            saveMessage = "Failed to prepare save: \(error.localizedDescription)"
+            dismissAfterSave = false
+            showingSaveAlert = true
+            return
         }
-        showingSaveAlert = true
+
+        let savedRelativePath = relativePath
+        isSaving = true
+        dismissAfterSave = false
+        saveTask = Task { @MainActor in
+            defer {
+                isSaving = false
+                saveTask = nil
+            }
+            do {
+                _ = try await coordinator.performEditor(
+                    context: executionContext,
+                    operation: EditorCanonicalMutationOperation.writeFile(
+                        WriteFileArguments(
+                            path: savedRelativePath,
+                            contents: textToSave
+                        )
+                    )
+                )
+                lastSavedText = textToSave
+                dismissAfterSave = fileText == textToSave
+                saveMessage = dismissAfterSave
+                    ? "File saved successfully."
+                    : "File version saved successfully. New edits remain unsaved."
+                onSave()
+                showingSaveAlert = true
+            } catch {
+                guard !Self.isQuietCancellation(error) else {
+                    return
+                }
+                dismissAfterSave = false
+                saveMessage = "Failed to save: \(error.localizedDescription)"
+                showingSaveAlert = true
+            }
+        }
+    }
+
+    private static func idempotencyKey(
+        operation: String,
+        operationID: UUID
+    ) -> String {
+        "editor.\(operation).v1:\(operationID.uuidString.lowercased())"
+    }
+
+    private static func isQuietCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        return (error as? AgentPolicyMutationServiceError) == .cancelled
     }
 
     private func insertCharacter(_ char: String) {

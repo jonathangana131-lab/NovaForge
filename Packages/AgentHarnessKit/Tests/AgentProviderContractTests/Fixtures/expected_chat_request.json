@@ -1,0 +1,47 @@
+{
+  "model": "fixture-model",
+  "messages": [
+    {"role": "system", "content": "Be exact."},
+    {"role": "user", "content": "Update notes."},
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call-old",
+          "type": "function",
+          "function": {"name": "read_file", "arguments": "{\"path\":\"notes.md\"}"}
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": [{"type": "json", "json": {"lines": 1, "text": "hello"}}],
+      "tool_call_id": "call-old",
+      "name": "read_file"
+    }
+  ],
+  "stream": true,
+  "stream_options": {"include_usage": true},
+  "metadata": {"trace": "fixture"},
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "Write a file",
+        "parameters": {
+          "type": "object",
+          "properties": {"path": {"type": "string"}, "replace": {"type": "boolean"}},
+          "required": ["path", "replace"],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    }
+  ],
+  "tool_choice": {"type": "function", "function": {"name": "write_file"}},
+  "max_completion_tokens": 128,
+  "temperature": 0.25,
+  "parallel_tool_calls": true
+}

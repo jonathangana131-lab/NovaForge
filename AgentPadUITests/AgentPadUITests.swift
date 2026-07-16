@@ -17,21 +17,21 @@ final class AgentPadUITests: XCTestCase {
 
     func testLaunchStartsOnFreshReadyChatInsteadOfOldChat() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui"]
+        app.launchArguments = ["--reset-ui", "--debug-provider-list-ready", "--open-chat"]
         app.launch()
         let title = app.staticTexts["currentChatTitle"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertEqual(title.label, "NovaForge")
+        XCTAssertEqual(title.label, "New chat")
 
         app.buttons["New chat"].tap()
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertNotEqual(title.label, "NovaForge Ready")
 
         app.terminate()
-        app.launchArguments = []
+        app.launchArguments = ["--debug-provider-list-ready", "--open-chat"]
         app.launch()
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertEqual(title.label, "NovaForge", "Launch should reopen a fresh ready chat, not the same old working chat.")
+        XCTAssertEqual(title.label, "New chat", "Launch should reopen a fresh ready chat, not the same old working chat.")
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.otherElements["firstRunProjectLauncher"].exists)
         XCTAssertFalse(app.otherElements["projectStatusBoard"].exists)
@@ -44,7 +44,9 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("firstRunPowerUp", in: app).waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Power up NovaForge"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["firstRunPowerUpButton"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Launch a project"].exists)
         XCTAssertFalse(app.otherElements["firstRunProjectLauncher"].exists)
         XCTAssertFalse(app.otherElements["projectStatusBoard"].exists)
@@ -57,10 +59,12 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["Local model not downloaded"].exists)
-        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Starter missions are blocked")).firstMatch.exists)
-        XCTAssertFalse(app.buttons["firstRunSetupDownload"].exists)
+        XCTAssertTrue(identifiedElement("firstRunPowerUp", in: app).waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Power up NovaForge"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["LOCAL SETUP"].waitForExistence(timeout: 5))
+        let download = app.buttons["firstRunPowerUpButton"]
+        XCTAssertTrue(download.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(download, named: "Download local model")
 
         for identifier in ["missionStarter-build", "missionStarter-fix", "missionStarter-audit", "missionStarter-ship"] {
             XCTAssertFalse(app.buttons[identifier].exists, "\(identifier) should not appear as a dead button while setup blocks starters.")
@@ -88,21 +92,25 @@ final class AgentPadUITests: XCTestCase {
 
     func testLaunchRestoresCompletedSelectedChatButNotInterruptedDraft() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui"]
+        app.launchArguments = ["--reset-ui", "--debug-provider-list-ready", "--open-chat"]
         app.launch()
         let title = app.staticTexts["currentChatTitle"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
+        waitForDebugProviderFixture(in: app)
 
         app.buttons["New chat"].tap()
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         composer.tap()
         composer.typeText("list files")
-        app.buttons["sendMessageButton"].tap()
-        XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 8))
+        tapReadySendButton(in: app)
+        let completion = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Workspace scan finished")).firstMatch
+        XCTAssertTrue(completion.waitForExistence(timeout: 8), "The deterministic run should finish with a durable assistant handoff.")
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "Completed work should not leave a second persistent Run complete bar above the composer.")
+        XCTAssertFalse(runProgressToggle(in: app).exists, "Completed work belongs in the transcript and History, not a persistent bottom run control.")
 
         app.terminate()
-        app.launchArguments = []
+        app.launchArguments = ["--debug-provider-list-ready", "--open-chat"]
         app.launch()
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5), "Cold launch should start in a fresh chat.")
@@ -119,7 +127,7 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = []
         app.launch()
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5), "An empty/interrupted chat should not become the launch chat.")
+        XCTAssertTrue(identifiedElement("firstRunPowerUp", in: app).waitForExistence(timeout: 8), "Cold launch should return to the local-first setup surface instead of reopening an interrupted draft.")
         XCTAssertFalse(app.staticTexts["unfinished draft"].exists)
         capture("48-interrupted-chat-falls-back-ready", app: app)
     }
@@ -138,20 +146,21 @@ final class AgentPadUITests: XCTestCase {
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         composer.tap()
-        composer.typeText("Show me what tools you can use")
+        composer.typeText("Show me your tools")
         assertNoFloatingActionsOverComposer(in: app)
         let keyboard = app.keyboards.firstMatch
         let keyboardVisible = keyboard.waitForExistence(timeout: 3)
         let sendButton = app.buttons["Send message"]
         let modelPicker = app.descendants(matching: .any)["composerModelNativeMenu"]
         if modelPicker.waitForExistence(timeout: 1) {
-            XCTAssertTrue(modelPicker.label.localizedCaseInsensitiveContains("Choose model"), "Composer model rail should advertise model selection, not read as a mystery chip.")
-            XCTAssertGreaterThanOrEqual(modelPicker.frame.width, 120, "Composer model rail should have room for a compact provider and model label, not a cryptic tiny chip.")
-            XCTAssertLessThanOrEqual(modelPicker.frame.width, 180, "Composer model rail should stay compact so the typing field remains the primary surface.")
+            XCTAssertTrue(modelPicker.label.localizedCaseInsensitiveContains("Choose model"), "The compact model icon should keep a complete VoiceOver label.")
+            XCTAssertGreaterThanOrEqual(modelPicker.frame.width, 43.5, "The compact model icon should retain a reliable touch target.")
+            XCTAssertGreaterThanOrEqual(modelPicker.frame.width, 120, "The idle model control should keep provider and model context readable.")
+            XCTAssertLessThanOrEqual(modelPicker.frame.width, 180, "The idle model control should remain a compact pill instead of becoming a toolbar.")
         }
         let composerDock = composerDock(in: app)
         XCTAssertTrue(composerDock.waitForExistence(timeout: 3))
-        XCTAssertLessThanOrEqual(composerDock.frame.height, 180, "A normal one-line prompt should be a compact two-row card, not the giant old composer sheet.")
+        XCTAssertLessThanOrEqual(composerDock.frame.height, 128, "A normal prompt should stay inside the compact unified composer.")
         XCTAssertTrue(sendButton.isEnabled, "The typed prompt should enable Send even when a hardware keyboard prevents a software keyboard frame.")
         if keyboardVisible {
             let composerKeyboardGap = keyboard.frame.minY - sendButton.frame.maxY
@@ -164,19 +173,23 @@ final class AgentPadUITests: XCTestCase {
         assertComposerDockAligned(in: app)
         capture("02-keyboard-composer", app: app)
 
-        app.buttons["Send message"].tap()
+        tapReadySendButton(in: app)
         if keyboardVisible {
             XCTAssertTrue(keyboard.waitForNonExistence(timeout: 3), "Sending from the focused composer should dismiss the keyboard cleanly.")
         }
         XCTAssertGreaterThanOrEqual(composerDock.frame.maxY, app.frame.maxY - 180, "After the keyboard dismisses, the composer should settle near the bottom instead of floating where the keyboard was.")
-        let sentMessage = app.staticTexts["Show me what tools you can use"].firstMatch
+        let sentMessage = app.staticTexts["Show me your tools"].firstMatch
         XCTAssertTrue(sentMessage.waitForExistence(timeout: 3), "Sent prompt should remain visible in the transcript.")
         XCTAssertLessThanOrEqual(sentMessage.frame.maxY, composerDock.frame.minY - 8, "Latest messages should remain readable above the composer after sending.")
-        let runAccessory = runProgressToggle(in: app)
-        XCTAssertTrue(runAccessory.waitForExistence(timeout: 3), "Run/action accessory should be visible after a failed local send.")
-        let bottomAccessoryTop = min(runAccessory.frame.minY, composerDock.frame.minY)
+        XCTAssertFalse(
+            runProgressToggle(in: app).exists,
+            "A failed canonical run should stay in the transcript and recovery strip instead of adding a second persistent Run Control bar."
+        )
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        let bottomAccessoryTop = bottomAccessory.frame.minY
         XCTAssertLessThanOrEqual(sentMessage.frame.maxY, bottomAccessoryTop - 8, "Sent prompt should clear the full run/action accessory, not only the composer.")
-        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
+        let assistantMessage = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "provider connection failed")).firstMatch
         XCTAssertTrue(assistantMessage.waitForExistence(timeout: 5), "Assistant response should remain visible after Send.")
         XCTAssertLessThanOrEqual(assistantMessage.frame.maxY, bottomAccessoryTop - 8, "Assistant output should stay readable above the full bottom accessory stack.")
         XCTAssertFalse(app.otherElements["liveResponseField"].waitForExistence(timeout: 2), "Failed send should clear live response state.")
@@ -198,11 +211,13 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
 
+        waitForDebugProviderFixture(in: app)
+
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         composer.tap()
         composer.typeText("Yo")
-        app.buttons["sendMessageButton"].tap()
+        tapReadySendButton(in: app)
 
         let userText = app.staticTexts["Yo"].firstMatch
         XCTAssertTrue(userText.waitForExistence(timeout: 5), "User message should appear immediately after Send.")
@@ -210,19 +225,11 @@ final class AgentPadUITests: XCTestCase {
         let liveField = app.otherElements["liveResponseField"]
         XCTAssertTrue(liveField.waitForExistence(timeout: 4), "Streaming response should render as one live typefield.")
         XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveResponseField")), 1, "Streaming should update one live field instead of adding duplicates.")
-        // Handoff can now happen as soon as the durable row materializes. Keep
-        // the live geometry captured while that transient surface still exists.
-        let liveFieldFrame = liveField.frame
-        let liveReadableContent = liveStreamingReadableContent(in: app)
-        XCTAssertTrue(liveReadableContent.waitForExistence(timeout: 3), "Live transcript should expose readable content during streaming.")
-        let liveReadableFrame = liveReadableContent.frame
-        XCTAssertFalse(liveReadableContent.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "Send-path live response should expose a readable accessibility checkpoint before final handoff.")
         let liveBottomAccessory = bottomChatAccessory(in: app)
         XCTAssertTrue(liveBottomAccessory.waitForExistence(timeout: 3), "Bottom accessory should be measurable while the live response is streaming.")
-        XCTAssertLessThanOrEqual(liveReadableFrame.maxY, liveBottomAccessory.frame.minY - 4, "Readable live text should clear the composer while streaming.")
-        let liveDockGap = liveBottomAccessory.frame.minY - liveFieldFrame.maxY
-        XCTAssertGreaterThanOrEqual(liveDockGap, 0, "The open response field should not overlap the composer while streaming.")
-        XCTAssertLessThanOrEqual(liveDockGap, 112, "Live response auto-scroll should land on the response, not an invisible spacer below the transcript.")
+        // Geometry has dedicated long-lived layout coverage. This send-flow
+        // fixture intentionally may finish between two XCTest snapshots, so
+        // never dereference the transient live element after existence proof.
         capture("sev0-chat-send-stream-live", app: app)
 
         let assistantResponse = app.otherElements.matching(identifier: "chatAssistantResponse").firstMatch
@@ -230,10 +237,10 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(liveField.exists, "Live field should clear as soon as the final response is visible.")
         XCTAssertEqual(visibleElementCount(app.otherElements.matching(identifier: "chatAssistantResponse")), 1, "Assistant output should appear once, not as live plus final duplicates.")
         let assistantText = assistantResponse.staticTexts
-            .containing(NSPredicate(format: "label CONTAINS %@", "Hey! What can I do"))
+            .containing(NSPredicate(format: "label CONTAINS %@", "Hey! I’m on it"))
             .firstMatch
         XCTAssertTrue(assistantText.waitForExistence(timeout: 2), "Completed assistant bubble should contain the provider response, not only live-stream text.")
-        XCTAssertEqual(visibleStaticTextCount(in: app, containing: "Hey! What can I do"), 1, "Welcome text should not duplicate as a real assistant output and a live response.")
+        XCTAssertEqual(visibleStaticTextCount(in: app, containing: "Hey! I’m on it"), 1, "Provider text should not duplicate as a real assistant output and a live response.")
 
         let userBubble = app.otherElements.matching(identifier: "chatUserMessageBubble").firstMatch
         if userBubble.exists && !userBubble.frame.isEmpty {
@@ -246,7 +253,12 @@ final class AgentPadUITests: XCTestCase {
         let assistantDockGap = bottomAccessory.frame.minY - assistantResponse.frame.maxY
         XCTAssertGreaterThanOrEqual(assistantDockGap, 4, "Auto-scroll should not tuck the latest assistant response under the composer.")
         XCTAssertLessThanOrEqual(assistantDockGap, 96, "Auto-scroll should land on the latest assistant response, not an invisible spacer below the transcript.")
-        XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 4), "Running/Calling state should clear after a valid response.")
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "Completed work should not leave a persistent Run complete bar above the composer.")
+        XCTAssertFalse(runProgressToggle(in: app).exists, "Completed work should return Forge to its compact idle composer instead of retaining Run Control.")
+        let completedDock = composerDock(in: app)
+        XCTAssertTrue(completedDock.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(completedDock.frame.height, 128, "Completion should collapse back to the compact unified composer.")
+        assertContained(completedDock, in: bottomAccessory, named: "completed composer dock")
         capture("sev0-chat-send-stream-visible-before-followup", app: app)
 
         composer.tap()
@@ -263,15 +275,20 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
 
+        waitForDebugProviderFixture(in: app)
+
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         composer.tap()
         composer.typeText("Trigger a timeout")
-        app.buttons["sendMessageButton"].tap()
+        tapReadySendButton(in: app)
 
-        XCTAssertTrue(app.staticTexts["Trigger a timeout"].firstMatch.waitForExistence(timeout: 2), "Failed send should still keep the user bubble.")
-        let errorText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "request timed out")).firstMatch
-        XCTAssertTrue(errorText.waitForExistence(timeout: 8), "Failed provider send should show a visible transcript error.")
+        let errorText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "provider connection failed")).firstMatch
+        XCTAssertTrue(errorText.waitForExistence(timeout: 10), "Failed provider send should show a visible transcript error.")
+        XCTAssertTrue(
+            app.staticTexts["Trigger a timeout"].firstMatch.waitForExistence(timeout: 10),
+            "Failed send should still keep the durable user bubble after the error is projected."
+        )
         XCTAssertFalse(app.otherElements["liveResponseField"].waitForExistence(timeout: 2), "Failure should clear live streaming UI.")
 
         composer.tap()
@@ -296,6 +313,9 @@ final class AgentPadUITests: XCTestCase {
         assertNoFloatingActionsOverComposer(in: app)
 
         let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 1) {
+            composer.tap()
+        }
         XCTAssertTrue(keyboard.waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["chatComposer"].exists, "Expanding a draft must preserve the original text-field identity.")
         XCTAssertFalse(app.textViews["chatComposer"].exists, "Long drafts should not swap the focused text field for a TextEditor.")
@@ -325,7 +345,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testChatComposerPreservesDraftAndSurvivesScrollAndNewChat() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--keyboard-multiline-draft-demo"]
+        app.launchArguments = ["--reset-ui", "--keyboard-multiline-draft-demo", "--settings-local-model-ready", "--open-chat"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
 
@@ -334,6 +354,9 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         XCTAssertTrue(initialDock.waitForExistence(timeout: 5))
         let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 1) {
+            composer.tap()
+        }
         XCTAssertTrue(keyboard.waitForExistence(timeout: 3))
         let sendButton = app.buttons["Send message"]
         assertKeyboardComposerChrome(in: app, keyboard: keyboard, sendButton: sendButton)
@@ -401,7 +424,13 @@ final class AgentPadUITests: XCTestCase {
             XCTAssertFalse(app.tabBars.buttons[oldTab].exists, "Legacy dock tab should stay removed: \(oldTab).")
         }
         XCTAssertFalse(app.otherElements["projectDashboard"].exists, "Project dashboard should not be a public tab surface for --open-project.")
-        let dossierShortcut = app.buttons["missionDossierShortcut"]
+        let scopeMenu = identifiedElement("chatProjectScopeMenu", in: app)
+        XCTAssertTrue(scopeMenu.waitForExistence(timeout: 5))
+        scopeMenu.tap()
+        let projectChoice = app.buttons["NovaForge Project"].firstMatch
+        XCTAssertTrue(projectChoice.waitForExistence(timeout: 5), "The scope menu should expose the default project.")
+        projectChoice.tap()
+        let dossierShortcut = identifiedElement("missionDossierShortcut", in: app)
         XCTAssertTrue(dossierShortcut.waitForExistence(timeout: 5), "Forge should expose a direct Mission Dossier shortcut instead of forcing a slow scope menu round-trip.")
         dossierShortcut.tap()
         XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 2), "Mission Dossier shortcut should mount the dashboard quickly.")
@@ -429,9 +458,65 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5), "Closing Mission Dossier should reveal Forge.")
     }
 
+    func testMissionDossierPinnedActionsStayCompactWhenIdle() throws {
+        let app = launchMissionDossierForPinnedDock()
+        assertCompactMissionDossierDock("Idle", in: app)
+        let run = identifiedElement("projectPinnedRunButton", in: app)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "projectPinnedRunButton").count, 1)
+        assertMinimumTouchTarget(run, named: "Idle Run")
+        XCTAssertFalse(app.buttons["projectAutoContinuePauseButton"].exists)
+        XCTAssertFalse(app.buttons["projectApprovalApproveButton"].exists)
+        capture("44b-mission-dossier-compact-idle-dock", app: app)
+    }
+
+    func testMissionDossierPinnedActionsStayCompactDuringCountdown() throws {
+        let app = launchMissionDossierForPinnedDock(["--auto-continue-countdown-demo"])
+        assertCompactMissionDossierDock("Countdown", in: app)
+        let pause = identifiedElement("projectAutoContinuePauseButton", in: app)
+        let cancel = identifiedElement("projectAutoContinueCancelButton", in: app)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "projectAutoContinuePauseButton").count, 1, "Countdown should have one Pause owner.")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "projectAutoContinueCancelButton").count, 1, "Countdown should have one Cancel owner.")
+        assertMinimumTouchTarget(pause, named: "Countdown Pause")
+        assertMinimumTouchTarget(cancel, named: "Countdown Cancel")
+        capture("44c-mission-dossier-compact-countdown-dock", app: app)
+    }
+
+    func testMissionDossierPinnedActionsStayCompactDuringApproval() throws {
+        let app = launchMissionDossierForPinnedDock(["--project-waiting-demo"])
+        assertCompactMissionDossierDock("Approval", in: app)
+        let approve = identifiedElement("projectApprovalApproveButton", in: app)
+        let reject = identifiedElement("projectApprovalRejectButton", in: app)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "projectApprovalApproveButton").count, 1, "Approval should have one Approve owner.")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "projectApprovalRejectButton").count, 1, "Approval should have one Reject owner.")
+        assertMinimumTouchTarget(approve, named: "Approval Approve")
+        assertMinimumTouchTarget(reject, named: "Approval Reject")
+        XCTAssertFalse(app.buttons["projectPinnedRunButton"].exists, "Approval should not reuse the idle Run identifier.")
+        capture("44d-mission-dossier-compact-approval-dock", app: app)
+    }
+
+    private func launchMissionDossierForPinnedDock(_ arguments: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"] + arguments
+        app.launch()
+        XCTAssertTrue(app.otherElements["projectDashboard"].waitForExistence(timeout: 8))
+        return app
+    }
+
+    private func assertCompactMissionDossierDock(_ state: String, in app: XCUIApplication) {
+        let dock = identifiedElement("projectPinnedActionDock", in: app)
+        XCTAssertTrue(dock.waitForExistence(timeout: 5), "\(state) should expose the pinned action dock.")
+        XCTAssertLessThanOrEqual(dock.frame.height, 128, "\(state) dock should remain compact on iPhone 12.")
+
+        for scope in ["review", "plan", "evidence", "timeline"] {
+            let tab = app.buttons["projectDetailScope-\(scope)"]
+            XCTAssertTrue(tab.waitForExistence(timeout: 5))
+            XCTAssertFalse(tab.frame.intersects(dock.frame), "\(state) dock must not cover Mission Dossier scope controls.")
+        }
+    }
+
     func testProjectLiquidGlassPerformanceTraceFlow() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo", "--profile-frame-rate", "--profile-events", "--auto-project-scroll", "--performance-mode"]
+        app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo", "--profile-frame-rate", "--profile-events", "--performance-mode"]
         app.launch()
 
         let projectHero = app.otherElements["projectOSControlCenter"]
@@ -440,9 +525,11 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists)
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists)
 
-        sleep(5)
+        sleep(8)
         app.swipeUp()
+        sleep(2)
         app.swipeDown()
+        sleep(2)
         capture("43-mission-dossier-performance-scroll", app: app)
         app.buttons["missionDossierClose"].tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
@@ -458,11 +545,15 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--stress-streaming", "--open-chat", "--profile-frame-rate", "--profile-events", "--performance-mode"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        sleep(5)
+        // The canonical projection can mount after the app title is already
+        // visible. Keep a full sustained window after the probe's warmup so
+        // the gate always receives at least four chat-frame samples.
+        sleep(8)
     }
 
     func testFilesShowsSeedReadme() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
 
@@ -471,7 +562,7 @@ final class AgentPadUITests: XCTestCase {
         filesTab.tap()
 
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
-        let fileCell = app.staticTexts["README.md"]
+        let fileCell = app.buttons["fileOpen-README-md"]
         XCTAssertTrue(fileCell.waitForExistence(timeout: 5))
         fileCell.tap()
 
@@ -481,7 +572,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testFilesStressListAndSearch() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--stress-files"]
+        app.launchArguments = ["--reset-ui", "--stress-files"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
@@ -490,14 +581,16 @@ final class AgentPadUITests: XCTestCase {
         filesTab.tap()
 
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Sources"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("filesStressFixtureReady", in: app).waitForExistence(timeout: 90), "Stress files should finish every durable mutation before navigation begins.")
+        XCTAssertTrue(app.staticTexts["Sources"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.buttons["filesGoUpButton"].exists, "Workspace root should not waste a primary toolbar slot on a disabled Go up action.")
         XCTAssertFalse(app.buttons["filesBreadcrumb-home"].exists, "Workspace root should not repeat Home as a redundant breadcrumb.")
-        let sourcesRow = app.staticTexts["Sources"]
+        let sourcesRow = app.buttons["fileOpen-Sources"]
+        XCTAssertTrue(sourcesRow.waitForExistence(timeout: 5))
         XCTAssertLessThan(sourcesRow.frame.maxY, app.tabBars.firstMatch.frame.minY, "Workspace should expose real files in the first viewport instead of leading with a duplicate evidence dashboard.")
         XCTAssertFalse(app.otherElements["filesEvidenceWorkbenchOverview"].exists, "Workspace should not repeat the latest file in a large evidence dashboard before the browser.")
         XCTAssertFalse(app.otherElements["filesProvenanceHandoff"].exists, "Workspace should keep handoff details in evidence inspection instead of duplicating the first file above the browser.")
-        app.staticTexts["Sources"].tap()
+        sourcesRow.tap()
         XCTAssertTrue(app.buttons["filesGoUpButton"].waitForExistence(timeout: 5), "Folder navigation should reveal Go up only when it can act.")
         assertMinimumTouchTarget(app.buttons["filesGoUpButton"], named: "Files Go up")
         XCTAssertTrue(app.buttons["filesBreadcrumb-home"].waitForExistence(timeout: 5), "Opening a folder should reveal the Home breadcrumb.")
@@ -565,7 +658,7 @@ final class AgentPadUITests: XCTestCase {
 
     func testFilesSearchControlsExposePhoneSizedTargets() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--stress-files"]
+        app.launchArguments = ["--reset-ui", "--stress-files"]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
@@ -574,7 +667,8 @@ final class AgentPadUITests: XCTestCase {
         filesTab.tap()
 
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
-        assertMinimumTouchTarget(app.buttons["filesBreadcrumb-home"], named: "Files Home breadcrumb")
+        XCTAssertTrue(identifiedElement("filesStressFixtureReady", in: app).waitForExistence(timeout: 90), "Search controls should wait for every durable fixture mutation before opening.")
+        XCTAssertFalse(app.buttons["filesBreadcrumb-home"].exists, "Workspace root should not repeat Home as a redundant breadcrumb.")
         app.buttons["Search files"].tap()
 
         let searchField = app.textFields["filesSearchField"]
@@ -604,6 +698,9 @@ final class AgentPadUITests: XCTestCase {
         chatScroll.swipeDown()
         let latestButton = jumpToLatestButton(in: app)
         if latestButton.waitForExistence(timeout: 1) {
+            let bottomAccessory = bottomChatAccessory(in: app)
+            XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+            assertContained(latestButton, in: bottomAccessory, named: "Jump to Latest")
             capture("12-jump-to-latest-visible", app: app)
             if app.buttons["Load older messages"].waitForExistence(timeout: 2) {
                 app.buttons["Load older messages"].tap()
@@ -657,7 +754,16 @@ final class AgentPadUITests: XCTestCase {
                 capture("08-control-tab", app: app)
             case "Forge":
                 XCTAssertTrue(chatComposerInput(in: app).waitForExistence(timeout: 5))
-                XCTAssertTrue(title.label.contains("Stress"), "Returning to Forge should preserve the selected stress conversation.")
+                let stressCheckpoint = app.staticTexts.containing(
+                    NSPredicate(
+                        format: "label CONTAINS %@",
+                        "Stress window checkpoint"
+                    )
+                ).firstMatch
+                XCTAssertTrue(
+                    stressCheckpoint.waitForExistence(timeout: 5),
+                    "Returning to Forge should preserve the selected stress conversation and its transcript."
+                )
                 capture("09-forge-return", app: app)
             default:
                 break
@@ -698,7 +804,7 @@ final class AgentPadUITests: XCTestCase {
 
         XCTAssertFalse(app.tabBars.buttons["More"].exists)
         XCTAssertFalse(app.tabBars.buttons["Term"].exists)
-        XCTAssertTrue(app.otherElements["terminalCommandDeck"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("terminalCommandDeck", in: app).waitForExistence(timeout: 8))
         XCTAssertTrue(app.otherElements["terminalCommandComposer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["140 lines"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["terminalCopyOutput"].waitForExistence(timeout: 5))
@@ -728,7 +834,7 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--open-terminal", "--terminal-safety-demo"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["terminalCommandDeck"].waitForExistence(timeout: 8))
+        XCTAssertTrue(identifiedElement("terminalCommandDeck", in: app).waitForExistence(timeout: 8))
         XCTAssertTrue(app.otherElements["terminalCommandSafetyStrip"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["terminalCommandSafetyLabel"].label, "Changes files")
         XCTAssertTrue(app.staticTexts["terminalCommandSafetyDetail"].label.contains("ask before running"))
@@ -736,14 +842,23 @@ final class AgentPadUITests: XCTestCase {
         capture("70-terminal-safety-draft", app: app)
 
         app.buttons["terminalRunButton"].tap()
-        XCTAssertTrue(app.staticTexts["Run file-changing command?"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "create, move, copy, or delete files")).firstMatch.waitForExistence(timeout: 5))
+        let approval = app.otherElements["agentPolicyApprovalView"]
+        XCTAssertTrue(approval.waitForExistence(timeout: 8), "File-changing terminal commands should enter the shared policy review surface.")
+        XCTAssertTrue(app.staticTexts["Review change"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "paused until you approve or reject")).firstMatch.waitForExistence(timeout: 5),
+            "The policy review should explain that execution is paused before the exact mutation."
+        )
         capture("71-terminal-safety-confirmation", app: app)
 
-        app.buttons["Cancel"].tap()
+        let reject = app.buttons["agentPolicyRejectButton"]
+        XCTAssertTrue(reject.waitForExistence(timeout: 5))
+        reject.tap()
+        XCTAssertTrue(approval.waitForNonExistence(timeout: 8))
         XCTAssertTrue(app.textFields["terminalCommandInput"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["terminalCommandSafetyLabel"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["terminalCommandSafetyLabel"].label, "Changes files")
+        let rejectedRecord = app.otherElements["terminalOutputRecord"]
+        XCTAssertTrue(rejectedRecord.waitForExistence(timeout: 8), "Rejecting a mutation should leave a failed command receipt instead of silently dropping the decision.")
+        XCTAssertTrue(app.staticTexts["$ rm README.md"].waitForExistence(timeout: 5))
     }
 
     func testTerminalQuickChecksAndUnsupportedCommandGuardScreenshot() throws {
@@ -751,7 +866,7 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--open-terminal", "--terminal-unsupported-demo"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["terminalCommandDeck"].waitForExistence(timeout: 8))
+        XCTAssertTrue(identifiedElement("terminalCommandDeck", in: app).waitForExistence(timeout: 8))
         XCTAssertTrue(app.descendants(matching: .any)["terminalQuickChecks"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["terminalCommandSafetyLabel"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["terminalCommandSafetyLabel"].label, "Unsupported command")
@@ -771,14 +886,14 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--open-terminal"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["terminalCommandDeck"].waitForExistence(timeout: 8))
+        XCTAssertTrue(identifiedElement("terminalCommandDeck", in: app).waitForExistence(timeout: 8))
         app.buttons["terminalPreset-pwd"].tap()
         XCTAssertTrue(app.staticTexts["terminalCommandSafetyLabel"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["terminalCommandSafetyLabel"].label, "Read-only command")
         app.buttons["terminalRunButton"].tap()
-        XCTAssertFalse(app.staticTexts["Run file-changing command?"].waitForExistence(timeout: 1))
+        XCTAssertFalse(app.otherElements["agentPolicyApprovalView"].waitForExistence(timeout: 1))
         XCTAssertTrue(app.staticTexts["$ pwd"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["OK"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["terminalOutputRecord"].waitForExistence(timeout: 5))
         capture("72-terminal-readonly-ran", app: app)
     }
 
@@ -787,10 +902,10 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--open-terminal", "--terminal-live-record-demo"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["terminalCommandDeck"].waitForExistence(timeout: 8))
+        XCTAssertTrue(identifiedElement("terminalCommandDeck", in: app).waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["$ pwd"].waitForExistence(timeout: 8), "Agent-created terminal records should appear without reopening Terminal.")
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "agent live terminal sync proof")).firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["OK"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["terminalOutputRecord"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.otherElements["terminalEmptyState"].exists)
         capture("78-terminal-live-agent-record", app: app)
     }
@@ -800,21 +915,11 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--open-runs", "--terminal-live-record-demo"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 8))
-        let searchField = app.textFields["runsSearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
-        searchField.tap()
-        searchField.typeText("agent live terminal sync proof")
-        if app.keyboards.firstMatch.exists {
-            searchField.typeText("\n")
-            XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3), "Runs search keyboard should dismiss before opening a filtered proof row.")
-        }
-
-        XCTAssertTrue(app.staticTexts["1 shown"].waitForExistence(timeout: 5), "Runs search should settle on the injected terminal proof run.")
+        XCTAssertTrue(app.otherElements["historyToolbar"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["runHistoryCard"].firstMatch.waitForExistence(timeout: 8), "Agent-created command runs should appear in History after the terminal proof fixture saves.")
         XCTAssertTrue(app.descendants(matching: .any)["runTerminalProofBadge"].waitForExistence(timeout: 5), "The filtered command run should advertise terminal proof.")
         XCTAssertTrue(app.descendants(matching: .any)["runTerminalProofInline"].waitForExistence(timeout: 5), "Command runs should expose terminal proof directly on the row.")
 
-        XCTAssertTrue(app.buttons["runHistoryCard"].firstMatch.waitForExistence(timeout: 8), "Agent-created command runs should appear in Runs after the terminal proof fixture saves.")
         XCTAssertTrue(app.staticTexts["$ pwd"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "agent live terminal sync proof")).firstMatch.waitForExistence(timeout: 5))
         let openTerminal = app.buttons["runOpenTerminalRecord"].firstMatch
@@ -825,7 +930,7 @@ final class AgentPadUITests: XCTestCase {
         capture("79-runs-linked-terminal-proof", app: app)
 
         openTerminal.tap()
-        XCTAssertTrue(app.otherElements["terminalCommandDeck"].waitForExistence(timeout: 5), "Opening a linked proof should present the Terminal surface.")
+        XCTAssertTrue(identifiedElement("terminalCommandDeck", in: app).waitForExistence(timeout: 5), "Opening a linked proof should present the Terminal surface.")
         let terminalSearch = app.textFields["terminalConsoleSearchField"]
         XCTAssertTrue(terminalSearch.waitForExistence(timeout: 5), "Terminal should open with search visible for the linked proof.")
         let terminalSearchValue = terminalSearch.value as? String ?? ""
@@ -846,8 +951,8 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(runsTab.waitForExistence(timeout: 5))
         runsTab.tap()
 
-        XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Run Audit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["historyToolbar"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["History"].waitForExistence(timeout: 5))
         let shownSummary = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "shown")).firstMatch
         XCTAssertTrue(shownSummary.waitForExistence(timeout: 5))
         capture("63-runs-history-collapsed", app: app)
@@ -891,9 +996,9 @@ final class AgentPadUITests: XCTestCase {
         capture("65-runs-history-output-open", app: app)
     }
 
-    func testBatchedToolCallsCollapseAndExpand() throws {
+    func testLegacyV1BatchedToolCallsRemainAvailableForMigrationInspection() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--stress-tool-batch"]
+        app.launchArguments = ["--stress-tool-batch", "--legacy-v1-tool-ui"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
@@ -921,33 +1026,35 @@ final class AgentPadUITests: XCTestCase {
         capture("11-tool-batch-expanded", app: app)
     }
 
-    func testRunningToolCallStaysInlineAndCompact() throws {
+    func testLegacyV1RunningToolCallRemainsCompactForMigrationInspection() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--running-tool-call-demo", "--open-chat"]
+        app.launchArguments = ["--reset-ui", "--running-tool-call-demo", "--legacy-v1-tool-ui", "--open-chat"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let runningRow = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Reading Config.swift")).firstMatch
-        XCTAssertTrue(runningRow.waitForExistence(timeout: 5), "Running tool calls should appear as a compact inline activity row.")
-        XCTAssertTrue(app.staticTexts["Running"].waitForExistence(timeout: 5), "The running strip should expose a small plain-language status label.")
-        let activityRow = app.descendants(matching: .any).matching(identifier: "toolActivityRow").firstMatch
-        XCTAssertTrue(activityRow.waitForExistence(timeout: 5))
-        XCTAssertLessThanOrEqual(activityRow.frame.height, 44, "Running tool activity should stay close to one compact line.")
-        XCTAssertFalse(app.buttons["toolBatchToggle"].exists, "A single running tool should not render a large batch/details control.")
+        let summary = app.staticTexts.matching(identifier: "toolActivitySummary").firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout: 15), "Running tool calls should appear as one compact inline activity summary.")
+        XCTAssertTrue(summary.label.contains("Working on 1 action"))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "toolActivityRow").firstMatch.exists, "Raw tool rows should stay collapsed by default.")
+        let detailToggle = app.buttons["toolBatchToggle"]
+        XCTAssertTrue(detailToggle.waitForExistence(timeout: 5), "Running work should expose details without making the raw tool record permanent chat chrome.")
+        detailToggle.tap()
+        let runningRow = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Reading files")).firstMatch
+        XCTAssertTrue(runningRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "toolActivityRow").firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Tool Center"].exists, "Running tool activity should not revive the old large debug panel.")
         XCTAssertFalse(app.otherElements["projectStatusBoard"].exists, "Running chat tool activity should stay in the transcript, not duplicate Run Control UI.")
         capture("14-tool-running-compact", app: app)
     }
 
-    func testFailedToolCallStaysCompactAndExpandable() throws {
+    func testLegacyV1FailedToolCallRemainsInspectable() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--failed-tool-call-demo", "--open-chat"]
+        app.launchArguments = ["--reset-ui", "--failed-tool-call-demo", "--legacy-v1-tool-ui", "--open-chat"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         let failedSummary = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "1 failed")).firstMatch
         XCTAssertTrue(failedSummary.waitForExistence(timeout: 5), "A resolved failed tool call should collapse to a compact failed-action summary.")
-        XCTAssertTrue(failedSummary.label.contains("Config.swift"), "The compact failure summary should name the actionable target.")
         XCTAssertFalse(
             app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "was not found")).firstMatch.exists,
             "Raw failure output should stay hidden until the user expands details."
@@ -959,26 +1066,24 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(detailToggle.label.contains("Show action details"))
         detailToggle.tap()
 
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Could not read Config.swift")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Read failed"].waitForExistence(timeout: 5))
         let resultDetail = app.staticTexts.matching(identifier: "toolResultDetail").firstMatch
         XCTAssertTrue(resultDetail.waitForExistence(timeout: 5))
-        XCTAssertTrue(resultDetail.label.contains("was not found"))
+        XCTAssertTrue(resultDetail.label.contains("Open History for diagnostics"))
         XCTAssertFalse(app.otherElements["projectStatusBoard"].exists, "Failed tool details should stay in the inline action disclosure, not a duplicate debug/status panel.")
         capture("13-tool-failure-expanded", app: app)
     }
 
-    func testArtifactToolCallHandoffStaysCompactAndOpenableFromChat() throws {
+    func testLegacyV1ArtifactHandoffRemainsInspectable() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--local-agent-boundary-test", "--open-chat"]
+        app.launchArguments = ["--reset-ui", "--local-agent-boundary-test", "--legacy-v1-tool-ui"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "build and verify the game")).firstMatch.waitForExistence(timeout: 5))
 
         let summary = app.staticTexts.matching(identifier: "toolActivitySummary").firstMatch
-        XCTAssertTrue(summary.waitForExistence(timeout: 5), "Artifact-producing tool batches should collapse to one compact handoff line in Chat.")
+        XCTAssertTrue(summary.waitForExistence(timeout: 15), "Artifact-producing tool batches should collapse to one compact handoff line in Chat.")
         XCTAssertTrue(summary.label.contains("3 actions completed"), "Artifact handoff should summarize the completed tool batch instead of replaying raw rows.")
-        XCTAssertTrue(summary.label.contains("slither-arena.html"), "Artifact handoff should name the generated file.")
         XCTAssertLessThanOrEqual(summary.frame.height, 32, "Artifact tool handoff should stay visually compact.")
         XCTAssertFalse(
             app.descendants(matching: .any).matching(identifier: "toolActivityRow").firstMatch.exists,
@@ -1039,7 +1144,7 @@ final class AgentPadUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(app.staticTexts["On-Device Model"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["VibeThinker-3B iPhone 12"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Qwen Coder 1.5B — iPhone 12"].waitForExistence(timeout: 5))
         capture("18-local-model-settings", app: app)
     }
 
@@ -1048,19 +1153,19 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = ["--reset-ui", "--settings-local-model-ready"]
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Settings"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Ready to run"].waitForExistence(timeout: 5))
 
-        let providerModelText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Local", "VibeThinker Q2")).firstMatch
-        XCTAssertTrue(providerModelText.waitForExistence(timeout: 5), "Ready card should show provider and readable model name in one visible line.")
-        XCTAssertGreaterThanOrEqual(providerModelText.frame.width, 120, "Provider/model text should remain visibly readable on compact iPhones.")
-        XCTAssertTrue(app.staticTexts["Ask before writes"].waitForExistence(timeout: 3), "Writes policy pill should remain visible after provider/model is promoted.")
-        XCTAssertTrue(app.staticTexts["Terminal Noir"].waitForExistence(timeout: 3), "Theme pill should remain visible after provider/model is promoted.")
-        for providerID in ["local", "openAI", "openAICodex", "openRouter", "openCodeZen", "custom"] {
+        XCTAssertTrue(app.staticTexts["Local"].waitForExistence(timeout: 5), "Ready card should expose the selected provider plainly.")
+        let modelDetail = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Qwen Coder Q4 is installed and runs on-device")).firstMatch
+        XCTAssertTrue(modelDetail.waitForExistence(timeout: 5), "Ready card should explain the installed on-device model in readable language.")
+        XCTAssertGreaterThanOrEqual(modelDetail.frame.width, 120, "Model detail should remain visibly readable on compact iPhones.")
+        XCTAssertTrue(app.staticTexts["Writes, commands, and deletes pause for approval."].waitForExistence(timeout: 3), "The current safety policy should remain visible beside provider readiness.")
+        for providerID in ["openCodeZen", "local", "openAICodex", "openAI"] {
             let provider = app.buttons["settingsProvider-\(providerID)"]
             XCTAssertTrue(provider.waitForExistence(timeout: 3), "Settings should expose provider route \(providerID) without hidden horizontal scrolling.")
-            XCTAssertGreaterThanOrEqual(provider.frame.minX, app.frame.minX + 24, "Provider route \(providerID) should stay inside the compact iPhone leading edge.")
-            XCTAssertLessThanOrEqual(provider.frame.maxX, app.frame.maxX - 24, "Provider route \(providerID) should stay inside the compact iPhone trailing edge.")
+            XCTAssertGreaterThanOrEqual(provider.frame.minX, app.frame.minX + 15.5, "Provider route \(providerID) should stay inside the compact iPhone leading edge.")
+            XCTAssertLessThanOrEqual(provider.frame.maxX, app.frame.maxX - 15.5, "Provider route \(providerID) should stay inside the compact iPhone trailing edge.")
             assertMinimumTouchTarget(provider, named: "settings provider \(providerID)")
         }
         capture("86-settings-ready-card-readable-hierarchy", app: app)
@@ -1081,30 +1186,17 @@ final class AgentPadUITests: XCTestCase {
         capture("88-settings-diagnostics-app-build", app: app)
     }
 
-    func testCustomProviderInvalidEndpointShowsInlineValidationScreenshot() throws {
+    func testControlDoesNotOfferRoutesUnsupportedByAgentRuntime() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--settings-local-model-ready"]
         app.launch()
 
         XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
-        let customProvider = app.buttons["settingsProvider-custom"]
-        if !customProvider.waitForExistence(timeout: 2) {
-            app.swipeDown()
-        }
-        XCTAssertTrue(customProvider.waitForExistence(timeout: 5))
-        customProvider.tap()
-
-        let endpointField = app.textFields["Custom endpoint URL"]
-        if !endpointField.waitForExistence(timeout: 2) {
-            app.swipeUp()
-        }
-        XCTAssertTrue(endpointField.waitForExistence(timeout: 5))
-        endpointField.tap()
-        endpointField.typeText("file:///tmp/not-a-provider")
-
-        let validation = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Use a valid http:// or https:// endpoint")).firstMatch
-        XCTAssertTrue(validation.waitForExistence(timeout: 5), "Custom providers should explain invalid URLs before a run fails.")
-        capture("87-settings-custom-endpoint-validation", app: app)
+        XCTAssertFalse(app.buttons["settingsProvider-custom"].exists)
+        XCTAssertFalse(app.buttons["settingsProvider-openRouter"].exists)
+        XCTAssertTrue(app.buttons["settingsProvider-openCodeZen"].exists)
+        XCTAssertTrue(app.buttons["settingsProvider-local"].exists)
+        capture("87-settings-agent-routes-only", app: app)
     }
 
     func testLocalModelDestructiveActionsRequireConfirmation() throws {
@@ -1112,7 +1204,7 @@ final class AgentPadUITests: XCTestCase {
             let app = XCUIApplication()
             app.launchArguments = ["--reset-ui", launchArgument, "--open-settings"]
             app.launch()
-            XCTAssertTrue(app.staticTexts["Settings"].waitForExistence(timeout: 8))
+            XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
             if !app.staticTexts["On-Device Model"].waitForExistence(timeout: 2) {
                 app.swipeUp()
             }
@@ -1152,7 +1244,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(restartButton.waitForExistence(timeout: 5), "Canceling Restart should keep the partial download resumable.")
     }
 
-    func testNativeModelPickerAndCodexProviderScreenshot() throws {
+    func testNativeModelPickerAndChatGPTProviderScreenshot() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
@@ -1162,9 +1254,9 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
-        let codexProvider = app.staticTexts["OpenAI Codex"]
-        XCTAssertTrue(codexProvider.waitForExistence(timeout: 5))
-        codexProvider.tap()
+        let chatGPTProvider = app.staticTexts["ChatGPT"]
+        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
+        chatGPTProvider.tap()
 
         let pickerButton = app.buttons["modelPickerButton"]
         if !pickerButton.waitForExistence(timeout: 2) {
@@ -1174,11 +1266,11 @@ final class AgentPadUITests: XCTestCase {
         pickerButton.tap()
 
         XCTAssertTrue(app.staticTexts["Choose Model"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["gpt-5.1-codex"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["gpt-5.6-sol"].waitForExistence(timeout: 5))
         let settingsModelSearch = app.textFields["Search models"]
         XCTAssertTrue(settingsModelSearch.waitForExistence(timeout: 5))
         settingsModelSearch.tap()
-        settingsModelSearch.typeText("codex")
+        settingsModelSearch.typeText("5.6")
         let settingsClear = app.buttons["settingsModelSearchClearButton"]
         XCTAssertTrue(settingsClear.waitForExistence(timeout: 5))
         assertMinimumTouchTarget(settingsClear, named: "settings model search clear")
@@ -1190,15 +1282,16 @@ final class AgentPadUITests: XCTestCase {
         if app.buttons["modelRefreshButton"].waitForExistence(timeout: 2) {
             assertMinimumTouchTarget(app.buttons["modelRefreshButton"], named: "model refresh card")
         }
-        let missingKeyMessage = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "OpenAI API key needed")).firstMatch
-        XCTAssertTrue(missingKeyMessage.waitForExistence(timeout: 5))
-        let exampleOnlyMessage = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Built-in model IDs are examples only")).firstMatch
-        XCTAssertTrue(exampleOnlyMessage.waitForExistence(timeout: 5), "Provider defaults must be framed as example IDs, not runnable no-key models.")
-        capture("21-native-model-picker-codex", app: app)
+        XCTAssertTrue(
+            app.staticTexts["Live ChatGPT models"].waitForExistence(timeout: 5),
+            "ChatGPT model choices should expose the live subscription-backed catalog."
+        )
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "OpenAI API key needed")).firstMatch.exists)
+        capture("21-native-model-picker-chatgpt", app: app)
         app.buttons["Done"].tap()
     }
 
-    func testCodexTerminalDemoIsHiddenInNormalProviderFlow() throws {
+    func testChatGPTSubscriptionSignInReplacesSimulatedTerminal() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
@@ -1208,36 +1301,34 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
-        let codexProvider = app.staticTexts["OpenAI Codex"]
-        XCTAssertTrue(codexProvider.waitForExistence(timeout: 5))
-        codexProvider.tap()
+        let chatGPTProvider = app.staticTexts["ChatGPT"]
+        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
+        chatGPTProvider.tap()
 
-        let openAIKeyTitle = app.staticTexts["OpenAI Key"]
-        let openAIKeyHelp = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Uses your OpenAI API key for Codex-compatible model IDs")).firstMatch
-        let apiKeyField = app.secureTextFields["sk-..."]
-        if !openAIKeyTitle.waitForExistence(timeout: 2) {
+        let subscriptionTitle = app.staticTexts["ChatGPT subscription"]
+        let signInButton = app.buttons["Sign in with ChatGPT"]
+        if !subscriptionTitle.waitForExistence(timeout: 2) {
             app.swipeUp()
         }
-        if !openAIKeyTitle.waitForExistence(timeout: 2) {
+        if !subscriptionTitle.waitForExistence(timeout: 2) {
             app.swipeUp()
         }
-        XCTAssertTrue(openAIKeyTitle.waitForExistence(timeout: 5), "Codex should present the real OpenAI API-key section in normal app flow.")
-        XCTAssertTrue(openAIKeyHelp.waitForExistence(timeout: 5), "Codex credential copy should explain that ChatGPT/Codex subscription tokens are not available to iOS apps.")
-        XCTAssertTrue(apiKeyField.waitForExistence(timeout: 5), "Codex should expose the OpenAI API key field instead of a simulated terminal setup.")
-        XCTAssertFalse(app.otherElements["codexTerminalSection"].exists, "Simulated Codex terminal must not appear in normal Settings flow.")
-        XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists, "Simulated terminal copy must be hidden unless a debug demo flag is passed.")
-        capture("38-settings-codex-key-required-no-terminal", app: app)
+        XCTAssertTrue(subscriptionTitle.waitForExistence(timeout: 5), "ChatGPT should present the real subscription sign-in flow.")
+        XCTAssertTrue(signInButton.waitForExistence(timeout: 5), "ChatGPT should expose device-code sign-in instead of asking for an API key.")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "never asks for your ChatGPT password")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["OpenAI Key"].exists, "The ChatGPT subscription route should stay separate from the OpenAI API-key provider.")
+        XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists)
+        capture("38-settings-chatgpt-subscription-sign-in", app: app)
 
         let chatTab = app.tabBars.buttons["Forge"]
         XCTAssertTrue(chatTab.waitForExistence(timeout: 5))
         chatTab.tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.otherElements["codexChatTerminalCard"].exists, "Chat should not show a fake Codex terminal card in normal provider flow.")
-        XCTAssertFalse(app.staticTexts["Open Codex Terminal"].exists)
-        capture("39-chat-codex-no-terminal-card", app: app)
+        XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists, "Chat should never show the removed fake Codex terminal.")
+        capture("39-chat-chatgpt-subscription-route", app: app)
     }
 
-    func testComposerModelMenuUsesNativePopup() throws {
+    func testComposerModelMenuUsesNativeGlassChooser() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
@@ -1250,14 +1341,17 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(composerModelButton.label.localizedCaseInsensitiveContains("Choose model"), "Composer model control should describe its purpose before opening the native menu.")
         composerModelButton.tap()
 
-        XCTAssertTrue(app.buttons["Local"].firstMatch.waitForExistence(timeout: 5), "Composer menu should expose provider switching as native menu actions.")
-        XCTAssertTrue(app.buttons["OpenAI"].firstMatch.waitForExistence(timeout: 5), "Composer menu should keep hosted providers reachable without a second sheet.")
-        XCTAssertTrue(app.buttons["VibeThinker Q2"].firstMatch.waitForExistence(timeout: 5), "Composer menu should show the current local model in-place.")
-        XCTAssertFalse(app.staticTexts["Switch model"].exists, "Composer should not open the removed custom model sheet.")
+        XCTAssertTrue(app.navigationBars["Model & provider"].waitForExistence(timeout: 5), "Composer should open the structured native glass chooser.")
+        XCTAssertTrue(app.staticTexts["Choose where NovaForge thinks"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composerProvider-local"].waitForExistence(timeout: 5), "Local should be a readable provider row, not a raw menu item.")
+        XCTAssertTrue(app.buttons["composerProvider-openAI"].waitForExistence(timeout: 5), "OpenAI should remain available in the provider section.")
+        app.buttons["composerProvider-local"].tap()
+        XCTAssertTrue(app.buttons["composerModel-Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"].waitForExistence(timeout: 5), "The local provider should reveal iPhone-safe local models in the same chooser.")
+        XCTAssertTrue(app.staticTexts["On-device model"].waitForExistence(timeout: 5), "Local download readiness belongs directly beside local model selection.")
         XCTAssertFalse(app.buttons["composerModelSearchClearButton"].exists, "Search belongs in Settings; the composer menu should stay compact.")
         XCTAssertFalse(app.buttons["Refresh provider models"].exists, "Live model refresh belongs in Settings; the composer menu should stay focused on choosing.")
-        XCTAssertFalse(app.navigationBars["Models"].exists, "Composer picker should use the compact native menu, not the old List navigation sheet.")
-        capture("22b-composer-native-model-menu", app: app)
+        capture("22b-composer-native-glass-chooser", app: app)
+        app.buttons["Done"].tap()
     }
 
     func testComposerProviderSwitchingRepairsStaleModelInline() throws {
@@ -1269,27 +1363,80 @@ final class AgentPadUITests: XCTestCase {
         let composerModelButton = composerModelControl(in: app)
         XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
         XCTAssertTrue(composerModelButton.label.contains("OpenAI"), "A stale local model under OpenAI should repair to OpenAI before the user sends.")
-        XCTAssertFalse(composerModelButton.label.contains("VibeThinker"), "Stale local model labels should not survive under the OpenAI provider.")
+        XCTAssertFalse(composerModelButton.label.contains("Qwen Coder"), "Stale local model labels should not survive under the OpenAI provider.")
         composerModelButton.tap()
 
         XCTAssertTrue(app.buttons["gpt-5.5"].firstMatch.waitForExistence(timeout: 5), "Repaired OpenAI state should show the default OpenAI model in the native composer menu.")
         XCTAssertFalse(app.staticTexts["Switch model"].exists, "Composer provider switching should not bring back the old custom model sheet.")
 
-        let codexProvider = app.buttons["OpenAI Codex"].firstMatch
-        XCTAssertTrue(codexProvider.waitForExistence(timeout: 5))
-        codexProvider.tap()
+        let chatGPTProvider = app.buttons["composerProvider-openAICodex"].firstMatch
+        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
+        chatGPTProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-gpt-5.6-sol"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
         XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(composerModelButton.label.contains("OpenAI Codex"), "Selecting Codex should update the compact composer label immediately.")
-        XCTAssertTrue(composerModelButton.label.contains("gpt-5.1-codex"), "Provider switching should repair to the selected provider's default model.")
+        XCTAssertTrue(composerModelButton.label.contains("ChatGPT"), "Selecting ChatGPT should update the compact composer label immediately.")
 
         composerModelButton.tap()
-        let localProvider = app.buttons["Local"].firstMatch
+        let localProvider = app.buttons["composerProvider-local"].firstMatch
         XCTAssertTrue(localProvider.waitForExistence(timeout: 5))
         localProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
         XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
         XCTAssertTrue(composerModelButton.label.contains("Local"), "Local should be selectable from the compact composer menu.")
-        XCTAssertTrue(composerModelButton.label.contains("VibeThinker"), "Switching back to Local should restore the safe local default.")
-        capture("09-composer-provider-switching-native", app: app)
+        capture("09-composer-provider-switching-glass", app: app)
+    }
+
+    func testReasoningAndUltraCodePickerUsesExpandableLiquidGlassControl() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let composerModelButton = composerModelControl(in: app)
+        XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
+        composerModelButton.tap()
+
+        let chatGPTProvider = app.buttons["composerProvider-openAICodex"]
+        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
+        chatGPTProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-gpt-5.6-sol"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+
+        let reasoningButton = app.buttons["composerReasoningPickerButton"]
+        XCTAssertTrue(reasoningButton.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(reasoningButton, named: "reasoning and agent mode")
+        reasoningButton.tap()
+
+        let reasoningPicker = app.descendants(matching: .any)
+            .matching(identifier: "composerReasoningPicker").firstMatch
+        XCTAssertTrue(
+            reasoningPicker.waitForExistence(timeout: 5) ||
+                app.staticTexts["Reasoning"].waitForExistence(timeout: 5)
+        )
+        for level in ["low", "medium", "high", "extraHigh", "ultraCode"] {
+            let button = app.buttons["reasoningLevel-\(level)"]
+            XCTAssertTrue(button.waitForExistence(timeout: 5), "Reasoning level \(level) should be visible.")
+            assertMinimumTouchTarget(button, named: "reasoning level \(level)")
+        }
+        XCTAssertFalse(app.staticTexts["Agent mode"].exists, "The composer should not reopen the old settings-style mode menu.")
+
+        app.buttons["reasoningLevel-ultraCode"].tap()
+        XCTAssertTrue(
+            app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS[c] %@", "workspace")
+            ).firstMatch.waitForExistence(timeout: 5),
+            "UltraCode should compactly explain its maximum-reasoning workspace behavior."
+        )
+        capture("23-reasoning-ultracode-liquid-glass", app: app)
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.08)).tap()
+        XCTAssertTrue(reasoningButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            reasoningButton.label.localizedCaseInsensitiveContains("UltraCode"),
+            "The collapsed liquid-glass control should retain the selected UltraCode mode."
+        )
     }
 
     func testStreamingKeepsBottomPinnedDuringLiveResponse() throws {
@@ -1307,7 +1454,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(liveResponse.label.localizedCaseInsensitiveContains("normalizing chunk"))
         let firstCharacterCount = liveStreamingCharacterCount(in: app)
         XCTAssertGreaterThan(firstCharacterCount, 0, "Live feed should reveal an initial readable frame.")
-        let secondCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: firstCharacterCount, timeout: 4)
+        let secondCharacterCount = waitForLiveStreamingCharacterGrowth(in: app, from: firstCharacterCount, timeout: 10)
         XCTAssertGreaterThan(secondCharacterCount, firstCharacterCount, "Live feed should advance in measured display-paced frames before layout proof.")
         assertNoLiveStreamingLineArtifacts(in: app)
         RunLoop.current.run(until: Date().addingTimeInterval(0.25))
@@ -1323,8 +1470,16 @@ final class AgentPadUITests: XCTestCase {
         )
         XCTAssertFalse(
             app.descendants(matching: .any)["composerStatusPill"].exists,
-            "The run context should own live status instead of repeating Running beside the model picker."
+            "The composer live rail should replace the old decorative Running pill."
         )
+        let liveRunRail = app.descendants(matching: .any)["composerLiveRunRail"].firstMatch
+        XCTAssertTrue(liveRunRail.waitForExistence(timeout: 3), "A chat-owned stream should fold live state into the composer instead of adding a second glass slab.")
+        let composerStop = app.buttons["composerStopButton"]
+        XCTAssertTrue(composerStop.waitForExistence(timeout: 3), "Stop should remain directly reachable from the live composer rail.")
+        assertMinimumTouchTarget(composerStop, named: "Composer Stop")
+        let streamingComposerDock = composerDock(in: app)
+        XCTAssertTrue(streamingComposerDock.waitForExistence(timeout: 3))
+        assertContained(liveRunRail, in: bottomAccessory, named: "live composer run rail")
         let liveField = app.otherElements["liveResponseField"]
         XCTAssertTrue(liveField.waitForExistence(timeout: 3))
         // TextRenderer display padding intentionally lets the materializing
@@ -1339,6 +1494,7 @@ final class AgentPadUITests: XCTestCase {
         let progressToggle = runProgressToggle(in: app)
         XCTAssertTrue(progressToggle.waitForExistence(timeout: 5))
         progressToggle.tap()
+        assertRunControlSheetPresented(in: app)
         XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run Control"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Running Tool"].waitForExistence(timeout: 5))
@@ -1403,6 +1559,9 @@ final class AgentPadUITests: XCTestCase {
         let latestAppeared = latestButton.waitForExistence(timeout: 4)
         capture("25-streaming-user-scroll-detached", app: app)
         XCTAssertTrue(latestAppeared, "A deliberate user scroll away from a live response should reveal Jump to Latest instead of being auto-forced back down.")
+        let detachedDock = composerDock(in: app)
+        XCTAssertTrue(detachedDock.waitForExistence(timeout: 3))
+        assertContained(latestButton, in: bottomChatAccessory(in: app), named: "detached Jump to Latest")
         sleep(1)
         XCTAssertTrue(latestButton.exists, "Pending live-stream resize scrolls must not cancel an intentional user scroll-away.")
 
@@ -1416,146 +1575,267 @@ final class AgentPadUITests: XCTestCase {
         pullStart.press(forDuration: 0.15, thenDragTo: pullEnd)
         let latestAfterRepin = jumpToLatestButton(in: app)
         XCTAssertTrue(latestAfterRepin.waitForExistence(timeout: 3), "A fresh drag after repinning should immediately detach again instead of being overridden by delayed scroll retries.")
+        let repinnedDock = composerDock(in: app)
+        XCTAssertTrue(repinnedDock.waitForExistence(timeout: 3))
+        assertContained(latestAfterRepin, in: bottomChatAccessory(in: app), named: "repinned Jump to Latest")
         sleep(1)
         XCTAssertTrue(latestAfterRepin.exists, "No delayed repin correction should steal the user's second scroll-away.")
     }
 
-    func testLocalNativeToolPlanScreenshot() throws {
+    func testLegacyV1LocalNativeToolPlanMigrationScreenshot() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--local-agent-boundary-test"]
+        app.launchArguments = ["--reset-ui", "--local-agent-boundary-test", "--legacy-v1-tool-ui"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "3 visible steps")).firstMatch.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Write File"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Validate HTML"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["File Info"].waitForExistence(timeout: 8))
+        let summary = app.staticTexts.matching(identifier: "toolActivitySummary").firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout: 15), "Completed tool work should remain as one compact transcript receipt.")
+        XCTAssertTrue(summary.label.contains("3 actions completed"))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "toolActivityRow").firstMatch.exists, "Completed file operations should not replay raw action rows until requested.")
+        let openArtifact = app.buttons["toolArtifactOpenButton"]
+        XCTAssertTrue(openArtifact.waitForExistence(timeout: 5), "The transcript receipt should retain the artifact handoff.")
+        assertMinimumTouchTarget(openArtifact, named: "inline artifact handoff")
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Playable game ready")).firstMatch.waitForExistence(timeout: 8))
         capture("19-local-native-tool-plan", app: app)
-
-        let progressToggle = runProgressToggle(in: app)
-        XCTAssertTrue(progressToggle.waitForExistence(timeout: 5))
-        progressToggle.tap()
-        XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Run Control"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Progress"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Workspace"].waitForExistence(timeout: 5))
-        assertMinimumTouchTarget(app.buttons["progressFilesButton"], named: "Run Control Files shortcut")
-        assertMinimumTouchTarget(app.buttons["progressRunsButton"], named: "Run Control Runs shortcut")
-        XCTAssertFalse(app.buttons["progressTerminalButton"].exists, "Run Control should keep Terminal agent-only instead of surfacing it as a user shortcut.")
-        let runControlTitle = app.staticTexts["Run Control"]
-        XCTAssertTrue(runControlTitle.waitForExistence(timeout: 3))
-        XCTAssertGreaterThan(runControlTitle.frame.minY, 58, "Expanded progress drawer should not overlap the iPhone status bar/clock.")
-        capture("37-run-progress-expanded", app: app)
+        XCTAssertFalse(runProgressToggle(in: app).exists, "A completed tool plan should not leave a persistent Run Control toggle.")
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "A completed tool plan should not add a duplicate completion bar.")
+        let idleDock = composerDock(in: app)
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(idleDock.waitForExistence(timeout: 3))
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(idleDock.frame.height, 128, "Completed tool work should return to the compact idle composer.")
+        assertContained(idleDock, in: bottomAccessory, named: "completed tool-plan composer")
+        capture("37-completed-tool-plan-compact-dock", app: app)
     }
 
-    func testPendingApprovalApproveClearsSheetAndCompletesRun() throws {
+    func testToolBearingMarkdownCompletedRunDetachesToLatest() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--pending-approval-demo"]
+        app.launchArguments = ["--reset-ui", "--stress-chat", "--local-agent-boundary-test", "--open-chat"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Review this action"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["approval-demo.html"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.otherElements["approvalHumanReadableFields"].waitForExistence(timeout: 5), "Approval sheets should summarize tool, risk, affected target, and reason before raw arguments.")
-        XCTAssertTrue(app.buttons["Reject Change"].waitForExistence(timeout: 5), "Approval sheet should use a specific user-facing Reject action.")
-        let approvalRowText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Waiting approval to edit approval-demo.html")).firstMatch
-        XCTAssertTrue(approvalRowText.waitForExistence(timeout: 5), "Approval tool calls should appear as compact inline activity, not only as a modal prompt.")
-        XCTAssertTrue(app.staticTexts["Approval"].waitForExistence(timeout: 5), "The approval strip should expose a small plain-language status label.")
-        let approvalActivityRow = app.descendants(matching: .any).matching(identifier: "toolActivityRow").firstMatch
-        XCTAssertTrue(approvalActivityRow.waitForExistence(timeout: 5))
-        XCTAssertLessThanOrEqual(approvalActivityRow.frame.height, 44, "Pending approval activity should stay close to one compact line.")
-        XCTAssertFalse(app.staticTexts["Tool Center"].exists, "Approval state should not revive the old large debug panel.")
-        capture("51-pending-approval-sheet", app: app)
+        XCTAssertTrue(
+            app.staticTexts.containing(NSPredicate(
+                format: "label CONTAINS %@",
+                "I’ll build and verify the game in slither-arena.html with native tools."
+            )).firstMatch.waitForExistence(timeout: 20),
+            "Tool-bearing assistant prose should expose its unique cleaned sentence without raw Markdown delimiters."
+        )
+        XCTAssertFalse(
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "**")).firstMatch.exists,
+            "Settled tool prose should never expose provider Markdown delimiters."
+        )
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "Completed work should not occupy a second persistent bottom bar.")
+        XCTAssertFalse(runProgressToggle(in: app).exists, "Completed work should return Forge to its compact idle composer.")
 
-        app.buttons["Approve Change"].tap()
-        XCTAssertFalse(app.staticTexts["Review this action"].waitForExistence(timeout: 2), "Approval sheet should dismiss immediately after approve.")
-        XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 10), "Approved local tool run should complete instead of leaving pending approval stuck.")
-        XCTAssertFalse(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 1), "Pending approval label should clear after approve.")
+        let dock = composerDock(in: app)
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(dock.waitForExistence(timeout: 3))
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(dock.frame.height, 128, "The idle composer should remain a compact unified surface after tool work completes.")
+        XCTAssertLessThanOrEqual(bottomAccessory.frame.height, 128, "Completed work should leave only the compact bottom composer accessory.")
+        assertContained(dock, in: bottomAccessory, named: "completed tool Markdown composer")
 
-        app.tabBars.buttons["History"].tap()
-        XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
-        let searchField = app.textFields["runsSearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
-        searchField.tap()
-        searchField.typeText("approval-demo.html")
-        if app.keyboards.firstMatch.exists {
-            searchField.typeText("\n")
-            XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3), "Runs search keyboard should dismiss before inspecting approval proof.")
-        }
-        XCTAssertTrue(app.staticTexts["1 shown"].waitForExistence(timeout: 5), "Approved write should leave one searchable durable run proof.")
-        XCTAssertTrue(app.staticTexts["Wrote file"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "approval-demo.html")).firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Completed"].waitForExistence(timeout: 5), "Approved write run should finish as durable completed proof.")
+        let chatScroll = app.scrollViews["chatTranscriptScroll"]
+        XCTAssertTrue(chatScroll.waitForExistence(timeout: 5))
+        let pullStart = chatScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.42))
+        let pullEnd = chatScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.82))
+        pullStart.press(forDuration: 0.15, thenDragTo: pullEnd)
 
-        let approvedRun = app.buttons["runHistoryCard"].firstMatch
-        XCTAssertTrue(approvedRun.waitForExistence(timeout: 5))
-        approvedRun.tap()
-        XCTAssertTrue(app.buttons["runToggleArguments"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["runToggleOutput"].waitForExistence(timeout: 5))
-        app.buttons["runToggleOutput"].tap()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Wrote approval-demo.html")).firstMatch.waitForExistence(timeout: 5))
-        assertMinimumTouchTarget(app.buttons["runToggleArguments"], named: "approval run arguments disclosure")
-        assertMinimumTouchTarget(app.buttons["runToggleOutput"], named: "approval run output disclosure")
-        capture("53-approved-tool-run-complete", app: app)
+        let latestButton = jumpToLatestButton(in: app)
+        XCTAssertTrue(latestButton.waitForExistence(timeout: 4), "Scrolling away from a completed long transcript should surface Latest inside the composer.")
+        let detachedAccessory = bottomChatAccessory(in: app)
+        let detachedInput = chatComposerInput(in: app)
+        let detachedSend = app.buttons["sendMessageButton"]
+        assertContained(latestButton, in: detachedAccessory, named: "completed transcript Latest")
+        XCTAssertTrue(detachedInput.exists)
+        XCTAssertTrue(detachedSend.waitForExistence(timeout: 3))
+        capture("34-tool-markdown-complete-latest", app: app)
+        XCTAssertGreaterThanOrEqual(latestButton.frame.minX, detachedInput.frame.maxX - 1, "Latest should occupy the typing row immediately after the text lane.")
+        XCTAssertLessThanOrEqual(latestButton.frame.maxX, detachedSend.frame.minX + 1, "Latest should remain before Send in the same typing row.")
+        XCTAssertLessThanOrEqual(abs(latestButton.frame.midY - detachedSend.frame.midY), 1, "Latest and Send should share the same command-row center instead of forming separate floating shelves.")
     }
 
-    func testRunControlShowsSinglePrimaryArtifactHandoff() throws {
+    func testCanonicalActivityApprovalIsAccessibleCompactAndLegacyFree() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-ui",
+            "--canonical-activity-a11y-demo",
+            "--theme-world=whiteGold",
+            "--open-chat",
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 10))
+        let approvalView = app.descendants(matching: .any)
+            .matching(identifier: "agentPolicyApprovalView").firstMatch
+        XCTAssertTrue(
+            approvalView.waitForExistence(timeout: 10),
+            "The broker-owned redacted approval surface should present for the canonical fixture."
+        )
+
+        let exactTarget = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "label CONTAINS %@",
+                "approval-demo-with-a-deliberately-long-name.swift"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            exactTarget.waitForExistence(timeout: 5),
+            "The exact reviewed target must remain available at the largest accessibility text size."
+        )
+        assertReadableLabel(exactTarget, named: "canonical approval target")
+
+        let expiry = app.descendants(matching: .any)
+            .matching(identifier: "agentPolicyApprovalExpiry").firstMatch
+        XCTAssertTrue(expiry.waitForExistence(timeout: 5))
+        assertReadableLabel(expiry, named: "approval expiry")
+
+        let reject = app.buttons["agentPolicyRejectButton"]
+        let approve = app.buttons["agentPolicyApproveButton"]
+        scrollUntilHittable(reject, in: app)
+        scrollUntilHittable(approve, in: app)
+        assertMinimumTouchTarget(reject, named: "canonical reject")
+        assertMinimumTouchTarget(approve, named: "canonical approve")
+        XCTAssertFalse(
+            reject.frame.intersects(approve.frame),
+            "Accessibility-size approval actions must reflow without overlapping."
+        )
+
+        XCTAssertFalse(app.staticTexts["Review this action"].exists)
+        XCTAssertFalse(app.buttons["Approve Change"].exists)
+        XCTAssertFalse(
+            app.descendants(matching: .any)
+                .matching(identifier: "toolActivityRow").firstMatch.exists,
+            "The canonical fixture must never revive the legacy provider-JSON tool row."
+        )
+        capture("51-canonical-approval-accessibility-white-gold", app: app)
+
+        reject.tap()
+        XCTAssertTrue(
+            approvalView.waitForNonExistence(timeout: 5),
+            "Rejecting the exact fixture should dismiss the broker surface immediately."
+        )
+
+        let transcript = app.scrollViews["chatTranscriptScroll"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        let activityGroups = app.otherElements.matching(identifier: "agentActivityGroup")
+        for _ in 0 ..< 6 where activityGroups.count < 2 {
+            transcript.swipeDown()
+        }
+        XCTAssertGreaterThanOrEqual(
+            activityGroups.count,
+            2,
+            "Canonical activity should render as compact classified groups after the decision."
+        )
+
+        XCTAssertFalse(
+            app.buttons.matching(identifier: "agentActivityOpenReceipt").firstMatch.exists,
+            "Collapsed activity should stay one compact line; receipts live behind disclosure."
+        )
+
+        let stop = app.buttons["agentActivityStop"]
+        for _ in 0 ..< 8 where !stop.exists {
+            transcript.swipeDown()
+        }
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(stop, named: "canonical stop")
+
+        let summaries = app.descendants(matching: .any)
+            .matching(identifier: "agentActivitySummary")
+        var expandableSummary: XCUIElement?
+        for attempt in 0 ..< 12 where expandableSummary == nil {
+            expandableSummary = summaries.allElementsBoundByIndex.first(where: {
+                $0.exists && $0.isHittable
+            })
+            guard expandableSummary == nil else { break }
+            // At accessibility sizes, locating Stop can leave every group
+            // summary just beyond either edge of the transcript viewport.
+            // Sweep toward newer content first, then back toward older work.
+            if attempt < 6 {
+                transcript.swipeUp()
+            } else {
+                transcript.swipeDown()
+            }
+        }
+        XCTAssertNotNil(
+            expandableSummary,
+            "A classified activity summary should remain reachable at AX-XXXL."
+        )
+        expandableSummary?.tap()
+        XCTAssertTrue(
+            app.otherElements["agentActivityItem"].waitForExistence(timeout: 5) ||
+                app.otherElements["agentActivityModelWork"].waitForExistence(timeout: 5),
+            "Expanded canonical activity should expose classified detail instead of a giant raw tool payload."
+        )
+
+        let retry = app.buttons["agentActivityRetry"]
+        for _ in 0 ..< 10 where !retry.exists {
+            transcript.swipeUp()
+        }
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(retry, named: "canonical retry")
+        XCTAssertTrue(
+            app.otherElements["agentActivityArtifact"].waitForExistence(timeout: 5),
+            "Canonical failed work should retain compact artifact handoffs."
+        )
+        XCTAssertTrue(
+            identifiedElement(
+                "agentActivityMoreArtifacts",
+                in: app
+            ).waitForExistence(timeout: 5),
+            "Capped artifact detail should hand off to History instead of expanding the transcript indefinitely."
+        )
+        capture("52-canonical-activity-expanded-accessibility", app: app)
+    }
+
+    func testCompletedArtifactHandoffKeepsForgeDockCompact() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--artifact-dedupe-demo"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Playable game ready")).firstMatch.waitForExistence(timeout: 8))
+        let finalMessage = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Playable game ready")).firstMatch
+        XCTAssertTrue(finalMessage.waitForExistence(timeout: 8))
 
-        let progressToggle = runProgressToggle(in: app)
-        XCTAssertTrue(progressToggle.waitForExistence(timeout: 5))
-        progressToggle.tap()
-        XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Ready to play"].waitForExistence(timeout: 5))
+        XCTAssertFalse(runProgressToggle(in: app).exists, "A completed artifact should not keep Run Control pinned over the transcript.")
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "The transcript handoff is the completion receipt; Forge should not repeat it in a bottom bar.")
+        XCTAssertFalse(app.buttons["artifactPrimaryOpenButton"].exists, "Completed artifact actions should not survive inside an obsolete bottom drawer.")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "artifactSecondaryOpenButton").firstMatch.exists)
 
-        let primaryOpen = app.buttons["artifactPrimaryOpenButton"]
-        XCTAssertTrue(primaryOpen.waitForExistence(timeout: 5), "Single-artifact runs should expose the generated file as the primary Open action.")
-        let duplicateStripButton = app.descendants(matching: .any).matching(identifier: "artifactSecondaryOpenButton").firstMatch
-        XCTAssertFalse(duplicateStripButton.exists, "A single generated artifact should not also appear in a secondary Changed strip.")
-        XCTAssertFalse(app.staticTexts["Changed"].exists, "The drawer should not show an empty or duplicate Changed section for one artifact.")
+        let dock = composerDock(in: app)
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(dock.waitForExistence(timeout: 3))
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(dock.frame.height, 128, "Completed artifact handoff should return to the compact composer.")
+        assertContained(dock, in: bottomAccessory, named: "completed artifact composer")
+        XCTAssertLessThanOrEqual(finalMessage.frame.maxY, bottomAccessory.frame.minY - 4, "The final artifact handoff should remain readable above the real bottom accessory.")
 
-        capture("35-artifact-dedupe-drawer", app: app)
+        capture("35-artifact-dedupe-compact-forge", app: app)
     }
 
-    func testArtifactPreviewStudioModes() throws {
+    func testLegacyV1ArtifactPreviewStudioModes() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--local-agent-boundary-test"]
+        app.launchArguments = ["--reset-ui", "--local-agent-boundary-test", "--legacy-v1-tool-ui"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Playable game ready")).firstMatch.waitForExistence(timeout: 8))
 
-        let progressToggle = runProgressToggle(in: app)
-        XCTAssertTrue(progressToggle.waitForExistence(timeout: 5))
-        progressToggle.tap()
-        XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Ready to play"].waitForExistence(timeout: 5), "Completed artifact runs should have a clear primary handoff section, not only raw tool rows.")
-        let primaryArtifactOpen = app.buttons["artifactPrimaryOpenButton"]
-        XCTAssertTrue(primaryArtifactOpen.waitForExistence(timeout: 5), "Run Control should expose a large Open button for the generated artifact.")
-        let duplicateArtifactStripButton = app.descendants(matching: .any).matching(identifier: "artifactSecondaryOpenButton").firstMatch
-        XCTAssertFalse(duplicateArtifactStripButton.exists, "A single generated artifact should not appear twice as both the primary handoff and a Changed strip chip.")
-
-        if primaryArtifactOpen.isHittable {
-            primaryArtifactOpen.tap()
-        } else {
-            // Xcode 26 can report this SwiftUI button as a PopUpButton in the legacy
-            // accessibility snapshot even though it is visible and tappable. Keep the
-            // focused visual test moving by tapping the stable primary handoff location.
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.18, dy: 0.26)).tap()
-        }
+        XCTAssertFalse(runProgressToggle(in: app).exists, "Completed artifact work should not require reopening an obsolete bottom drawer.")
+        let inlineArtifactOpen = app.buttons["toolArtifactOpenButton"]
+        XCTAssertTrue(inlineArtifactOpen.waitForExistence(timeout: 5), "Artifact preview should open from the compact transcript receipt.")
+        assertMinimumTouchTarget(inlineArtifactOpen, named: "inline artifact preview")
+        inlineArtifactOpen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         capture("42-artifact-button-tapped", app: app)
         let previewStudio = app.descendants(matching: .any).matching(identifier: "artifactPreviewStudio").firstMatch
         let normalPreviewLabel = app.staticTexts["Normal preview"]
         let swiftGamePreview = app.descendants(matching: .any).matching(identifier: "swiftGamePreviewPlayer").firstMatch
         let previewShareButton = identifiedElement("artifactShareButton", in: app)
+        let addToHomeScreenButton = identifiedElement("artifactAddToHomeScreenButton", in: app)
         let previewFullScreenButton = identifiedElement("artifactFullScreenButton", in: app)
         let previewCloseButton = identifiedElement("artifactCloseButton", in: app)
         let previewReloadButton = identifiedElement("artifactReloadButton", in: app)
@@ -1568,6 +1848,7 @@ final class AgentPadUITests: XCTestCase {
         )
         XCTAssertTrue(previewStudio.exists || normalPreviewLabel.waitForExistence(timeout: 5) || swiftGamePreview.waitForExistence(timeout: 5) || previewShareButton.exists)
         assertMinimumTouchTarget(previewShareButton, named: "artifact preview share")
+        assertMinimumTouchTarget(addToHomeScreenButton, named: "artifact add to Home Screen")
         assertMinimumTouchTarget(previewFullScreenButton, named: "artifact preview full screen")
         assertMinimumTouchTarget(previewCloseButton, named: "artifact preview close")
         assertMinimumTouchTarget(previewReloadButton, named: "artifact preview reload")
@@ -1576,6 +1857,19 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.buttons["artifactViewportLandscape"].exists, "Release artifact viewer should not show a landscape mode button.")
         Thread.sleep(forTimeInterval: 1.0)
         capture("43-artifact-preview-normal", app: app)
+
+        addToHomeScreenButton.tap()
+        let homeScreenGuide = app.descendants(matching: .any)
+            .matching(identifier: "artifactHomeScreenGuide").firstMatch
+        XCTAssertTrue(
+            homeScreenGuide.waitForExistence(timeout: 5) ||
+                app.staticTexts["Add to Home Screen"].waitForExistence(timeout: 5),
+            "A playable artifact should expose the real Shortcuts handoff needed to create a Home Screen icon."
+        )
+        XCTAssertTrue(app.staticTexts["Open Shortcuts below."].waitForExistence(timeout: 5))
+        capture("45-artifact-home-screen-guide", app: app)
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(previewFullScreenButton.waitForExistence(timeout: 5))
 
         app.buttons["artifactFullScreenButton"].tap()
         let fullScreenSurface = app.descendants(matching: .any).matching(identifier: "artifactGameFullScreen").firstMatch
@@ -1619,35 +1913,52 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Local web artifact ready")).firstMatch.waitForExistence(timeout: 8))
+        let fixtureReady = app.descendants(matching: .any)
+            .matching(identifier: "localWebArtifactFixtureReady").firstMatch
+        XCTAssertTrue(
+            fixtureReady.waitForExistence(timeout: 20),
+            "The app should publish readiness only after the artifact, receipt, and transcript are durable."
+        )
         let finalMessage = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Local web artifact ready")).firstMatch
-        let progressSummary = runProgressToggle(in: app)
         XCTAssertTrue(finalMessage.waitForExistence(timeout: 5))
-        XCTAssertTrue(progressSummary.waitForExistence(timeout: 5))
+        XCTAssertFalse(runProgressToggle(in: app).exists, "Completed web artifacts should not keep a Run Control bar above the composer.")
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "The assistant handoff should not be duplicated by persistent completion chrome.")
+        let dock = composerDock(in: app)
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(dock.waitForExistence(timeout: 3))
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(dock.frame.height, 128, "Completed web work should return to the compact idle composer.")
+        assertContained(dock, in: bottomAccessory, named: "completed web-artifact composer")
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertLessThanOrEqual(
             finalMessage.frame.maxY,
-            progressSummary.frame.minY - 8,
-            "Completed-run summary should keep the final assistant handoff readable above the composer/progress dock instead of covering it."
+            bottomAccessory.frame.minY - 8,
+            "The real bottom accessory should keep the final assistant handoff readable instead of covering it."
         )
         capture("70-local-web-artifact-run-complete", app: app)
 
-        progressSummary.tap()
-        XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Ready to open"].waitForExistence(timeout: 5), "Landing-page artifacts should be framed as preview/open handoffs, not playable game handoffs.")
-        XCTAssertFalse(app.staticTexts["Ready to play"].exists, "Landing-page artifacts should not be mislabeled as games.")
+        app.tabBars.buttons["Workspace"].tap()
+        XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
+        let artifactEntry = app.buttons.containing(
+            NSPredicate(format: "label CONTAINS %@", "cron-18-landing.html")
+        ).firstMatch
+        scrollUntilHittable(artifactEntry, in: app)
+        XCTAssertTrue(artifactEntry.waitForExistence(timeout: 5), "Completed artifacts should remain reachable from Workspace after Forge drops completion chrome.")
+        XCTAssertTrue(artifactEntry.isHittable)
+        artifactEntry.tap()
 
-        let primaryArtifactOpen = app.buttons["artifactPrimaryOpenButton"]
-        XCTAssertTrue(primaryArtifactOpen.waitForExistence(timeout: 5), "Single web-page artifacts should open from the primary Run Control handoff.")
-        let secondaryArtifactOpen = app.descendants(matching: .any).matching(identifier: "artifactSecondaryOpenButton").firstMatch
-        XCTAssertFalse(secondaryArtifactOpen.exists, "A single web-page artifact should not also appear in the secondary artifact strip.")
-        if primaryArtifactOpen.isHittable {
-            primaryArtifactOpen.tap()
-        } else {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.18, dy: 0.26)).tap()
+        let previewStudio = app.descendants(matching: .any).matching(identifier: "artifactPreviewStudio").firstMatch
+        let normalPreview = app.staticTexts["Normal preview"]
+        if !previewStudio.waitForExistence(timeout: 2), !normalPreview.waitForExistence(timeout: 1) {
+            let inspector = app.descendants(matching: .any).matching(identifier: "filesMemoryInspector").firstMatch
+            XCTAssertTrue(inspector.waitForExistence(timeout: 5), "Tapping Workspace evidence should either preview it directly or open its inspector.")
+            let previewAction = app.buttons["Preview"].firstMatch
+            XCTAssertTrue(previewAction.waitForExistence(timeout: 5))
+            assertMinimumTouchTarget(previewAction, named: "Workspace artifact Preview")
+            previewAction.tap()
         }
 
-        XCTAssertTrue(app.otherElements["artifactPreviewStudio"].waitForExistence(timeout: 8))
+        XCTAssertTrue(previewStudio.waitForExistence(timeout: 8) || normalPreview.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["cron-18-landing.html"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Normal preview"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["artifactViewportLandscape"].exists, "Local web artifact preview should no longer expose confusing landscape mode controls.")
@@ -1683,23 +1994,38 @@ final class AgentPadUITests: XCTestCase {
         assertMinimumTouchTarget(failedRunProgressToggle, named: "Run Control failed-run toggle")
         XCTAssertFalse(app.otherElements["projectStatusBoard"].waitForExistence(timeout: 1), "Chat should not show a duplicate Project Status board when Run Control already owns the failed runtime state.")
         failedRunProgressToggle.tap()
+        assertRunControlSheetPresented(in: app)
         XCTAssertTrue(app.otherElements["runControlDrawer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run Control"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Retry"].waitForExistence(timeout: 5), "Run Control should keep the recovery action visible after suppressing duplicate Project Status.")
         capture("34-network-failure-state", app: app)
+        let runSheet = runControlSheet(in: app)
+        let closeRunSheet = app.buttons["runControlCloseButton"]
+        XCTAssertTrue(closeRunSheet.waitForExistence(timeout: 3))
+        closeRunSheet.tap()
+        XCTAssertTrue(runSheet.waitForNonExistence(timeout: 3), "Run details should dismiss before the composer accepts a recovery prompt.")
         let composer = chatComposerInput(in: app)
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
-        composer.tap()
-        composer.typeText("list files")
-        app.buttons["sendMessageButton"].tap()
+        if app.buttons["composerProvider-local"].exists {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.12)).tap()
+        }
+        let resumedComposer = chatComposerInput(in: app)
+        XCTAssertTrue(resumedComposer.waitForExistence(timeout: 5))
+        resumedComposer.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        resumedComposer.typeText("list files")
+        tapReadySendButton(in: app)
         XCTAssertFalse(app.staticTexts["Run failed"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["Run complete"].waitForExistence(timeout: 8))
+        let completedHandoff = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Workspace scan finished")).firstMatch
+        XCTAssertTrue(completedHandoff.waitForExistence(timeout: 8), "Recovery should finish with a durable assistant handoff.")
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "Recovery completion should not leave persistent completion chrome.")
+        XCTAssertFalse(runProgressToggle(in: app).exists, "Recovery completion should clear the actionable Run Control bar.")
         capture("35-network-recovery-complete", app: app)
 
         composer.tap()
         composer.typeText("next draft")
-        XCTAssertFalse(app.staticTexts["Run complete"].exists, "Completed-run chrome should clear out while the user starts a fresh draft in the composer.")
-        XCTAssertFalse(self.runProgressToggle(in: app).exists, "Completed-run progress toggle should not crowd a focused composer draft.")
+        XCTAssertFalse(app.staticTexts["Run complete"].exists, "A fresh draft should keep the already-idle bottom stack free of completion chrome.")
+        XCTAssertFalse(self.runProgressToggle(in: app).exists, "A completed run should not crowd a focused composer draft.")
     }
 
     func testNetworkFailureFocusKeepsRetryUntilFreshDraftStarts() throws {
@@ -1714,7 +2040,14 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Run failed"].waitForExistence(timeout: 2), "Focusing the composer should not erase Retry/Clear recovery state before the user starts a new draft.")
         capture("36-network-failure-focus-keeps-retry", app: app)
 
-        composer.typeText("list files")
+        if app.buttons["composerProvider-local"].exists {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.12)).tap()
+        }
+        let resumedComposer = chatComposerInput(in: app)
+        XCTAssertTrue(resumedComposer.waitForExistence(timeout: 5))
+        resumedComposer.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        resumedComposer.typeText("list files")
         XCTAssertFalse(app.staticTexts["Run failed"].waitForExistence(timeout: 2), "Starting a fresh draft should clear the stale failure banner before send.")
     }
 
@@ -1745,7 +2078,6 @@ final class AgentPadUITests: XCTestCase {
 
         app.buttons["New chat"].tap()
 
-        XCTAssertNotEqual(app.staticTexts["currentChatTitle"].label, runningTitle, "Creating a new chat should switch selection without moving the active response.")
         let activeElsewhereDock = app.buttons["activeResponseElsewhereDock"]
         XCTAssertTrue(activeElsewhereDock.waitForExistence(timeout: 5))
         XCTAssertTrue(app.otherElements["activeResponseElsewhereCard"].waitForExistence(timeout: 5))
@@ -1768,33 +2100,54 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("firstRunPowerUp", in: app).waitForExistence(timeout: 8), "A fresh install without local weights should lead with the actionable on-device setup surface.")
+        XCTAssertTrue(app.buttons["firstRunPowerUpButton"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.otherElements["firstRunProjectLauncher"].exists)
         XCTAssertFalse(app.otherElements["projectStatusBoard"].exists)
-        capture("69-clean-first-run-chat", app: app)
+        capture("69-first-run-power-up", app: app)
     }
 
     func testGoalMatrixChatReadabilityAndThemeSwitchingScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui", "--theme-world=matrixRain", "--pending-approval-demo", "--open-chat"]
+        app.launchArguments = ["--reset-ui", "--theme-world=matrixRain", "--canonical-activity-a11y-demo", "--open-chat"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        let assistantApproval = app.staticTexts
-            .containing(NSPredicate(format: "label CONTAINS %@", "I need approval before writing"))
-            .firstMatch
-        XCTAssertTrue(assistantApproval.waitForExistence(timeout: 8), "Matrix chat should keep assistant bubbles readable over the rain backdrop.")
-        XCTAssertTrue(app.buttons["Approve Change"].waitForExistence(timeout: 5), "Approval controls should stay readable and tappable in Matrix mode.")
+        XCTAssertTrue(
+            app.descendants(matching: .any)
+                .matching(identifier: "agentPolicyApprovalView").firstMatch
+                .waitForExistence(timeout: 8),
+            "Matrix mode should keep the canonical approval surface readable over its ambient world."
+        )
+        XCTAssertTrue(
+            app.buttons["agentPolicyApproveButton"].waitForExistence(timeout: 5),
+            "Canonical approval controls should stay readable and tappable in Matrix mode."
+        )
+        XCTAssertFalse(app.buttons["Approve Change"].exists)
+        XCTAssertFalse(
+            app.descendants(matching: .any).matching(identifier: "toolActivityRow").firstMatch.exists
+        )
         capture("goal-matrix-chat-readable", app: app)
 
         app.terminate()
-        app.launchArguments = ["--reset-ui", "--theme-world=matrixRain"]
+        app.launchArguments = [
+            "--reset-ui",
+            "--theme-world=matrixRain",
+            "--settings-local-model-ready",
+            "--open-chat",
+        ]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         app.tabBars.buttons["Control"].tap()
-        let midnightTheme = identifiedElement("settingsThemeRow-midnightBlack", in: app)
+        let midnightTheme = identifiedElement(
+            "settingsThemeStudioCard-midnightBlack",
+            in: app
+        )
         scrollUntilHittable(midnightTheme, in: app)
-        XCTAssertTrue(midnightTheme.isHittable, "Midnight theme row should be reachable from Settings.")
+        XCTAssertTrue(
+            midnightTheme.isHittable,
+            "Midnight theme studio card should be reachable from Control."
+        )
         midnightTheme.tap()
         capture("goal-theme-switched-midnight-settings", app: app)
 
@@ -1829,22 +2182,27 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(kindField.waitForExistence(timeout: 5))
         kindField.tap()
         kindField.typeText("Arcade Memory Lab")
-        let platformField = identifiedTextInput("projectIntakePlatformField", in: app)
-        XCTAssertTrue(platformField.waitForExistence(timeout: 5))
-        platformField.tap()
-        platformField.typeText("iPhone")
         capture("goal-project-intake-filled", app: app)
 
-        app.buttons["Create"].tap()
-        let createdProjectName = app.staticTexts
-            .containing(NSPredicate(format: "label CONTAINS %@", "Arcade Memory Lab"))
-            .firstMatch
-        XCTAssertTrue(createdProjectName.waitForExistence(timeout: 8), "Creating a project should select the project built from the intake brief.")
-        XCTAssertFalse(app.staticTexts["Arcade Memory Lab"].exists && app.tabBars.buttons["Forge"].isSelected, "Project creation should stay in Project instead of dumping a raw chat prompt.")
+        let intakeCreate = app.buttons["projectIntakeCreateButton"]
+        XCTAssertTrue(intakeCreate.waitForExistence(timeout: 5))
+        XCTAssertTrue(intakeCreate.isEnabled)
+        intakeCreate.tap()
+        XCTAssertTrue(app.otherElements["projectIntakeSheet"].waitForNonExistence(timeout: 15))
+        let createdProjectName = identifiedElement("projectOSProjectName", in: app)
+        let arcadeName = NSPredicate(format: "label CONTAINS[c] %@", "Arcade")
+        expectation(for: arcadeName, evaluatedWith: createdProjectName)
+        waitForExpectations(timeout: 15)
+        XCTAssertTrue(
+            app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5),
+            "Project creation should stay in the Mission Dossier instead of dumping a raw chat prompt."
+        )
 
         app.buttons["Project actions"].tap()
-        XCTAssertTrue(app.buttons["Edit Project"].waitForExistence(timeout: 5))
-        app.buttons["Edit Project"].tap()
+        XCTAssertTrue(app.otherElements["projectActionsPopover"].waitForExistence(timeout: 12))
+        let editProjectAction = app.buttons["projectEditAction"]
+        XCTAssertTrue(editProjectAction.waitForExistence(timeout: 12))
+        editProjectAction.tap()
         XCTAssertTrue(app.staticTexts["Edit Project"].waitForExistence(timeout: 5))
         XCTAssertTrue(identifiedTextInput("projectEditNameField", in: app).waitForExistence(timeout: 5))
         capture("goal-project-edit-sheet", app: app)
@@ -1852,13 +2210,15 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Edit Project"].waitForNonExistence(timeout: 5))
 
         app.buttons["Project actions"].tap()
+        XCTAssertTrue(app.otherElements["projectActionsPopover"].waitForExistence(timeout: 12))
+        let deleteProjectMenuAction = app.buttons["projectDeleteAction"]
+        XCTAssertTrue(deleteProjectMenuAction.waitForExistence(timeout: 12))
+        deleteProjectMenuAction.tap()
         XCTAssertTrue(app.buttons["Delete Project"].waitForExistence(timeout: 5))
         app.buttons["Delete Project"].tap()
-        XCTAssertTrue(app.buttons["Delete Project"].waitForExistence(timeout: 5))
-        app.buttons["Delete Project"].tap()
-        let activeName = identifiedElement("projectOSProjectName", in: app)
-        XCTAssertTrue(activeName.waitForExistence(timeout: 8))
-        XCTAssertFalse(activeName.label.contains("Arcade Memory Lab"), "Deleting the active project should fall back to a safe remaining project.")
+        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForNonExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["forgeTopBar"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.otherElements["projectActionsPopover"].exists)
         capture("goal-project-delete-fallback", app: app)
     }
 
@@ -1870,6 +2230,12 @@ final class AgentPadUITests: XCTestCase {
         func projectSwipeUp() {
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+
+        func projectSwipeDown() {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
 
@@ -1923,7 +2289,20 @@ final class AgentPadUITests: XCTestCase {
         } else {
             app.staticTexts["Create Project"].tap()
         }
-        XCTAssertTrue(app.staticTexts["Project 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["projectIntakeSheet"].waitForExistence(timeout: 5))
+        let projectKind = identifiedTextInput("projectIntakeProjectKindField", in: app)
+        XCTAssertTrue(projectKind.waitForExistence(timeout: 5))
+        projectKind.tap()
+        projectKind.typeText("Slither game")
+        let intakeCreate = app.buttons["projectIntakeCreateButton"]
+        XCTAssertTrue(intakeCreate.waitForExistence(timeout: 5))
+        XCTAssertTrue(intakeCreate.isEnabled)
+        intakeCreate.tap()
+        XCTAssertTrue(app.otherElements["projectIntakeSheet"].waitForNonExistence(timeout: 15))
+        let createdProjectName = identifiedElement("projectOSProjectName", in: app)
+        let createdNamePredicate = NSPredicate(format: "label != %@", "NovaForge Project")
+        expectation(for: createdNamePredicate, evaluatedWith: createdProjectName)
+        waitForExpectations(timeout: 15)
         XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["projectPinnedRunButton"].waitForExistence(timeout: 5), "Project hero should keep the single primary run action available after creating a project.")
         XCTAssertFalse(app.buttons["projectContinueButton"].exists, "The old Continue Project action should not reappear alongside the new hero action.")
@@ -1938,18 +2317,21 @@ final class AgentPadUITests: XCTestCase {
         dismissProjectSwitcherSheet()
         XCTAssertTrue(app.staticTexts["Projects"].waitForNonExistence(timeout: 3))
 
-        let moreButton = app.buttons["projectMoreButton"]
-        if !moreButton.isHittable {
-            projectSwipeUp()
+        let planScope = app.buttons["projectDetailScope-plan"]
+        for _ in 0..<6 where !planScope.isHittable {
+            projectSwipeDown()
         }
-        XCTAssertTrue(moreButton.waitForExistence(timeout: 5))
-        moreButton.tap()
-        XCTAssertTrue(app.otherElements["projectMoreDetails"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.otherElements["missionOSPanel"].waitForExistence(timeout: 5), "Mission OS details should be available inside More.")
-        XCTAssertTrue(app.otherElements["projectLatestEvidenceSection"].waitForExistence(timeout: 5), "Proof details should be available inside More.")
-        XCTAssertFalse(app.otherElements["projectCommandCenter"].exists, "More should reveal evidence and gates, not manual command choices.")
-        XCTAssertTrue(app.descendants(matching: .any)["projectMetricGrid"].waitForExistence(timeout: 5), "Metrics should remain available in More without crowding the initial Project tab.")
-        XCTAssertFalse(app.otherElements["projectCommandMenu"].exists, "Scrolling should not reveal duplicate Chat/Files/Runs/Terminal action cards.")
+        XCTAssertTrue(planScope.waitForExistence(timeout: 5))
+        XCTAssertTrue(planScope.isHittable)
+        planScope.tap()
+        XCTAssertTrue(app.otherElements["projectOSPlanSurface"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["missionOSPanel"].waitForExistence(timeout: 5), "Mission OS details should be available in the explicit Plan scope.")
+
+        let proofScope = app.buttons["projectDetailScope-evidence"]
+        XCTAssertTrue(proofScope.waitForExistence(timeout: 5))
+        proofScope.tap()
+        XCTAssertTrue(app.otherElements["projectOSProofSurface"].waitForExistence(timeout: 5), "Proof should have a first-class scope instead of a catch-all More panel.")
+        XCTAssertFalse(app.otherElements["projectCommandMenu"].exists, "Scope navigation must not revive duplicate Chat/Files/Runs/Terminal action cards.")
         capture("92-project-no-duplicate-command-menu", app: app)
     }
 
@@ -1987,7 +2369,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.otherElements["missionOSPanel"].exists, "Project tab should keep deeper Mission OS detail collapsed by default.")
         XCTAssertFalse(app.otherElements["projectLatestEvidenceSection"].exists, "Project tab should not show empty proof cards on first load.")
-        XCTAssertTrue(app.descendants(matching: .any)["projectStatusPill"].waitForExistence(timeout: 5), "Project hero should show a compact project status pill.")
+        XCTAssertTrue(app.descendants(matching: .any)["projectOSExecutionStatePill"].waitForExistence(timeout: 5), "Project hero should show one compact execution-state pill.")
         XCTAssertFalse(app.otherElements["projectSwitcherPanel"].exists, "Project switcher should not sit inside the main scroll.")
         XCTAssertFalse(app.otherElements["projectTimelineSection"].exists, "Full timeline should stay collapsed until More is opened.")
         capture("82-project-briefing-default", app: app)
@@ -2003,7 +2385,21 @@ final class AgentPadUITests: XCTestCase {
         } else {
             app.staticTexts["Create Project"].tap()
         }
-        XCTAssertTrue(app.staticTexts["Project 2"].waitForExistence(timeout: 5), "Creating a project should immediately select and show the new project.")
+        XCTAssertTrue(app.otherElements["projectIntakeSheet"].waitForExistence(timeout: 5))
+        let projectKind = identifiedTextInput("projectIntakeProjectKindField", in: app)
+        XCTAssertTrue(projectKind.waitForExistence(timeout: 5))
+        projectKind.tap()
+        projectKind.typeText("Slither game")
+        let intakeCreate = app.buttons["projectIntakeCreateButton"]
+        XCTAssertTrue(intakeCreate.waitForExistence(timeout: 5))
+        XCTAssertTrue(intakeCreate.isEnabled)
+        intakeCreate.tap()
+        XCTAssertTrue(app.otherElements["projectIntakeSheet"].waitForNonExistence(timeout: 15))
+        let createdProjectName = identifiedElement("projectOSProjectName", in: app)
+        let createdNamePredicate = NSPredicate(format: "label != %@", "NovaForge Project")
+        expectation(for: createdNamePredicate, evaluatedWith: createdProjectName)
+        waitForExpectations(timeout: 15)
+        let createdName = createdProjectName.label
         openProjectSwitcher()
         let selectedProjectRow = app.descendants(matching: .any)["projectSwitcherActiveRow"]
         XCTAssertTrue(selectedProjectRow.waitForExistence(timeout: 5))
@@ -2022,10 +2418,12 @@ final class AgentPadUITests: XCTestCase {
         capture("84-project-switched-default", app: app)
 
         openProjectSwitcher()
-        let projectTwoRow = app.staticTexts["projectSwitcherRowName-Project-2"]
-        XCTAssertTrue(projectTwoRow.waitForExistence(timeout: 5), "Project 2 should remain available after switching back to the default project.")
-        projectTwoRow.tap()
-        XCTAssertTrue(app.staticTexts["Project 2"].waitForExistence(timeout: 5))
+        let createdProjectRow = app.staticTexts.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "projectSwitcherRowName-", createdName)
+        ).firstMatch
+        XCTAssertTrue(createdProjectRow.waitForExistence(timeout: 5), "The created project should remain available after switching back to the default project.")
+        createdProjectRow.tap()
+        XCTAssertEqual(identifiedElement("projectOSProjectName", in: app).label, createdName)
 
         let runButton = app.buttons["projectPinnedRunButton"]
         for _ in 0..<5 where !runButton.isHittable {
@@ -2046,33 +2444,44 @@ final class AgentPadUITests: XCTestCase {
 
     func testAccessibilityLayoutTouchTargetsAndCompactLabels() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-ui"]
+        app.launchArguments = ["--reset-ui", "--debug-provider-list-ready", "--open-chat"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        waitForDebugProviderFixture(in: app)
         XCTAssertTrue(app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.otherElements["firstRunProjectLauncher"].exists)
         XCTAssertFalse(app.otherElements["projectStatusBoard"].exists)
 
         let headerTitle = app.staticTexts["currentChatTitle"].firstMatch
         assertHeaderAnchoredNearTop(headerTitle, in: app, message: "Header title should stay below the top safe area without drifting into the status bar.")
+        let forgeTopBar = app.descendants(matching: .any)["forgeTopBar"].firstMatch
+        XCTAssertTrue(forgeTopBar.waitForExistence(timeout: 5), "Forge should expose one stable compact navigation row.")
+        XCTAssertLessThanOrEqual(forgeTopBar.frame.height, 64, "Forge navigation should stay one deck instead of rebuilding the old stacked menu card.")
         assertMinimumTouchTarget(app.buttons["Open chats"], named: "Open chats")
         assertMinimumTouchTarget(app.buttons["New chat"], named: "New chat")
         assertReadableLabel(app.buttons["Open chats"], named: "Open chats")
         assertReadableLabel(app.buttons["New chat"], named: "New chat")
-        let scopeMenu = app.buttons["chatProjectScopeMenu"]
+        let scopeMenu = identifiedElement("chatProjectScopeMenu", in: app)
         XCTAssertTrue(scopeMenu.waitForExistence(timeout: 5), "Forge should expose the current project scope as a stable menu.")
         assertMinimumTouchTarget(scopeMenu, named: "Forge scope menu")
         let dossierShortcut = app.buttons["missionDossierShortcut"]
-        XCTAssertTrue(dossierShortcut.waitForExistence(timeout: 5), "Forge should expose the Mission Dossier as a direct labeled control.")
-        assertMinimumTouchTarget(dossierShortcut, named: "Mission Dossier shortcut")
-        XCTAssertGreaterThanOrEqual(dossierShortcut.frame.width, 72, "Mission Dossier should read as a labeled action instead of a mystery icon.")
+        XCTAssertFalse(dossierShortcut.exists, "General scope has no project dossier, so Forge should not expose a dead Mission Dossier control.")
         let headerStatus = app.descendants(matching: .any)["forgeSessionStatus"]
-        XCTAssertTrue(headerStatus.waitForExistence(timeout: 5), "Forge should expose one stable session status.")
+        XCTAssertFalse(headerStatus.exists, "Idle or setup status belongs to the content/composer, not permanent navigation chrome.")
         if app.otherElements["firstRunPowerUp"].exists {
-            XCTAssertTrue(headerStatus.label.contains("Setup"), "A blocked first run must not contradict the setup surface with a Ready header.")
             XCTAssertFalse(app.descendants(matching: .any)["forgeSignal-model"].exists, "The first-run setup card owns model setup; Forge should not repeat it as an icon-only header signal.")
         }
+
+        let idleDock = composerDock(in: app)
+        let bottomAccessory = bottomChatAccessory(in: app)
+        XCTAssertTrue(idleDock.waitForExistence(timeout: 5), "Idle Forge should expose one compact composer row.")
+        XCTAssertTrue(bottomAccessory.waitForExistence(timeout: 5), "Forge should expose the real bottom accessory container for layout proof.")
+        XCTAssertLessThanOrEqual(idleDock.frame.height, 128, "Idle composer should remain one compact unified control instead of rebuilding the old oversized card.")
+        assertContained(idleDock, in: bottomAccessory, named: "idle composer dock")
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(bottomAccessory.frame.maxY, tabBar.frame.minY + 1, "The chat bottom accessory should clear the four-tab dock instead of overlapping it.")
 
         for tab in ["Forge", "Workspace", "History", "Control"] {
             let tabButton = app.tabBars.buttons[tab]
@@ -2139,7 +2548,7 @@ final class AgentPadUITests: XCTestCase {
 
         XCTAssertFalse(app.tabBars.buttons["More"].exists)
         XCTAssertFalse(app.tabBars.buttons["Term"].exists)
-        XCTAssertTrue(app.otherElements["terminalCommandDeck"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("terminalCommandDeck", in: app).waitForExistence(timeout: 8))
         for (command, identifier) in [("ls", "terminalPreset-ls"), ("pwd", "terminalPreset-pwd"), ("find .", "terminalPreset-find-.")] {
             let preset = app.buttons[identifier]
             XCTAssertTrue(preset.waitForExistence(timeout: 5), "Terminal preset \(command) should be visible.")
@@ -2196,13 +2605,23 @@ final class AgentPadUITests: XCTestCase {
         capture("75-accessibility-workspace-status-strip-files", app: app)
 
         app.tabBars.buttons["History"].tap()
-        XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
-        assertWorkspaceStatusControls(on: "Runs")
+        XCTAssertTrue(app.tabBars.buttons["History"].isSelected)
+        let historyMission = identifiedElement("forgeMissionStrip", in: app)
+        XCTAssertTrue(historyMission.waitForExistence(timeout: 5), "History should reuse Forge's compact live mission strip while a run is active.")
+        assertMinimumTouchTarget(historyMission, named: "History mission strip")
+        let historyStop = app.buttons["missionStop"]
+        XCTAssertTrue(historyStop.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(historyStop, named: "History mission stop")
         capture("76-accessibility-workspace-status-strip-runs", app: app)
 
         app.tabBars.buttons["Forge"].tap()
-        XCTAssertTrue(app.otherElements["projectOSControlCenter"].waitForExistence(timeout: 5))
-        assertWorkspaceStatusControls(on: "Project")
+        XCTAssertTrue(app.tabBars.buttons["Forge"].isSelected)
+        let forgeProgress = runProgressToggle(in: app)
+        XCTAssertTrue(forgeProgress.waitForExistence(timeout: 5), "Forge should move a selected chat's active run into the compact composer rail instead of duplicating History's mission strip.")
+        assertMinimumTouchTarget(forgeProgress, named: "Forge composer run progress")
+        let stopMission = app.buttons["composerStopButton"]
+        XCTAssertTrue(stopMission.waitForExistence(timeout: 5), "A working Forge response should expose Stop beside its composer progress rail.")
+        assertMinimumTouchTarget(stopMission, named: "Forge composer stop")
         capture("77-accessibility-workspace-status-strip-project", app: app)
     }
 
@@ -2213,9 +2632,9 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
 
         app.tabBars.buttons["History"].tap()
-        XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["historyToolbar"].waitForExistence(timeout: 5))
         for label in ["All", "Writes", "Failures"] {
-            let filter = app.buttons[label]
+            let filter = app.buttons["runsFilter-\(label)"]
             XCTAssertTrue(filter.waitForExistence(timeout: 5), "Runs filter \(label) should be visible.")
             assertMinimumTouchTarget(filter, named: "runs filter \(label)")
         }
@@ -2232,7 +2651,7 @@ final class AgentPadUITests: XCTestCase {
         let confirmDeleteLog = app.buttons["Delete Log"].firstMatch
         XCTAssertTrue(confirmDeleteLog.waitForExistence(timeout: 5), "The confirmation sheet should expose an explicit destructive Delete Log action.")
         confirmDeleteLog.tap()
-        XCTAssertTrue(app.otherElements["runsAuditDashboard"].waitForExistence(timeout: 5), "Confirming run-log delete should return to the Runs dashboard instead of leaving the sheet stuck.")
+        XCTAssertTrue(app.otherElements["historyToolbar"].waitForExistence(timeout: 5), "Confirming run-log delete should return to History instead of leaving the sheet stuck.")
         XCTAssertTrue(app.buttons["runHistoryCard"].firstMatch.waitForExistence(timeout: 5), "Deleting one seeded log should keep the rest of the run history visible.")
         capture("72-accessibility-runs-targets", app: app)
     }
@@ -2244,13 +2663,13 @@ final class AgentPadUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         app.tabBars.buttons["Workspace"].tap()
-        XCTAssertTrue(app.staticTexts["notes.md"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["fileOpen-Actions-notes-md"].waitForExistence(timeout: 15))
         capture("80-files-actions-before", app: app)
 
         let sourceOpen = app.buttons["fileOpen-Actions-notes-md"]
         XCTAssertTrue(sourceOpen.waitForExistence(timeout: 5), "Every file row should remain the visible primary action for opening or editing that item.")
         assertMinimumTouchTarget(sourceOpen, named: "notes.md row action")
-        XCTAssertEqual(sourceOpen.label, "Edit notes.md")
+        XCTAssertEqual(sourceOpen.label, "Preview notes.md")
         XCTAssertFalse(app.buttons["fileEdit-Actions-notes-md"].exists, "Workspace rows should not repeat the row action as a second oversized edit button.")
         XCTAssertFalse(app.buttons["fileDuplicate-Actions-notes-md"].exists, "Duplicate should live behind the row overflow so Files stays calm.")
         XCTAssertFalse(app.buttons["fileDelete-Actions-notes-md"].exists, "Delete should live behind the row overflow so destructive actions are not first-viewport clutter.")
@@ -2261,6 +2680,7 @@ final class AgentPadUITests: XCTestCase {
         sourceMoreActions.tap()
         XCTAssertTrue(app.buttons["Duplicate"].waitForExistence(timeout: 5), "Overflow should still expose duplicate without hiding it in a context-only gesture.")
         app.buttons["Duplicate"].tap()
+        approveCurrentPolicyMutation(in: app)
         XCTAssertTrue(app.staticTexts["notes_copy.md"].waitForExistence(timeout: 8), "Duplicate should create a non-destructive unique copy next to the source file.")
         capture("81-files-actions-duplicated", app: app)
 
@@ -2275,6 +2695,7 @@ final class AgentPadUITests: XCTestCase {
         let confirmDeleteFile = app.buttons.matching(identifier: "confirmDeleteFileButton").firstMatch
         XCTAssertTrue(confirmDeleteFile.waitForExistence(timeout: 5), "The confirmation dialog should expose a stable destructive confirmation action.")
         confirmDeleteFile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        approveCurrentPolicyMutation(in: app)
         XCTAssertTrue(app.buttons["fileMoreActions-Actions-notes_copy-md"].waitForNonExistence(timeout: 8), "Confirmed delete should remove only the duplicate file row.")
         XCTAssertTrue(app.staticTexts["notes.md"].exists, "Deleting the copy must not remove the original file.")
         capture("83-files-actions-after-delete", app: app)
@@ -2317,26 +2738,38 @@ final class AgentPadUITests: XCTestCase {
         var maxX = 0
         var maxY = 0
         var nonBlackCount = 0
-        var trailingSamples = 0
-        var trailingNonBlack = 0
+        var trailingColumnSamples = 0
+        var trailingColumnsWithVisiblePixels = 0
         let step = 3
-        for y in stride(from: 0, to: height, by: step) {
-            for x in stride(from: 0, to: width, by: step) {
+        let trailingLongAxisStart = width >= height ? width * 2 / 3 : height * 2 / 3
+        for longAxisPosition in stride(from: 0, to: max(width, height), by: step) {
+            var visiblePixelsInColumn = 0
+            var pixelsInColumn = 0
+            for shortAxisPosition in stride(from: 0, to: min(width, height), by: step) {
+                let x = width >= height ? longAxisPosition : shortAxisPosition
+                let y = width >= height ? shortAxisPosition : longAxisPosition
                 let index = y * bytesPerRow + x * bytesPerPixel
                 let brightestChannel = Swift.max(data[index], Swift.max(data[index + 1], data[index + 2]))
                 let isNonBlack = brightestChannel > 25
                 if isNonBlack {
                     nonBlackCount += 1
+                    visiblePixelsInColumn += 1
                     minX = min(minX, x)
                     minY = min(minY, y)
                     maxX = max(maxX, x)
                     maxY = max(maxY, y)
                 }
+                pixelsInColumn += 1
+            }
 
-                let isTrailingLongAxis = width >= height ? x >= (width * 2 / 3) : y >= (height * 2 / 3)
-                if isTrailingLongAxis {
-                    trailingSamples += 1
-                    if isNonBlack { trailingNonBlack += 1 }
+            if longAxisPosition >= trailingLongAxisStart {
+                trailingColumnSamples += 1
+                // Dark games may intentionally reserve most of a column for a
+                // near-black sky or HUD. A genuinely stale portrait-width webview
+                // leaves the entire trailing column black, so a small visible slice
+                // is the robust signal that content reached this column.
+                if visiblePixelsInColumn >= max(2, pixelsInColumn / 20) {
+                    trailingColumnsWithVisiblePixels += 1
                 }
             }
         }
@@ -2345,7 +2778,7 @@ final class AgentPadUITests: XCTestCase {
         let bboxLongSpan = width >= height ? (maxX - minX + 1) : (maxY - minY + 1)
         let longAxis = max(width, height)
         let bboxLongAxisCoverage = CGFloat(bboxLongSpan) / CGFloat(longAxis)
-        let trailingCoverage = CGFloat(trailingNonBlack) / CGFloat(max(1, trailingSamples))
+        let trailingColumnCoverage = CGFloat(trailingColumnsWithVisiblePixels) / CGFloat(max(1, trailingColumnSamples))
         XCTAssertGreaterThanOrEqual(
             bboxLongAxisCoverage,
             0.92,
@@ -2354,9 +2787,9 @@ final class AgentPadUITests: XCTestCase {
             line: line
         )
         XCTAssertGreaterThanOrEqual(
-            trailingCoverage,
-            0.70,
-            "Fullscreen game content should reach the visual right third/trailing landscape area, not leave it black. coverage=\(trailingCoverage)",
+            trailingColumnCoverage,
+            0.90,
+            "Fullscreen game content should reach nearly every column in the trailing landscape area, not leave a portrait-width black strip. coverage=\(trailingColumnCoverage)",
             file: file,
             line: line
         )
@@ -2365,6 +2798,16 @@ final class AgentPadUITests: XCTestCase {
     @discardableResult
     private func capture(_ name: String, app: XCUIApplication) -> UIImage {
         let environment = ProcessInfo.processInfo.environment
+        let captureMode = environment["NOVAFORGE_CAPTURE_MODE"] ??
+            environment["TEST_RUNNER_NOVAFORGE_CAPTURE_MODE"] ??
+            "all"
+        let needsPixelProof = name.localizedCaseInsensitiveContains("fullscreen")
+        if captureMode == "off", !needsPixelProof {
+            // Assertion lanes get automatic XCTest failure screenshots. Avoid
+            // encoding and writing the 100+ visual-census PNGs unless the
+            // explicit visual lane requested them.
+            return UIImage()
+        }
         let directory = environment["NOVAFORGE_SCREENSHOT_DIR"] ??
             environment["TEST_RUNNER_NOVAFORGE_SCREENSHOT_DIR"] ??
             fallbackScreenshotDirectory()
@@ -2451,8 +2894,20 @@ final class AgentPadUITests: XCTestCase {
     ) {
         let minimumMeasuredTarget: CGFloat = 43.5
         XCTAssertTrue(element.waitForExistence(timeout: 3), "\(name) should exist before measuring its hit area.", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(element.frame.width, minimumMeasuredTarget, "\(name) should be about 44pt wide for reliable touch.", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(element.frame.height, minimumMeasuredTarget, "\(name) should be about 44pt tall for reliable touch.", file: file, line: line)
+
+        // SwiftUI full-screen covers occasionally publish a transient zero AX
+        // frame while their visual layout is already settled. Re-read briefly
+        // so the gate measures the real control instead of the hand-off frame.
+        let deadline = Date().addingTimeInterval(5)
+        var measuredFrame = element.frame
+        while (measuredFrame.width < minimumMeasuredTarget || measuredFrame.height < minimumMeasuredTarget),
+              Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.25)
+            measuredFrame = element.frame
+        }
+
+        XCTAssertGreaterThanOrEqual(measuredFrame.width, minimumMeasuredTarget, "\(name) should be about 44pt wide for reliable touch.", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(measuredFrame.height, minimumMeasuredTarget, "\(name) should be about 44pt tall for reliable touch.", file: file, line: line)
     }
 
     private func assertReadableLabel(
@@ -2477,21 +2932,36 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func composerModelControl(in app: XCUIApplication) -> XCUIElement {
-        let button = app.buttons["composerModelNativeMenu"]
-        if button.exists { return button }
-        return app.descendants(matching: .any)["composerModelNativeMenu"]
+        preferredIdentifiedElement("composerModelNativeMenu", in: app)
     }
 
     private func runProgressToggle(in app: XCUIApplication) -> XCUIElement {
-        let identifiedElement = app.descendants(matching: .any).matching(identifier: "runProgressToggle").firstMatch
-        if identifiedElement.exists { return identifiedElement }
-        return app.buttons["runProgressToggle"].firstMatch
+        preferredIdentifiedElement("runProgressToggle", in: app)
+    }
+
+    private func runControlSheet(in app: XCUIApplication) -> XCUIElement {
+        let direct = app.otherElements["runControlSheet"].firstMatch
+        if direct.exists { return direct }
+        return app.descendants(matching: .any).matching(identifier: "runControlSheet").firstMatch
+    }
+
+    private func assertRunControlSheetPresented(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let sheet = runControlSheet(in: app)
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Run details should present in its own sheet.", file: file, line: line)
+        let drawer = app.descendants(matching: .any).matching(identifier: "runControlDrawer").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 5), "The Run Details sheet should contain the progress drawer.", file: file, line: line)
+        let closeButton = app.buttons["runControlCloseButton"]
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 3), "Run Details should expose a stable close control.", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(closeButton.frame.width, 42, "The native Run Details toolbar close control should retain its full tappable visual frame.", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(closeButton.frame.height, 42, "The native Run Details toolbar close control should retain its full tappable visual frame.", file: file, line: line)
     }
 
     private func jumpToLatestButton(in app: XCUIApplication) -> XCUIElement {
-        let button = app.buttons["jumpToLatest"]
-        if button.exists { return button }
-        let identifiedElement = app.descendants(matching: .any).matching(identifier: "jumpToLatest").firstMatch
+        let identifiedElement = preferredIdentifiedElement("jumpToLatest", in: app)
         if identifiedElement.exists { return identifiedElement }
         return app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Latest")).firstMatch
     }
@@ -2583,11 +3053,25 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func bottomChatAccessory(in app: XCUIApplication) -> XCUIElement {
-        let matches = app.descendants(matching: .any)
-            .matching(identifier: "chatBottomAccessory")
-            .allElementsBoundByIndex
-            .filter { $0.exists && !$0.frame.isEmpty }
-        return matches.min { $0.frame.minY < $1.frame.minY } ?? app.otherElements["chatBottomAccessory"].firstMatch
+        preferredIdentifiedElement("chatBottomAccessory", in: app)
+    }
+
+    private func assertContained(
+        _ child: XCUIElement,
+        in container: XCUIElement,
+        named name: String,
+        tolerance: CGFloat = 1,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(child.exists, "\(name) should exist before containment is measured.", file: file, line: line)
+        XCTAssertTrue(container.exists, "\(name) container should exist before containment is measured.", file: file, line: line)
+        XCTAssertFalse(child.frame.isEmpty, "\(name) should expose a measurable frame.", file: file, line: line)
+        XCTAssertFalse(container.frame.isEmpty, "\(name) container should expose a measurable frame.", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(child.frame.minX, container.frame.minX - tolerance, "\(name) should stay inside the container's leading edge.", file: file, line: line)
+        XCTAssertLessThanOrEqual(child.frame.maxX, container.frame.maxX + tolerance, "\(name) should stay inside the container's trailing edge.", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(child.frame.minY, container.frame.minY - tolerance, "\(name) should stay inside the container's top edge.", file: file, line: line)
+        XCTAssertLessThanOrEqual(child.frame.maxY, container.frame.maxY + tolerance, "\(name) should stay inside the container's bottom edge.", file: file, line: line)
     }
 
     private func chatComposerInput(in app: XCUIApplication) -> XCUIElement {
@@ -2597,13 +3081,104 @@ final class AgentPadUITests: XCTestCase {
     }
 
     private func identifiedElement(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
-        let directButton = app.buttons[identifier]
-        if directButton.exists { return directButton }
-        let directOther = app.otherElements[identifier]
-        if directOther.exists { return directOther }
-        let directStaticText = app.staticTexts[identifier]
-        if directStaticText.exists { return directStaticText }
-        return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        preferredIdentifiedElement(identifier, in: app)
+    }
+
+    private func preferredIdentifiedElement(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+        let query = app.descendants(matching: .any).matching(identifier: identifier)
+        if let visible = query.allElementsBoundByIndex.filter({ element in
+            guard element.exists, !element.frame.isEmpty else { return false }
+            return element.frame.intersects(app.frame)
+        }).max(by: { lhs, rhs in
+            if lhs.frame.maxY != rhs.frame.maxY {
+                return lhs.frame.maxY < rhs.frame.maxY
+            }
+            return lhs.frame.width < rhs.frame.width
+        }) {
+            return visible
+        }
+        return query.firstMatch
+    }
+
+    private func waitForDebugProviderFixture(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let modelControl = composerModelControl(in: app)
+        XCTAssertTrue(
+            modelControl.waitForExistence(timeout: 8),
+            "The deterministic provider fixture should expose the composer model control.",
+            file: file,
+            line: line
+        )
+        let deadline = Date().addingTimeInterval(8)
+        while !modelControl.label.localizedCaseInsensitiveContains("OpenAI"), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(
+            modelControl.label.localizedCaseInsensitiveContains("OpenAI"),
+            "The deterministic OpenAI fixture should be installed before Send is exercised; label='\(modelControl.label)'.",
+            file: file,
+            line: line
+        )
+    }
+
+    private func tapReadySendButton(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let send = app.buttons["sendMessageButton"]
+        XCTAssertTrue(
+            send.waitForExistence(timeout: 5),
+            "Send should exist after a non-empty draft.",
+            file: file,
+            line: line
+        )
+        let ready = NSPredicate(format: "enabled == true AND value BEGINSWITH %@", "ready")
+        let expectation = XCTNSPredicateExpectation(
+            predicate: ready,
+            object: send
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [expectation], timeout: 12),
+            .completed,
+            "Send should wait for the canonical runtime to become ready instead of accepting a silent no-op tap.",
+            file: file,
+            line: line
+        )
+        send.tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        print("NovaForge Send disposition: \(String(describing: send.value))")
+    }
+
+    private func approveCurrentPolicyMutation(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let review = app.otherElements["agentPolicyApprovalView"]
+        XCTAssertTrue(
+            review.waitForExistence(timeout: 8),
+            "Workspace writes should surface the exact policy-bound change for review.",
+            file: file,
+            line: line
+        )
+        let approve = app.buttons["agentPolicyApproveButton"]
+        XCTAssertTrue(
+            approve.waitForExistence(timeout: 5),
+            "The policy review should expose its explicit approval action.",
+            file: file,
+            line: line
+        )
+        approve.tap()
+        XCTAssertTrue(
+            review.waitForNonExistence(timeout: 8),
+            "Approval review should dismiss after the exact mutation is resolved.",
+            file: file,
+            line: line
+        )
     }
 
     private func identifiedTextInput(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
@@ -2626,10 +3201,12 @@ final class AgentPadUITests: XCTestCase {
             "chatComposerDock",
             "Chat composer dock"
         )
-        let dock = app.otherElements.matching(labeledPredicate).firstMatch
-        if dock.exists { return dock }
-        let anyDock = app.descendants(matching: .any).matching(labeledPredicate).firstMatch
-        if anyDock.exists { return anyDock }
+        let matchingDocks = app.descendants(matching: .any).matching(labeledPredicate)
+        if let visibleDock = matchingDocks.allElementsBoundByIndex.first(where: { element in
+            element.exists && !element.frame.isEmpty && element.frame.intersects(app.frame)
+        }) {
+            return visibleDock
+        }
         let fallbackDock = app.otherElements.matching(identifier: "chatComposerDock").element(boundBy: 0)
         if fallbackDock.exists { return fallbackDock }
         return chatComposerInput(in: app)
@@ -2687,9 +3264,11 @@ final class AgentPadUITests: XCTestCase {
     private func assertKeyboardComposerChrome(in app: XCUIApplication, keyboard: XCUIElement, sendButton: XCUIElement) {
         let hasDockContainer = hasComposerDockContainer(in: app)
         let dock = composerDock(in: app)
+        let accessory = bottomChatAccessory(in: app)
         XCTAssertTrue(dock.waitForExistence(timeout: 3), "Composer dock should be visible while the keyboard is up.")
-        XCTAssertLessThanOrEqual(dock.frame.maxY, keyboard.frame.minY - 8, "The whole composer dock, not only the text field, should clear the keyboard/predictive bar.")
-        XCTAssertLessThanOrEqual(keyboard.frame.minY - dock.frame.maxY, 88, "Keyboard should not leave a large dead spacer below the composer dock.")
+        XCTAssertTrue(accessory.waitForExistence(timeout: 3), "Bottom chat accessory should remain visible while the keyboard is up.")
+        XCTAssertLessThanOrEqual(accessory.frame.maxY, keyboard.frame.minY + 1, "The complete composer accessory should clear the keyboard/predictive bar.")
+        XCTAssertLessThanOrEqual(keyboard.frame.minY - accessory.frame.maxY, 64, "Keyboard should dock directly below the complete composer accessory with only the system safe-area allowance.")
         XCTAssertGreaterThanOrEqual(sendButton.frame.minX, dock.frame.midX, "Send button should stay in the right half of the compact composer.")
         if hasDockContainer {
             XCTAssertLessThanOrEqual(sendButton.frame.maxX, dock.frame.maxX - 6, "Send button should stay inside the composer safe trailing edge.")

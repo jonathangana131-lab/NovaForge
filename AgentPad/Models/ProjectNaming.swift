@@ -23,6 +23,34 @@ enum ProjectNamingEngine {
         isGenericProjectName(name)
     }
 
+    static func shouldRenameConversation(_ title: String) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        let genericTitles = [
+            "NovaForge",
+            "NovaForge Session",
+            "New chat",
+            LaunchConversationSelection.safeStartTitle
+        ]
+        if genericTitles.contains(where: {
+            trimmed.localizedCaseInsensitiveCompare($0) == .orderedSame
+        }) {
+            return true
+        }
+        return trimmed.range(
+            of: #"^NovaForge\s+[A-Z]{3}\s+\d{1,2},\s+\d{1,2}:\d{2}\s+[AP]M$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    static func suggestedConversationTitle(prompt: String) -> String? {
+        let source = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return nil }
+        let lower = source.lowercased()
+        guard !isContinuationEnvelope(lower) else { return "Continued work" }
+        return preferredName(from: lower, source: source)
+    }
+
     static func suggestedIdentity(
         prompt: String,
         currentProjectName: String,
@@ -309,7 +337,7 @@ enum ChatProjectSeparation {
         // Forge owns both General and project-scoped conversations. Keep every
         // scope available to the drawer so a General chat cannot make durable
         // project history disappear from navigation.
-        conversations
+        conversations.filter { !$0.isOrchestrationChild }
     }
 
     static func preferredGeneralConversation(
@@ -320,8 +348,9 @@ enum ChatProjectSeparation {
         // Preserve the launch contract independently from drawer visibility:
         // prefer General whenever it exists, but retain the legacy project
         // fallback for stores that do not have a General conversation yet.
-        let generalConversations = conversations.filter { $0.project == nil }
-        let general = generalConversations.isEmpty ? conversations : generalConversations
+        let visible = conversations.filter { !$0.isOrchestrationChild }
+        let generalConversations = visible.filter { $0.project == nil }
+        let general = generalConversations.isEmpty ? visible : generalConversations
         if let ready = general.first(where: { $0.title == LaunchConversationSelection.safeStartTitle && !$0.hasUserMessages }) {
             return ready
         }
@@ -342,16 +371,64 @@ enum ChatProjectSeparation {
 }
 
 enum PersistentLaunchRecovery {
-    static func recoverInterruptedToolRuns(in context: ModelContext, now: Date = Date()) {
-        let pending = ToolRunStatus.pendingApproval.rawValue
-        let approved = ToolRunStatus.approved.rawValue
-        let descriptor = FetchDescriptor<ToolRun>(
-            predicate: #Predicate<ToolRun> { run in
-                run.statusRawValue == pending || run.statusRawValue == approved
-            }
-        )
+    struct Fetches {
+        var interruptedToolRuns: (ModelContext) throws -> [ToolRun]
+        var interruptedProjectOSRuns: (ModelContext) throws -> [ProjectOSRun]
+        var countdownProjects: (ModelContext) throws -> [Project]
 
-        guard let interruptedRuns = try? context.fetch(descriptor) else { return }
+        static var live: Fetches {
+            Fetches(
+                interruptedToolRuns: { context in
+                    let pending = ToolRunStatus.pendingApproval.rawValue
+                    let approved = ToolRunStatus.approved.rawValue
+                    let descriptor = FetchDescriptor<ToolRun>(
+                        predicate: #Predicate<ToolRun> { run in
+                            run.statusRawValue == pending || run.statusRawValue == approved
+                        }
+                    )
+                    return try context.fetch(descriptor)
+                },
+                interruptedProjectOSRuns: { context in
+                    let planning = ProjectOSRunStatus.planning.rawValue
+                    let running = ProjectOSRunStatus.running.rawValue
+                    let descriptor = FetchDescriptor<ProjectOSRun>(
+                        predicate: #Predicate<ProjectOSRun> { run in
+                            run.statusRawValue == planning || run.statusRawValue == running
+                        }
+                    )
+                    return try context.fetch(descriptor)
+                },
+                countdownProjects: { context in
+                    let countdown = ProjectAutoContinueState.countdown.rawValue
+                    let descriptor = FetchDescriptor<Project>(
+                        predicate: #Predicate<Project> { project in
+                            project.autoContinueStateRawValue == countdown
+                        }
+                    )
+                    return try context.fetch(descriptor)
+                }
+            )
+        }
+    }
+
+    static func recoverInterruptedToolRuns(
+        in context: ModelContext,
+        now: Date = Date(),
+        preservingRunIDs: Set<UUID> = [],
+        fetches: Fetches = .live
+    ) throws {
+        // Recovery is one launch transaction. Read every affected collection
+        // first so a late storage failure cannot leave an earlier collection
+        // partially recovered.
+        // AgentSystem owns recovery for preserved canonical runs, including
+        // their legacy-projected approval rows.
+        let interruptedRuns = try fetches.interruptedToolRuns(context).filter { run in
+            guard let runID = run.runID else { return true }
+            return !preservingRunIDs.contains(runID)
+        }
+        let interruptedProjectOSRuns = try fetches.interruptedProjectOSRuns(context)
+        let countdownProjects = try fetches.countdownProjects(context)
+
         for run in interruptedRuns {
             switch run.status {
             case .pendingApproval:
@@ -394,19 +471,11 @@ enum PersistentLaunchRecovery {
             run.completedAt = now
         }
 
-        recoverInterruptedProjectOSRuns(in: context, now: now)
-        recoverInterruptedAutoContinue(in: context, now: now)
+        recoverInterruptedProjectOSRuns(interruptedProjectOSRuns, now: now)
+        recoverInterruptedAutoContinue(countdownProjects, context: context, now: now)
     }
 
-    private static func recoverInterruptedProjectOSRuns(in context: ModelContext, now: Date) {
-        let planning = ProjectOSRunStatus.planning.rawValue
-        let running = ProjectOSRunStatus.running.rawValue
-        let descriptor = FetchDescriptor<ProjectOSRun>(
-            predicate: #Predicate<ProjectOSRun> { run in
-                run.statusRawValue == planning || run.statusRawValue == running
-            }
-        )
-        guard let runs = try? context.fetch(descriptor) else { return }
+    private static func recoverInterruptedProjectOSRuns(_ runs: [ProjectOSRun], now: Date) {
         for run in runs {
             run.status = .stopped
             run.resumeState = "Stopped after relaunch. Start or retry the mission from ProjectOS when ready."
@@ -423,14 +492,11 @@ enum PersistentLaunchRecovery {
         }
     }
 
-    private static func recoverInterruptedAutoContinue(in context: ModelContext, now: Date) {
-        let countdown = ProjectAutoContinueState.countdown.rawValue
-        let descriptor = FetchDescriptor<Project>(
-            predicate: #Predicate<Project> { project in
-                project.autoContinueStateRawValue == countdown
-            }
-        )
-        guard let projects = try? context.fetch(descriptor) else { return }
+    private static func recoverInterruptedAutoContinue(
+        _ projects: [Project],
+        context: ModelContext,
+        now: Date
+    ) {
         for project in projects {
             project.autoContinuePaused = true
             project.autoContinueState = .paused

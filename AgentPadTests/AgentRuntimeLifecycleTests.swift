@@ -1,4 +1,7 @@
+import AgentDomain
+import AgentPolicy
 import Combine
+import CryptoKit
 import SwiftData
 import SwiftUI
 import UIKit
@@ -39,6 +42,216 @@ private final class RuntimeLifecycleEffectsRecorder {
     )
 }
 
+private actor RuntimeBlockingApprovalPrompt: ApprovalDecisionPrompting {
+    private var promptCount = 0
+    private var continuation: CheckedContinuation<ApprovalDecision, Error>?
+
+    func requestDecision(
+        for context: DurableApprovalPromptContext
+    ) async throws -> ApprovalDecision {
+        _ = context
+        promptCount += 1
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func count() -> Int { promptCount }
+
+    func approve() {
+        continuation?.resume(returning: .approved)
+        continuation = nil
+    }
+}
+
+private actor RuntimeApprovingApprovalPrompt: ApprovalDecisionPrompting {
+    private var promptCount = 0
+
+    func requestDecision(
+        for context: DurableApprovalPromptContext
+    ) async throws -> ApprovalDecision {
+        _ = context
+        promptCount += 1
+        return .approved
+    }
+
+    func count() -> Int { promptCount }
+}
+
+private enum RuntimePolicyCompositionFailure: LocalizedError, Sendable {
+    case unavailable
+
+    var errorDescription: String? {
+        "simulated typed policy composition failure"
+    }
+}
+
+private final class RuntimePolicyStoreFileSystem:
+    AgentPolicyStoreFileSystem,
+    @unchecked Sendable
+{
+    private let support: URL
+    private let fileManager = FileManager.default
+
+    init() throws {
+        support = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "NovaForgeRuntimePolicy-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try fileManager.createDirectory(
+            at: support,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+    }
+
+    func applicationSupportDirectory() throws -> URL { support }
+
+    func itemKind(at url: URL) throws -> AgentPolicyStoreFileItemKind {
+        do {
+            let attributes = try fileManager.attributesOfItem(atPath: url.path)
+            switch attributes[.type] as? FileAttributeType {
+            case .typeDirectory: return .directory
+            case .typeRegular: return .regularFile
+            case .typeSymbolicLink: return .symbolicLink
+            default: return .other
+            }
+        } catch let error as CocoaError
+            where error.code == .fileNoSuchFile
+                || error.code == .fileReadNoSuchFile
+        {
+            return .missing
+        }
+    }
+
+    func createDirectory(
+        at url: URL,
+        protection _: AgentPolicyDirectoryProtection
+    ) throws {
+        try fileManager.createDirectory(
+            at: url,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+    }
+
+    func setProtection(
+        _: AgentPolicyDirectoryProtection,
+        at _: URL
+    ) throws {}
+
+    func protection(at _: URL) throws
+        -> AgentPolicyDirectoryProtection?
+    {
+        .complete
+    }
+
+    func setExcludedFromBackup(_: Bool, at _: URL) throws {}
+
+    func isExcludedFromBackup(at _: URL) throws -> Bool { true }
+}
+
+private final class RuntimePolicySigningKeychain:
+    AgentApprovalSigningKeychainClient,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var data: Data?
+
+    func lookup(service _: String, account _: String) throws
+        -> AgentApprovalSigningKeychainLookup
+    {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data else { return .notFound }
+        return .item(
+            data: data,
+            accessibility: .whenUnlockedThisDeviceOnly
+        )
+    }
+
+    func insert(
+        _ candidate: Data,
+        service _: String,
+        account _: String,
+        accessibility _: AgentApprovalSigningKeyAccessibility
+    ) throws -> AgentApprovalSigningKeychainInsertResult {
+        lock.lock()
+        defer { lock.unlock() }
+        guard data == nil else { return .duplicate }
+        data = candidate
+        return .inserted
+    }
+}
+
+private struct RuntimePolicySigningRandom:
+    AgentApprovalSigningKeyRandomGenerating
+{
+    func randomBytes(count: Int) throws -> Data {
+        Data(repeating: 0xa5, count: count)
+    }
+}
+
+@MainActor
+private func runtimePolicyComposition(
+    prompt: any ApprovalDecisionPrompting
+) throws -> AgentPolicyMutationRuntime {
+    let signingKeyStore = AgentApprovalSigningKeyStore(
+        keychain: RuntimePolicySigningKeychain(),
+        randomGenerator: RuntimePolicySigningRandom()
+    )
+    let coordinator = try AgentPolicyMutationCoordinator(
+        approvalPrompt: prompt,
+        storeFileSystem: try RuntimePolicyStoreFileSystem(),
+        signingKeyStore: signingKeyStore
+    )
+    return AgentPolicyMutationRuntime(
+        approvalPromptCenter: .shared,
+        policyCoordinator: coordinator,
+        executionNodeID: ExecutionNodeID(
+            rawValue: UUID(
+                uuidString: "99999999-aaaa-8bbb-8ccc-000000000001"
+            )!
+        )
+    )
+}
+
+private func existingRuntimeWorkspace(
+    at rootURL: URL
+) throws -> SandboxWorkspace {
+    try FileManager.default.createDirectory(
+        at: rootURL,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    return SandboxWorkspace(rootURL: rootURL)
+}
+
+@MainActor
+private func failingRuntimePolicyComposition() throws
+    -> AgentPolicyMutationRuntime
+{
+    let prompt = RuntimeApprovingApprovalPrompt()
+    let coordinator = AgentPolicyMutationCoordinator(
+        configuration: try AgentPolicyMutationCoordinator
+            .failClosedConfiguration(),
+        approvalPrompt: prompt,
+        systemFactory: { _, _, _ -> any AgentPolicyMutationSystemServing in
+            throw RuntimePolicyCompositionFailure.unavailable
+        }
+    )
+    return AgentPolicyMutationRuntime(
+        approvalPromptCenter: .shared,
+        policyCoordinator: coordinator,
+        executionNodeID: ExecutionNodeID(
+            rawValue: UUID(
+                uuidString: "99999999-aaaa-8bbb-8ccc-000000000002"
+            )!
+        )
+    )
+}
+
 @MainActor
 final class AgentRuntimeLifecycleTests: XCTestCase {
     func testLiveStreamBufferRevealsLargeChunksGradually() async throws {
@@ -52,7 +265,11 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertGreaterThan(stream.revealBacklog, 0)
 
         let initialCount = stream.displayText.count
-        try await Task.sleep(for: .milliseconds(140))
+        let revealDeadline = ContinuousClock.now + .milliseconds(700)
+        while stream.displayText.count == initialCount,
+              ContinuousClock.now < revealDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertGreaterThan(stream.displayText.count, initialCount, "The display-paced reveal loop should keep flowing after the first glyph.")
         XCTAssertLessThan(stream.displayText.count, text.count, "The reveal loop should not dump the entire backlog in one UI update.")
 
@@ -131,6 +348,369 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
 
         XCTAssertTrue(stream.isEmpty, "The live field should disappear immediately once the durable assistant response is ready.")
         XCTAssertNil(stream.handoffMessageID)
+    }
+
+    func testFlatToolArgumentParserPreservesBooleanAndNumericScalarTypes() {
+        let arguments = FlatToolArgumentParser.parse(
+            #"{"truth":true,"lie":false,"zero":0,"one":1,"two":2,"decimal":1.5,"text":"1"}"#
+        )
+
+        XCTAssertEqual(arguments["truth"], "true")
+        XCTAssertEqual(arguments["lie"], "false")
+        XCTAssertEqual(arguments["zero"], "0")
+        XCTAssertEqual(arguments["one"], "1")
+        XCTAssertEqual(arguments["two"], "2")
+        XCTAssertEqual(arguments["decimal"], "1.5")
+        XCTAssertEqual(arguments["text"], "1")
+    }
+
+    func testHostedBooleanReplaceAllArgumentReplacesEveryMatch() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeBooleanToolArguments-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let workspace = SandboxWorkspace(rootURL: workspaceRoot)
+        try workspace.testWrite("replace.txt", contents: "old value\nold value\n")
+        let conversation = Conversation(title: "Boolean tool arguments")
+        let settings = AgentSettings(provider: .openAI, autoApproveWrites: true)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: workspace,
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        APIToolCall(
+                            id: "replace-all-boolean",
+                            type: "function",
+                            function: APIFunctionCall(
+                                name: "replace_text",
+                                arguments: #"{"path":"replace.txt","old":"old value","new":"new value","replace_all":true}"#
+                            )
+                        )
+                    ]
+                ),
+                roleLog: "debug Boolean tool call"
+            ),
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "Both matches were replaced.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug Boolean tool completion"
+            )
+        ])
+
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "Replace every old value.",
+                conversation: conversation,
+                settings: settings,
+                context: context
+            ),
+            .started
+        )
+
+        let deadline = Date().addingTimeInterval(12)
+        while runtime.debugHasTrackedTask && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        if runtime.debugHasTrackedTask {
+            runtime.stopGenerating(context: context)
+            let cancellationDeadline = Date().addingTimeInterval(2)
+            while runtime.debugHasTrackedTask
+                    && Date() < cancellationDeadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(try workspace.read("replace.txt"), "new value\nnew value\n")
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 1)
+    }
+
+    func testRecoverableProviderRetryDiscardsFailedAttemptLiveText() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeProviderRetryStream-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let conversation = Conversation(title: "Provider retry stream")
+        let settings = AgentSettings(provider: .openAI)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot)
+        )
+        let cleanAnswer = "CLEAN-ANSWER"
+        runtime.debugInstallRecoverableProviderFailures([URLError(.networkConnectionLost)])
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: cleanAnswer,
+                    tool_calls: nil
+                ),
+                roleLog: "debug retry completion"
+            )
+        ])
+
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "Recover without mixing attempts.",
+                conversation: conversation,
+                settings: settings,
+                context: context
+            ),
+            .started
+        )
+
+        let deadline = Date().addingTimeInterval(6)
+        while runtime.debugHasTrackedTask && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(runtime.liveStream.displayText, cleanAnswer)
+        XCTAssertFalse(runtime.liveStream.displayText.contains("FAILED-PARTIAL-ATTEMPT"))
+        XCTAssertEqual(conversation.messages.last(where: { $0.role == .assistant })?.content, cleanAnswer)
+    }
+
+    func testTerminalReceiptSaveFailureRetainsOwnershipUntilSettlementSucceeds() async throws {
+        enum SaveFailure: LocalizedError {
+            case diskFull
+
+            var errorDescription: String? { "simulated terminal run receipt failure" }
+        }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeTerminalReceiptFailure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let conversation = Conversation(title: "Terminal receipt failure")
+        let settings = AgentSettings(provider: .openAI)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot)
+        )
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "First answer is durable before receipt settlement.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug first receipt"
+            ),
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "Second answer starts only after settlement.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug second receipt"
+            )
+        ])
+        runtime.debugInstallRunReceiptSaveOverride { _ in
+            throw SaveFailure.diskFull
+        }
+
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "Complete the first run.",
+                conversation: conversation,
+                settings: settings,
+                context: context
+            ),
+            .started
+        )
+        let firstRunID = try XCTUnwrap(try context.fetch(FetchDescriptor<AgentRunRecord>()).first?.id)
+
+        let firstDeadline = Date().addingTimeInterval(5)
+        while runtime.debugHasTrackedTask && Date() < firstDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertTrue(runtime.debugHasActiveRunReceipt)
+        XCTAssertTrue(runtime.debugHasCapturedRunWorkspace)
+        XCTAssertNil(runtime.debugLastSettledRunID)
+        XCTAssertFalse(runtime.restoreWorkspaceSelection(to: "MustNotRetarget"))
+
+        let persistedAfterFailure = try ModelContext(container).fetch(FetchDescriptor<AgentRunRecord>())
+        XCTAssertEqual(persistedAfterFailure.count, 1)
+        XCTAssertEqual(persistedAfterFailure.first?.id, firstRunID)
+        XCTAssertEqual(persistedAfterFailure.first?.status, .running)
+
+        XCTAssertFalse(
+            runtime.clearCurrentRunState(keepLastFailure: false),
+            "Presentation cleanup must not discard an unsettled durable receipt."
+        )
+        runtime.continueAfterInterruption(
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertTrue(runtime.debugHasActiveRunReceipt)
+        XCTAssertTrue(runtime.debugHasCapturedRunWorkspace)
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<AgentRunRecord>()).count, 1)
+
+        let blocked = runtime.send(
+            prompt: "Do not overwrite the unsettled receipt.",
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
+        guard case .rejected(.persistenceFailed(let detail)) = blocked else {
+            return XCTFail("A new run must be rejected while terminal receipt settlement still fails: \(blocked)")
+        }
+        XCTAssertTrue(detail.contains("not durably settled"))
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<AgentRunRecord>()).count, 1)
+
+        runtime.debugInstallRunReceiptSaveOverride(nil)
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "Start only after settling the first receipt.",
+                conversation: conversation,
+                settings: settings,
+                context: context
+            ),
+            .started
+        )
+
+        let secondDeadline = Date().addingTimeInterval(5)
+        while runtime.debugHasTrackedTask && Date() < secondDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        let finalReceipts = try ModelContext(container).fetch(FetchDescriptor<AgentRunRecord>())
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertEqual(finalReceipts.count, 2)
+        XCTAssertEqual(finalReceipts.first(where: { $0.id == firstRunID })?.status, .completed)
+        XCTAssertTrue(finalReceipts.allSatisfy { $0.status == .completed })
+        XCTAssertFalse(runtime.debugHasActiveRunReceipt)
+        XCTAssertFalse(runtime.debugHasCapturedRunWorkspace)
+        XCTAssertNotNil(runtime.debugLastSettledRunID)
+    }
+
+    func testHostedCompletionEvidenceSaveFailureCannotProduceCompletedReceipt() async throws {
+        enum SaveFailure: LocalizedError {
+            case diskFull
+
+            var errorDescription: String? { "simulated hosted completion evidence failure" }
+        }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeHostedCompletionEvidence-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let project = Project(name: "Hosted completion evidence", workspaceName: "Default")
+        let conversation = Conversation(title: "Hosted completion evidence", project: project)
+        let settings = AgentSettings(
+            provider: .openAI,
+            modelID: AIProvider.openAI.defaultModel,
+            activeProjectID: project.id
+        )
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(settings)
+        try context.save()
+
+        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        runtime.debugInstallProviderResponses([
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "The provider response itself saved successfully.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug hosted completion evidence"
+            )
+        ])
+
+        var saveAttempts = 0
+        var rejectedTerminalEvidence = false
+        runtime.debugInstallCompactedSaveOverride { saveContext in
+            saveAttempts += 1
+            if !rejectedTerminalEvidence,
+               project.events.contains(where: { $0.kind == .runCompleted && $0.severity == .success }) {
+                rejectedTerminalEvidence = true
+                throw SaveFailure.diskFull
+            }
+            try saveContext.save()
+        }
+
+        XCTAssertEqual(
+            runtime.send(
+                prompt: "Finish only if the terminal proof saves.",
+                conversation: conversation,
+                settings: settings,
+                context: context,
+                project: project
+            ),
+            .started
+        )
+
+        let deadline = Date().addingTimeInterval(6)
+        while runtime.debugHasTrackedTask && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertFalse(runtime.debugHasTrackedTask)
+        XCTAssertGreaterThanOrEqual(saveAttempts, 4)
+        XCTAssertTrue(rejectedTerminalEvidence)
+        if case .failed(let message) = runtime.runState {
+            XCTAssertTrue(message.contains("simulated hosted completion evidence failure"), "Actual message: \(message)")
+        } else {
+            XCTFail("Terminal evidence save failure must fail the run. State: \(runtime.runState)")
+        }
+
+        let durableContext = ModelContext(container)
+        let receipts = try durableContext.fetch(FetchDescriptor<AgentRunRecord>())
+        let events = try durableContext.fetch(FetchDescriptor<ProjectEvent>())
+        XCTAssertEqual(receipts.count, 1)
+        XCTAssertEqual(receipts.first?.status, .failed)
+        XCTAssertFalse(events.contains { $0.kind == .runCompleted && $0.severity == .success })
+        XCTAssertFalse(events.contains { $0.kind == .agentProofCreated && $0.severity == .success })
     }
 
     func testRuntimeFixtureExposesStructuredProjectProgressInputs() {
@@ -212,7 +792,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
     func testWorkspaceSummaryCacheRescansOnlyAfterWorkspaceRevisionChanges() throws {
         let workspace = SandboxWorkspace(name: "Summary-Cache-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: workspace.rootURL) }
-        try workspace.write("one.txt", contents: "one")
+        try workspace.testWrite("one.txt", contents: "one")
         let runtime = AgentRuntime(workspace: workspace)
 
         let first = runtime.debugWorkspaceSummary(for: .openAI)
@@ -223,7 +803,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(scansAfterFirstRead, 1)
         XCTAssertEqual(runtime.debugWorkspaceSummaryManifestScanCount, scansAfterFirstRead, "An unchanged workspace should use the revision-keyed summary without another manifest walk.")
 
-        try workspace.write("two.txt", contents: "two")
+        try workspace.testWrite("two.txt", contents: "two")
         runtime.noteWorkspaceChanged()
         let refreshed = runtime.debugWorkspaceSummary(for: .openAI)
 
@@ -483,7 +1063,13 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         context.insert(settings)
         try context.save()
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let approvalPrompt = RuntimeBlockingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
         runtime.debugInstallProviderResponses([
             ProviderResponse(
                 message: ChatCompletionsResponse.Choice.Message(
@@ -501,6 +1087,14 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
                     ]
                 ),
                 roleLog: "debug auto-continued mutating tool"
+            ),
+            ProviderResponse(
+                message: ChatCompletionsResponse.Choice.Message(
+                    role: "assistant",
+                    content: "The auto-continued proof is complete.",
+                    tool_calls: nil
+                ),
+                roleLog: "debug auto-continued completion"
             )
         ])
         runtime.send(
@@ -512,24 +1106,45 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             origin: .autoContinued
         )
 
-        let deadline = Date().addingTimeInterval(3)
-        while runtime.runState != .waitingForApproval && Date() < deadline {
+        let approvalDeadline = Date().addingTimeInterval(3)
+        while await approvalPrompt.count() != 1
+                && Date() < approvalDeadline {
             try await Task.sleep(for: .milliseconds(50))
         }
 
-        XCTAssertEqual(runtime.runState, .waitingForApproval)
-        XCTAssertNotNil(runtime.pendingTool)
+        let waitingPromptCount = await approvalPrompt.count()
+        XCTAssertEqual(waitingPromptCount, 1)
+        XCTAssertTrue(runtime.isWorking)
+        XCTAssertNil(
+            runtime.pendingTool,
+            "Fresh auto-continued writes suspend only in the typed broker."
+        )
         XCTAssertNil(try? runtime.workspace.read("auto-proof.txt"))
-
-        let runs = try context.fetch(FetchDescriptor<ToolRun>())
-        let run = try XCTUnwrap(runs.first { $0.name == "write_file" })
-        XCTAssertEqual(run.status, .pendingApproval)
-        XCTAssertTrue(run.requiresApproval)
-        XCTAssertEqual(run.project?.id, project.id)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ToolRun>()).isEmpty)
 
         let events = try context.fetch(FetchDescriptor<ProjectEvent>())
         XCTAssertTrue(events.contains { $0.kind == .promptQueued && $0.title == "Auto-continued prompt queued" })
-        XCTAssertTrue(events.contains { $0.kind == .toolApprovalRequested && $0.sourceIDString == run.id.uuidString })
+        XCTAssertFalse(
+            events.contains { $0.kind == .toolApprovalRequested },
+            "Fresh V1 writes must not create a legacy approval record."
+        )
+
+        await approvalPrompt.approve()
+        let completionDeadline = Date().addingTimeInterval(5)
+        while (runtime.isWorking || runtime.debugHasTrackedTask)
+                && Date() < completionDeadline {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        XCTAssertEqual(runtime.runState, .completed)
+        XCTAssertEqual(try runtime.workspace.read("auto-proof.txt"), "proof")
+        let runs = try context.fetch(FetchDescriptor<ToolRun>())
+        let run = try XCTUnwrap(runs.first { $0.name == "write_file" })
+        XCTAssertEqual(run.status, .completed)
+        XCTAssertTrue(run.requiresApproval)
+        XCTAssertEqual(run.project?.id, project.id)
+        let completedPromptCount = await approvalPrompt.count()
+        XCTAssertEqual(completedPromptCount, 1)
     }
 
     func testHostedMultiCallPlanCompletesEnvelopeThroughFirstApprovalAndDefersLaterCalls() async throws {
@@ -572,7 +1187,13 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             function: APIFunctionCall(name: "list_directory", arguments: #"{"path":"."}"#)
         )
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let approvalPrompt = RuntimeBlockingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
         runtime.debugInstallProviderResponses([
             ProviderResponse(
                 message: ChatCompletionsResponse.Choice.Message(
@@ -604,17 +1225,22 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         )
 
         let approvalDeadline = Date().addingTimeInterval(4)
-        while runtime.runState != .waitingForApproval && Date() < approvalDeadline {
+        while await approvalPrompt.count() != 1
+                && Date() < approvalDeadline {
             try await Task.sleep(for: .milliseconds(40))
         }
 
-        XCTAssertEqual(runtime.runState, .waitingForApproval)
-        XCTAssertEqual(runtime.pendingTool?.id, writeCall.id)
+        let waitingPromptCount = await approvalPrompt.count()
+        XCTAssertEqual(waitingPromptCount, 1)
+        XCTAssertTrue(runtime.isWorking)
+        XCTAssertNil(runtime.pendingTool)
         XCTAssertNil(try? runtime.workspace.read("hosted-proof.txt"))
 
         let planMessage = try XCTUnwrap(conversation.messages.first { $0.role == .assistant && $0.toolCalls?.isEmpty == false })
-        XCTAssertEqual(planMessage.toolCalls?.map(\.id), [readCall.id, writeCall.id])
-        XCTAssertFalse(planMessage.toolCalls?.contains(where: { $0.id == laterCall.id }) == true)
+        XCTAssertEqual(
+            planMessage.toolCalls?.map(\.id),
+            [readCall.id, writeCall.id, laterCall.id]
+        )
         XCTAssertEqual(conversation.messages.filter { $0.role == .tool }.compactMap(\.toolCallID), [readCall.id])
 
         let contextWhileWaiting = ProviderContextWindow.select(
@@ -626,15 +1252,11 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             "A partial read/write envelope must stay out of provider context until approval adds the missing write result."
         )
 
-        runtime.approvePendingTool(
-            conversation: conversation,
-            settings: settings,
-            context: context,
-            project: project
-        )
+        await approvalPrompt.approve()
 
         let completionDeadline = Date().addingTimeInterval(5)
-        while (runtime.isWorking || runtime.pendingTool != nil) && Date() < completionDeadline {
+        while (runtime.isWorking || runtime.debugHasTrackedTask)
+                && Date() < completionDeadline {
             try await Task.sleep(for: .milliseconds(40))
         }
 
@@ -642,10 +1264,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(try runtime.workspace.read("hosted-proof.txt"), "approved")
         XCTAssertEqual(
             Set(conversation.messages.filter { $0.role == .tool }.compactMap(\.toolCallID)),
-            Set([readCall.id, writeCall.id])
+            Set([readCall.id, writeCall.id, laterCall.id])
         )
-        XCTAssertFalse(conversation.messages.contains { $0.toolCallID == laterCall.id })
-        XCTAssertFalse(try context.fetch(FetchDescriptor<ToolRun>()).contains { $0.name == laterCall.function.name })
+        XCTAssertTrue(conversation.messages.contains { $0.toolCallID == laterCall.id })
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ToolRun>()).contains { $0.name == laterCall.function.name })
 
         let completedContext = ProviderContextWindow.select(
             conversation.messages.map(\.providerInput),
@@ -654,8 +1276,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertTrue(completedContext.contains { $0.id == planMessage.id })
         XCTAssertEqual(
             Set(completedContext.filter { $0.role == .tool }.compactMap(\.toolCallID)),
-            Set([readCall.id, writeCall.id])
+            Set([readCall.id, writeCall.id, laterCall.id])
         )
+        let completedPromptCount = await approvalPrompt.count()
+        XCTAssertEqual(completedPromptCount, 1)
     }
 
     func testLaunchRecoveryPausesInterruptedAutoContinueCountdown() throws {
@@ -671,7 +1295,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         context.insert(project)
         try context.save()
 
-        PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: Date(timeIntervalSince1970: 900))
+        try PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: Date(timeIntervalSince1970: 900))
 
         XCTAssertTrue(project.autoContinuePaused)
         XCTAssertEqual(project.autoContinueState, .paused)
@@ -771,7 +1395,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         try context.save()
 
         let recoveryDate = Date(timeIntervalSince1970: 1_234)
-        PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: recoveryDate)
+        try PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: recoveryDate)
 
         XCTAssertEqual(pending.status, .rejected)
         XCTAssertEqual(approved.status, .failed)
@@ -898,11 +1522,18 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
         let context = container.mainContext
-        let runtime = AgentRuntime(
-            workspace: SandboxWorkspace(
-                rootURL: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("NovaForgeRuntimeRecovery-\(UUID().uuidString)", isDirectory: true)
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "NovaForgeRuntimeRecovery-\(UUID().uuidString)",
+                isDirectory: true
             )
+        try FileManager.default.createDirectory(
+            at: workspaceRoot,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot)
         )
         let conversation = Conversation(title: "Recovery")
         let settings = AgentSettings(provider: .local)
@@ -935,7 +1566,11 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             .appendingPathComponent("NovaForgeLocalReviewFirst-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspaceRoot) }
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let prompt = RuntimeBlockingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(prompt: prompt)
+        )
         let conversation = Conversation(title: "Review local write")
         let settings = AgentSettings(provider: .local, autoApproveWrites: false)
         context.insert(conversation)
@@ -950,26 +1585,36 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         )
 
         let approvalDeadline = Date().addingTimeInterval(3)
-        while runtime.runState != .waitingForApproval && Date() < approvalDeadline {
+        while await prompt.count() != 1 && Date() < approvalDeadline {
             try await Task.sleep(for: .milliseconds(40))
         }
 
-        XCTAssertEqual(runtime.runState, .waitingForApproval)
-        XCTAssertEqual(runtime.pendingTool?.name, "write_file")
+        let pendingPromptCount = await prompt.count()
+        XCTAssertEqual(pendingPromptCount, 1)
+        XCTAssertNil(
+            runtime.pendingTool,
+            "Fresh V1 mutations must not create a second legacy approval."
+        )
+        XCTAssertTrue(runtime.isWorking)
         XCTAssertThrowsError(try runtime.workspace.read("review-first.txt"))
         XCTAssertTrue(try context.fetch(FetchDescriptor<ToolOperationRecord>()).isEmpty)
 
-        runtime.approvePendingTool(conversation: conversation, settings: settings, context: context)
+        await prompt.approve()
         let completionDeadline = Date().addingTimeInterval(3)
-        while runtime.isWorking && Date() < completionDeadline {
+        while (runtime.isWorking || runtime.debugHasTrackedTask)
+                && Date() < completionDeadline {
             try await Task.sleep(for: .milliseconds(40))
         }
 
         XCTAssertEqual(runtime.runState, .completed)
         XCTAssertEqual(try runtime.workspace.read("review-first.txt"), "approved content")
-        let reviewedReceipt = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
-        XCTAssertEqual(reviewedReceipt.phase, .completed)
-        XCTAssertEqual(reviewedReceipt.targetPaths, ["review-first.txt"])
+        let completedPromptCount = await prompt.count()
+        XCTAssertEqual(
+            completedPromptCount,
+            1,
+            "One fresh V1 mutation must produce exactly one typed prompt."
+        )
+        XCTAssertNil(runtime.pendingTool)
     }
 
     func testApprovalPausedRunKeepsItsCapturedWorkspaceUntilMutationSettles() async throws {
@@ -982,8 +1627,12 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             .appendingPathComponent("NovaForgeWorkspaceLease-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspaceRoot) }
 
-        let startingWorkspace = SandboxWorkspace(rootURL: workspaceRoot)
-        let runtime = AgentRuntime(workspace: startingWorkspace)
+        let startingWorkspace = try existingRuntimeWorkspace(at: workspaceRoot)
+        let prompt = RuntimeBlockingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: startingWorkspace,
+            policyMutationRuntime: try runtimePolicyComposition(prompt: prompt)
+        )
         let conversation = Conversation(title: "Workspace lease")
         let settings = AgentSettings(provider: .local, autoApproveWrites: false)
         context.insert(conversation)
@@ -998,22 +1647,21 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         )
 
         let approvalDeadline = Date().addingTimeInterval(3)
-        while runtime.runState != .waitingForApproval && Date() < approvalDeadline {
+        while await prompt.count() != 1 && Date() < approvalDeadline {
             try await Task.sleep(for: .milliseconds(40))
         }
 
-        XCTAssertEqual(runtime.runState, .waitingForApproval)
+        let pendingPromptCount = await prompt.count()
+        XCTAssertEqual(pendingPromptCount, 1)
+        XCTAssertNil(runtime.pendingTool)
         let redirectedWorkspaceName = "Redirected-\(UUID().uuidString)"
-        XCTAssertFalse(runtime.switchWorkspace(to: redirectedWorkspaceName))
+        XCTAssertFalse(runtime.restoreWorkspaceSelection(to: redirectedWorkspaceName))
         XCTAssertEqual(runtime.workspace.rootURL.standardizedFileURL, workspaceRoot.standardizedFileURL)
 
-        runtime.approvePendingTool(
-            conversation: conversation,
-            settings: settings,
-            context: context
-        )
+        await prompt.approve()
         let completionDeadline = Date().addingTimeInterval(3)
-        while runtime.isWorking && Date() < completionDeadline {
+        while (runtime.isWorking || runtime.debugHasTrackedTask)
+                && Date() < completionDeadline {
             try await Task.sleep(for: .milliseconds(40))
         }
 
@@ -1022,12 +1670,150 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             try startingWorkspace.read("captured-root.txt"),
             "immutable workspace proof"
         )
-        let receipt = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
-        XCTAssertEqual(receipt.workspaceName, startingWorkspace.workspaceName)
+        let completedPromptCount = await prompt.count()
+        XCTAssertEqual(completedPromptCount, 1)
 
-        XCTAssertTrue(runtime.switchWorkspace(to: redirectedWorkspaceName))
+        XCTAssertTrue(runtime.restoreWorkspaceSelection(to: redirectedWorkspaceName))
         XCTAssertEqual(runtime.workspace.workspaceName, redirectedWorkspaceName)
         try? FileManager.default.removeItem(at: runtime.workspace.rootURL)
+    }
+
+    func testWorkspaceSeedPolicyFailureLeavesRuntimeSettingsAndEventsOnOldSelection() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Seed failure", workspaceName: "OriginalWorkspace")
+        let settings = AgentSettings(
+            activeWorkspaceName: "OriginalWorkspace",
+            activeProjectID: project.id
+        )
+        context.insert(project)
+        context.insert(settings)
+        try context.save()
+
+        let originalRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeSeedFailureOriginal-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: originalRoot) }
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: originalRoot),
+            policyMutationRuntime: try failingRuntimePolicyComposition()
+        )
+        let originalWorkspaceName = runtime.workspace.workspaceName
+        var selectionCommitCalled = false
+
+        do {
+            _ = try await runtime.switchWorkspace(
+                to: "UnseededTarget-\(UUID().uuidString)",
+                context: context
+            ) {
+                selectionCommitCalled = true
+                settings.activeWorkspaceName = "must-not-persist"
+                ProjectEventRecorder.record(
+                    project: project,
+                    kind: .workspaceChanged,
+                    title: "Must not exist",
+                    context: context
+                )
+                try context.save()
+            }
+            XCTFail("A rejected typed seed composition must fail closed.")
+        } catch {
+            XCTAssertTrue(
+                error.localizedDescription.contains(
+                    "simulated typed policy composition failure"
+                )
+            )
+        }
+
+        XCTAssertFalse(selectionCommitCalled)
+        XCTAssertEqual(runtime.workspace.workspaceName, originalWorkspaceName)
+        let verificationContext = ModelContext(container)
+        let persistedSettings = try XCTUnwrap(
+            try verificationContext.fetch(FetchDescriptor<AgentSettings>()).first
+        )
+        XCTAssertEqual(persistedSettings.activeWorkspaceName, "OriginalWorkspace")
+        XCTAssertTrue(try verificationContext.fetch(FetchDescriptor<ProjectEvent>()).isEmpty)
+    }
+
+    func testResetWorkspaceUsesTypedControlThenTrustedSeed() async throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "NovaForgeTypedReset-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let workspace = SandboxWorkspace(rootURL: workspaceRoot)
+        try workspace.testWrite("stale.txt", contents: "remove me")
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: workspace,
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+
+        try await runtime.resetWorkspace(context: context)
+
+        XCTAssertThrowsError(try workspace.read("stale.txt"))
+        XCTAssertTrue(try workspace.read("README.md").contains("NovaForge Workspace"))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ToolOperationRecord>()).isEmpty)
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(
+            promptCount,
+            1,
+            "Reset remains explicit while the exact trusted bootstrap seed is pre-authorized."
+        )
+    }
+
+    func testAgentMutationOperationIDIsStableForDuplicateDelivery() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NovaForgeStableMutationID-\(UUID().uuidString)", isDirectory: true)
+        let firstWorkspace = SandboxWorkspace(rootURL: root)
+        let secondWorkspace = SandboxWorkspace(rootURL: root)
+        let runID = UUID()
+
+        let first = AgentRuntime.agentMutationOperationID(
+            runID: runID,
+            toolCallID: "provider-call-17",
+            workspace: firstWorkspace
+        )
+        let duplicate = AgentRuntime.agentMutationOperationID(
+            runID: runID,
+            toolCallID: "provider-call-17",
+            workspace: secondWorkspace
+        )
+        let anotherRun = AgentRuntime.agentMutationOperationID(
+            runID: UUID(),
+            toolCallID: "provider-call-17",
+            workspace: secondWorkspace
+        )
+
+        XCTAssertEqual(first, duplicate)
+        XCTAssertNotEqual(first, anotherRun)
+        XCTAssertEqual(first.uuidString.split(separator: "-")[2].first, "8")
+    }
+
+    func testReadOnlyWorkspaceRestoreDoesNotCreateAnUnseededRoot() throws {
+        let workspaceName = "ReadOnlyRestore-\(UUID().uuidString)"
+        let target = SandboxWorkspace(name: workspaceName)
+        try? FileManager.default.removeItem(at: target.rootURL)
+        let runtime = AgentRuntime()
+
+        XCTAssertTrue(runtime.restoreWorkspaceSelection(to: workspaceName))
+
+        XCTAssertEqual(runtime.workspace.workspaceName, workspaceName)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: target.rootURL.path),
+            "Persisted selection restoration must never masquerade as workspace creation."
+        )
     }
 
     func testLocalDeterministicWriteCanUseExplicitAutoApproval() async throws {
@@ -1040,7 +1826,11 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             .appendingPathComponent("NovaForgeLocalAutoWrite-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspaceRoot) }
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let prompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(prompt: prompt)
+        )
         let conversation = Conversation(title: "Auto local write")
         let settings = AgentSettings(provider: .local, autoApproveWrites: true)
         context.insert(conversation)
@@ -1062,8 +1852,12 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertNil(runtime.pendingTool)
         XCTAssertEqual(runtime.runState, .completed)
         XCTAssertEqual(try runtime.workspace.read("auto-write.txt"), "automatic content")
-        let automaticReceipt = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
-        XCTAssertEqual(automaticReceipt.phase, .completed)
+        let promptCount = await prompt.count()
+        XCTAssertEqual(promptCount, 1)
+        XCTAssertTrue(
+            try context.fetch(FetchDescriptor<ToolOperationRecord>()).isEmpty,
+            "V1 typed policy receipts must not dual-write the retired gateway model."
+        )
     }
 
     func testLocalNativePlanDoesNotCompleteAfterHistorySaveFailure() async throws {
@@ -1149,7 +1943,12 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             try saveContext.save()
         }
 
-        runtime.send(prompt: "local model is working", conversation: conversation, settings: settings, context: context)
+        runtime.send(
+            prompt: String(repeating: "local transcript save guard ", count: 100),
+            conversation: conversation,
+            settings: settings,
+            context: context
+        )
 
         let deadline = Date().addingTimeInterval(3)
         while runtime.isWorking && Date() < deadline {
@@ -1276,7 +2075,13 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             autoApproveWrites: true,
             activeProjectID: project.id
         )
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
         context.insert(project)
         context.insert(conversation)
         context.insert(settings)
@@ -1325,9 +2130,23 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             project: project
         )
 
-        let deadline = Date().addingTimeInterval(4)
+        let deadline = Date().addingTimeInterval(12)
         while (runtime.isWorking || runtime.debugHasTrackedTask) && Date() < deadline {
             try await Task.sleep(for: .milliseconds(40))
+        }
+
+        if runtime.isWorking || runtime.debugHasTrackedTask {
+            runtime.stopGenerating(context: context)
+            let cancellationDeadline = Date().addingTimeInterval(3)
+            while (runtime.isWorking || runtime.debugHasTrackedTask)
+                    && Date() < cancellationDeadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTFail(
+                "Timed out waiting for the multi-tool rollback to settle " +
+                "after \(saveAttempts) save attempts."
+            )
+            return
         }
 
         XCTAssertFalse(runtime.isWorking)
@@ -1365,20 +2184,26 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             "The failed transcript must not leave project success evidence behind."
         )
         XCTAssertEqual(conversation.messages.filter { $0.role == .tool }.count, 0)
-        XCTAssertEqual(operationReceipts.count, 2, "Write-ahead operation receipts remain durable because both workspace mutations really ran.")
-        XCTAssertTrue(operationReceipts.allSatisfy { $0.phase == .completed })
+        XCTAssertTrue(
+            operationReceipts.isEmpty,
+            "Typed policy receipts must not dual-write the retired gateway model."
+        )
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 2)
         XCTAssertEqual(runRecords.last?.status, .failed)
     }
 
-    func testProviderSwitchResetsStaleModelsButRepairKeepsManualExactAPIModel() throws {
+    func testProviderSwitchAndRepairKeepSelectionsInsideAgentRuntimeCatalog() throws {
         let settings = AgentSettings(provider: .openAI, modelID: "gpt-5.5-preview-manual")
 
-        XCTAssertFalse(settings.repairStaleModelSelection(), "Manual exact API model IDs should stay valid within the same provider.")
-        XCTAssertEqual(settings.modelID, "gpt-5.5-preview-manual")
+        XCTAssertTrue(settings.repairStaleModelSelection())
+        XCTAssertEqual(settings.modelID, AIProvider.openAI.defaultModel)
 
+        let compatibleGPTSelection = settings.modelID
         XCTAssertTrue(settings.switchProvider(to: .openAICodex))
         XCTAssertEqual(settings.provider, .openAICodex)
-        XCTAssertEqual(settings.modelID, AIProvider.openAICodex.defaultModel)
+        XCTAssertEqual(settings.modelID, compatibleGPTSelection)
+        XCTAssertTrue(AIProvider.openAICodex.modelOptions.contains(settings.modelID))
 
         settings.modelID = AIProvider.local.defaultModel
         XCTAssertTrue(settings.switchProvider(to: .openAI))
@@ -1790,11 +2615,208 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         try context.save()
 
         let runtime = AgentRuntime()
-        XCTAssertEqual(runtime.reconcileInterruptedDurableWork(context: context), 1)
+        XCTAssertEqual(try runtime.reconcileInterruptedDurableWork(context: context), 1)
         XCTAssertTrue(
             runtime.toasts.contains { $0.message.contains("Recovered 1 interrupted run") },
             "Run recovery must not stay silent when there are no workspace-operation receipts."
         )
+    }
+
+    func testInterruptedRecoveryPreservesV2RunAndAssociatedReceiptsWhileClosingLegacyWork() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let preservedRunID = UUID()
+        let legacyRunID = UUID()
+        let recoveryDate = Date(timeIntervalSince1970: 1_900_000_000)
+
+        let preservedRun = AgentRunRecord(id: preservedRunID, status: .awaitingApproval)
+        let legacyRun = AgentRunRecord(id: legacyRunID, status: .running)
+        let preservedOperation = ToolOperationRecord(
+            runID: preservedRunID,
+            toolName: "write_file",
+            argumentsJSON: #"{"path":"v2.txt"}"#,
+            phase: .executing
+        )
+        let legacyOperation = ToolOperationRecord(
+            runID: legacyRunID,
+            toolName: "write_file",
+            argumentsJSON: #"{"path":"v1.txt"}"#,
+            phase: .executing
+        )
+        let preservedToolRun = ToolRun(
+            name: "write_file",
+            argumentsJSON: #"{"path":"v2.txt"}"#,
+            status: .approved,
+            runID: preservedRunID,
+            runStatus: .awaitingApproval
+        )
+        let legacyToolRun = ToolRun(
+            name: "write_file",
+            argumentsJSON: #"{"path":"v1.txt"}"#,
+            status: .approved,
+            runID: legacyRunID,
+            runStatus: .running
+        )
+        let preservedMessage = ChatMessage(
+            role: .assistant,
+            content: "Waiting for the V2 approval decision.",
+            runID: preservedRunID,
+            runStatus: .awaitingApproval
+        )
+        let legacyMessage = ChatMessage(
+            role: .assistant,
+            content: "Legacy work was interrupted.",
+            runID: legacyRunID,
+            runStatus: .running
+        )
+
+        [preservedRun, legacyRun].forEach { context.insert($0) }
+        [preservedOperation, legacyOperation].forEach { context.insert($0) }
+        [preservedToolRun, legacyToolRun].forEach { context.insert($0) }
+        [preservedMessage, legacyMessage].forEach { context.insert($0) }
+        try context.save()
+
+        let runtime = AgentRuntime()
+        XCTAssertEqual(
+            try runtime.reconcileInterruptedDurableWork(
+                context: context,
+                now: recoveryDate,
+                preservingRunIDs: [preservedRunID]
+            ),
+            2
+        )
+
+        let verificationContext = ModelContext(container)
+        let runs = try verificationContext.fetch(FetchDescriptor<AgentRunRecord>())
+        let operations = try verificationContext.fetch(FetchDescriptor<ToolOperationRecord>())
+        let toolRuns = try verificationContext.fetch(FetchDescriptor<ToolRun>())
+        let messages = try verificationContext.fetch(FetchDescriptor<ChatMessage>())
+
+        let persistedV2Run = try XCTUnwrap(runs.first { $0.id == preservedRunID })
+        XCTAssertEqual(persistedV2Run.status, .awaitingApproval)
+        XCTAssertNil(persistedV2Run.completedAt)
+        XCTAssertNil(persistedV2Run.errorKind)
+        XCTAssertEqual(
+            try XCTUnwrap(operations.first { $0.runID == preservedRunID }).phase,
+            .executing
+        )
+        XCTAssertNil(operations.first { $0.runID == preservedRunID }?.completedAt)
+        XCTAssertEqual(toolRuns.first { $0.runID == preservedRunID }?.runStatus, .awaitingApproval)
+        XCTAssertEqual(messages.first { $0.runID == preservedRunID }?.runStatus, .awaitingApproval)
+
+        let persistedV1Run = try XCTUnwrap(runs.first { $0.id == legacyRunID })
+        XCTAssertEqual(persistedV1Run.status, .interrupted)
+        XCTAssertEqual(persistedV1Run.completedAt, recoveryDate)
+        XCTAssertEqual(
+            try XCTUnwrap(operations.first { $0.runID == legacyRunID }).phase,
+            .interrupted
+        )
+        XCTAssertEqual(operations.first { $0.runID == legacyRunID }?.completedAt, recoveryDate)
+        XCTAssertEqual(toolRuns.first { $0.runID == legacyRunID }?.runStatus, .interrupted)
+        XCTAssertEqual(messages.first { $0.runID == legacyRunID }?.runStatus, .interrupted)
+    }
+
+    func testInterruptedRecoveryFetchFailureLeavesEveryDurableRecordUnchanged() throws {
+        enum RecoveryFailure: Error { case injectedFetch }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let run = AgentRunRecord(status: .running)
+        let message = ChatMessage(
+            role: .assistant,
+            content: "unfinished",
+            runID: run.id,
+            runStatus: .running
+        )
+        let toolRun = ToolRun(
+            name: "read_file",
+            argumentsJSON: #"{"path":"README.md"}"#,
+            status: .completed,
+            runID: run.id,
+            runStatus: .running
+        )
+        context.insert(run)
+        context.insert(message)
+        context.insert(toolRun)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugInstallInterruptedRecoveryFetchOverride { stage, _ in
+            if stage == .toolRuns(runID: run.id) {
+                throw RecoveryFailure.injectedFetch
+            }
+        }
+
+        XCTAssertThrowsError(
+            try runtime.reconcileInterruptedDurableWork(context: context)
+        ) { error in
+            XCTAssertTrue(error is RecoveryFailure)
+        }
+
+        let verificationContext = ModelContext(container)
+        let persistedRun = try XCTUnwrap(
+            try verificationContext.fetch(FetchDescriptor<AgentRunRecord>()).first
+        )
+        let persistedMessage = try XCTUnwrap(
+            try verificationContext.fetch(FetchDescriptor<ChatMessage>()).first
+        )
+        let persistedToolRun = try XCTUnwrap(
+            try verificationContext.fetch(FetchDescriptor<ToolRun>()).first
+        )
+        XCTAssertEqual(persistedRun.status, .running)
+        XCTAssertEqual(persistedMessage.runStatus, .running)
+        XCTAssertEqual(persistedToolRun.runStatus, .running)
+        XCTAssertNil(persistedRun.completedAt)
+    }
+
+    func testInterruptedRecoverySaveFailureRollsBackIsolatedTransaction() throws {
+        enum RecoveryFailure: Error { case injectedSave }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let run = AgentRunRecord(status: .running)
+        let operation = ToolOperationRecord(
+            runID: run.id,
+            workspaceName: "Default",
+            toolName: "write_file",
+            argumentsJSON: #"{"path":"draft.txt"}"#,
+            phase: .executing
+        )
+        context.insert(run)
+        context.insert(operation)
+        try context.save()
+
+        let runtime = AgentRuntime()
+        runtime.debugInstallInterruptedRecoverySaveOverride { _ in
+            throw RecoveryFailure.injectedSave
+        }
+
+        XCTAssertThrowsError(
+            try runtime.reconcileInterruptedDurableWork(context: context)
+        ) { error in
+            XCTAssertTrue(error is RecoveryFailure)
+        }
+
+        let verificationContext = ModelContext(container)
+        let persistedRun = try XCTUnwrap(
+            try verificationContext.fetch(FetchDescriptor<AgentRunRecord>()).first
+        )
+        let persistedOperation = try XCTUnwrap(
+            try verificationContext.fetch(FetchDescriptor<ToolOperationRecord>()).first
+        )
+        XCTAssertEqual(persistedRun.status, .running)
+        XCTAssertNil(persistedRun.completedAt)
+        XCTAssertEqual(persistedOperation.phase, .executing)
+        XCTAssertNil(persistedOperation.completedAt)
     }
 
     func testGeneralSnapshotDoesNotBorrowProjectEvidence() throws {
@@ -2116,7 +3138,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
 
         runtime.debugSimulateDelayedCompletionForActiveRun(delayMilliseconds: 120)
         XCTAssertTrue(runtime.isWorking)
-        XCTAssertFalse(runtime.switchWorkspace(to: nextWorkspaceName))
+        XCTAssertFalse(runtime.restoreWorkspaceSelection(to: nextWorkspaceName))
         XCTAssertEqual(runtime.workspace.workspaceName, startingWorkspaceName)
 
         let deadline = Date().addingTimeInterval(2)
@@ -2125,7 +3147,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         }
 
         XCTAssertEqual(runtime.runState, .completed)
-        XCTAssertTrue(runtime.switchWorkspace(to: nextWorkspaceName))
+        XCTAssertTrue(runtime.restoreWorkspaceSelection(to: nextWorkspaceName))
         XCTAssertEqual(runtime.workspace.workspaceName, nextWorkspaceName)
         try? FileManager.default.removeItem(at: runtime.workspace.rootURL)
     }
@@ -2257,10 +3279,17 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let context = container.mainContext
         let conversation = Conversation(title: "Approval transition")
         let settings = AgentSettings(provider: .custom, modelID: AIProvider.custom.defaultModel)
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "NovaForgeRuntimeApproval-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
         let runtime = AgentRuntime(
-            workspace: SandboxWorkspace(
-                rootURL: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("NovaForgeRuntimeApproval-\(UUID().uuidString)", isDirectory: true)
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
             )
         )
         let request = ToolRequest(
@@ -2293,6 +3322,12 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTAssertFalse(runtime.isWorking)
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(
+            promptCount,
+            1,
+            "Recovered legacy approval must still enter the typed mutation boundary."
+        )
     }
 
     func testApprovedMutatingToolRecordsProjectFileChange() async throws {
@@ -2310,7 +3345,13 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let workspaceRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("NovaForgeRuntimeToolFileChange-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspaceRoot) }
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
         let request = ToolRequest(
             id: "pending-write-file-change",
             name: "write_file",
@@ -2351,6 +3392,8 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             event.detail == "approved-file-change.txt"
         })
         XCTAssertEqual(run.status, .completed)
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 1)
     }
 
     func testLocalNativeWriteCreatesLinkedDurableProofRecords() async throws {
@@ -2365,7 +3408,13 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let workspaceRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("NovaForgeLocalProofChain-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspaceRoot) }
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
 
         context.insert(project)
         context.insert(conversation)
@@ -2433,6 +3482,8 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             event.sourceType == .conversation &&
             event.sourceIDString == conversation.id.uuidString
         })
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 1)
     }
 
     func testGeneralLocalNativeWritePersistsUnscopedDurableEvidence() async throws {
@@ -2446,7 +3497,13 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         let workspaceRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("NovaForgeGeneralProofChain-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspaceRoot) }
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
 
         context.insert(unrelatedProject)
         context.insert(conversation)
@@ -2488,12 +3545,10 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertNil(toolRun.project)
         XCTAssertEqual(toolRun.runID, canonicalRun.id)
 
-        let operation = try XCTUnwrap(try context.fetch(FetchDescriptor<ToolOperationRecord>()).first)
-        XCTAssertEqual(operation.phase, .completed)
-        XCTAssertEqual(operation.runID, canonicalRun.id)
-        XCTAssertEqual(operation.conversationID, conversation.id)
-        XCTAssertNil(operation.projectID)
-        XCTAssertEqual(operation.targetPaths, ["general-proof.html"])
+        XCTAssertTrue(
+            try context.fetch(FetchDescriptor<ToolOperationRecord>()).isEmpty,
+            "Typed V1 receipts must not dual-write the retired operation model."
+        )
 
         let artifact = try XCTUnwrap(
             try context.fetch(FetchDescriptor<ProjectArtifact>()).first { $0.path == "general-proof.html" }
@@ -2510,6 +3565,8 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
 
         XCTAssertTrue(try context.fetch(FetchDescriptor<ProjectEvent>()).isEmpty)
         XCTAssertTrue(unrelatedProject.events.isEmpty)
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 1)
     }
 
     func testApprovePendingToolKeepsApprovalVisibleAfterSaveFailure() throws {
@@ -2654,10 +3711,17 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
             modelID: AIProvider.custom.defaultModel,
             activeProjectID: project.id
         )
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "NovaForgeRuntimeApprovedToolSaveFailure-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
         let runtime = AgentRuntime(
-            workspace: SandboxWorkspace(
-                rootURL: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("NovaForgeRuntimeApprovedToolSaveFailure-\(UUID().uuidString)", isDirectory: true)
+            workspace: try existingRuntimeWorkspace(at: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
             )
         )
         let request = ToolRequest(
@@ -2712,6 +3776,8 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertFalse(runtime.debugHasTrackedTask)
         XCTAssertTrue(try context.fetch(FetchDescriptor<ProjectFileChange>()).isEmpty)
         XCTAssertFalse(try context.fetch(FetchDescriptor<ProjectEvent>()).contains { $0.kind == .fileChanged })
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 1)
     }
 
     func testLaunchSelectionPrefersReadyChatOverSettledColdLaunchSelection() throws {
@@ -2866,7 +3932,7 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         context.insert(completed)
         try context.save()
 
-        PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: now)
+        try PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: now)
 
         XCTAssertEqual(pending.status, .rejected)
         XCTAssertTrue(pending.output.contains("waiting for approval"))
@@ -2880,6 +3946,135 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(completed.status, .completed)
         XCTAssertEqual(completed.output, "README.md")
         XCTAssertNil(completed.completedAt)
+    }
+
+    func testPersistentLaunchRecoveryPreservesV2ToolsWhileClosingUnrelatedLegacyApprovals() throws {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let preservedRunID = UUID()
+        let legacyRunID = UUID()
+        let recoveryDate = Date(timeIntervalSince1970: 1_900_000_100)
+        let preservedPending = ToolRun(
+            name: "write_file",
+            argumentsJSON: #"{"path":"v2-pending.txt"}"#,
+            output: "V2 approval is live",
+            status: .pendingApproval,
+            requiresApproval: true,
+            isMutating: true,
+            runID: preservedRunID,
+            runStatus: .awaitingApproval
+        )
+        let preservedApproved = ToolRun(
+            name: "patch_file",
+            argumentsJSON: #"{"path":"v2-approved.txt"}"#,
+            output: "V2 execution is live",
+            status: .approved,
+            requiresApproval: true,
+            isMutating: true,
+            runID: preservedRunID,
+            runStatus: .running
+        )
+        let legacyPending = ToolRun(
+            name: "write_file",
+            argumentsJSON: #"{"path":"v1-pending.txt"}"#,
+            status: .pendingApproval,
+            requiresApproval: true,
+            isMutating: true,
+            runID: legacyRunID,
+            runStatus: .awaitingApproval
+        )
+        let legacyApproved = ToolRun(
+            name: "patch_file",
+            argumentsJSON: #"{"path":"v1-approved.txt"}"#,
+            status: .approved,
+            requiresApproval: true,
+            isMutating: true,
+            runID: legacyRunID,
+            runStatus: .running
+        )
+        [preservedPending, preservedApproved, legacyPending, legacyApproved].forEach {
+            context.insert($0)
+        }
+        try context.save()
+
+        try PersistentLaunchRecovery.recoverInterruptedToolRuns(
+            in: context,
+            now: recoveryDate,
+            preservingRunIDs: [preservedRunID]
+        )
+
+        XCTAssertEqual(preservedPending.status, .pendingApproval)
+        XCTAssertEqual(preservedPending.output, "V2 approval is live")
+        XCTAssertNil(preservedPending.completedAt)
+        XCTAssertEqual(preservedApproved.status, .approved)
+        XCTAssertEqual(preservedApproved.output, "V2 execution is live")
+        XCTAssertNil(preservedApproved.completedAt)
+
+        XCTAssertEqual(legacyPending.status, .rejected)
+        XCTAssertEqual(legacyPending.completedAt, recoveryDate)
+        XCTAssertTrue(legacyPending.output.contains("cancelled this stale approval"))
+        XCTAssertEqual(legacyApproved.status, .failed)
+        XCTAssertEqual(legacyApproved.completedAt, recoveryDate)
+        XCTAssertTrue(legacyApproved.output.contains("marked it failed"))
+    }
+
+    func testPersistentLaunchRecoveryLateFetchFailureMutatesNothing() throws {
+        enum InjectedFailure: Error { case countdownProjects }
+
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(name: "Atomic Recovery", mission: "Recover all launch state together.", workspaceName: "Default")
+        project.autoContinueEnabled = true
+        project.autoContinueState = .countdown
+        project.autoContinueDecision = "Start the next pass."
+        let pending = ToolRun(
+            name: "write_file",
+            argumentsJSON: "{}",
+            output: "waiting for approval",
+            status: .pendingApproval,
+            requiresApproval: true,
+            isMutating: true,
+            project: project
+        )
+        let projectRun = ProjectOSRun(
+            project: project,
+            projectName: project.name,
+            mission: project.mission,
+            status: .running,
+            now: Date(timeIntervalSince1970: 1_700)
+        )
+        context.insert(project)
+        context.insert(pending)
+        context.insert(projectRun)
+        try context.save()
+
+        var fetches = PersistentLaunchRecovery.Fetches.live
+        fetches.countdownProjects = { _ in throw InjectedFailure.countdownProjects }
+
+        XCTAssertThrowsError(
+            try PersistentLaunchRecovery.recoverInterruptedToolRuns(
+                in: context,
+                now: Date(timeIntervalSince1970: 1_800),
+                fetches: fetches
+            )
+        )
+
+        XCTAssertEqual(pending.status, .pendingApproval)
+        XCTAssertEqual(pending.output, "waiting for approval")
+        XCTAssertNil(pending.completedAt)
+        XCTAssertEqual(projectRun.status, .running)
+        XCTAssertTrue(projectRun.resumeState.isEmpty)
+        XCTAssertNil(projectRun.completedAt)
+        XCTAssertFalse(project.autoContinuePaused)
+        XCTAssertEqual(project.autoContinueState, .countdown)
+        XCTAssertEqual(project.autoContinueDecision, "Start the next pass.")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ProjectEvent>()).count, 0)
     }
 
     func testThemeWorldPalettesExposeRequiredReadableTokens() throws {
@@ -3172,14 +4367,14 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
     func testDownloadCompletionRequiresMinimumUsableBytes() throws {
         let variant = makeTinyVariant(expectedBytes: 100)
 
-        XCTAssertThrowsError(try LocalModelDownloader.validateCompleteDownload(variant: variant, receivedBytes: 97)) { error in
+        XCTAssertThrowsError(try LocalModelDownloader.validateCompleteDownload(variant: variant, receivedBytes: 99)) { error in
             XCTAssertTrue(String(describing: error).contains("downloadFailed"))
         }
-        XCTAssertNoThrow(try LocalModelDownloader.validateCompleteDownload(variant: variant, receivedBytes: 98))
+        XCTAssertNoThrow(try LocalModelDownloader.validateCompleteDownload(variant: variant, receivedBytes: 100))
     }
 
     @MainActor
-    func testLocalFileURLRejectsUndersizedFinalModel() throws {
+    func testLocalFileURLRejectsUndersizedFinalModel() async throws {
         let variant = makeTinyVariant(expectedBytes: 100)
         let finalURL = try LocalModelCatalog.fileURL(for: variant)
         let partialURL = LocalModelDownloader.temporaryURL(for: finalURL)
@@ -3193,9 +4388,38 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
 
         let manager = LocalModelManager()
 
-        XCTAssertThrowsError(try manager.localFileURL(for: variant)) { error in
+        do {
+            _ = try await manager.localFileURL(for: variant)
+            XCTFail("Expected an undersized final model to be rejected")
+        } catch {
             guard case LocalModelRuntimeError.modelNotDownloaded = error else {
                 return XCTFail("Expected undersized final model to be treated as not downloaded, got \(error)")
+            }
+        }
+    }
+
+    func testSameSizeCorruptFinalModelFailsObservedDigestVerification()
+        async throws
+    {
+        let data = Data("same size but wrong bytes".utf8)
+        let variant = makeTinyVariant(
+            expectedBytes: Int64(data.count),
+            expectedSHA256: String(repeating: "f", count: 64)
+        )
+        let finalURL = try LocalModelCatalog.fileURL(for: variant)
+        try data.write(to: finalURL, options: .atomic)
+        defer {
+            try? FileManager.default.removeItem(at: finalURL)
+        }
+
+        do {
+            _ = try await LocalModelArtifactVerifier.shared.verifiedURL(
+                for: variant
+            )
+            XCTFail("Expected same-size corrupt model bytes to be rejected")
+        } catch let error as LocalModelRuntimeError {
+            guard case .downloadFailed = error else {
+                return XCTFail("Expected an integrity failure, got \(error)")
             }
         }
     }
@@ -3247,6 +4471,53 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: finalURL.path), "A larger undersized final file should become the resumable partial download.")
     }
 
+    func testExactSizeVerifiedPartialPromotesWithoutNetwork() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let finalURL = directory.appendingPathComponent("model.gguf")
+        let partialURL = LocalModelDownloader.temporaryURL(for: finalURL)
+        let data = Data("verified local model".utf8)
+        try data.write(to: partialURL)
+        let variant = makeTinyVariant(
+            expectedBytes: Int64(data.count),
+            expectedSHA256: SHA256.hash(data: data).map {
+                String(format: "%02x", $0)
+            }.joined()
+        )
+
+        let preparation = try await LocalModelDownloader
+            .prepareExistingPartial(variant: variant, destination: finalURL)
+
+        XCTAssertEqual(
+            preparation,
+            .promoted(receivedBytes: Int64(data.count))
+        )
+        XCTAssertEqual(try Data(contentsOf: finalURL), data)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partialURL.path))
+    }
+
+    func testExactSizeCorruptPartialIsRemovedAndRestartsAtZero()
+        async throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let finalURL = directory.appendingPathComponent("model.gguf")
+        let partialURL = LocalModelDownloader.temporaryURL(for: finalURL)
+        let data = Data("corrupt local model".utf8)
+        try data.write(to: partialURL)
+        let variant = makeTinyVariant(
+            expectedBytes: Int64(data.count),
+            expectedSHA256: String(repeating: "0", count: 64)
+        )
+
+        let preparation = try await LocalModelDownloader
+            .prepareExistingPartial(variant: variant, destination: finalURL)
+
+        XCTAssertEqual(preparation, .resume(startingBytes: 0))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partialURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: finalURL.path))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("LocalModelDownloadPreservationTests-\(UUID().uuidString)", isDirectory: true)
@@ -3262,7 +4533,10 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
     }
 
-    private func makeTinyVariant(expectedBytes: Int64) -> LocalModelVariant {
+    private func makeTinyVariant(
+        expectedBytes: Int64,
+        expectedSHA256: String = String(repeating: "0", count: 64)
+    ) -> LocalModelVariant {
         .init(
             id: "test/tiny-\(UUID().uuidString)",
             displayName: "Tiny Test Model",
@@ -3271,6 +4545,7 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
             filename: "tiny-test-\(UUID().uuidString).gguf",
             downloadURL: URL(string: "https://example.com/tiny-test.gguf")!,
             expectedBytes: expectedBytes,
+            expectedSHA256: expectedSHA256,
             minimumPhysicalMemoryBytes: 1,
             recommendedFreeDiskBytes: expectedBytes,
             contextTokens: 8,
@@ -3558,7 +4833,7 @@ final class ProjectFoundationTests: XCTestCase {
         let persisted = try XCTUnwrap(try context.fetch(FetchDescriptor<ProjectOSRun>()).first)
         XCTAssertEqual(persisted.selectedAdaptiveSurface, .proof)
 
-        PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: Date(timeIntervalSince1970: 1_261))
+        try PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: Date(timeIntervalSince1970: 1_261))
         try context.save()
 
         XCTAssertEqual(run.status, .stopped)
@@ -3615,7 +4890,7 @@ final class ProjectFoundationTests: XCTestCase {
         run.status = .running
         try context.save()
 
-        PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: Date(timeIntervalSince1970: 1_400))
+        try PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: Date(timeIntervalSince1970: 1_400))
         try context.save()
 
         XCTAssertEqual(run.status, .stopped)
@@ -3748,6 +5023,258 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertEqual(conversations.filter { $0.project == nil }.count, 1)
     }
 
+    func testLaunchRepairFetchFailuresNeverManufactureEmptyStoreDefaults() throws {
+        enum InjectedFailure: Error {
+            case settings
+            case conversations
+            case projects
+        }
+
+        for failure in [InjectedFailure.settings, .conversations, .projects] {
+            let suiteName = "NovaForgeLaunchFetchFailure-\(UUID().uuidString)"
+            let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            defer { migrationStore.removePersistentDomain(forName: suiteName) }
+            let container = try ModelContainer(
+                for: TestModelSchema.projectFoundation,
+                configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+            )
+            let context = container.mainContext
+            var fetches = AppRootLaunchRepair.Fetches.live
+            switch failure {
+            case .settings:
+                fetches.settings = { _ in throw InjectedFailure.settings }
+            case .conversations:
+                fetches.conversations = { _ in throw InjectedFailure.conversations }
+            case .projects:
+                fetches.projectBootstrap.projects = { _ in throw InjectedFailure.projects }
+            }
+
+            XCTAssertThrowsError(
+                try AppRootLaunchRepair.ensureLaunchRecords(
+                    in: context,
+                    settings: nil,
+                    migrationStore: migrationStore,
+                    fetches: fetches
+                )
+            )
+            XCTAssertEqual(try context.fetch(FetchDescriptor<AgentSettings>()).count, 0)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<Project>()).count, 0)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<Conversation>()).count, 0)
+            XCTAssertFalse(migrationStore.bool(forKey: ProjectBootstrap.legacyOwnershipMigrationKey))
+        }
+    }
+
+    func testDefaultProjectMigrationFetchFailureLeavesLegacyOwnershipUntouched() throws {
+        enum InjectedFailure: Error { case events }
+
+        let suiteName = "NovaForgeMigrationFetchFailure-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let settings = AgentSettings(activeWorkspaceName: "Legacy")
+        let orphanRun = ToolRun(name: "legacy", argumentsJSON: "{}", status: .completed)
+        context.insert(settings)
+        context.insert(orphanRun)
+        try context.save()
+
+        var fetches = AppRootLaunchRepair.Fetches.live
+        fetches.projectBootstrap.events = { _ in throw InjectedFailure.events }
+
+        XCTAssertThrowsError(
+            try AppRootLaunchRepair.ensureLaunchRecords(
+                in: context,
+                settings: settings,
+                migrationStore: migrationStore,
+                fetches: fetches
+            )
+        )
+        XCTAssertNil(settings.activeProjectID)
+        XCTAssertNil(orphanRun.project)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Project>()).count, 0)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Conversation>()).count, 0)
+        XCTAssertFalse(migrationStore.bool(forKey: ProjectBootstrap.legacyOwnershipMigrationKey))
+    }
+
+    func testLaunchRepairCallerRollbackRestoresWholeUnsavedTransaction() throws {
+        enum InjectedFailure: Error { case save }
+
+        let suiteName = "NovaForgeLaunchRollback-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let settings = AgentSettings(activeWorkspaceName: "Legacy")
+        let orphanRun = ToolRun(name: "legacy", argumentsJSON: "{}", status: .completed)
+        context.insert(settings)
+        context.insert(orphanRun)
+        try context.save()
+
+        // AppRoot performs launch repair in a short-lived context so a failed
+        // transaction cannot leave its already-rendered model references stale.
+        let transactionContext = ModelContext(container)
+        transactionContext.autosaveEnabled = false
+        let transactionSettings = try XCTUnwrap(
+            transactionContext.fetch(FetchDescriptor<AgentSettings>()).first
+        )
+        let transactionRun = try XCTUnwrap(
+            transactionContext.fetch(FetchDescriptor<ToolRun>()).first
+        )
+
+        var reachedInjectedSaveFailure = false
+        do {
+            let staged = try AppRootLaunchRepair.ensureLaunchRecords(
+                in: transactionContext,
+                settings: transactionSettings,
+                migrationStore: migrationStore
+            )
+            XCTAssertEqual(transactionSettings.activeProjectID, staged.project.id)
+            XCTAssertEqual(transactionRun.project?.id, staged.project.id)
+            XCTAssertFalse(staged.createdSettings)
+            XCTAssertTrue(staged.createdConversation)
+            throw InjectedFailure.save
+        } catch InjectedFailure.save {
+            reachedInjectedSaveFailure = true
+            transactionContext.rollback()
+        } catch {
+            XCTFail("Launch staging failed before the injected save boundary: \(error)")
+            throw error
+        }
+
+        XCTAssertTrue(reachedInjectedSaveFailure)
+        XCTAssertNil(settings.activeProjectID)
+        XCTAssertNil(orphanRun.project)
+        XCTAssertEqual(try transactionContext.fetch(FetchDescriptor<Project>()).count, 0)
+        XCTAssertEqual(try transactionContext.fetch(FetchDescriptor<Conversation>()).count, 0)
+
+        let verificationContext = ModelContext(container)
+        let persistedSettings = try XCTUnwrap(verificationContext.fetch(FetchDescriptor<AgentSettings>()).first)
+        let persistedRun = try XCTUnwrap(verificationContext.fetch(FetchDescriptor<ToolRun>()).first)
+        XCTAssertNil(persistedSettings.activeProjectID)
+        XCTAssertNil(persistedRun.project)
+        XCTAssertEqual(try verificationContext.fetch(FetchDescriptor<Project>()).count, 0)
+        XCTAssertEqual(try verificationContext.fetch(FetchDescriptor<Conversation>()).count, 0)
+        XCTAssertFalse(migrationStore.bool(forKey: ProjectBootstrap.legacyOwnershipMigrationKey))
+    }
+
+    func testLaunchRepairIsIdempotentAfterSuccessfulCommit() throws {
+        let suiteName = "NovaForgeLaunchIdempotency-\(UUID().uuidString)"
+        let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { migrationStore.removePersistentDomain(forName: suiteName) }
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+
+        let first = try AppRootLaunchRepair.ensureLaunchRecords(
+            in: context,
+            settings: nil,
+            now: Date(timeIntervalSince1970: 97),
+            migrationStore: migrationStore
+        )
+        try context.save()
+        ProjectBootstrap.markLegacyOwnershipMigrationComplete(in: migrationStore)
+
+        let second = try AppRootLaunchRepair.ensureLaunchRecords(
+            in: context,
+            settings: nil,
+            now: Date(timeIntervalSince1970: 98),
+            migrationStore: migrationStore
+        )
+        try context.save()
+        ProjectBootstrap.markLegacyOwnershipMigrationComplete(in: migrationStore)
+
+        XCTAssertTrue(first.createdSettings)
+        XCTAssertTrue(first.createdConversation)
+        XCTAssertFalse(second.createdSettings)
+        XCTAssertFalse(second.createdConversation)
+        XCTAssertEqual(second.settings.id, first.settings.id)
+        XCTAssertEqual(second.project.id, first.project.id)
+        XCTAssertEqual(second.conversation.id, first.conversation.id)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<AgentSettings>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Project>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Conversation>()).count, 1)
+    }
+
+    func testCompatibilityFallbackPreservesSourceOwnershipMigrationState() throws {
+        for initiallyComplete in [false, true] {
+            let suiteName = "NovaForgeCompatibilityFallback-\(UUID().uuidString)"
+            let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            defer { migrationStore.removePersistentDomain(forName: suiteName) }
+            migrationStore.set(
+                initiallyComplete,
+                forKey: ProjectBootstrap.legacyOwnershipMigrationKey
+            )
+
+            ProjectBootstrap.setCompatibilityFallbackActive(true, in: migrationStore)
+            XCTAssertTrue(
+                migrationStore.bool(forKey: ProjectBootstrap.compatibilityFallbackActiveKey)
+            )
+            XCTAssertEqual(
+                migrationStore.bool(forKey: ProjectBootstrap.legacyOwnershipMigrationKey),
+                initiallyComplete
+            )
+
+            let container = try ModelContainer(
+                for: TestModelSchema.projectFoundation,
+                configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+            )
+            let context = container.mainContext
+            let settings = AgentSettings(activeWorkspaceName: "Compatibility")
+            let generalTool = ToolRun(
+                name: "read_file",
+                argumentsJSON: #"{"path":"README.md"}"#,
+                status: .completed
+            )
+            context.insert(settings)
+            context.insert(generalTool)
+            try context.save()
+
+            _ = try ProjectBootstrap.ensureDefaultProject(
+                in: context,
+                settings: settings,
+                migrationStore: migrationStore
+            )
+            try context.save()
+            ProjectBootstrap.markLegacyOwnershipMigrationComplete(in: migrationStore)
+
+            // AppRoot's later completion call is a true no-op in fallback mode.
+            XCTAssertNil(generalTool.project)
+            XCTAssertEqual(
+                migrationStore.bool(forKey: ProjectBootstrap.legacyOwnershipMigrationKey),
+                initiallyComplete
+            )
+
+            ProjectBootstrap.setCompatibilityFallbackActive(false, in: migrationStore)
+            _ = try ProjectBootstrap.ensureDefaultProject(
+                in: context,
+                settings: settings,
+                migrationStore: migrationStore
+            )
+            try context.save()
+            ProjectBootstrap.markLegacyOwnershipMigrationComplete(in: migrationStore)
+
+            XCTAssertFalse(
+                migrationStore.bool(forKey: ProjectBootstrap.compatibilityFallbackActiveKey)
+            )
+            if initiallyComplete {
+                XCTAssertNil(generalTool.project)
+            } else {
+                XCTAssertNotNil(generalTool.project)
+            }
+            XCTAssertTrue(
+                migrationStore.bool(forKey: ProjectBootstrap.legacyOwnershipMigrationKey)
+            )
+        }
+    }
+
     func testDefaultProjectMigrationLeavesGeneralConversationsUnscopedButOwnsRuns() throws {
         let suiteName = "NovaForgeProjectMigration-\(UUID().uuidString)"
         let migrationStore = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -3765,7 +5292,7 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(run)
         try context.save()
 
-        let project = ProjectBootstrap.ensureDefaultProject(
+        let project = try ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
             now: Date(timeIntervalSince1970: 100),
@@ -3795,7 +5322,7 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(legacyRun)
         try context.save()
 
-        let project = ProjectBootstrap.ensureDefaultProject(
+        let project = try ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
             now: Date(timeIntervalSince1970: 140),
@@ -3837,7 +5364,7 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(change)
         try context.save()
 
-        _ = ProjectBootstrap.ensureDefaultProject(
+        _ = try ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
             now: Date(timeIntervalSince1970: 141),
@@ -3896,7 +5423,7 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(change)
         try context.save()
 
-        _ = ProjectBootstrap.ensureDefaultProject(
+        _ = try ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
             now: Date(timeIntervalSince1970: 142),
@@ -3981,7 +5508,7 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(approved)
         try context.save()
 
-        PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: now)
+        try PersistentLaunchRecovery.recoverInterruptedToolRuns(in: context, now: now)
         try context.save()
 
         XCTAssertEqual(pending.status, .rejected)
@@ -4089,7 +5616,7 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(fileChange)
         try context.save()
 
-        let project = ProjectBootstrap.ensureDefaultProject(
+        let project = try ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
             now: Date(timeIntervalSince1970: 120),
@@ -4130,7 +5657,7 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(orphanEvent)
         try context.save()
 
-        let project = ProjectBootstrap.ensureDefaultProject(
+        let project = try ProjectBootstrap.ensureDefaultProject(
             in: context,
             settings: settings,
             now: Date(timeIntervalSince1970: 130),
@@ -5707,9 +7234,15 @@ final class ProjectFoundationTests: XCTestCase {
             events: try context.fetch(FetchDescriptor<ProjectEvent>())
         )
         let instruction = ProjectContinuationInstructionBuilder.makeInstruction(project: activeProject, summary: summary)
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        runtime.ensureSeedWorkspace()
-        try runtime.workspace.write(
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
+        try runtime.workspace.testWrite(
             "proof.html",
             contents: """
             <!doctype html><html><head><meta name="viewport" content="width=device-width"><title>Proof</title></head><body><main><h1>Proof</h1></main></body></html>
@@ -5747,6 +7280,73 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertTrue(activeConversation.messages.contains { $0.role == .assistant && $0.content.contains("Agent Plan:") })
         XCTAssertTrue(activeConversation.messages.contains { $0.role == .assistant && $0.content.contains("Agent Proof:") })
         XCTAssertEqual(otherConversation.messageCount, 0)
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 0)
+    }
+
+    func testColdWorkspaceSeedCreatesMissingContainerThroughProductionPolicyChain()
+        async throws
+    {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "NovaForgeColdWorkspace-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: base,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let workspaces = base.appendingPathComponent(
+            "Workspaces",
+            isDirectory: true
+        )
+        let root = workspaces.appendingPathComponent(
+            "Fresh",
+            isDirectory: true
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: workspaces.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: root),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
+
+        var workspacesIsDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: workspaces.path,
+            isDirectory: &workspacesIsDirectory
+        ))
+        XCTAssertTrue(workspacesIsDirectory.boolValue)
+        XCTAssertEqual(
+            try String(
+                contentsOf: root.appendingPathComponent("README.md"),
+                encoding: .utf8
+            ),
+            """
+            # NovaForge Workspace
+
+            This folder lives inside the iOS app sandbox. Ask NovaForge to create notes, edit files, search text, or run safe native commands.
+            """
+        )
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(
+            promptCount,
+            0,
+            "The exact trusted first-launch seed session is policy-authorized without blocking the user."
+        )
     }
 
     func testGenericProjectRenamesFromFirstAgentActionIntent() async throws {
@@ -5767,8 +7367,14 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(settings)
         try context.save()
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        runtime.ensureSeedWorkspace()
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
         runtime.send(
             prompt: "list files for robotics dashboard",
             conversation: conversation,
@@ -5792,6 +7398,8 @@ final class ProjectFoundationTests: XCTestCase {
             event.kind == .projectRenamed &&
             event.detail == "Mission Draft 2 -> Dashboard Build"
         })
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 0)
     }
 
     func testAgentRunCommandCreatesProjectTerminalEvidence() async throws {
@@ -5812,8 +7420,14 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(settings)
         try context.save()
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        runtime.ensureSeedWorkspace()
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
         runtime.send(
             prompt: "run command pwd",
             conversation: conversation,
@@ -5860,6 +7474,8 @@ final class ProjectFoundationTests: XCTestCase {
         )
         XCTAssertEqual(summary.terminalCommandCount, 1)
         XCTAssertTrue(summary.proofItems.contains { $0.id.hasPrefix("terminal-") && $0.detail == "pwd" })
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 0)
     }
 
     func testAgentCommandFailureCreatesUsefulProjectTimelineEvidence() async throws {
@@ -5880,8 +7496,14 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(settings)
         try context.save()
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        runtime.ensureSeedWorkspace()
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
         runtime.send(
             prompt: "run command unknown_tool",
             conversation: conversation,
@@ -5927,6 +7549,8 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertEqual(summary.status, .blocked)
         XCTAssertTrue(summary.nextStep.contains("retry"))
         XCTAssertTrue(summary.proofItems.contains { $0.id.hasPrefix("terminal-failure-") && $0.detail == "unknown_tool" })
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 0)
     }
 
     func testProjectNamingEngineSuggestsSpecificIdentityForGenericProjects() throws {
@@ -6060,8 +7684,14 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(settings)
         try context.save()
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        runtime.ensureSeedWorkspace()
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
         runtime.send(prompt: "list files", conversation: conversation, settings: settings, context: context, project: project)
 
         let deadline = Date().addingTimeInterval(3)
@@ -6078,6 +7708,8 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertTrue(project.events.contains { $0.kind == .promptQueued })
         XCTAssertTrue(project.events.contains { $0.kind == .toolCompleted })
         XCTAssertTrue(project.events.contains { $0.kind == .runCompleted })
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 0)
     }
 
     func testRuntimePersistsCanonicalRunReceiptAndLinksTranscript() async throws {
@@ -6098,8 +7730,14 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(settings)
         try context.save()
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        runtime.ensureSeedWorkspace()
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
         runtime.send(prompt: "list files", conversation: conversation, settings: settings, context: context, project: project)
 
         let deadline = Date().addingTimeInterval(3)
@@ -6115,6 +7753,8 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertNotNil(receipt.responseMessageID)
         XCTAssertTrue(conversation.messages.allSatisfy { $0.runID == receipt.id && $0.runStatus == .completed })
         XCTAssertTrue(try context.fetch(FetchDescriptor<ToolRun>()).allSatisfy { $0.runID == receipt.id })
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 0)
     }
 
     func testRuntimeRenamesGenericProjectFromFirstAgentPrompt() async throws {
@@ -6135,8 +7775,14 @@ final class ProjectFoundationTests: XCTestCase {
         context.insert(settings)
         try context.save()
 
-        let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-        runtime.ensureSeedWorkspace()
+        let approvalPrompt = RuntimeApprovingApprovalPrompt()
+        let runtime = AgentRuntime(
+            workspace: SandboxWorkspace(rootURL: workspaceRoot),
+            policyMutationRuntime: try runtimePolicyComposition(
+                prompt: approvalPrompt
+            )
+        )
+        try await runtime.ensureSeedWorkspace(context: context)
         runtime.send(prompt: "Build a snake game, then list files.", conversation: conversation, settings: settings, context: context, project: project)
 
         XCTAssertEqual(project.name, "Snake Game")
@@ -6148,5 +7794,7 @@ final class ProjectFoundationTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTAssertFalse(runtime.isWorking)
+        let promptCount = await approvalPrompt.count()
+        XCTAssertEqual(promptCount, 0)
     }
 }

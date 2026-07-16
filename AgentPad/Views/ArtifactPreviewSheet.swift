@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import UIKit
 import WebKit
@@ -21,6 +22,7 @@ struct ArtifactPreviewSheet: View {
     @State private var isOpeningExternalFullScreen = false
     @State private var isRestoringPortrait = false
     @State private var reloadToken = UUID()
+    @State private var showingHomeScreenGuide = false
 
     var body: some View {
         ArtifactPreviewStudio(
@@ -37,6 +39,14 @@ struct ArtifactPreviewSheet: View {
             iterationPrompt: iterationPrompt,
             share: shareArtifact,
             reload: reloadPreview,
+            addToHomeScreen: {
+                NovaForgeArtifactShortcutRegistry.register(
+                    workspaceName: workspace.workspaceName,
+                    path: artifact.path,
+                    title: artifact.title
+                )
+                showingHomeScreenGuide = true
+            },
             openFullScreen: presentGameFullScreen,
             openChat: openChat,
             close: {
@@ -80,6 +90,11 @@ struct ArtifactPreviewSheet: View {
         } message: {
             Text(shareError ?? "NovaForge could not share this artifact.")
         }
+        .sheet(isPresented: $showingHomeScreenGuide) {
+            ArtifactHomeScreenGuide(artifactTitle: artifact.title)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private func loadArtifact() {
@@ -97,6 +112,13 @@ struct ArtifactPreviewSheet: View {
                 gameManifest = try JSONDecoder().decode(SwiftGameManifest.self, from: Data(content.utf8))
             } else {
                 content = try workspace.read(artifact.path)
+            }
+            if artifact.isWebPage || artifact.isSwiftGameArtifact {
+                NovaForgeArtifactShortcutRegistry.register(
+                    workspaceName: workspace.workspaceName,
+                    path: artifact.path,
+                    title: artifact.title
+                )
             }
             errorMessage = nil
         } catch {
@@ -164,6 +186,80 @@ struct ArtifactPreviewSheet: View {
     private static func byteText(for url: URL) -> String {
         guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return "" }
         return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+}
+
+private struct ArtifactHomeScreenGuide: View {
+    @Environment(\.dismiss) private var dismiss
+    let artifactTitle: String
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 13) {
+                    Image(systemName: "apps.iphone")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(AgentPalette.green)
+                        .frame(width: 44, height: 44)
+                        .agentControlSurface(
+                            radius: 15,
+                            tint: AgentPalette.green.opacity(0.12),
+                            selected: true
+                        )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Add to Home Screen")
+                            .font(NovaType.title)
+                            .foregroundStyle(AgentPalette.ink)
+                        Text(artifactTitle)
+                            .font(NovaType.caption)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(1)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    homeScreenStep(1, "Open Shortcuts below.")
+                    homeScreenStep(2, "Add NovaForge’s Play Artifact action and choose this game.")
+                    homeScreenStep(3, "Use the shortcut’s Share menu → Add to Home Screen.")
+                }
+
+                Text("iOS requires you to confirm Home Screen icons in Shortcuts. Once added, the icon opens this saved game directly in landscape fullscreen.")
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ShortcutsLink()
+                    .shortcutsLinkStyle(.automatic)
+                    .frame(minHeight: AgentDesign.minimumTouchTarget)
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .agentControlSurface()
+            .navigationTitle("Home Screen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .accessibilityIdentifier("artifactHomeScreenGuide")
+    }
+
+    private func homeScreenStep(_ number: Int, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(.caption.weight(.black).monospacedDigit())
+                .foregroundStyle(AgentPalette.green)
+                .frame(width: 26, height: 26)
+                .background(AgentPalette.green.opacity(0.11), in: Circle())
+            Text(text)
+                .font(NovaType.body)
+                .foregroundStyle(AgentPalette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -425,6 +521,7 @@ struct ArtifactGameFullScreenCover: View {
 enum ArtifactOrientationController {
     private static var lastRequestMask: UIInterfaceOrientationMask?
     private static var lastRequestAt: Date = .distantPast
+    private(set) static var supportedInterfaceOrientations: UIInterfaceOrientationMask = .portrait
 
     static var currentInterfaceIsLandscape: Bool {
         guard let windowScene = activeWindowScene else { return false }
@@ -444,6 +541,7 @@ enum ArtifactOrientationController {
 
     static func request(_ mask: UIInterfaceOrientationMask) {
         let geometryMask: UIInterfaceOrientationMask = mask == .portrait ? .portrait : .landscapeRight
+        supportedInterfaceOrientations = geometryMask
         let now = Date()
         if lastRequestMask == geometryMask, now.timeIntervalSince(lastRequestAt) < 1.2 {
             return
@@ -538,6 +636,7 @@ private struct ArtifactPreviewStudio: View {
     let iterationPrompt: String?
     let share: () -> Void
     let reload: () -> Void
+    let addToHomeScreen: () -> Void
     let openFullScreen: (() -> Void)?
     let openChat: (() -> Void)?
     let close: () -> Void
@@ -561,7 +660,7 @@ private struct ArtifactPreviewStudio: View {
 
     private var previewHintTitle: String {
         if artifact.isSwiftGameArtifact { return "Native game ready" }
-        if artifact.isWebPage { return "Artifact ready" }
+        if artifact.isWebPage { return "Normal preview" }
         if artifact.isImageArtifact { return artifact.path.lowercased().contains("screenshot") ? "Screenshot evidence" : "Image artifact" }
         if artifact.isPDFArtifact { return "Report artifact" }
         if artifact.isLogArtifact { return "Log evidence" }
@@ -726,6 +825,15 @@ private struct ArtifactPreviewStudio: View {
             headerButton(symbol: "square.and.arrow.up", label: "Share Artifact", action: share)
                 .accessibilityIdentifier("artifactShareButton")
 
+            if artifact.isWebPage || artifact.isSwiftGameArtifact {
+                headerButton(
+                    symbol: "apps.iphone",
+                    label: "Add to Home Screen",
+                    action: addToHomeScreen
+                )
+                .accessibilityIdentifier("artifactAddToHomeScreenButton")
+            }
+
             if let openFullScreen {
                 headerButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Full Screen", action: openFullScreen)
                     .accessibilityIdentifier("artifactFullScreenButton")
@@ -745,7 +853,10 @@ private struct ArtifactPreviewStudio: View {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(isFullScreen ? .white : AgentPalette.ink)
-                .frame(width: 40, height: 40)
+                .frame(
+                    width: AgentDesign.minimumTouchTarget,
+                    height: AgentDesign.minimumTouchTarget
+                )
                 .background(Circle().fill(tint.opacity(0.10)))
                 .overlay(Circle().strokeBorder(tint.opacity(0.26), lineWidth: 0.9))
                 .contentShape(Circle())
@@ -780,7 +891,10 @@ private struct ArtifactPreviewStudio: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(artifactTint)
-                        .frame(width: 38, height: 38)
+                        .frame(
+                            width: AgentDesign.minimumTouchTarget,
+                            height: AgentDesign.minimumTouchTarget
+                        )
                         .background(Circle().fill(artifactTint.opacity(0.10)))
                         .overlay(Circle().strokeBorder(artifactTint.opacity(0.26), lineWidth: 0.9))
                         .contentShape(Circle())
@@ -806,7 +920,7 @@ private struct ArtifactPreviewStudio: View {
                     }
                     .foregroundStyle(AgentPalette.cyan)
                     .padding(.horizontal, 15)
-                    .frame(minHeight: 38)
+                    .frame(minHeight: AgentDesign.minimumTouchTarget)
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -1971,7 +2085,7 @@ private struct WebArtifactView: UIViewRepresentable {
                 cssHeight = "100svh"
             }
             let fullBleedScript = fullBleedGameMode ? """
-              const styleID = 'novaforge-fullscreen-game-style';
+              const styleID = 'novaforge-fullscreen-viewport-style';
               let style = document.getElementById(styleID);
               if (!style) {
                 style = document.createElement('style');
@@ -1986,45 +2100,11 @@ private struct WebArtifactView: UIViewRepresentable {
                   margin: 0 !important;
                   padding: 0 !important;
                   overflow: hidden !important;
-                  background: #06100c !important;
                   border-radius: 0 !important;
                 }
-                main {
-                  position: fixed !important;
-                  inset: 0 !important;
-                  width: \(cssWidth) !important;
-                  height: \(cssHeight) !important;
-                  min-height: \(cssHeight) !important;
-                  margin: 0 !important;
-                  padding: 0 !important;
-                  display: block !important;
-                  overflow: hidden !important;
-                  background: #06100c !important;
-                  border-radius: 0 !important;
-                }
-                * {
-                  box-shadow: none !important;
-                }
-                header { display: none !important; }
-                .game-wrap,
-                canvas {
-                  position: fixed !important;
-                  inset: 0 !important;
-                  width: \(cssWidth) !important;
-                  height: \(cssHeight) !important;
-                  max-width: none !important;
-                  max-height: none !important;
-                  margin: 0 !important;
-                  padding: 0 !important;
-                  border: 0 !important;
-                  border-radius: 0 !important;
-                  box-shadow: none !important;
-                  touch-action: none !important;
-                }
-                canvas { display: block !important; object-fit: fill !important; }
               `;
             """ : """
-              const existingFullscreenStyle = document.getElementById('novaforge-fullscreen-game-style');
+              const existingFullscreenStyle = document.getElementById('novaforge-fullscreen-viewport-style');
               if (existingFullscreenStyle) existingFullscreenStyle.remove();
             """
             let script = """
@@ -2033,6 +2113,8 @@ private struct WebArtifactView: UIViewRepresentable {
               document.documentElement.style.height = '\(cssHeight)';
               document.body.style.width = '\(cssWidth)';
               document.body.style.height = '\(cssHeight)';
+              document.documentElement.style.setProperty('--novaforge-viewport-width', '\(cssWidth)');
+              document.documentElement.style.setProperty('--novaforge-viewport-height', '\(cssHeight)');
             \(fullBleedScript)
               window.dispatchEvent(new Event('resize'));
               console.log('NF_ARTIFACT_DOM_SIZE', window.innerWidth, window.innerHeight, document.documentElement.clientWidth, document.documentElement.clientHeight, document.body.clientWidth, document.body.clientHeight);
@@ -2057,6 +2139,7 @@ private struct WebArtifactView: UIViewRepresentable {
             let configuration = WKWebViewConfiguration()
             configuration.allowsInlineMediaPlayback = true
             configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+            configuration.websiteDataStore = .nonPersistent()
             self.webView = WKWebView(frame: .zero, configuration: configuration)
             super.init(frame: .zero)
             backgroundColor = .black
@@ -2068,7 +2151,7 @@ private struct WebArtifactView: UIViewRepresentable {
             webView.scrollView.contentInset = .zero
             webView.scrollView.scrollIndicatorInsets = .zero
             webView.scrollView.contentInsetAdjustmentBehavior = .never
-            webView.scrollView.isScrollEnabled = false
+            webView.scrollView.isScrollEnabled = true
             webView.allowsBackForwardNavigationGestures = true
             webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             if #available(iOS 16.4, *) {
@@ -2132,6 +2215,8 @@ private struct WebArtifactView: UIViewRepresentable {
         let webView = container.webView
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
+        webView.scrollView.isScrollEnabled = !fullBleedGameMode
+        webView.scrollView.bounces = !fullBleedGameMode
         if viewportSize.width > 1, viewportSize.height > 1 {
             let viewportFrame = CGRect(origin: .zero, size: viewportSize)
             container.frame = viewportFrame

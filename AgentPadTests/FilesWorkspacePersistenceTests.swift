@@ -321,4 +321,71 @@ final class FilesWorkspacePersistenceTests: XCTestCase {
         XCTAssertEqual(settings.modelID, "gpt-4.1")
         XCTAssertEqual(settings.updatedAt, savedAt)
     }
+
+    func testWorkspaceMutationUIRequestUsesTypedTargetsAndHumanAuthorizationWithoutPayloads() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("novaforge-files-ui-request-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let workspace = SandboxWorkspace(rootURL: rootURL)
+        let projectID = UUID()
+        let conversationID = UUID()
+        let request = try WorkspaceMutationUIRequest.make(
+            workspace: workspace,
+            operation: .copyPath(from: "Drafts/brief.md", to: "Drafts/brief_copy.md"),
+            projectID: projectID,
+            conversationID: conversationID,
+            source: .files,
+            ownerDescription: "Files duplicate file"
+        )
+
+        XCTAssertEqual(request.operation.targetPaths, ["Drafts/brief.md", "Drafts/brief_copy.md"])
+        XCTAssertEqual(request.context.projectID, projectID)
+        XCTAssertEqual(request.context.conversationID, conversationID)
+        XCTAssertEqual(request.context.source, .files)
+        XCTAssertEqual(request.context.authorization, .userInitiated)
+        XCTAssertEqual(request.journalArgumentsJSON, "{}")
+        XCTAssertFalse(request.journalArgumentsJSON.contains(rootURL.path))
+        XCTAssertTrue(request.workspaceIdentity.resourceKey.hasPrefix("workspace:sha256:"))
+        XCTAssertFalse(request.workspaceIdentity.resourceKey.contains(rootURL.path))
+    }
+
+    func testWorkspaceMutationUIFailureMessageSuppressesSafeCancellationButSurfacesAmbiguity() {
+        let operationID = UUID()
+        XCTAssertNil(
+            WorkspaceMutationUIRequest.failureMessage(
+                action: "Failed to save",
+                error: WorkspaceMutationGatewayError.cancelledBeforeExecution(
+                    operationID: operationID
+                )
+            )
+        )
+
+        let mayHaveApplied = WorkspaceMutationGatewayError.effectMayHaveApplied(
+            operationID: operationID,
+            message: "The filesystem result is uncertain."
+        )
+        let effectMessage = WorkspaceMutationUIRequest.failureMessage(
+            action: "Failed to save",
+            error: mayHaveApplied
+        )
+        XCTAssertTrue(effectMessage?.contains("may have applied") == true)
+        XCTAssertTrue(effectMessage?.contains("before retrying") == true)
+
+        let durableFailure = WorkspaceMutationGatewayError.durableSettlementFailed(
+            operationID: operationID,
+            lastDurablePhase: .applied,
+            message: "The completion receipt could not commit."
+        )
+        let durableMessage = WorkspaceMutationUIRequest.failureMessage(
+            action: "Could not duplicate file",
+            error: durableFailure
+        )
+        XCTAssertTrue(durableMessage?.contains("ambiguously") == true)
+        XCTAssertTrue(durableMessage?.contains("applied") == true)
+    }
 }

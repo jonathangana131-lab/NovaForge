@@ -188,8 +188,8 @@ final actor Llama {
         return .token(model.piece(from: newTokenId))
     }
 
-    func updateSamplingConfig(_ config: LlamaSamplingConfig) {
-        self.sampler = .init(config: config, model: model)
+    func updateSamplingConfig(_ config: LlamaSamplingConfig) throws {
+        self.sampler = try .init(config: config, model: model)
     }
 
     private func clear() {

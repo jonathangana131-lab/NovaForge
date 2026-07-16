@@ -9,6 +9,7 @@ enum SandboxError: LocalizedError, Equatable {
     case recursiveWorkspaceMutationDenied
     case directoryOverwriteDenied
     case pathAlreadyExists
+    case workspaceMutationPermitRequired
 
     var errorDescription: String? {
         switch self {
@@ -28,6 +29,8 @@ enum SandboxError: LocalizedError, Equatable {
             "NovaForge will not replace an existing folder with another file or folder. Delete or rename the folder first."
         case .pathAlreadyExists:
             "A file or folder already exists at that path. Pick a new name or open the existing item."
+        case .workspaceMutationPermitRequired:
+            "That workspace change must pass through NovaForge's mutation gateway."
         }
     }
 }
@@ -60,10 +63,19 @@ struct WorkspaceSearchReport: Equatable, Sendable {
     var capped = false
 }
 
+/// Internal deterministic seam for exercising the validation-to-open race in
+/// the real legacy reader. Normal workspaces always store `nil`, so production
+/// read behavior and authority are unchanged.
+struct SandboxReadInterposition: Sendable {
+    let beforeContentOpen: @Sendable () throws -> Void
+    let afterContentOpen: @Sendable () throws -> Void
+}
+
 struct SandboxWorkspace: Sendable {
     let workspaceName: String
     let rootURL: URL
     var maxReadableBytes: Int = 256_000
+    private let readInterposition: SandboxReadInterposition?
 
     init(name: String = "Default", fileManager: FileManager = .default) {
         self.workspaceName = Self.sanitizedWorkspaceName(name)
@@ -78,14 +90,18 @@ struct SandboxWorkspace: Sendable {
         self.rootURL = candidateRoot.path.hasPrefix(workspacesRoot.path + "/")
             ? candidateRoot
             : workspacesRoot.appendingPathComponent("Default", isDirectory: true)
-        try? fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        self.readInterposition = nil
     }
 
-    init(rootURL: URL, maxReadableBytes: Int = 256_000) {
+    init(
+        rootURL: URL,
+        maxReadableBytes: Int = 256_000,
+        readInterposition: SandboxReadInterposition? = nil
+    ) {
         self.workspaceName = rootURL.lastPathComponent
         self.rootURL = rootURL
         self.maxReadableBytes = maxReadableBytes
-        try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        self.readInterposition = readInterposition
     }
 
     private var standardizedRootPath: String {
@@ -255,19 +271,46 @@ struct SandboxWorkspace: Sendable {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
         if size > maxReadableBytes { throw SandboxError.fileTooLarge }
-        return try String(contentsOf: url, encoding: .utf8)
+        guard let readInterposition else {
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        try readInterposition.beforeContentOpen()
+        let content: String
+        do {
+            content = try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            let readError = error
+            do {
+                try readInterposition.afterContentOpen()
+            } catch {
+                throw error
+            }
+            throw readError
+        }
+        try readInterposition.afterContentOpen()
+        return content
     }
 
-    func write(_ relativePath: String, contents: String) throws {
+    func write(
+        _ relativePath: String,
+        contents: String,
+        permit: WorkspaceMutationPermit
+    ) throws {
         guard !isWorkspaceRootRequest(relativePath) else {
             throw SandboxError.workspaceRootMutationDenied
         }
         let url = try resolve(relativePath)
+        try permit.validate(workspace: self, operation: .writeFile(path: relativePath))
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try permit.validate(workspace: self, operation: .writeFile(path: relativePath))
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    func createNewFile(_ relativePath: String, contents: String = "") throws {
+    func createNewFile(
+        _ relativePath: String,
+        contents: String = "",
+        permit: WorkspaceMutationPermit
+    ) throws {
         guard !isWorkspaceRootRequest(relativePath) else {
             throw SandboxError.workspaceRootMutationDenied
         }
@@ -275,11 +318,17 @@ struct SandboxWorkspace: Sendable {
         guard !FileManager.default.fileExists(atPath: url.path) else {
             throw SandboxError.pathAlreadyExists
         }
+        try permit.validate(workspace: self, operation: .createFile(path: relativePath))
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try permit.validate(workspace: self, operation: .createFile(path: relativePath))
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    func append(_ relativePath: String, contents: String) throws {
+    func append(
+        _ relativePath: String,
+        contents: String,
+        permit: WorkspaceMutationPermit
+    ) throws {
         guard !isWorkspaceRootRequest(relativePath) else {
             throw SandboxError.workspaceRootMutationDenied
         }
@@ -290,48 +339,56 @@ struct SandboxWorkspace: Sendable {
         // that, yielding "" — silently truncating large files to just the new
         // text. Appending via a file handle avoids that data loss entirely and
         // also keeps append O(new content) rather than O(file size).
+        try permit.validate(workspace: self, operation: .appendFile(path: relativePath))
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: url.path) {
             // Create the file (empty) so the handle can open it for writing/appending.
+            try permit.validate(workspace: self, operation: .appendFile(path: relativePath))
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
         guard let handle = try? FileHandle(forWritingTo: url) else {
             // Fall back to a plain write if a handle can't be opened.
+            try permit.validate(workspace: self, operation: .appendFile(path: relativePath))
             try contents.write(to: url, atomically: true, encoding: .utf8)
             return
         }
         defer { try? handle.close() }
         try handle.seekToEnd()
+        try permit.validate(workspace: self, operation: .appendFile(path: relativePath))
         try handle.write(contentsOf: Data(contents.utf8))
     }
 
-    func touch(_ relativePath: String) throws {
+    func touch(_ relativePath: String, permit: WorkspaceMutationPermit) throws {
         guard !isWorkspaceRootRequest(relativePath) else {
             throw SandboxError.workspaceRootMutationDenied
         }
         let url = try resolve(relativePath)
         if FileManager.default.fileExists(atPath: url.path) {
+            try permit.validate(workspace: self, operation: .touchFile(path: relativePath))
             try FileManager.default.setAttributes(
                 [.modificationDate: Date()],
                 ofItemAtPath: url.path
             )
         } else {
+            try permit.validate(workspace: self, operation: .touchFile(path: relativePath))
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
+            try permit.validate(workspace: self, operation: .touchFile(path: relativePath))
             try Data().write(to: url, options: .atomic)
         }
     }
 
-    func makeDirectory(_ relativePath: String) throws {
+    func makeDirectory(_ relativePath: String, permit: WorkspaceMutationPermit) throws {
         guard !isWorkspaceRootRequest(relativePath) else {
             throw SandboxError.workspaceRootMutationDenied
         }
+        try permit.validate(workspace: self, operation: .createDirectory(path: relativePath))
         try FileManager.default.createDirectory(at: resolve(relativePath), withIntermediateDirectories: true)
     }
 
-    func createNewDirectory(_ relativePath: String) throws {
+    func createNewDirectory(_ relativePath: String, permit: WorkspaceMutationPermit) throws {
         guard !isWorkspaceRootRequest(relativePath) else {
             throw SandboxError.workspaceRootMutationDenied
         }
@@ -339,17 +396,19 @@ struct SandboxWorkspace: Sendable {
         guard !FileManager.default.fileExists(atPath: url.path) else {
             throw SandboxError.pathAlreadyExists
         }
+        try permit.validate(workspace: self, operation: .createDirectory(path: relativePath))
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
-    func delete(_ relativePath: String) throws {
+    func delete(_ relativePath: String, permit: WorkspaceMutationPermit) throws {
         guard !isWorkspaceRootRequest(relativePath) else {
             throw SandboxError.workspaceRootMutationDenied
         }
+        try permit.validate(workspace: self, operation: .deletePath(path: relativePath))
         try FileManager.default.removeItem(at: resolve(relativePath))
     }
 
-    func move(from: String, to: String) throws {
+    func move(from: String, to: String, permit: WorkspaceMutationPermit) throws {
         guard !isWorkspaceRootRequest(from), !isWorkspaceRootRequest(to) else {
             throw SandboxError.workspaceRootMutationDenied
         }
@@ -360,14 +419,18 @@ struct SandboxWorkspace: Sendable {
         }
         try rejectRecursiveMutation(source: source, destination: destination)
         try rejectDirectoryOverwrite(destination: destination)
+        let operation = WorkspaceMutationCapabilityOperation.movePath(from: from, to: to)
+        try permit.validate(workspace: self, operation: operation)
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: destination.path) {
+            try permit.validate(workspace: self, operation: operation)
             try FileManager.default.removeItem(at: destination)
         }
+        try permit.validate(workspace: self, operation: operation)
         try FileManager.default.moveItem(at: source, to: destination)
     }
 
-    func copy(from: String, to: String) throws {
+    func copy(from: String, to: String, permit: WorkspaceMutationPermit) throws {
         guard !isWorkspaceRootRequest(from), !isWorkspaceRootRequest(to) else {
             throw SandboxError.workspaceRootMutationDenied
         }
@@ -378,10 +441,14 @@ struct SandboxWorkspace: Sendable {
         }
         try rejectRecursiveMutation(source: source, destination: destination)
         try rejectDirectoryOverwrite(destination: destination)
+        let operation = WorkspaceMutationCapabilityOperation.copyPath(from: from, to: to)
+        try permit.validate(workspace: self, operation: operation)
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: destination.path) {
+            try permit.validate(workspace: self, operation: operation)
             try FileManager.default.removeItem(at: destination)
         }
+        try permit.validate(workspace: self, operation: operation)
         try FileManager.default.copyItem(at: source, to: destination)
     }
 
@@ -545,10 +612,12 @@ struct SandboxWorkspace: Sendable {
         return rows.joined(separator: "\n")
     }
 
-    func reset() throws {
+    func reset(permit: WorkspaceMutationPermit) throws {
         if FileManager.default.fileExists(atPath: rootURL.path) {
+            try permit.validate(workspace: self, operation: .resetWorkspace)
             try FileManager.default.removeItem(at: rootURL)
         }
+        try permit.validate(workspace: self, operation: .resetWorkspace)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
     }
 

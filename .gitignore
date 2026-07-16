@@ -12,6 +12,10 @@ Build/
 .cursor/
 .vscode/
 
+# Python local tooling state.
+__pycache__/
+*.py[cod]
+
 # Generated local tooling payloads that make desktop git scans unusably heavy.
 AppShortsStudio/
 Business/

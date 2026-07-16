@@ -5,9 +5,45 @@
 //  Search: sheet, query execution, results.
 //
 
+import AgentPolicy
+import AgentTools
 import SwiftData
 import SwiftUI
 import UIKit
+
+/// Coalesces repeated SwiftUI lifecycle requests for the same debug fixture.
+/// The task is deliberately retained independently of any one view lifetime so
+/// a cancelled/recreated Files surface cannot dispatch a second seed midway
+/// through the first policy-backed seed.
+@MainActor
+private final class FilesDebugFixtureSeedCoordinator {
+    static let shared = FilesDebugFixtureSeedCoordinator()
+
+    private var tasks: [String: Task<Void, Error>] = [:]
+
+    func run(
+        key: String,
+        operation: @escaping @MainActor () async throws -> Void
+    ) async throws {
+        if let existingTask = tasks[key] {
+            try await existingTask.value
+            return
+        }
+
+        let task = Task { @MainActor in
+            try await operation()
+        }
+        tasks[key] = task
+
+        do {
+            try await task.value
+            tasks[key] = nil
+        } catch {
+            tasks[key] = nil
+            throw error
+        }
+    }
+}
 
 extension FilesView {
     var searchSheet: some View {
@@ -254,6 +290,10 @@ extension FilesView {
                 let destinationURL = tempDir.appendingPathComponent("\(workspaceName).zip")
                 
                 do {
+                    // Mutation-boundary exemption: `zipURL` is a coordinated,
+                    // read-only snapshot and `destinationURL` is an external
+                    // temporary export. Neither operation mutates the sandbox
+                    // workspace root, so no workspace journal permit applies.
                     try? FileManager.default.removeItem(at: destinationURL)
                     try FileManager.default.copyItem(at: zipURL, to: destinationURL)
                     DispatchQueue.main.async {
@@ -285,54 +325,256 @@ extension FilesView {
         }
     }
 
+    @MainActor
     func seedFileStressIfNeeded() {
         #if DEBUG
-        seedFileActionsFixtureIfNeeded()
-
-        guard ProcessInfo.processInfo.arguments.contains("--stress-files"), !didSeedFileStress else {
+        guard !didSeedFileStress, !isSeedingFileStress else {
             return
         }
-        didSeedFileStress = true
 
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--files-actions-test") {
+            seedFileActionsFixtureIfNeeded()
+            return
+        }
+        guard arguments.contains("--stress-files") else { return }
+        isSeedingFileStress = true
+
+        let fixtureKey = "\(runtime.workspace.rootURL.standardizedFileURL.path)|file-stress-v1"
+        Task { @MainActor in
+            defer { isSeedingFileStress = false }
+            let approvalTask = Task { @MainActor in
+                await approveExpectedSearchFixtureMutations(
+                    searchFileStressOperations()
+                )
+            }
+            defer { approvalTask.cancel() }
+            do {
+                try await FilesDebugFixtureSeedCoordinator.shared.run(key: fixtureKey) {
+                    try await seedFileStressFixture()
+                }
+                // This is a success flag. The explicit in-flight flag and
+                // shared coordinator prevent duplicate dispatch until every
+                // durable mutation receipt has completed.
+                didSeedFileStress = true
+                runtime.noteWorkspaceChanged()
+                reload()
+                reloadWorkspaces()
+                // The receipts above are the durable completion boundary.
+                // Give the detached browser projection one render turn; its
+                // task identity may be replaced by SwiftUI lifecycle reloads,
+                // so observing the shared task slot is not a completion API.
+                try? await Task.sleep(for: .milliseconds(500))
+                isFileStressFixtureReady = true
+            } catch {
+                if let message = filesMutationFailureMessage(
+                    action: "Could not prepare the file stress fixture",
+                    error: error
+                ) {
+                    fileActionError = message
+                }
+            }
+        }
+        #endif
+    }
+
+    #if DEBUG
+    @MainActor
+    private func seedFileStressFixture() async throws {
         if (try? runtime.workspace.read(".novaforge-file-stress")) == "v1",
            (try? runtime.workspace.read("Sources/Generated/Module12.swift"))?.contains("Fixture symbol 12") == true {
             return
         }
 
-        try? runtime.workspace.makeDirectory("Sources/Generated")
-        try? runtime.workspace.makeDirectory("Logs")
-        for index in 1...36 {
-            let source = """
-            // NovaForge file stress fixture \(index)
-            struct GeneratedModule\(index) {
-                let fixture = "Fixture symbol \(index)"
-                let path = "Sources/Generated/Module\(index).swift"
-            }
-            """
-            try? runtime.workspace.write("Sources/Generated/Module\(index).swift", contents: source)
+        for operation in searchFileStressOperations() {
+            try Task.checkCancellation()
+            _ = try await performSearchFixtureMutation(operation)
         }
-        let logLines = (1...80)
-            .map { "Fixture log line \($0): workspace search should stay quick and readable." }
-            .joined(separator: "\n")
-        try? runtime.workspace.write("Logs/build-summary.log", contents: logLines)
-        try? runtime.workspace.write(".novaforge-file-stress", contents: "v1")
-        runtime.noteWorkspaceChanged()
+    }
+    #endif
+
+    @MainActor
+    func seedFileActionsFixtureIfNeeded() {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("--files-actions-test"),
+              !didSeedFileStress,
+              !isSeedingFileStress else {
+            return
+        }
+        isSeedingFileStress = true
+
+        let fixtureKey = "\(runtime.workspace.rootURL.standardizedFileURL.path)|file-actions-v1"
+        Task { @MainActor in
+            defer { isSeedingFileStress = false }
+            let approvalTask = Task { @MainActor in
+                await approveExpectedSearchFixtureMutations(
+                    searchFileActionsOperations()
+                )
+            }
+            defer { approvalTask.cancel() }
+            do {
+                try await FilesDebugFixtureSeedCoordinator.shared.run(key: fixtureKey) {
+                    try await seedFileActionsFixture()
+                }
+                // UI state changes only after every mutation receipt, including
+                // cleanup deletes, has reached durable completion.
+                didSeedFileStress = true
+                currentPath = "Actions"
+                runtime.noteWorkspaceChanged()
+                reload()
+                reloadWorkspaces()
+                try? await Task.sleep(for: .milliseconds(500))
+                isFileStressFixtureReady = true
+            } catch {
+                if let message = filesMutationFailureMessage(
+                    action: "Could not prepare the file actions fixture",
+                    error: error
+                ) {
+                    fileActionError = message
+                }
+            }
+        }
         #endif
     }
 
-    func seedFileActionsFixtureIfNeeded() {
-        #if DEBUG
-        guard ProcessInfo.processInfo.arguments.contains("--files-actions-test"), !didSeedFileStress else {
-            return
-        }
-        didSeedFileStress = true
-        try? runtime.workspace.makeDirectory("Actions")
-        try? runtime.workspace.write("Actions/notes.md", contents: "# Actions fixture\n\nDuplicate/delete proof.\n")
+    #if DEBUG
+    @MainActor
+    private func seedFileActionsFixture() async throws {
+        _ = try await performSearchFixtureMutation(
+            .makeDirectory(PathArguments(path: "Actions"))
+        )
+        _ = try await performSearchFixtureMutation(
+            .writeFile(WriteFileArguments(
+                path: "Actions/notes.md",
+                contents: "# Actions fixture\n\nDuplicate/delete proof.\n"
+            ))
+        )
+
         for path in ["Actions/notes_copy.md", "Actions/notes_copy 2.md", "Actions/notes_copy 3.md"] {
-            try? runtime.workspace.delete(path)
+            try Task.checkCancellation()
+            let targetURL = try runtime.workspace.resolve(path)
+            guard FileManager.default.fileExists(atPath: targetURL.path)
+            else { continue }
+            _ = try await performSearchFixtureMutation(
+                .deletePath(PathArguments(path: path))
+            )
         }
-        currentPath = "Actions"
-        runtime.noteWorkspaceChanged()
+    }
+    #endif
+
+    @MainActor
+    private func performSearchFixtureMutation(
+        _ operation: FilesCanonicalMutationOperation
+    ) async throws -> AgentPolicyMutationReceipt {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("--stress-files") ||
+                arguments.contains("--files-actions-test") else {
+            throw CocoaError(.userCancelled)
+        }
+
+        // Fixtures still cross the exact Files policy boundary and receive a
+        // durable receipt. The narrowly launch-flagged debug task acts as the
+        // test operator, approving only the matching Files preview; production
+        // builds contain neither this path nor ambient authorization.
+        let operationID = UUID()
+        return try await performFilesMutation(
+            operationID: operationID,
+            operation: operation
+        )
+        #else
+        throw CocoaError(.userCancelled)
         #endif
     }
+
+    #if DEBUG
+    @MainActor
+    private func approveExpectedSearchFixtureMutations(
+        _ expectedOperations: [FilesCanonicalMutationOperation]
+    ) async {
+        let promptCenter = AgentPolicyMutationRuntime.shared.approvalPromptCenter
+        while !Task.isCancelled {
+            if let item = promptCenter.pendingItem,
+               item.origin == .files,
+               expectedOperations.contains(where: {
+                   searchFixturePreview(item.operation, matches: $0)
+               })
+            {
+                _ = promptCenter.approve(requestID: item.requestID)
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func searchFileStressOperations() -> [FilesCanonicalMutationOperation] {
+        var operations: [FilesCanonicalMutationOperation] = [
+            .makeDirectory(PathArguments(path: "Sources/Generated")),
+            .makeDirectory(PathArguments(path: "Logs")),
+        ]
+        // Twelve generated modules exercise folder navigation, list/grid
+        // rendering, and multi-file search while keeping this debug fixture
+        // comfortably inside the UI test's 90-second durable-seed budget.
+        operations.append(contentsOf: (1...12).map { fixtureIndex in
+            let path = "Sources/Generated/Module\(fixtureIndex).swift"
+            let source = """
+            // NovaForge file stress fixture \(fixtureIndex)
+            struct GeneratedModule\(fixtureIndex) {
+                let fixture = "Fixture symbol \(fixtureIndex)"
+                let path = "\(path)"
+            }
+            """
+            return .writeFile(WriteFileArguments(path: path, contents: source))
+        })
+        let logLines = (1...80)
+            .map { "Fixture log line \($0): workspace search should stay quick and readable." }
+            .joined(separator: "\n")
+        operations.append(.writeFile(WriteFileArguments(
+            path: "Logs/build-summary.log",
+            contents: logLines
+        )))
+        // Commit the marker last. An interrupted partial fixture therefore
+        // remains eligible for a safe, idempotent repair.
+        operations.append(.writeFile(WriteFileArguments(
+            path: ".novaforge-file-stress",
+            contents: "v1"
+        )))
+        return operations
+    }
+
+    private func searchFileActionsOperations() -> [FilesCanonicalMutationOperation] {
+        var operations: [FilesCanonicalMutationOperation] = [
+            .makeDirectory(PathArguments(path: "Actions")),
+            .writeFile(WriteFileArguments(
+                path: "Actions/notes.md",
+                contents: "# Actions fixture\n\nDuplicate/delete proof.\n"
+            )),
+        ]
+        operations.append(contentsOf: [
+            "Actions/notes_copy.md",
+            "Actions/notes_copy 2.md",
+            "Actions/notes_copy 3.md",
+        ].map { .deletePath(PathArguments(path: $0)) })
+        return operations
+    }
+
+    private func searchFixturePreview(
+        _ preview: AgentApprovalPromptCenter.PendingItem.OperationPreview,
+        matches operation: FilesCanonicalMutationOperation
+    ) -> Bool {
+        switch (preview, operation) {
+        case let (.writeFile(path, byteCount), .writeFile(arguments)):
+            path == arguments.path && byteCount == arguments.contents.utf8.count
+        case let (.deletePath(path), .deletePath(arguments)):
+            path == arguments.path
+        case let (.makeDirectory(path), .makeDirectory(arguments)):
+            path == arguments.path
+        case let (.movePath(source, destination), .movePath(arguments)):
+            source == arguments.from && destination == arguments.to
+        case let (.copyPath(source, destination), .copyPath(arguments)):
+            source == arguments.from && destination == arguments.to
+        default:
+            false
+        }
+    }
+    #endif
 }

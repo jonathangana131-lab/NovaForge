@@ -267,7 +267,7 @@ final class AgentRunPersistenceTests: XCTestCase {
             try context.save()
 
             let runtime = AgentRuntime(workspace: SandboxWorkspace(rootURL: workspaceRoot))
-            let repairedCount = runtime.reconcileInterruptedDurableWork(
+            let repairedCount = try runtime.reconcileInterruptedDurableWork(
                 context: context,
                 now: recoveryDate
             )

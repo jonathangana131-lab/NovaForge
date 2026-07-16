@@ -1,15 +1,77 @@
 //
 //  ChatMessages.swift
-//  Chat message rendering: bubbles, markdown/code blocks, snapshots,
-//  and the tool-approval sheet. Extracted from ChatView.swift; all structs
-//  take explicit parameters and hold no ChatView-private state.
+//  Chat message rendering: bubbles, markdown/code blocks, snapshots, and the
+//  DEBUG-only V1 inspection fallback. Production approvals are canonical and
+//  inline. Extracted from ChatView.swift; all structs take explicit inputs.
 //
 
+import AgentPolicy
+import AgentTools
 import SwiftUI
 import UIKit
 
+private struct ChatMutationConversationIDKey: EnvironmentKey {
+    static let defaultValue: UUID? = nil
+}
+
+private struct ChatMutationProjectIDKey: EnvironmentKey {
+    static let defaultValue: UUID? = nil
+}
+
+private extension EnvironmentValues {
+    var chatMutationConversationID: UUID? {
+        get { self[ChatMutationConversationIDKey.self] }
+        set { self[ChatMutationConversationIDKey.self] = newValue }
+    }
+
+    var chatMutationProjectID: UUID? {
+        get { self[ChatMutationProjectIDKey.self] }
+        set { self[ChatMutationProjectIDKey.self] = newValue }
+    }
+}
+
+private struct ChatMutationScope: Equatable {
+    let conversationID: UUID?
+    let projectID: UUID?
+
+    init(actionScopeID: String) {
+        guard actionScopeID.count > 37 else {
+            conversationID = nil
+            projectID = nil
+            return
+        }
+        let conversationEnd = actionScopeID.index(
+            actionScopeID.startIndex,
+            offsetBy: 36
+        )
+        let projectStart = actionScopeID.index(after: conversationEnd)
+        guard actionScopeID[conversationEnd] == "-",
+              let conversationID = UUID(
+                uuidString: String(actionScopeID[..<conversationEnd])
+              )
+        else {
+            self.conversationID = nil
+            projectID = nil
+            return
+        }
+
+        let projectToken = String(actionScopeID[projectStart...])
+        if projectToken == "general" {
+            self.conversationID = conversationID
+            projectID = nil
+        } else if let projectID = UUID(uuidString: projectToken) {
+            self.conversationID = conversationID
+            self.projectID = projectID
+        } else {
+            self.conversationID = nil
+            projectID = nil
+        }
+    }
+}
+
 struct ChatMessageSource: Sendable {
     let id: UUID
+    let runID: UUID?
     let role: ChatRole
     let content: String
     let createdAt: Date
@@ -18,6 +80,7 @@ struct ChatMessageSource: Sendable {
 
     init(_ message: ChatMessage) {
         id = message.id
+        runID = message.runID
         role = message.role
         content = message.content
         createdAt = message.createdAt
@@ -29,8 +92,6 @@ struct ChatMessageSource: Sendable {
 struct ToolCallSnapshot: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
-    let detail: String
-    let resultDetail: String
     let isComplete: Bool
     let isError: Bool
     let artifact: WorkspaceArtifact?
@@ -38,24 +99,9 @@ struct ToolCallSnapshot: Identifiable, Equatable, Sendable {
     fileprivate init(call: APIToolCall, result: ChatMessageSource?) {
         id = call.id
         name = call.function.name
-        detail = Self.shortDetail(from: call.function.arguments)
-        let firstLine = result?.content.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-        resultDetail = firstLine.count > 100 ? String(firstLine.prefix(100)) + "…" : firstLine
         isComplete = result != nil
         isError = result?.content.localizedCaseInsensitiveContains("error") == true
         artifact = result.flatMap { WorkspaceArtifact.fromToolOutput($0.content) }
-    }
-
-    private static func shortDetail(from json: String) -> String {
-        guard let data = json.data(using: .utf8),
-              let values = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return ""
-        }
-        let value = ["path", "from", "to", "query", "command"]
-            .compactMap { values[$0] as? String }
-            .first ?? ""
-        let singleLine = value.replacingOccurrences(of: "\n", with: " ")
-        return singleLine.count > 100 ? String(singleLine.prefix(100)) + "…" : singleLine
     }
 }
 
@@ -210,11 +256,11 @@ struct MessageReferenceHint: Identifiable, Equatable, Sendable {
 
 struct ChatMessageSnapshot: Identifiable, Equatable, Sendable {
     let id: UUID
+    let runID: UUID?
     let role: ChatRole
     let content: String
     let createdAt: Date
     let toolName: String?
-    let toolDetail: String
     let toolCalls: [ToolCallSnapshot]
     let blocks: [MarkdownBlock]
     let isToolError: Bool
@@ -259,13 +305,13 @@ struct ChatMessageSnapshot: Identifiable, Equatable, Sendable {
             if isTool, let callID = source.toolCallID, namesByCallID[callID] != nil {
                 return nil
             }
-            let firstLine = source.content.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "Tool completed."
-            let detail = isTool
-                ? (firstLine.count > 120 ? String(firstLine.prefix(120)) + "…" : firstLine)
-                : ""
+            // Tool-bearing assistant messages are often the most structured
+            // prose in the transcript. Always parse those short introductions
+            // so filenames, emphasis, and fenced snippets never fall back to
+            // literal Markdown punctuation. Keep the history-window throttle
+            // for ordinary long responses.
             let shouldParseMarkdown = source.role == .assistant &&
-                calls.isEmpty &&
-                (parsedMessageIDs == nil || parsedMessageIDs?.contains(source.id) == true)
+                (!calls.isEmpty || parsedMessageIDs == nil || parsedMessageIDs?.contains(source.id) == true)
             let assistantBlocks: [MarkdownBlock]
             if shouldParseMarkdown {
                 assistantBlocks = parseMarkdown(source.content)
@@ -280,11 +326,11 @@ struct ChatMessageSnapshot: Identifiable, Equatable, Sendable {
             let artifact = isTool ? WorkspaceArtifact.fromToolOutput(source.content) : nil
             return ChatMessageSnapshot(
                 id: source.id,
+                runID: source.runID,
                 role: source.role,
                 content: isTool ? "" : source.content,
                 createdAt: source.createdAt,
                 toolName: toolName,
-                toolDetail: detail,
                 toolCalls: toolCallSnapshots,
                 blocks: assistantBlocks,
                 isToolError: isTool && source.content.localizedCaseInsensitiveContains("error"),
@@ -298,6 +344,45 @@ struct ChatMessageSnapshot: Identifiable, Equatable, Sendable {
                 )
             )
         }
+    }
+}
+
+/// Exact cutover policy between the canonical activity timeline and the V1
+/// provider-message fallback. Release builds never reconstruct tool activity
+/// from provider JSON. A deliberately named DEBUG launch argument keeps one
+/// reversible migration-inspection path without making it a production UI.
+enum ChatToolActivityCutoverPolicy {
+    static let legacyV1DebugLaunchArgument = "--legacy-v1-tool-ui"
+
+    static var legacyV1DebugFallbackEnabled: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains(legacyV1DebugLaunchArgument)
+        #else
+        false
+        #endif
+    }
+
+    static func shouldRenderMessage(
+        role: ChatRole,
+        hasToolCalls: Bool,
+        canonicalOwnsToolPresentation: Bool,
+        allowsLegacyV1DebugFallback: Bool =
+            ChatToolActivityCutoverPolicy.legacyV1DebugFallbackEnabled
+    ) -> Bool {
+        if canonicalOwnsToolPresentation {
+            guard role != .tool else { return false }
+            // An explicit migration inspection must not duplicate canonical
+            // activity. Normal Release/DEBUG chat keeps assistant prose and
+            // lets `MessageBubble` omit the provider-call chrome.
+            return !hasToolCalls || !allowsLegacyV1DebugFallback
+        }
+        if allowsLegacyV1DebugFallback {
+            return true
+        }
+        // Historical V1 assistant introductions remain readable, but their
+        // provider-call and tool-result payloads do not become a second
+        // activity surface. Durable receipts remain available in History.
+        return role != .tool
     }
 }
 
@@ -320,6 +405,10 @@ struct MessageBubble: View, Equatable {
             lhs.actionScopeID == rhs.actionScopeID
     }
 
+    private var mutationScope: ChatMutationScope {
+        ChatMutationScope(actionScopeID: actionScopeID)
+    }
+
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Message Bubble Body")
         Group {
@@ -327,28 +416,63 @@ struct MessageBubble: View, Equatable {
             case .user:
                 UserMessageBubble(content: message.content, createdAt: message.createdAt)
             case .assistant:
-                if !message.toolCalls.isEmpty {
+                #if DEBUG
+                if !message.toolCalls.isEmpty,
+                   ChatToolActivityCutoverPolicy.legacyV1DebugFallbackEnabled {
                     AssistantToolCallBubble(
                         content: message.content,
+                        blocks: message.blocks,
                         toolCalls: message.toolCalls,
+                        workspace: workspace,
                         openArtifact: openArtifact
                     )
                 } else {
                     AssistantMessageBubble(
                         rawContent: message.content,
                         blocks: message.blocks,
-                        references: message.referenceHints,
+                        references: message.toolCalls.isEmpty
+                            ? message.referenceHints
+                            : [],
                         workspace: workspace,
                         tint: tint,
                         createdAt: message.createdAt
                     )
                 }
+                #else
+                AssistantMessageBubble(
+                    rawContent: message.content,
+                    blocks: message.blocks,
+                    references: message.toolCalls.isEmpty
+                        ? message.referenceHints
+                        : [],
+                    workspace: workspace,
+                    tint: tint,
+                    createdAt: message.createdAt
+                )
+                #endif
             case .tool:
-                ToolMessageBubble(message: message, workspace: workspace, openArtifact: openArtifact)
+                #if DEBUG
+                if ChatToolActivityCutoverPolicy.legacyV1DebugFallbackEnabled {
+                    ToolMessageBubble(
+                        message: message,
+                        workspace: workspace,
+                        openArtifact: openArtifact
+                    )
+                } else {
+                    EmptyView()
+                }
+                #else
+                EmptyView()
+                #endif
             case .system:
                 EmptyView()
             }
         }
+        .environment(
+            \.chatMutationConversationID,
+            mutationScope.conversationID
+        )
+        .environment(\.chatMutationProjectID, mutationScope.projectID)
     }
 }
 
@@ -388,34 +512,30 @@ struct AssistantMessageBubble: View {
     let createdAt: Date
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .top, spacing: 9) {
-                    // The live glass bead dissolves at completion, but its
-                    // fixed gutter remains. Live and durable text therefore
-                    // share the same horizontal geometry during handoff.
-                    Color.clear
-                        .frame(width: 24, height: 1)
-                        .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(tint.opacity(0.72))
+                .frame(width: 18, height: 22, alignment: .top)
+                .accessibilityHidden(true)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        if blocks.isEmpty {
-                            AssistantTextBlockView(content: "")
-                        } else {
-                            ForEach(blocks) { block in
-                                if block.isCode {
-                                    CodeBlockView(block: block, workspace: workspace)
-                                } else {
-                                    AssistantTextBlockView(content: block.content)
-                                }
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if blocks.isEmpty {
+                        AssistantTextBlockView(content: "")
+                    } else {
+                        ForEach(blocks) { block in
+                            if block.isCode {
+                                CodeBlockView(block: block, workspace: workspace)
+                            } else {
+                                AssistantTextBlockView(content: block.content)
                             }
                         }
-
-                        if !references.isEmpty {
-                            MessageReferenceHintRail(references: references)
-                        }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if !references.isEmpty {
+                        MessageReferenceHintRail(references: references)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -427,9 +547,8 @@ struct AssistantMessageBubble: View {
                     createdAt: createdAt,
                     roleLabel: "NovaForge response"
                 )
-                .padding(.leading, 33)
             }
-            Spacer(minLength: 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 18)
         .accessibilityElement(children: .contain)
@@ -514,34 +633,45 @@ struct MessageReferenceHintRail: View {
 struct AssistantTextBlockView: View {
     let content: String
     private let previewContent: String
+    private let previewPresentation: AssistantMarkdownPresentation
     private let isLong: Bool
     private let hiddenCharacterCount: Int
     @State private var expanded = false
+    @State private var loadedFullPresentation: AssistantMarkdownPresentation?
+    @State private var isPreparingFullPresentation = false
 
     private static let previewCharacterLimit = 3_600
 
     init(content: String) {
         self.content = content
         if content.count > Self.previewCharacterLimit {
-            let index = content.index(content.startIndex, offsetBy: Self.previewCharacterLimit)
-            let preview = String(content[..<index])
+            let preview = assistantMarkdownPreview(
+                content,
+                characterLimit: Self.previewCharacterLimit
+            )
             self.previewContent = preview
+            self.previewPresentation = assistantMarkdownPresentation(preview)
             self.isLong = true
             self.hiddenCharacterCount = max(content.count - preview.count, 0)
+            self._loadedFullPresentation = State(initialValue: nil)
         } else {
             self.previewContent = content
+            let presentation = assistantMarkdownPresentation(content)
+            self.previewPresentation = presentation
             self.isLong = false
             self.hiddenCharacterCount = 0
+            self._loadedFullPresentation = State(initialValue: presentation)
         }
     }
 
-    private var renderedContent: String {
-        expanded ? content : previewContent
+    private var renderedPresentation: AssistantMarkdownPresentation {
+        guard expanded else { return previewPresentation }
+        return loadedFullPresentation ?? previewPresentation
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if renderedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(" ")
                     .font(.system(.body, design: .default, weight: .regular))
                     .frame(height: 10)
@@ -558,14 +688,16 @@ struct AssistantTextBlockView: View {
             if isLong {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.smooth(duration: 0.2)) {
-                        expanded.toggle()
-                    }
+                    toggleExpandedPresentation()
                 } label: {
                     HStack(spacing: 7) {
-                        Image(systemName: expanded ? "chevron.up" : "text.append")
+                        Image(systemName: isPreparingFullPresentation ? "ellipsis" : (expanded ? "chevron.up" : "text.append"))
                             .font(.system(size: 10, weight: .bold))
-                        Text(expanded ? "Collapse long response" : "Show full response")
+                        Text(
+                            isPreparingFullPresentation
+                                ? "Formatting response"
+                                : (expanded ? "Collapse long response" : "Show full response")
+                        )
                             .font(.system(size: 11, weight: .bold, design: AgentPalette.interfaceFontDesign))
                         Spacer(minLength: 0)
                         if !expanded {
@@ -580,14 +712,290 @@ struct AssistantTextBlockView: View {
                     .agentSurface(radius: 11, tint: AgentPalette.cyan.opacity(0.06))
                 }
                 .buttonStyle(.plain)
+                .disabled(isPreparingFullPresentation)
+            }
+        }
+    }
+
+    private func toggleExpandedPresentation() {
+        if expanded {
+            withAnimation(.smooth(duration: 0.2)) {
+                expanded = false
+            }
+            return
+        }
+
+        if loadedFullPresentation != nil {
+            withAnimation(.smooth(duration: 0.2)) {
+                expanded = true
+            }
+            return
+        }
+
+        isPreparingFullPresentation = true
+        let source = content
+        Task {
+            let presentation = await Task.detached(priority: .userInitiated) {
+                assistantMarkdownPresentation(source)
+            }.value
+            guard !Task.isCancelled else { return }
+            loadedFullPresentation = presentation
+            isPreparingFullPresentation = false
+            withAnimation(.smooth(duration: 0.2)) {
+                expanded = true
             }
         }
     }
 
     @ViewBuilder
     private var renderedText: some View {
-        Text(renderedContent)
+        Text(renderedPresentation.attributedText)
+            .accessibilityLabel(renderedPresentation.accessibilityText)
     }
+}
+
+/// One shared, lossless presentation boundary for assistant prose. The raw
+/// Markdown remains on the message for provider history, Copy, and Share;
+/// only the visible/accessibility layer removes syntax punctuation.
+struct AssistantMarkdownPresentation: Hashable, Sendable {
+    let attributedText: AttributedString
+    let accessibilityText: String
+}
+
+func assistantMarkdownPresentation(_ source: String) -> AssistantMarkdownPresentation {
+    AssistantMarkdownPresentationCache.shared.presentation(for: source)
+}
+
+/// Live text needs Markdown source positions so the dust renderer can split
+/// one coherently parsed leaf exactly where the newest provider phrase starts.
+/// Parsing the combined source prevents emphasis, inline code, and links from
+/// flashing literal delimiters when a provider chunk lands mid-token.
+func assistantLiveMarkdownPresentation(_ source: String) -> AssistantMarkdownPresentation {
+    guard assistantMarkdownRequiresParsing(source) else {
+        return AssistantMarkdownPresentation(
+            attributedText: AttributedString(source),
+            accessibilityText: source
+        )
+    }
+    let options = AttributedString.MarkdownParsingOptions(
+        interpretedSyntax: .inlineOnlyPreservingWhitespace,
+        failurePolicy: .returnPartiallyParsedIfPossible,
+        appliesSourcePositionAttributes: true
+    )
+    let parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+    let attributed = replacingAssistantBlockMarkers(in: parsed)
+    return AssistantMarkdownPresentation(
+        attributedText: attributed,
+        accessibilityText: String(attributed.characters)
+    )
+}
+
+/// Foundation's Markdown parser is intentionally reserved for text that can
+/// contain Markdown structure. Ordinary streamed prose is overwhelmingly the
+/// hot path, and punctuation inside words (for example `display-paced`) must
+/// remain eligible for the native `AttributedString` fast path.
+func assistantMarkdownRequiresParsing(_ source: String) -> Bool {
+    let inlineControlCharacters = "*_`[]<>#~\\"
+    if source.contains(where: inlineControlCharacters.contains) {
+        return true
+    }
+
+    return source.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
+        let body = line.drop(while: { $0 == " " || $0 == "\t" })
+        return body.hasPrefix("- ") || body.hasPrefix("+ ")
+    }
+}
+
+private final class AssistantMarkdownPresentationBox: NSObject {
+    let value: AssistantMarkdownPresentation
+
+    init(_ value: AssistantMarkdownPresentation) {
+        self.value = value
+    }
+}
+
+/// SwiftUI may re-evaluate a transcript row many times while scrolling or
+/// while a sibling is streaming. A bounded cache makes settled Markdown a
+/// parse-once value instead of repeating Foundation parsing on every body pass.
+private final class AssistantMarkdownPresentationCache: @unchecked Sendable {
+    static let shared = AssistantMarkdownPresentationCache()
+
+    private let cache = NSCache<NSString, AssistantMarkdownPresentationBox>()
+
+    private init() {
+        cache.countLimit = 320
+        cache.totalCostLimit = 2_000_000
+    }
+
+    func presentation(for source: String) -> AssistantMarkdownPresentation {
+        let key = source as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached.value
+        }
+
+        let presentation = makeAssistantMarkdownPresentation(source)
+        cache.setObject(
+            AssistantMarkdownPresentationBox(presentation),
+            forKey: key,
+            cost: source.utf8.count
+        )
+        return presentation
+    }
+}
+
+private func makeAssistantMarkdownPresentation(_ source: String) -> AssistantMarkdownPresentation {
+    guard assistantMarkdownRequiresParsing(source) else {
+        return AssistantMarkdownPresentation(
+            attributedText: AttributedString(source),
+            accessibilityText: source
+        )
+    }
+    let normalized = normalizedAssistantMarkdown(source)
+    let options = AttributedString.MarkdownParsingOptions(
+        interpretedSyntax: .inlineOnlyPreservingWhitespace,
+        failurePolicy: .returnPartiallyParsedIfPossible
+    )
+    if let attributed = try? AttributedString(markdown: normalized, options: options) {
+        return AssistantMarkdownPresentation(
+            attributedText: attributed,
+            accessibilityText: String(attributed.characters)
+        )
+    }
+    return AssistantMarkdownPresentation(
+        attributedText: AttributedString(normalized),
+        accessibilityText: normalized
+    )
+}
+
+/// Avoid bisecting a paragraph or word solely because the old preview used an
+/// arbitrary character offset. Full formatting is loaded only if requested.
+private func assistantMarkdownPreview(_ source: String, characterLimit: Int) -> String {
+    guard source.count > characterLimit else { return source }
+    let hardEnd = source.index(source.startIndex, offsetBy: characterLimit)
+    let minimumEnd = source.index(source.startIndex, offsetBy: characterLimit * 2 / 3)
+    let prefix = source[..<hardEnd]
+
+    if let paragraphBreak = prefix.range(of: "\n\n", options: .backwards),
+       paragraphBreak.lowerBound >= minimumEnd {
+        return String(source[..<paragraphBreak.lowerBound])
+    }
+    if let lineBreak = prefix.lastIndex(of: "\n"), lineBreak >= minimumEnd {
+        return String(source[..<lineBreak])
+    }
+    if let wordBreak = prefix.lastIndex(where: { $0.isWhitespace }), wordBreak >= minimumEnd {
+        return String(source[..<wordBreak])
+    }
+    return String(prefix)
+}
+
+private struct AssistantBlockMarkerEdit {
+    let lowerCharacterOffset: Int
+    let upperCharacterOffset: Int
+    let replacement: String
+}
+
+/// Inline Markdown deliberately preserves whitespace, which is ideal for a
+/// streaming transcript but leaves block prefixes visible. Normalize those
+/// prefixes after parsing so source-position attributes remain tied to the
+/// provider's untouched source.
+private func replacingAssistantBlockMarkers(in source: AttributedString) -> AttributedString {
+    let plainText = String(source.characters)
+    var edits: [AssistantBlockMarkerEdit] = []
+    var lineStartOffset = 0
+    let lines = plainText.split(separator: "\n", omittingEmptySubsequences: false)
+
+    for (lineIndex, lineSlice) in lines.enumerated() {
+        let line = String(lineSlice)
+        let indentationCount = line.prefix { $0 == " " || $0 == "\t" }.count
+        let body = line.dropFirst(indentationCount)
+        let markerOffset = lineStartOffset + indentationCount
+
+        if body.hasPrefix("- ") || body.hasPrefix("* ") || body.hasPrefix("+ ") {
+            edits.append(
+                AssistantBlockMarkerEdit(
+                    lowerCharacterOffset: markerOffset,
+                    upperCharacterOffset: markerOffset + 1,
+                    replacement: "•"
+                )
+            )
+        } else {
+            let headingDepth = body.prefix { $0 == "#" }.count
+            if (1...6).contains(headingDepth), body.dropFirst(headingDepth).hasPrefix(" ") {
+                edits.append(
+                    AssistantBlockMarkerEdit(
+                        lowerCharacterOffset: markerOffset,
+                        upperCharacterOffset: markerOffset + headingDepth + 1,
+                        replacement: ""
+                    )
+                )
+            } else if body.hasPrefix("> ") {
+                edits.append(
+                    AssistantBlockMarkerEdit(
+                        lowerCharacterOffset: markerOffset,
+                        upperCharacterOffset: markerOffset + 1,
+                        replacement: "›"
+                    )
+                )
+            }
+        }
+
+        lineStartOffset += line.count
+        if lineIndex < lines.count - 1 {
+            lineStartOffset += 1
+        }
+    }
+
+    var result = source
+    for edit in edits.reversed() {
+        guard edit.lowerCharacterOffset <= result.characters.count,
+              edit.upperCharacterOffset <= result.characters.count else { continue }
+        let lower = result.characters.index(
+            result.startIndex,
+            offsetBy: edit.lowerCharacterOffset
+        )
+        let upper = result.characters.index(
+            result.startIndex,
+            offsetBy: edit.upperCharacterOffset
+        )
+        let range = lower..<upper
+        let attributes = result[range].runs.first?.attributes ?? AttributeContainer()
+        var replacement = AttributedString(edit.replacement)
+        replacement.setAttributes(attributes)
+        result.replaceSubrange(range, with: replacement)
+    }
+    return result
+}
+
+/// Foundation's inline Markdown parser preserves line breaks (important for
+/// streaming and selectable text) but intentionally leaves block markers in
+/// place. Normalize only the leading markers that should be spoken/rendered
+/// semantically; inline emphasis, links, and code stay intact for parsing.
+private func normalizedAssistantMarkdown(_ source: String) -> String {
+    source
+        .components(separatedBy: "\n")
+        .map(normalizedAssistantMarkdownLine)
+        .joined(separator: "\n")
+}
+
+private func normalizedAssistantMarkdownLine(_ line: String) -> String {
+    let indentation = line.prefix { $0 == " " || $0 == "\t" }
+    let body = line.dropFirst(indentation.count)
+    let prefix = String(indentation)
+
+    for marker in ["- ", "* ", "+ "] where body.hasPrefix(marker) {
+        return prefix + "• " + body.dropFirst(marker.count)
+    }
+
+    let headingDepth = body.prefix { $0 == "#" }.count
+    if (1...6).contains(headingDepth), body.dropFirst(headingDepth).hasPrefix(" ") {
+        return prefix + body.dropFirst(headingDepth + 1)
+    }
+
+    if body.hasPrefix("> ") {
+        return prefix + "› " + body.dropFirst(2)
+    }
+
+    return line
 }
 
 enum ChatMessageSurfaceEmphasis {
@@ -836,6 +1244,9 @@ private func stableMarkdownBlockID(index: Int, kind: String, language: String?, 
 }
 
 struct CodeBlockView: View {
+    @Environment(\.chatMutationConversationID) private var conversationID
+    @Environment(\.chatMutationProjectID) private var projectID
+
     let language: String?
     let content: String
     var workspace: SandboxWorkspace
@@ -850,9 +1261,17 @@ struct CodeBlockView: View {
     @State private var showingSaveStatus = false
     @State private var saveFileName = ""
     @State private var saveStatusMessage = ""
+    @State private var saveTask: Task<Void, Never>?
+    @State private var pendingSaveOperation: PendingCodeBlockSaveOperation?
 
     private static let previewLineLimit = 28
     private static let previewCharacterLimit = 2_800
+
+    private struct PendingCodeBlockSaveOperation: Equatable {
+        let operationID: UUID
+        let name: String
+        let content: String
+    }
 
     init(block: MarkdownBlock, workspace: SandboxWorkspace) {
         self.language = block.language
@@ -944,6 +1363,7 @@ struct CodeBlockView: View {
                     .foregroundStyle(AgentPalette.cyan)
                 }
                 .buttonStyle(.plain)
+                .disabled(saveTask != nil)
                 .accessibilityIdentifier("codeBlockSaveButton")
             }
             .padding(.horizontal, 12)
@@ -1007,6 +1427,7 @@ struct CodeBlockView: View {
             Button("Save") {
                 saveBlock()
             }
+            .disabled(saveTask != nil)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Enter a filename to save this code block into the current active workspace directory.")
@@ -1025,105 +1446,152 @@ struct CodeBlockView: View {
             showingSaveStatus = true
             return
         }
-        do {
-            try workspace.write(name, contents: content)
-            saveStatusMessage = "Saved \(name)."
-            saveFileName = ""
-        } catch {
-            saveStatusMessage = "Could not save \(name): \(error.localizedDescription)"
+
+        guard saveTask == nil else { return }
+
+        let savedContent = content
+        let operation: PendingCodeBlockSaveOperation
+        if let pendingSaveOperation,
+           pendingSaveOperation.name == name,
+           pendingSaveOperation.content == savedContent
+        {
+            operation = pendingSaveOperation
+        } else {
+            operation = PendingCodeBlockSaveOperation(
+                operationID: UUID(),
+                name: name,
+                content: savedContent
+            )
+            pendingSaveOperation = operation
         }
-        showingSaveStatus = true
+
+        let policyRuntime = AgentPolicyMutationRuntime.shared
+        let executionContext: AgentPolicyMutationExecutionContext
+        let coordinator: AgentPolicyMutationCoordinator
+        do {
+            executionContext = try policyRuntime.makeExecutionContext(
+                workspace: workspace,
+                operationID: operation.operationID,
+                idempotencyKey: Self.idempotencyKey(
+                    operationID: operation.operationID
+                ),
+                conversationID: conversationID,
+                projectID: projectID,
+                sessionID: "chat-code-artifact"
+            )
+            coordinator = try policyRuntime.coordinator()
+        } catch {
+            saveStatusMessage = "Could not prepare the save for \(name): \(error.localizedDescription)"
+            showingSaveStatus = true
+            return
+        }
+
+        saveTask = Task { @MainActor in
+            defer { saveTask = nil }
+
+            do {
+                try Task.checkCancellation()
+                _ = try await coordinator.performArtifact(
+                    context: executionContext,
+                    operation: ArtifactCanonicalMutationOperation.writeFile(
+                        WriteFileArguments(
+                            path: operation.name,
+                            contents: operation.content
+                        )
+                    )
+                )
+
+                // The coordinator returns only after the digest receipt is
+                // durably settled, so success can never outrun its receipt.
+                saveStatusMessage = "Saved \(name)."
+                saveFileName = ""
+                if pendingSaveOperation?.operationID == operation.operationID {
+                    pendingSaveOperation = nil
+                }
+            } catch is CancellationError {
+                saveStatusMessage = "Save cancelled before it started. No workspace files changed."
+            } catch let policyError as AgentPolicyMutationServiceError {
+                saveStatusMessage = saveFailureMessage(
+                    for: name,
+                    policyError: policyError
+                )
+            } catch {
+                saveStatusMessage = "Could not save \(name): \(error.localizedDescription)"
+            }
+
+            showingSaveStatus = true
+        }
+    }
+
+    private func saveFailureMessage(
+        for name: String,
+        policyError: AgentPolicyMutationServiceError
+    ) -> String {
+        switch policyError {
+        case .cancelled:
+            "Save cancelled before it started. No workspace files changed."
+        case .effectFailed, .recoveryFailed:
+            "The save outcome for \(name) is uncertain. \(policyError.localizedDescription)"
+        case .approvalRejected, .policyDenied:
+            "The save for \(name) was not approved. No workspace files changed."
+        case .invalidComposition, .requestRejected, .policyIndeterminate,
+             .approvalFailed, .authorizationFailed, .claimFailed,
+             .stagedAutomaticAuthorizationUnsupported,
+             .stagedPreparationMismatch, .approvalBindingMismatch:
+            "Could not save \(name): \(policyError.localizedDescription)"
+        }
+    }
+
+    private static func idempotencyKey(operationID: UUID) -> String {
+        "artifact.chat-code-block.write-file.v1:\(operationID.uuidString.lowercased())"
     }
 }
 
+#if DEBUG
+/// DEBUG-only receipt for inspecting a pre-canonical V1 transcript. It never
+/// renders provider output, arguments, or reconstructed tool targets.
 struct ToolMessageBubble: View {
     let message: ChatMessageSnapshot
     var workspace: SandboxWorkspace
     let openArtifact: (WorkspaceArtifact) -> Void
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 9) {
-                    Image(systemName: statusSymbol)
-                        .font(.system(size: 12, weight: .black))
-                        .foregroundStyle(statusTint)
-                        .frame(width: 28, height: 28)
-                        .agentSurface(radius: 9, tint: statusTint.opacity(0.10))
-                    
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(message.isToolError ? "Tool needs review" : "Tool finished")
-                                .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.ink)
-                            Text(toolDisplayName)
-                                .font(.system(size: 8.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(statusTint)
-                                .textCase(.uppercase)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.72)
-                                .padding(.horizontal, 7)
-                                .frame(height: 20)
-                                .agentControlSurface(radius: 7, tint: statusTint.opacity(0.10), selected: true)
-                        }
+        HStack(spacing: 8) {
+            Image(systemName: statusSymbol)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(statusTint)
+                .accessibilityHidden(true)
 
-                        if !message.toolDetail.isEmpty {
-                            Text(message.toolDetail)
-                                .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.secondaryText)
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    
-                    Spacer(minLength: 0)
+            Text(message.isToolError ? "Legacy action needs review" : "Legacy receipt saved in History")
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(2)
 
-                    Text(message.createdAt, style: .time)
-                        .font(.system(size: 9, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.tertiaryText)
-                        .padding(.top, 3)
+            Spacer(minLength: 4)
+
+            if let artifact = message.artifact {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    openArtifact(artifact)
+                } label: {
+                    Image(systemName: artifact.handoffSymbol)
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: AgentDesign.minimumTouchTarget)
+                        .frame(minHeight: AgentDesign.minimumTouchTarget)
+                        .contentShape(Circle())
                 }
-                
-                if !message.referenceHints.isEmpty {
-                    MessageReferenceHintRail(references: message.referenceHints)
-                }
-
-                if let artifact = message.artifact {
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        openArtifact(artifact)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: artifact.isWebPage ? "play.rectangle.fill" : artifact.symbol)
-                                .font(.system(size: 15, weight: .black))
-                                .foregroundStyle(artifact.isWebPage ? AgentPalette.green : AgentPalette.cyan)
-                                .frame(width: 30, height: 30)
-                                .agentControlSurface(radius: 10, tint: (artifact.isWebPage ? AgentPalette.green : AgentPalette.cyan).opacity(0.12), selected: true)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(artifact.isWebPage ? "Open live artifact" : "Open artifact")
-                                    .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                Text(artifact.path)
-                                    .font(.system(size: 9.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption.weight(.bold))
-                        }
-                        .foregroundStyle(AgentPalette.ink)
-                        .padding(10)
-                        .agentRowSurface(radius: 14, tint: artifact.isWebPage ? AgentPalette.green : AgentPalette.cyan, selected: true)
-                    }
-                    .buttonStyle(.plain)
-                }
-
+                .agentInteractiveGlassButtonStyle(
+                    radius: AgentDesign.minimumTouchTarget / 2,
+                    tint: AgentPalette.cyan
+                )
+                .accessibilityLabel("Open legacy artifact")
             }
-            .padding(11)
-            .agentRowSurface(radius: 16, tint: statusTint.opacity(0.08), selected: message.isToolError)
-            Spacer(minLength: 44)
         }
-        .padding(.horizontal)
+        .padding(.horizontal, 10)
+        .agentRowSurface(radius: 14, tint: statusTint.opacity(0.06))
+        .padding(.horizontal, 18)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatLegacyToolReceipt")
     }
 
     private var statusTint: Color {
@@ -1134,11 +1602,8 @@ struct ToolMessageBubble: View {
         message.isToolError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
     }
 
-    private var toolDisplayName: String {
-        guard let toolName = message.toolName else { return "Completed" }
-        return plainToolName(toolName)
-    }
 }
+#endif
 
 struct ApprovalSafetySummary: Hashable {
     let actionName: String
@@ -1247,12 +1712,14 @@ struct ApprovalSafetySummary: Hashable {
     }
 }
 
+#if DEBUG
+/// Retained only for explicit V1 migration inspection. Production approvals
+/// are rendered and resolved inline by `AgentActivityGroupView`.
 struct ApprovalSheet: View {
     let request: ToolRequest
     let approve: () -> Void
     let reject: () -> Void
     var workspace: SandboxWorkspace?
-    @State private var showingArguments = false
     @State private var reviewDiff: FileDiff?
     @State private var reviewPath: String?
 
@@ -1341,39 +1808,6 @@ struct ApprovalSheet: View {
                             DiffReviewSection(diff: reviewDiff, path: reviewPath)
                         }
 
-                        Button {
-                            withAnimation(.smooth(duration: 0.2)) {
-                                showingArguments.toggle()
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .rotationEffect(.degrees(showingArguments ? 90 : 0))
-                                Text(showingArguments ? "Hide raw arguments" : "Show raw arguments")
-                                    .font(NovaType.caption)
-                                Spacer()
-                            }
-                            .foregroundStyle(AgentPalette.secondaryText)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if showingArguments {
-                            Text(request.argumentsJSON)
-                                .font(.system(size: 11, design: .monospaced))
-                                .textSelection(.enabled)
-                                .foregroundStyle(AgentPalette.codeText)
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(AgentPalette.codeBackground.opacity(0.94), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .strokeBorder(AgentPalette.codeCursor.opacity(0.16), lineWidth: 0.55)
-                                )
-                                .transition(.opacity)
-                        }
                     }
                     .padding(14)
                     .agentSurface(radius: 20, tint: gateTint.opacity(0.06))
@@ -1483,21 +1917,8 @@ struct ApprovalSheet: View {
         .accessibilityLabel("\(title): \(value)")
     }
 
-    private var argumentSummary: String {
-        let keys = ["path", "from", "to", "query", "command"]
-        if let value = keys.compactMap({ request.arguments[$0] }).first {
-            let singleLine = oneLine(value)
-            return singleLine.count > 120 ? String(singleLine.prefix(120)) + "..." : singleLine
-        }
-        return "\(request.arguments.count) argument\(request.arguments.count == 1 ? "" : "s") ready to review."
-    }
-
-    private func oneLine(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 }
+#endif
 
 extension View {
     @ViewBuilder

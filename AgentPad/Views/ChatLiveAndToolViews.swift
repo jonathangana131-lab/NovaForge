@@ -1,41 +1,69 @@
 import SwiftUI
 
+#if DEBUG
+/// Compact fallback for V1 provider messages that have no canonical journal
+/// projection. It is compiled only for DEBUG and `MessageBubble` additionally
+/// requires `--legacy-v1-tool-ui`, so it cannot become a Release transcript.
 struct AssistantToolCallBubble: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let content: String
+    let blocks: [MarkdownBlock]
     let toolCalls: [ToolCallSnapshot]
+    var workspace: SandboxWorkspace
     let openArtifact: (WorkspaceArtifact) -> Void
     @State private var detailsExpanded = false
 
-    private let collapsedLimit = 4
+    private let expandedDetailLimit = 12
 
     private var visibleToolCalls: ArraySlice<ToolCallSnapshot> {
-        guard !detailsExpanded, !allToolCallsResolved, toolCalls.count > collapsedLimit else {
-            return toolCalls[...]
-        }
-        return toolCalls.prefix(collapsedLimit)
+        guard detailsExpanded else { return toolCalls.prefix(0) }
+        return toolCalls.prefix(expandedDetailLimit)
     }
 
     private var hiddenToolCallCount: Int {
-        max(toolCalls.count - collapsedLimit, 0)
+        max(toolCalls.count - visibleToolCalls.count, 0)
+    }
+
+    private var batchPresentation: LegacyToolActivityBatchPresentation {
+        LegacyToolActivityBatchPresentation(
+            totalCount: toolCalls.count,
+            completedCount: successfulToolCallCount,
+            failedCount: failedToolCallCount,
+            pendingApprovalCount: pendingApprovalToolCallCount,
+            primaryTarget: primaryTargetName
+        )
     }
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 7) {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(AgentPalette.primaryAccent.opacity(0.72))
+                .frame(width: 18, height: 22, alignment: .top)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 10) {
                 if !content.isEmpty {
-                    Text(content)
-                        .font(.system(size: 16, weight: .regular, design: AgentPalette.interfaceFontDesign))
-                        .foregroundStyle(AgentPalette.ink)
-                        .lineSpacing(5)
-                        .padding(.horizontal, 2)
+                    if blocks.isEmpty {
+                        AssistantTextBlockView(content: content)
+                    } else {
+                        ForEach(blocks) { block in
+                            if block.isCode {
+                                CodeBlockView(block: block, workspace: workspace)
+                            } else {
+                                AssistantTextBlockView(content: block.content)
+                            }
+                        }
+                    }
                 }
 
-                if allToolCallsResolved {
+                VStack(alignment: .leading, spacing: 7) {
                     ToolActivityCompletionLine(
-                        summary: resolvedSummaryText,
-                        symbol: resolvedSummarySymbol,
-                        tint: resolvedSummaryTint,
-                        artifact: primaryArtifact,
+                        summary: batchPresentation.summary,
+                        symbol: batchPresentation.symbol,
+                        tint: batchTint,
+                        artifact: allToolCallsResolved ? primaryArtifact : nil,
                         detailsExpanded: detailsExpanded,
                         toggleDetails: toggleDetails,
                         openArtifact: openArtifact
@@ -44,22 +72,26 @@ struct AssistantToolCallBubble: View {
                     if detailsExpanded {
                         detailRows
                             .transition(.opacity)
-                    }
-                } else {
-                    detailRows
 
-                    if hiddenToolCallCount > 0 {
-                        batchToggle(identifier: "toolBatchToggle")
+                        if hiddenToolCallCount > 0 {
+                            Text("\(hiddenToolCallCount) more action\(hiddenToolCallCount == 1 ? "" : "s") in History")
+                                .font(NovaType.caption)
+                                .foregroundStyle(AgentPalette.tertiaryText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(minHeight: AgentDesign.minimumTouchTarget)
+                                .accessibilityIdentifier("toolActivityCappedCount")
+                        }
                     }
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .agentRowSurface(radius: 15, tint: batchTint.opacity(0.07))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .assistantResponseSurface(tint: AgentPalette.primaryAccent)
-            Spacer(minLength: 44)
         }
         .padding(.horizontal, 18)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatAssistantToolResponse")
     }
 
     private var detailRows: some View {
@@ -67,7 +99,7 @@ struct AssistantToolCallBubble: View {
             ForEach(visibleToolCalls, id: \.id) { call in
                 ToolActivityRow(
                     call: call,
-                    showResultDetailByDefault: allToolCallsResolved && detailsExpanded && call.isError,
+                    showResultDetailByDefault: detailsExpanded && call.isError,
                     openArtifact: openArtifact
                 )
             }
@@ -82,6 +114,12 @@ struct AssistantToolCallBubble: View {
         toolCalls.filter { $0.isComplete && !$0.isError }.count
     }
 
+    private var pendingApprovalToolCallCount: Int {
+        toolCalls.filter {
+            !$0.isComplete && LegacyToolActivityPolicy.requiresApproval($0.name)
+        }.count
+    }
+
     private var allToolCallsResolved: Bool {
         !toolCalls.isEmpty && toolCalls.allSatisfy(\.isComplete)
     }
@@ -90,73 +128,28 @@ struct AssistantToolCallBubble: View {
         toolCalls.compactMap(\.artifact).first
     }
 
-    private var primaryTargetName: String? {
-        if let primaryArtifact {
-            return primaryArtifact.title
+    // Legacy inspection never reconstructs argument targets. Those values can
+    // contain commands, paths, or provider payloads; History owns diagnostics.
+    private var primaryTargetName: String? { nil }
+
+    private var batchTint: Color {
+        switch batchPresentation.phase {
+        case .running: AgentPalette.cyan
+        case .awaitingApproval: AgentPalette.warning
+        case .succeeded: AgentPalette.green
+        case .failed: AgentPalette.rose
         }
-        return toolCalls
-            .map(\.detail)
-            .map(Self.compactDisplayName)
-            .first { !$0.isEmpty }
-    }
-
-    private var resolvedSummaryText: String {
-        let target = primaryTargetName.map { " · \($0)" } ?? ""
-        if failedToolCallCount > 0 {
-            let completed = successfulToolCallCount > 0 ? " · \(successfulToolCallCount) completed" : ""
-            return "\(failedToolCallCount) failed\(completed)\(target)"
-        }
-        let noun = toolCalls.count == 1 ? "action" : "actions"
-        return "\(toolCalls.count) \(noun) completed\(target)"
-    }
-
-    private var resolvedSummarySymbol: String {
-        failedToolCallCount > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
-    }
-
-    private var resolvedSummaryTint: Color {
-        failedToolCallCount > 0 ? AgentPalette.rose : AgentPalette.green
     }
 
     private func toggleDetails() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.smooth(duration: 0.18)) {
+        withAnimation(
+            NovaMotion.enabled(reduceMotion: reduceMotion)
+                ? .smooth(duration: 0.18)
+                : nil
+        ) {
             detailsExpanded.toggle()
         }
-    }
-
-
-    private static func compactDisplayName(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        let lastPathComponent = URL(fileURLWithPath: trimmed).lastPathComponent
-        let display = lastPathComponent.isEmpty ? trimmed : lastPathComponent
-        guard display.count > 68 else { return display }
-        return String(display.prefix(68)) + "..."
-    }
-
-    private func batchToggle(identifier: String) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.smooth(duration: 0.18)) {
-                detailsExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: detailsExpanded ? "chevron.up" : "ellipsis")
-                    .font(.system(size: 10, weight: .bold))
-                Text(detailsExpanded ? "Show fewer actions" : "\(hiddenToolCallCount) more actions")
-                    .font(.system(size: 11, weight: .bold, design: AgentPalette.interfaceFontDesign))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(AgentPalette.secondaryText)
-            .padding(.horizontal, 8)
-            .frame(height: AgentDesign.minimumTouchTarget)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(detailsExpanded ? "Show fewer actions" : "\(hiddenToolCallCount) more actions")
-        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -170,66 +163,79 @@ private struct ToolActivityCompletionLine: View {
     let openArtifact: (WorkspaceArtifact) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(tint.opacity(0.12))
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(tint.opacity(0.24), lineWidth: 0.5)
-                Image(systemName: symbol)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(tint)
-            }
-            .frame(width: 22, height: 22)
-
-            Text(summary)
-                .font(.system(size: 11.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                .foregroundStyle(AgentPalette.secondaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .allowsTightening(true)
-                .truncationMode(.tail)
-                .layoutPriority(1)
-                .accessibilityIdentifier("toolActivitySummary")
-
-            if let artifact {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    openArtifact(artifact)
-                } label: {
-                    Label("Open", systemImage: artifact.isWebPage || artifact.isSwiftGameArtifact ? artifact.handoffSymbol : artifact.symbol)
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(AgentPalette.cyan)
-                        .frame(width: AgentDesign.minimumTouchTarget, height: 28)
-                        .contentShape(Rectangle())
+        GlassGroup(spacing: 6) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(tint.opacity(0.12))
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(tint.opacity(0.24), lineWidth: 0.5)
+                    Image(systemName: symbol)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(tint)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open \(artifact.title)")
-                .accessibilityIdentifier("toolArtifactOpenButton")
-            }
+                .frame(width: 22, height: 22)
+                .accessibilityHidden(true)
 
-            Button(action: toggleDetails) {
-                Label(
-                    detailsExpanded ? "Hide action details" : "Show action details",
-                    systemImage: detailsExpanded ? "chevron.up" : "chevron.down"
+                Text(summary)
+                    .font(.system(size: 11.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+                    .accessibilityIdentifier("toolActivitySummary")
+
+                if let artifact {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        openArtifact(artifact)
+                    } label: {
+                        Label("Open", systemImage: artifact.isWebPage || artifact.isSwiftGameArtifact ? artifact.handoffSymbol : artifact.symbol)
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(AgentPalette.cyan)
+                            .frame(width: AgentDesign.minimumTouchTarget)
+                            .frame(minHeight: AgentDesign.minimumTouchTarget)
+                            .contentShape(Circle())
+                    }
+                    .agentInteractiveGlassButtonStyle(
+                        radius: AgentDesign.minimumTouchTarget / 2,
+                        tint: AgentPalette.cyan
+                    )
+                    .accessibilityLabel("Open \(artifact.title)")
+                    .accessibilityIdentifier("toolArtifactOpenButton")
+                }
+
+                Button(action: toggleDetails) {
+                    Label(
+                        detailsExpanded ? "Hide action details" : "Show action details",
+                        systemImage: detailsExpanded ? "chevron.up" : "chevron.down"
+                    )
+                    .labelStyle(.iconOnly)
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(tint)
+                        .frame(width: AgentDesign.minimumTouchTarget)
+                        .frame(minHeight: AgentDesign.minimumTouchTarget)
+                        .contentShape(Circle())
+                }
+                .agentInteractiveGlassButtonStyle(
+                    radius: AgentDesign.minimumTouchTarget / 2,
+                    tint: tint,
+                    selected: detailsExpanded
                 )
-                .labelStyle(.iconOnly)
-                    .font(.system(size: 10, weight: .black))
-                    .foregroundStyle(AgentPalette.tertiaryText)
-                    .frame(width: AgentDesign.minimumTouchTarget, height: 28)
-                    .contentShape(Rectangle())
+                .accessibilityLabel(detailsExpanded ? "Hide action details" : "Show action details")
+                .accessibilityIdentifier("toolBatchToggle")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(detailsExpanded ? "Hide action details" : "Show action details")
-            .accessibilityIdentifier("toolBatchToggle")
         }
         .padding(.horizontal, 2)
-        .frame(minHeight: 28)
+        .frame(minHeight: AgentDesign.minimumTouchTarget)
+        .accessibilityElement(children: .contain)
     }
 }
 
 private struct ToolActivityRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let call: ToolCallSnapshot
     let showResultDetailByDefault: Bool
     let openArtifact: (WorkspaceArtifact) -> Void
@@ -291,7 +297,11 @@ private struct ToolActivityRow: View {
                 if hasHiddenDetail && !showResultDetailByDefault {
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        withAnimation(.smooth(duration: 0.18)) {
+                        withAnimation(
+                            NovaMotion.enabled(reduceMotion: reduceMotion)
+                                ? .smooth(duration: 0.18)
+                                : nil
+                        ) {
                             detailsExpanded.toggle()
                         }
                     } label: {
@@ -309,7 +319,7 @@ private struct ToolActivityRow: View {
             .frame(minHeight: 26)
 
             if resultDetailVisible, hasHiddenDetail {
-                Text(call.resultDetail)
+                Text(call.isError ? "Open History for diagnostics." : "Receipt saved in History.")
                     .font(.system(size: 11, weight: .medium, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(call.isError ? AgentPalette.rose : AgentPalette.secondaryText)
                     .lineLimit(4)
@@ -422,41 +432,17 @@ private struct ToolActivityRow: View {
         }
     }
 
-    private var hasHiddenDetail: Bool {
-        call.isComplete && !call.resultDetail.isEmpty
-    }
+    private var hasHiddenDetail: Bool { call.isComplete }
 
     private var resultDetailVisible: Bool {
         showResultDetailByDefault || detailsExpanded
     }
 
     private var isWaitingForApprovalCandidate: Bool {
-        !call.isComplete && [
-            "write_file",
-            "append_file",
-            "replace_text",
-            "run_command",
-            "make_directory",
-            "delete_path",
-            "move_path",
-            "copy_path"
-        ].contains(call.name)
+        !call.isComplete && LegacyToolActivityPolicy.requiresApproval(call.name)
     }
 
-    private var targetName: String? {
-        guard !call.detail.isEmpty else { return nil }
-        let trimmed = call.detail.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let lastPathComponent = URL(fileURLWithPath: trimmed).lastPathComponent
-        let display = lastPathComponent.isEmpty ? trimmed : lastPathComponent
-        return compactDetail(display)
-    }
-
-    private func compactDetail(_ text: String) -> String {
-        let singleLine = text.replacingOccurrences(of: "\n", with: " ")
-        guard singleLine.count > 82 else { return singleLine }
-        return String(singleLine.prefix(82)) + "..."
-    }
+    private var targetName: String? { nil }
 
     private var toolIconName: String {
         switch call.name {
@@ -497,6 +483,7 @@ private struct ToolActivityRow: View {
         return nil
     }
 }
+#endif
 
 struct LiveResponseView: View {
     let isWorking: Bool

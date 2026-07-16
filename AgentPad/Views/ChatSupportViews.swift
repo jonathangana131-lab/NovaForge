@@ -271,6 +271,10 @@ struct ActiveResponseElsewhereDock: View {
             .padding(.horizontal, 11)
             .frame(minHeight: AgentDesign.minimumTouchTarget)
             .frame(maxWidth: .infinity)
+            // Plain buttons otherwise preserve the transparent Spacer as a
+            // visual frame but not a reliable hit target. Make the whole dock
+            // respond, including its center and trailing breathing room.
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .agentControlSurface(radius: 13, tint: AgentPalette.cyan.opacity(0.10), selected: true)
@@ -280,17 +284,16 @@ struct ActiveResponseElsewhereDock: View {
 }
 
 struct ChatLiveResponseIsland: View {
-    let runtime: AgentRuntime
+    @ObservedObject var stream: LiveStreamBuffer
+    let isWorking: Bool
     let isVisibleForFrameProfiling: Bool
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Chat Live Response Island Body")
-        let isWorking = runtime.isWorking
-        let stream = runtime.liveStream
         ZStack(alignment: .topLeading) {
             LiveResponseView(
                 isWorking: isWorking,
-                isHandoffActive: stream.isHandoffActive,
+                isHandoffActive: !isWorking && !stream.isEmpty,
                 stream: stream
             )
 
@@ -326,7 +329,7 @@ struct ChatStreamingFrameRateProbe: View {
             // path still renders immediately, while the gate measures sustained
             // streaming smoothness after the response stage has settled and the
             // first bottom-pin corrections have completed.
-            try? await Task.sleep(for: .milliseconds(2_800))
+            try? await Task.sleep(for: .milliseconds(1_800))
             guard !Task.isCancelled else { return }
             didArmProbe = true
         }
@@ -408,18 +411,16 @@ struct JumpToLatestButton: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             action()
         } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "arrow.down")
-                    .font(.system(size: 11, weight: .black))
-                Text("Latest")
-                    .font(.system(size: 11, weight: .bold, design: AgentPalette.interfaceFontDesign))
-            }
+            Image(systemName: "arrow.down")
+                .font(.system(size: 12, weight: .black))
             .foregroundStyle(AgentPalette.ink)
-            .padding(.horizontal, 12)
-            .frame(height: AgentDesign.minimumTouchTarget)
-            .agentGlass(radius: 14, interactive: true, tint: tint.opacity(0.14))
+            .frame(width: AgentDesign.minimumTouchTarget, height: AgentDesign.minimumTouchTarget)
+            .agentControlSurface(
+                radius: AgentDesign.minimumTouchTarget / 2,
+                tint: tint.opacity(0.14),
+                selected: true
+            )
             .agentGlassEffectID("chat-latest", in: glassNamespace ?? localGlassNamespace)
-            .shadow(color: tint.opacity(0.16), radius: 10, x: 0, y: 5)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("jumpToLatest")
@@ -572,67 +573,6 @@ struct ThreadWindowBanner: View {
         }
         .padding(10)
         .agentSurface(radius: 16, tint: AgentPalette.cyan.opacity(0.04))
-    }
-}
-
-struct CodexChatTerminalCard: View {
-    let isPaired: Bool
-    let openSettings: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    Circle().fill(AgentPalette.rose).frame(width: 7, height: 7)
-                    Circle().fill(AgentPalette.lilac).frame(width: 7, height: 7)
-                    Circle().fill(AgentPalette.green).frame(width: 7, height: 7)
-                }
-                Text("codex simulated terminal")
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
-                    .foregroundStyle(AgentPalette.terminalOutput)
-                Spacer(minLength: 0)
-                Text(isPaired ? "SIMULATED" : "SETUP")
-                    .font(.system(size: 9, weight: .black, design: .monospaced))
-                    .foregroundStyle(isPaired ? AgentPalette.green : AgentPalette.cyan)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("$ codex login --device-auth")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(AgentPalette.terminalText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                Text(isPaired ? "Simulated CLI flow reviewed. Real model calls still need API setup." : "Open Settings for the Start / Safari / Copy Code / Finish flow.")
-                    .font(.system(size: 10, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.terminalOutput)
-                    .lineLimit(2)
-            }
-
-            Button(action: openSettings) {
-                Label(isPaired ? "Review Simulated Flow" : "Open Codex Terminal", systemImage: "terminal.fill")
-                    .font(.system(size: 10, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .foregroundStyle(AgentPalette.terminalText)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: AgentDesign.minimumTouchTarget)
-                    .agentControlSurface(radius: 11, tint: AgentPalette.indigo.opacity(0.16), selected: true)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(12)
-        .background(
-            LinearGradient(
-                colors: [AgentPalette.terminalBackground.opacity(0.96), AgentPalette.codeBackground.opacity(0.98)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(AgentPalette.terminalSelection.opacity(0.60), lineWidth: 1)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("codexChatTerminalCard")
     }
 }
 

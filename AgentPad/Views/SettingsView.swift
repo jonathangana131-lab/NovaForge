@@ -1,27 +1,26 @@
+import AgentPolicy
+import AgentTools
 import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openURL) private var openURL
     var runtime: AgentRuntime
     var project: Project
     @Bindable var settings: AgentSettings
     @State private var apiKey = ""
     @State private var savedKeyNotice = ""
-    @State private var customModel = ""
     @State private var testingConnection = false
     @State private var connectionResult: Result<Void, Error>?
     @State private var showKey = false
     @State private var showSavedToast = false
     @State private var saveTask: Task<Void, Never>?
     @State private var toastHideTask: Task<Void, Never>?
-    @State private var codexTerminalTask: Task<Void, Never>?
     @State private var providerModelTask: Task<Void, Never>?
     @State private var connectionTestTask: Task<Void, Never>?
     @State private var showingModelPicker = false
-    @State private var showingCustomModelField = false
+    @State private var codexAuth = OpenAICodexAuthManager.shared
     @State private var didPresentModelPickerDemo = false
     @State private var providerModels: [String] = []
     @State private var loadingProviderModels = false
@@ -29,16 +28,10 @@ struct SettingsView: View {
     @State private var settingsSaveError: String? = nil
     @State private var draftTemperature = 0.2
     @State private var draftSystemPrompt = ""
-    @State private var confirmingWorkspaceReset = false
     @State private var resetWorkspaceError: String?
-    @State private var codexTerminalLines: [String] = [
-        "$ codex login --device-auth",
-        "Simulated setup is fully local/no-key. Use Local for real no-key model runs."
-    ]
-    @State private var codexTerminalCode = "NOVA-CODEX"
-    @State private var codexTerminalRunning = false
+    @State private var workspaceResetTask: Task<Void, Never>?
+    @State private var workspaceResetOperationID: UUID?
     @State private var lastRecordedSettingsSnapshot: AgentSettingsPersistence.Snapshot?
-    @AppStorage("codexTerminalPaired") private var codexTerminalPaired = false
     @AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue
     @AppStorage(AgentPerformance.storageKey) private var performanceModeEnabled = false
 
@@ -85,10 +78,7 @@ struct SettingsView: View {
                             presetSection
 
                             if settings.provider == .openAICodex {
-                                credentialSection
-                                if showsCodexTerminalDemo {
-                                    codexTerminalSection
-                                }
+                                codexSubscriptionSection
                             } else if settings.provider == .local {
                                 localModelSection
                             } else {
@@ -120,9 +110,11 @@ struct SettingsView: View {
             flushPendingSettingsSave()
             saveTask?.cancel()
             toastHideTask?.cancel()
-            codexTerminalTask?.cancel()
             providerModelTask?.cancel()
             connectionTestTask?.cancel()
+            workspaceResetTask?.cancel()
+            workspaceResetTask = nil
+            workspaceResetOperationID = nil
         }
         .onChange(of: settings.providerRawValue) {
             providerModels = []
@@ -130,7 +122,6 @@ struct SettingsView: View {
             loadingProviderModels = false
             providerModelTask?.cancel()
             reloadKey()
-            customModel = settings.modelID
             if let variant = LocalModelCatalog.variant(for: settings.modelID) {
                 runtime.localModels.select(variant)
             }
@@ -166,40 +157,6 @@ struct SettingsView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .confirmationDialog(
-            "Reset workspace?",
-            isPresented: $confirmingWorkspaceReset,
-            titleVisibility: .visible
-        ) {
-            Button("Reset \(runtime.workspace.workspaceName)", role: .destructive) {
-                do {
-                    let workspaceName = runtime.workspace.workspaceName
-                    try runtime.resetWorkspace()
-                    ProjectEventRecorder.recordFileChange(
-                        project: project,
-                        action: "Workspace reset",
-                        path: workspaceName,
-                        context: modelContext
-                    )
-                    do {
-                        try modelContext.save()
-                    } catch {
-                        modelContext.rollback()
-                        resetWorkspaceError = "Workspace reset completed, but NovaForge could not save the project proof record. The files are cleared; run the smoke gate before trusting cleanup history. \(error.localizedDescription)"
-                        UINotificationFeedbackGenerator().notificationOccurred(.error)
-                        return
-                    }
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    triggerSaveNotice()
-                } catch {
-                    resetWorkspaceError = "Could not reset workspace: \(error.localizedDescription)"
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This deletes files in the current NovaForge workspace. This cannot be undone.")
-        }
         .alert(
             "Workspace Reset Issue",
             isPresented: Binding(
@@ -224,14 +181,103 @@ struct SettingsView: View {
         }
     }
 
+    @MainActor
+    private func startWorkspaceReset() {
+        guard workspaceResetTask == nil else { return }
+
+        let workspace = runtime.workspace
+        let workspaceName = workspace.workspaceName
+        let projectID = project.id
+        let conversationID = runtime.activeConversationID
+        let operationID = UUID()
+        let acceptedAt = Date()
+        workspaceResetOperationID = operationID
+
+        workspaceResetTask = Task { @MainActor in
+            defer {
+                if workspaceResetOperationID == operationID {
+                    workspaceResetTask = nil
+                    workspaceResetOperationID = nil
+                }
+            }
+
+            do {
+                let policyRuntime = AgentPolicyMutationRuntime.shared
+                let executionContext = try policyRuntime.makeExecutionContext(
+                    workspace: workspace,
+                    operationID: operationID,
+                    idempotencyKey: Self.controlResetIdempotencyKey(
+                        operationID: operationID
+                    ),
+                    conversationID: conversationID,
+                    projectID: projectID,
+                    acceptedAt: acceptedAt,
+                    sessionID: "control"
+                )
+                _ = try await policyRuntime.coordinator().performControl(
+                    context: executionContext,
+                    operation: ControlPolicyMutationOperation.resetWorkspace(
+                        ResetWorkspaceMutationArguments()
+                    )
+                )
+
+                // Success presentation starts only after the typed coordinator
+                // returns its digest receipt. Reset intentionally leaves an
+                // empty root; later seed files need an independent receipt.
+                runtime.noteWorkspaceChanged()
+                ProjectEventRecorder.recordFileChange(
+                    project: project,
+                    action: "Workspace reset",
+                    path: workspaceName,
+                    context: modelContext
+                )
+
+                do {
+                    try modelContext.save()
+                } catch {
+                    modelContext.rollback()
+                    resetWorkspaceError = "Workspace reset completed, but NovaForge could not save the project proof record. The files are cleared; run the smoke gate before trusting cleanup history. \(error.localizedDescription)"
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    return
+                }
+
+                if workspaceResetOperationID == operationID {
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    triggerSaveNotice()
+                }
+            } catch is CancellationError {
+                return
+            } catch let policyError as AgentPolicyMutationServiceError
+                where policyError == .cancelled
+            {
+                return
+            } catch {
+                resetWorkspaceError = "Could not durably reset the workspace: \(error.localizedDescription)"
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
+        }
+    }
+
+    private static func controlResetIdempotencyKey(
+        operationID: UUID
+    ) -> String {
+        "control.reset-workspace.v1:\(operationID.uuidString.lowercased())"
+    }
+
 
     private var credentialStatusText: String {
         if settings.provider == .local { return "Local" }
+        if settings.provider == .openAICodex {
+            return codexAuth.isSignedIn ? "Connected" : "Sign in"
+        }
         return apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Needed" : "Saved"
     }
 
     private var credentialStatusTint: Color {
         if settings.provider == .local { return AgentPalette.green }
+        if settings.provider == .openAICodex {
+            return codexAuth.isSignedIn ? AgentPalette.green : AgentPalette.warning
+        }
         return apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? AgentPalette.storageAccent : AgentPalette.green
     }
 
@@ -252,6 +298,9 @@ struct SettingsView: View {
                 return "Local model needs attention"
             }
         }
+        if settings.provider == .openAICodex {
+            return codexAuth.isSignedIn ? "Ready to run" : "Sign in with ChatGPT"
+        }
         if settings.provider == .custom,
            let customEndpointValidationMessage {
             return customEndpointValidationMessage == Self.missingCustomEndpointMessage
@@ -264,6 +313,11 @@ struct SettingsView: View {
     private var settingsReadinessDetail: String {
         if settings.provider == .local {
             return localModelStatusDetail
+        }
+        if settings.provider == .openAICodex {
+            return codexAuth.isSignedIn
+                ? "ChatGPT is connected · supported GPT agent runs use your eligible subscription allowance"
+                : "Connect your ChatGPT account below before starting a run"
         }
         if settings.provider == .custom,
            let customEndpointValidationMessage {
@@ -310,6 +364,9 @@ struct SettingsView: View {
                 return "exclamationmark.triangle.fill"
             }
         }
+        if settings.provider == .openAICodex {
+            return codexAuth.isSignedIn ? "checkmark.shield.fill" : "person.badge.key.fill"
+        }
         if settingsReadinessTitle == "Ready to run" {
             return "checkmark.seal.fill"
         }
@@ -328,6 +385,9 @@ struct SettingsView: View {
             case .incompatible, .failed:
                 return AgentPalette.rose
             }
+        }
+        if settings.provider == .openAICodex {
+            return codexAuth.isSignedIn ? AgentPalette.green : AgentPalette.warning
         }
         return settingsReadinessTitle == "Ready to run" ? AgentPalette.green : AgentPalette.warning
     }
@@ -353,6 +413,11 @@ struct SettingsView: View {
         if settings.provider == .custom {
             return customEndpointValidationMessage ?? "Custom endpoint configured"
         }
+        if settings.provider == .openAICodex {
+            return codexAuth.isSignedIn
+                ? "ChatGPT connected · live GPT catalog"
+                : "ChatGPT sign-in needed"
+        }
         return "\(settings.provider.displayName) hosted model ID"
     }
 
@@ -374,14 +439,6 @@ struct SettingsView: View {
         }
     }
 
-    private var showsCodexTerminalDemo: Bool {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--codex-terminal-demo")
-        #else
-        false
-        #endif
-    }
-
     private var providerSection: some View {
         SettingsSection(title: "Provider", subtitle: "Choose the API route for new runs") {
             LazyVGrid(
@@ -391,7 +448,7 @@ struct SettingsView: View {
                 ],
                 spacing: 8
             ) {
-                ForEach(AIProvider.allCases) { provider in
+                ForEach(AIProvider.agentRuntimeProviders) { provider in
                     SettingsProviderRow(
                         provider: provider,
                         selected: settings.provider == provider,
@@ -410,7 +467,7 @@ struct SettingsView: View {
     }
 
     private var modelSection: some View {
-        SettingsSection(title: "Model", subtitle: "Browse every model for the selected provider") {
+        SettingsSection(title: "Model", subtitle: "Choose a model validated for agent runs") {
             VStack(alignment: .leading, spacing: 10) {
                 SettingsModelReadinessPanel(
                     title: modelDisplayName(settings.modelID),
@@ -432,31 +489,6 @@ struct SettingsView: View {
                         loadProviderModels()
                     }
                 }
-
-                DisclosureGroup(isExpanded: $showingCustomModelField) {
-                    HStack(alignment: .bottom, spacing: 8) {
-                        SettingsTextField(
-                            title: "Paste exact model id",
-                            text: $customModel,
-                            symbol: "cpu"
-                        )
-                        .onSubmit {
-                            selectModel(customModel.trimmingCharacters(in: .whitespacesAndNewlines))
-                        }
-
-                        SettingsActionButton(title: "Apply", symbol: "checkmark", tint: settings.provider.tint, prominent: false) {
-                            selectModel(customModel.trimmingCharacters(in: .whitespacesAndNewlines))
-                        }
-                        .disabled(customModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    .padding(.top, 8)
-                } label: {
-                    Text("Custom model id")
-                        .font(NovaType.caption)
-                        .foregroundStyle(AgentPalette.secondaryText)
-                }
-                .tint(AgentPalette.secondaryText)
-                .accessibilityIdentifier("settingsCustomModelDisclosure")
 
                 if let providerModelError {
                     Label(providerModelError, systemImage: "exclamationmark.triangle")
@@ -535,7 +567,7 @@ struct SettingsView: View {
                     }
 
                     SettingsActionButton(
-                        title: testingConnection ? "Testing" : "Test",
+                        title: testingConnection ? "Checking" : "Check key",
                         symbol: testingConnection ? "hourglass" : "checkmark.shield",
                         tint: AgentPalette.green,
                         prominent: false
@@ -553,55 +585,169 @@ struct SettingsView: View {
                 }
 
                 ConnectionResultView(result: connectionResult)
+
+                if settings.provider == .openCodeZen,
+                   let zenURL = URL(string: "https://opencode.ai/auth")
+                {
+                    Link(destination: zenURL) {
+                        Label("Create or open a Zen key", systemImage: "safari.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(settings.provider.tint)
+                    }
+                    Label(
+                        "Zen is hosted: even free models require a Zen account and key, and limited-time availability can change.",
+                        systemImage: "cloud.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                }
             }
         }
     }
 
-    private var codexTerminalSection: some View {
-        SettingsSection(title: "Codex Terminal", subtitle: "Simulated CLI-style login flow inside NovaForge") {
+    private var codexSubscriptionSection: some View {
+        SettingsSection(
+            title: "ChatGPT subscription",
+            subtitle: "Secure device-code sign-in for supported GPT usage included with eligible ChatGPT plans"
+        ) {
             VStack(alignment: .leading, spacing: 12) {
-                CodexTerminalWindow(
-                    lines: codexTerminalLines,
-                    code: codexTerminalCode,
-                    isPaired: codexTerminalPaired,
-                    isRunning: codexTerminalRunning
+                HStack(spacing: 12) {
+                    Image(systemName: codexAuth.isSignedIn
+                        ? "checkmark.shield.fill"
+                        : "person.badge.key.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(codexAuth.isSignedIn
+                            ? AgentPalette.green
+                            : AIProvider.openAICodex.tint)
+                        .frame(width: 42, height: 42)
+                        .background(
+                            Circle().fill(
+                                AIProvider.openAICodex.tint.opacity(0.11)
+                            )
+                        )
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(codexAuthTitle)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(AgentPalette.ink)
+                        Text(codexAuthDetail)
+                            .font(.caption)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                            .lineLimit(4)
+                    }
+                    Spacer(minLength: 4)
+                }
+
+                if let code = codexAuth.userCode {
+                    VStack(spacing: 10) {
+                        Text("ENTER THIS CODE")
+                            .font(.caption2.weight(.black))
+                            .tracking(1.1)
+                            .foregroundStyle(AgentPalette.secondaryText)
+                        Text(code)
+                            .font(.system(.title2, design: .monospaced, weight: .bold))
+                            .textSelection(.enabled)
+                            .foregroundStyle(AIProvider.openAICodex.tint)
+
+                        HStack(spacing: 8) {
+                            SettingsActionButton(
+                                title: "Copy code",
+                                symbol: "doc.on.doc",
+                                tint: AgentPalette.cyan,
+                                prominent: false
+                            ) {
+                                UIPasteboard.general.string = code
+                                UINotificationFeedbackGenerator()
+                                    .notificationOccurred(.success)
+                            }
+                            SettingsActionButton(
+                                title: "Open ChatGPT",
+                                symbol: "safari.fill",
+                                tint: AgentPalette.blue,
+                                prominent: true
+                            ) {
+                                codexAuth.openVerificationPage()
+                            }
+                        }
+                    }
+                    .padding(14)
+                    .agentSurface(
+                        radius: 18,
+                        tint: AIProvider.openAICodex.tint.opacity(0.09)
+                    )
+                    .accessibilityIdentifier("codexDeviceCodePanel")
+                }
+
+                HStack(spacing: 8) {
+                    if codexAuth.isSignedIn {
+                        SettingsActionButton(
+                            title: "Sign out",
+                            symbol: "rectangle.portrait.and.arrow.right",
+                            tint: AgentPalette.rose,
+                            prominent: false
+                        ) {
+                            codexAuth.signOut()
+                        }
+                    } else if codexAuth.state.isWorking {
+                        SettingsActionButton(
+                            title: "Cancel",
+                            symbol: "xmark",
+                            tint: AgentPalette.rose,
+                            prominent: false
+                        ) {
+                            codexAuth.cancelLogin()
+                        }
+                    } else {
+                        SettingsActionButton(
+                            title: "Sign in with ChatGPT",
+                            symbol: "person.crop.circle.badge.checkmark",
+                            tint: AIProvider.openAICodex.tint,
+                            prominent: true
+                        ) {
+                            codexAuth.startLogin()
+                        }
+                    }
+                }
+
+                Label(
+                    "NovaForge never asks for your ChatGPT password. OpenAI returns a one-time code; access and refresh tokens are stored only in this device’s Keychain.",
+                    systemImage: "lock.shield.fill"
                 )
-
-                HStack(spacing: 8) {
-                    SettingsActionButton(title: codexTerminalRunning ? "Running" : "Start", symbol: "terminal.fill", tint: AgentPalette.indigo, prominent: true) {
-                        startCodexTerminalLogin()
-                    }
-                    .disabled(codexTerminalRunning)
-
-                    SettingsActionButton(title: "Safari", symbol: "safari", tint: AgentPalette.blue, prominent: false) {
-                        openCodexSafari()
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    SettingsActionButton(title: "Copy Code", symbol: "doc.on.doc", tint: AgentPalette.cyan, prominent: false) {
-                        copyCodexTerminalCode()
-                    }
-                    SettingsActionButton(title: "Finish", symbol: "checkmark.seal.fill", tint: AgentPalette.green, prominent: false) {
-                        finishCodexTerminalLogin()
-                    }
-                }
-
-                SettingsActionButton(title: "Reset Terminal", symbol: "arrow.counterclockwise", tint: AgentPalette.secondaryText, prominent: false) {
-                    resetCodexTerminal()
-                }
-
-                Label("Simulated Codex setup works without any API key. Real ChatGPT/Codex subscription tokens are not exposed to third-party iOS apps; for 100% no-key model runs, use the Local on-device model below.", systemImage: "lock.shield")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(5)
-
-                SettingsActionButton(title: "Use Local No-Key Model", symbol: "cpu.fill", tint: AgentPalette.green, prominent: true) {
-                    useLocalNoKeyModel()
-                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AgentPalette.secondaryText)
+                .lineLimit(5)
             }
         }
-        .accessibilityIdentifier("codexTerminalSection")
+        .accessibilityIdentifier("codexSubscriptionSection")
+    }
+
+    private var codexAuthTitle: String {
+        switch codexAuth.state {
+        case .signedOut: "Not connected"
+        case .requestingCode: "Requesting a secure code…"
+        case .awaitingApproval: "Waiting for approval…"
+        case .exchanging: "Finishing sign-in…"
+        case .signedIn: "ChatGPT connected"
+        case .failed: "Sign-in needs attention"
+        }
+    }
+
+    private var codexAuthDetail: String {
+        switch codexAuth.state {
+        case .signedOut:
+            "Connect once, then refresh the available GPT models for new agent runs."
+        case .requestingCode:
+            "Contacting OpenAI’s authorization service."
+        case let .awaitingApproval(_, expiresAt):
+            "Approve in the browser. This code expires at \(expiresAt.formatted(date: .omitted, time: .shortened))."
+        case .exchanging:
+            "Saving the approved credential securely."
+        case let .signedIn(accountID):
+            accountID.map { "Connected account · \(String($0.prefix(8)))…" }
+                ?? "Ready to use your eligible ChatGPT allowance."
+        case let .failed(message):
+            message
+        }
     }
 
     private var localModelSection: some View {
@@ -707,9 +853,7 @@ struct SettingsView: View {
                     .agentSurface(radius: 14, tint: AgentPalette.lilac.opacity(0.08))
                 }
 
-                SettingsResetButton {
-                    confirmingWorkspaceReset = true
-                }
+                SettingsResetButton(action: startWorkspaceReset)
             }
         }
     }
@@ -768,7 +912,7 @@ struct SettingsView: View {
     }
 
     private var modelChoices: [String] {
-        uniqueModels(settings.provider.modelOptions + providerModels + [settings.modelID, customModel])
+        uniqueModels(settings.provider.modelOptions + providerModels + [settings.modelID])
     }
 
     private func uniqueModels(_ models: [String]) -> [String] {
@@ -788,9 +932,6 @@ struct SettingsView: View {
         let saved = persistSettingsChange {
             $0.modelID = trimmed
         }
-        if saved {
-            customModel = trimmed
-        }
         return saved
     }
 
@@ -799,8 +940,10 @@ struct SettingsView: View {
         guard !loadingProviderModels else { return }
         let requestedProvider = settings.provider
         let savedKey = runtime.apiKey(for: requestedProvider)
-        guard !savedKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            providerModelError = "\(requestedProvider.missingCredentialMessage) Built-in model IDs are examples only; add a key before running them."
+        guard requestedProvider == .openCodeZen ||
+                !savedKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            providerModelError = "\(requestedProvider.missingCredentialMessage) The built-in list contains only agent-compatible choices."
             providerModels = []
             return
         }
@@ -817,15 +960,17 @@ struct SettingsView: View {
         providerModelTask?.cancel()
         providerModelTask = Task {
             do {
-                let loaded = try await AIProviderClient(configuration: configuration).listModels()
+                let loaded = try await AIProviderClient(configuration: configuration).modelCatalog()
                 try Task.checkCancellation()
                 await MainActor.run {
                     guard settings.provider == requestedProvider else { return }
-                    providerModels = uniqueModels(loaded)
+                    providerModels = uniqueModels(
+                        loaded.map(\.id).filter(requestedProvider.modelOptions.contains)
+                    )
                     loadingProviderModels = false
                     providerModelTask = nil
                     if providerModels.isEmpty {
-                        providerModelError = "No provider models returned. You can still paste an exact model id."
+                        providerModelError = "No models compatible with NovaForge's canonical agent route were returned. Built-in validated choices remain available."
                     }
                 }
             } catch is CancellationError {
@@ -839,75 +984,10 @@ struct SettingsView: View {
                     guard settings.provider == requestedProvider else { return }
                     loadingProviderModels = false
                     providerModelTask = nil
-                    providerModelError = "Could not load live \(requestedProvider.displayName) models. Showing built-in example IDs; add a key before running them or paste any exact model id if needed."
+                    providerModelError = "Could not refresh live \(requestedProvider.displayName) models. Showing the built-in agent-compatible catalog."
                 }
             }
         }
-    }
-
-    private func startCodexTerminalLogin() {
-        codexTerminalCode = makeCodexDeviceCode()
-        codexTerminalPaired = false
-        codexTerminalRunning = true
-        codexTerminalLines = [
-            "$ codex login --device-auth",
-            "Launching Safari sign-in…",
-            "Device code: \(codexTerminalCode)",
-            "Copy the code, tap Yes it’s me, then paste it.",
-            "Waiting for confirmation…"
-        ]
-        openCodexSafari()
-        codexTerminalTask?.cancel()
-        codexTerminalTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(800))
-            guard !Task.isCancelled else { return }
-            codexTerminalLines.append("Safari opened. Return here after the browser confirms login.")
-            codexTerminalRunning = false
-        }
-    }
-
-    private func finishCodexTerminalLogin() {
-        codexTerminalRunning = false
-        codexTerminalPaired = true
-        appendCodexTerminalLine("✓ Simulated Codex CLI flow complete. No key needed for this setup simulation; use Local for real no-key model runs.")
-        triggerSaveNotice()
-    }
-
-    private func resetCodexTerminal() {
-        codexTerminalRunning = false
-        codexTerminalPaired = false
-        codexTerminalCode = "NOVA-CODEX"
-        codexTerminalLines = [
-            "$ codex login --device-auth",
-            "Simulated setup is fully local/no-key. Use Local for real no-key model runs."
-        ]
-        triggerSaveNotice()
-    }
-
-    private func copyCodexTerminalCode() {
-        UIPasteboard.general.string = codexTerminalCode
-        appendCodexTerminalLine("Copied code \(codexTerminalCode) to clipboard.")
-        triggerSaveNotice()
-    }
-
-    private func openCodexSafari() {
-        if let url = URL(string: "https://chatgpt.com/codex") {
-            openURL(url)
-        }
-    }
-
-    private func appendCodexTerminalLine(_ line: String) {
-        codexTerminalLines.append(line)
-        if codexTerminalLines.count > 8 {
-            codexTerminalLines.removeFirst(codexTerminalLines.count - 8)
-        }
-    }
-
-    private func makeCodexDeviceCode() -> String {
-        let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-        let left = String((0..<4).map { _ in alphabet.randomElement() ?? "N" })
-        let right = String((0..<4).map { _ in alphabet.randomElement() ?? "F" })
-        return "\(left)-\(right)"
     }
 
     private var selectedTheme: AgentTheme {
@@ -923,7 +1003,7 @@ struct SettingsView: View {
             ]
         }
 
-        let modelSource = providerModels.contains(settings.modelID) ? "Live list" : "Manual ID"
+        let modelSource = providerModels.contains(settings.modelID) ? "Live list" : "Built-in"
         return [
             SettingsMiniStat(label: "Provider", value: settings.provider.shortName),
             SettingsMiniStat(label: "Source", value: modelSource),
@@ -1022,6 +1102,12 @@ struct SettingsView: View {
             }
         }
 
+        if provider == .openAICodex {
+            return codexAuth.isSignedIn
+                ? ("Connected", AgentPalette.green)
+                : ("Sign in", AgentPalette.warning)
+        }
+
         let hasKey = !runtime.apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return ("URL needed", AgentPalette.warning)
@@ -1031,7 +1117,8 @@ struct SettingsView: View {
 
     private var keyPlaceholder: String {
         switch settings.provider {
-        case .openAI, .openAICodex: "sk-..."
+        case .openAI: "sk-..."
+        case .openAICodex: "Sign in above"
         case .openRouter: "sk-or-..."
         case .openCodeZen: "opencode zen key"
         case .local: "No key needed"
@@ -1075,7 +1162,6 @@ struct SettingsView: View {
             }
         }
         reloadKey()
-        customModel = settings.modelID
         draftTemperature = settings.temperature
         draftSystemPrompt = settings.customSystemPrompt ?? ""
         lastRecordedSettingsSnapshot = AgentSettingsPersistence.snapshot(settings)
@@ -1231,27 +1317,6 @@ struct SettingsView: View {
             $0.temperature = temp
             $0.customSystemPrompt = prompt.isEmpty ? nil : prompt
         }
-    }
-
-    private func useLocalNoKeyModel() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        let variant = LocalModelCatalog.defaultVariant
-        let previousVariantID = runtime.localModels.selectedVariantID
-        guard runtime.localModels.select(variant) else { return }
-        let saved = persistSettingsChange(
-            rollbackUI: {
-                runtime.localModels.selectedVariantID = previousVariantID
-            }
-        ) {
-            $0.provider = .local
-            $0.modelID = variant.id
-        }
-        guard saved else { return }
-        customModel = variant.id
-        providerModels = []
-        providerModelError = nil
-        loadingProviderModels = false
-        savedKeyNotice = "Local no-key model selected. Download it below if it is not installed yet."
     }
 
     @discardableResult

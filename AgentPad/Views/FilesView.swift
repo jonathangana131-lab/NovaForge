@@ -1,3 +1,5 @@
+import AgentPolicy
+import AgentTools
 import SwiftData
 import SwiftUI
 import UIKit
@@ -69,7 +71,6 @@ struct FilesView: View {
     @State var pinnedMemoryPaths: Set<String> = []
     @State var transientNotice: String?
     @State var showingCreate = false
-    @State var newFileName = ""
     
     @State var workspaces: [String] = []
     @State var showingCreateWorkspace = false
@@ -88,12 +89,15 @@ struct FilesView: View {
     @State var searchTask: Task<Void, Never>?
     @State var reloadTask: Task<Void, Never>?
     @State var fileActionTask: Task<Void, Never>?
+    @State var workspaceSwitchTask: Task<Void, Never>?
     @State var fileActionStatus: String?
     @State var fileActionError: String?
     @State var fileLoadError: String?
     @State var workspaceSaveError: String?
     @State var pendingDeleteItem: FileItem?
     @State var didSeedFileStress = false
+    @State var isSeedingFileStress = false
+    @State var isFileStressFixtureReady = false
     @State var didOpenDebugArtifactPreview = false
     @State var didOpenFilesSurfaceDemo = false
     @FocusState var searchFocused: Bool
@@ -107,6 +111,107 @@ struct FilesView: View {
 
     let tabBarClearance: CGFloat = BottomDockMetrics.scrollClearance
     let searchResultLimit = 200
+
+    @MainActor
+    @discardableResult
+    func performFilesMutation(
+        operationID: UUID,
+        operation: FilesCanonicalMutationOperation
+    ) async throws -> AgentPolicyMutationReceipt {
+        let workspace = runtime.workspace
+        let policyRuntime = AgentPolicyMutationRuntime.shared
+        let executionContext = try policyRuntime.makeExecutionContext(
+            workspace: workspace,
+            operationID: operationID,
+            idempotencyKey: filesMutationIdempotencyKey(
+                operation: operation,
+                operationID: operationID
+            ),
+            conversationID: scopeConversationID,
+            projectID: project.id,
+            sessionID: "files"
+        )
+        return try await policyRuntime.coordinator().performFiles(
+            context: executionContext,
+            operation: operation
+        )
+    }
+
+    @MainActor
+    @discardableResult
+    func performFilesMutation(
+        operationID: UUID,
+        operation: FilesPolicyMutationOperation
+    ) async throws -> AgentPolicyMutationReceipt {
+        let workspace = runtime.workspace
+        let policyRuntime = AgentPolicyMutationRuntime.shared
+        let executionContext = try policyRuntime.makeExecutionContext(
+            workspace: workspace,
+            operationID: operationID,
+            idempotencyKey: filesMutationIdempotencyKey(
+                operation: operation,
+                operationID: operationID
+            ),
+            conversationID: scopeConversationID,
+            projectID: project.id,
+            sessionID: "files"
+        )
+        return try await policyRuntime.coordinator().performFiles(
+            context: executionContext,
+            operation: operation
+        )
+    }
+
+    func filesMutationFailureMessage(
+        action: String,
+        error: Error
+    ) -> String? {
+        if error is CancellationError { return nil }
+        if (error as? AgentPolicyMutationServiceError) == .cancelled {
+            return nil
+        }
+        return "\(action): \(error.localizedDescription)"
+    }
+
+    private func filesMutationIdempotencyKey(
+        operation: FilesCanonicalMutationOperation,
+        operationID: UUID
+    ) -> String {
+        let kind: String
+        switch operation {
+        case .writeFile: kind = "write-file"
+        case .deletePath: kind = "delete-path"
+        case .movePath: kind = "move-path"
+        case .copyPath: kind = "copy-path"
+        case .makeDirectory: kind = "make-directory"
+        }
+        return filesMutationIdempotencyKey(
+            kind: kind,
+            operationID: operationID
+        )
+    }
+
+    private func filesMutationIdempotencyKey(
+        operation: FilesPolicyMutationOperation,
+        operationID: UUID
+    ) -> String {
+        let kind: String
+        switch operation {
+        case .createFile: kind = "create-file"
+        case .touchFile: kind = "touch-file"
+        }
+        return filesMutationIdempotencyKey(
+            kind: kind,
+            operationID: operationID
+        )
+    }
+
+    private func filesMutationIdempotencyKey(
+        kind: String,
+        operationID: UUID
+    ) -> String {
+        "files.\(kind).v1:\(operationID.uuidString.lowercased())"
+    }
 
     init(
         runtime: AgentRuntime,
@@ -1439,6 +1544,8 @@ struct FilesView: View {
                 fileName: target.item.name,
                 relativePath: target.item.relativePath,
                 workspace: runtime.workspace,
+                projectID: project.id,
+                conversationID: scopeConversationID,
                 initialLineNumber: target.focusedLineNumber,
                 onSave: {
                     runtime.noteWorkspaceChanged()
@@ -1526,19 +1633,40 @@ struct FilesView: View {
     private var filesCreationAndAlertSurface: some View {
         filesSearchLifecycleSurface
         .sheet(isPresented: $showingCreate) {
-            CreateFileSheet(workspace: runtime.workspace, currentPath: currentPath) { path, isDirectory in
-                runtime.noteWorkspaceChanged()
-                ProjectEventRecorder.recordFileChange(
-                    project: scopeProject,
-                    action: isDirectory ? "Created folder" : "Created file",
-                    path: path,
-                    context: modelContext
-                )
-                saveFileEvidence(
-                    failureMessage: "Created \(isDirectory ? "folder" : "file") \(path), but NovaForge could not save the project proof record"
-                )
-                reload()
-            }
+            CreateFileSheet(
+                currentPath: currentPath,
+                createMutation: { path, isDirectory in
+                    let operationID = UUID()
+                    if isDirectory {
+                        _ = try await performFilesMutation(
+                            operationID: operationID,
+                            operation: FilesCanonicalMutationOperation.makeDirectory(
+                                PathArguments(path: path)
+                            )
+                        )
+                    } else {
+                        _ = try await performFilesMutation(
+                            operationID: operationID,
+                            operation: FilesPolicyMutationOperation.createFile(
+                                CreateFileMutationArguments(path: path)
+                            )
+                        )
+                    }
+                },
+                onCreated: { path, isDirectory in
+                    runtime.noteWorkspaceChanged()
+                    ProjectEventRecorder.recordFileChange(
+                        project: scopeProject,
+                        action: isDirectory ? "Created folder" : "Created file",
+                        path: path,
+                        context: modelContext
+                    )
+                    saveFileEvidence(
+                        failureMessage: "Created \(isDirectory ? "folder" : "file") \(path), but NovaForge could not save the project proof record"
+                    )
+                    reload()
+                }
+            )
             .presentationDetents([.height(320)])
             .presentationDragIndicator(.visible)
         }
@@ -1601,7 +1729,35 @@ struct FilesView: View {
     var body: some View {
         filesCreationAndAlertSurface
         .scrollDismissesKeyboard(.interactively)
+        #if DEBUG
+        // Stress fixtures now travel through the same policy and receipt path
+        // as production mutations. Expose completion—not partial filesystem
+        // contents—so UI tests never race the final durable writes/reload.
+        .overlay(alignment: .topLeading) {
+            if debugFileFixtureIsDurable {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("File fixture ready")
+                    .accessibilityIdentifier("filesStressFixtureReady")
+                    .allowsHitTesting(false)
+            }
+        }
+        #endif
     }
+
+    #if DEBUG
+    private var debugFileFixtureIsDurable: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--stress-files") {
+            return (try? runtime.workspace.read(".novaforge-file-stress")) == "v1"
+                && (try? runtime.workspace.read("Sources/Generated/Module12.swift"))?
+                    .contains("Fixture symbol 12") == true
+        }
+        return arguments.contains("--files-actions-test")
+            && isFileStressFixtureReady
+    }
+    #endif
 
     /// Facelift screen opener: hero title with workspace strapline, live
     /// file telemetry in the status line, and one quiet mission readout.
@@ -1694,59 +1850,69 @@ struct FilesView: View {
         workspaces = SandboxWorkspace.listWorkspaces()
     }
 
-    @discardableResult
-    func switchWorkspace(to name: String) -> Bool {
+    func switchWorkspace(to name: String, clearDraftOnSuccess: Bool = false) {
         let safeName = SandboxWorkspace.sanitizedWorkspaceName(name)
         guard !isWorkspaceRoutingLocked() else {
             workspaceSaveError = "Finish or stop the active mission before switching workspaces. NovaForge kept the current workspace unchanged."
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            return false
+            return
+        }
+        guard workspaceSwitchTask == nil else {
+            workspaceSaveError = "NovaForge is already preparing another workspace. The current workspace is unchanged."
+            return
         }
 
-        let previousRuntimeWorkspaceName = runtime.workspace.workspaceName
-        guard runtime.switchWorkspace(to: safeName) else {
-            workspaceSaveError = "NovaForge could not switch workspaces while work is active. The current workspace is unchanged."
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            return false
+        workspaceSaveError = nil
+        workspaceSwitchTask = Task { @MainActor in
+            defer { workspaceSwitchTask = nil }
+            do {
+                let switched = try await runtime.switchWorkspace(
+                    to: safeName,
+                    context: modelContext
+                ) {
+                    if project.workspaceName != safeName {
+                        ProjectEventRecorder.record(
+                            project: project,
+                            kind: .workspaceChanged,
+                            title: "Workspace changed",
+                            detail: safeName,
+                            severity: .info,
+                            sourceType: .workspace,
+                            context: modelContext
+                        )
+                    }
+                    try FilesWorkspacePersistence.persistProjectWorkspaceSelection(
+                        safeName,
+                        project: project,
+                        settings: settings,
+                        save: { try modelContext.save() }
+                    )
+                }
+                guard switched else {
+                    workspaceSaveError = "NovaForge could not switch workspaces while work is active. The current workspace is unchanged."
+                    UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                    return
+                }
+                if clearDraftOnSuccess {
+                    newWorkspaceName = ""
+                }
+                currentPath = ""
+                reload()
+                reloadWorkspaces()
+            } catch is CancellationError {
+                modelContext.rollback()
+            } catch {
+                modelContext.rollback()
+                workspaceSaveError = "Could not switch to \(safeName): \(error.localizedDescription)"
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
         }
-
-        let projectWorkspaceWillChange = project.workspaceName != safeName
-        if projectWorkspaceWillChange {
-            ProjectEventRecorder.record(
-                project: project,
-                kind: .workspaceChanged,
-                title: "Workspace changed",
-                detail: safeName,
-                severity: .info,
-                sourceType: .workspace,
-                context: modelContext
-            )
-        }
-        do {
-            try FilesWorkspacePersistence.persistProjectWorkspaceSelection(
-                safeName,
-                project: project,
-                settings: settings,
-                save: { try modelContext.save() }
-            )
-        } catch {
-            modelContext.rollback()
-            _ = runtime.switchWorkspace(to: previousRuntimeWorkspaceName)
-            workspaceSaveError = "Could not switch to \(safeName): \(error.localizedDescription)"
-            return false
-        }
-        currentPath = ""
-        reload()
-        reloadWorkspaces()
-        return true
     }
 
     func createWorkspace() {
         let name = SandboxWorkspace.sanitizedWorkspaceName(newWorkspaceName)
         guard !name.isEmpty else { return }
-        if switchWorkspace(to: name) {
-            newWorkspaceName = ""
-        }
+        switchWorkspace(to: name, clearDraftOnSuccess: true)
     }
 
     func open(_ item: FileItem) {
@@ -1775,6 +1941,10 @@ struct FilesView: View {
 
     func previewArtifactPath(_ path: String, displayName: String? = nil) {
         let artifact = WorkspaceArtifact(path: path)
+        // A persisted inspector selection can still be resolving as Workspace
+        // appears. Clear that sheet route before opening the fullscreen preview so
+        // SwiftUI never has two presentation requests racing for the same tap.
+        selectedMemoryItemID = ""
         ProjectEventRecorder.noteArtifactPreview(
             artifact,
             project: scopeProject,
@@ -1935,29 +2105,6 @@ struct FilesView: View {
         reload()
     }
 
-    func createFile() {
-        guard !newFileName.isEmpty else { return }
-        let path = currentPath.isEmpty ? newFileName : "\(currentPath)/\(newFileName)"
-        do {
-            try runtime.workspace.write(path, contents: "")
-        } catch {
-            fileActionError = "Could not create \(newFileName): \(error.localizedDescription)"
-            return
-        }
-        runtime.noteWorkspaceChanged()
-        ProjectEventRecorder.recordFileChange(
-            project: scopeProject,
-            action: "Created file",
-            path: path,
-            context: modelContext
-        )
-        saveFileEvidence(
-            failureMessage: "Created \(newFileName), but NovaForge could not save the project proof record"
-        )
-        newFileName = ""
-        reload()
-    }
-    
 }
 
 struct FileMetricPill: View {
@@ -2146,14 +2293,16 @@ struct FileSearchResultRow: View {
 }
 
 struct CreateFileSheet: View {
-    let workspace: SandboxWorkspace
     let currentPath: String
+    let createMutation: @MainActor (String, Bool) async throws -> Void
     let onCreated: (String, Bool) -> Void
     
     @Environment(\.dismiss) private var dismiss
     @State private var fileName = ""
     @State private var isDirectory = false
     @State private var errorMessage: String? = nil
+    @State private var creationTask: Task<Void, Never>?
+    @State private var isCreating = false
     @FocusState private var nameFocused: Bool
 
     private var trimmedName: String {
@@ -2161,7 +2310,7 @@ struct CreateFileSheet: View {
     }
 
     private var createDisabled: Bool {
-        trimmedName.isEmpty
+        trimmedName.isEmpty || isCreating
     }
     
     var body: some View {
@@ -2187,6 +2336,7 @@ struct CreateFileSheet: View {
                             .agentControlSurface(radius: 12, tint: AgentPalette.cyan, selected: !isDirectory)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isCreating)
                     
                     Button {
                         let impact = UIImpactFeedbackGenerator(style: .light)
@@ -2200,6 +2350,7 @@ struct CreateFileSheet: View {
                             .agentControlSurface(radius: 12, tint: AgentPalette.cyan, selected: isDirectory)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isCreating)
                 }
                 
                 TextField(isDirectory ? "Folder name..." : "File name...", text: $fileName)
@@ -2209,6 +2360,7 @@ struct CreateFileSheet: View {
                     .submitLabel(.done)
                     .focused($nameFocused)
                     .padding(12)
+                    .disabled(isCreating)
                     .agentControlSurface(radius: 14, tint: isDirectory ? AgentPalette.cyan : AgentPalette.cyan)
                     .onSubmit {
                         guard !createDisabled else { return }
@@ -2232,12 +2384,11 @@ struct CreateFileSheet: View {
                         dismiss()
                     }
                     .buttonStyle(.bordered)
+                    .disabled(isCreating)
                     .frame(maxWidth: .infinity)
                     .accessibilityIdentifier("createFileCancelButton")
                     
-                    Button("Create") {
-                        create()
-                    }
+                    Button(isCreating ? "Creating…" : "Create") { create() }
                     .buttonStyle(.borderedProminent)
                     .tint(isDirectory ? AgentPalette.cyan : AgentPalette.cyan)
                     .disabled(createDisabled)
@@ -2253,28 +2404,48 @@ struct CreateFileSheet: View {
                 nameFocused = true
             }
         }
+        .interactiveDismissDisabled(isCreating)
+        .onDisappear {
+            creationTask?.cancel()
+            creationTask = nil
+        }
     }
     
     private func create() {
         let name = trimmedName
-        guard !name.isEmpty else { return }
+        guard !name.isEmpty, creationTask == nil else { return }
         
         let targetRelativePath = currentPath.isEmpty ? name : "\(currentPath)/\(name)"
-        
-        do {
-            if isDirectory {
-                try workspace.createNewDirectory(targetRelativePath)
-            } else {
-                try workspace.createNewFile(targetRelativePath, contents: "")
+        let creatingDirectory = isDirectory
+        isCreating = true
+        errorMessage = nil
+        creationTask = Task { @MainActor in
+            defer {
+                isCreating = false
+                creationTask = nil
             }
-            let successImpact = UINotificationFeedbackGenerator()
-            successImpact.notificationOccurred(.success)
-            onCreated(targetRelativePath, isDirectory)
-            dismiss()
-        } catch {
-            let errorImpact = UINotificationFeedbackGenerator()
-            errorImpact.notificationOccurred(.error)
-            errorMessage = error.localizedDescription
+            do {
+                try await createMutation(targetRelativePath, creatingDirectory)
+                let successImpact = UINotificationFeedbackGenerator()
+                successImpact.notificationOccurred(.success)
+                onCreated(targetRelativePath, creatingDirectory)
+                dismiss()
+            } catch {
+                guard !Self.isQuietCancellation(error) else {
+                    return
+                }
+                let errorImpact = UINotificationFeedbackGenerator()
+                errorImpact.notificationOccurred(.error)
+                let action = creatingDirectory
+                    ? "Could not create folder"
+                    : "Could not create file"
+                errorMessage = "\(action): \(error.localizedDescription)"
+            }
         }
+    }
+
+    private static func isQuietCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        return (error as? AgentPolicyMutationServiceError) == .cancelled
     }
 }

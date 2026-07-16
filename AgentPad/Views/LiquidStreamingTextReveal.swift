@@ -89,7 +89,10 @@ struct LiveTranscriptView: View {
         guard force || hasFirstReadableText || structureChanged || activePhraseEndsSemanticBoundary else {
             return
         }
-        accessibleTranscript = snapshot.visibleText
+        // Growing prefixes are ephemeral. Parsing them through the durable
+        // settled-row cache would insert a new overlapping document at every
+        // sentence boundary and evict the rows that actually benefit from reuse.
+        accessibleTranscript = assistantLiveMarkdownPresentation(snapshot.visibleText).accessibilityText
         lastAccessibilityStructureKey = accessibilityStructureKey
     }
 }
@@ -105,7 +108,7 @@ private struct LiveSettledParagraphRow: View {
                 .frame(width: 24, height: 1)
                 .accessibilityHidden(true)
 
-            Text(verbatim: paragraph.text)
+            Text(assistantMarkdownPresentation(paragraph.text).attributedText)
                 .font(.system(.body, design: .default, weight: .regular))
                 .lineSpacing(lineSpacing)
                 .foregroundStyle(AgentPalette.ink)
@@ -165,12 +168,18 @@ private struct LiveSettledSegmentRow: View {
                 .frame(width: 24, height: 1)
                 .accessibilityHidden(true)
 
-            Text(verbatim: segment.text)
-                .font(.system(.body, design: .default, weight: .regular))
-                .lineSpacing(lineSpacing)
-                .foregroundStyle(AgentPalette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if let fallback = segment.fallbackPresentationText {
+                    Text(verbatim: fallback)
+                } else {
+                    Text(assistantMarkdownPresentation(segment.text).attributedText)
+                }
+            }
+            .font(.system(.body, design: .default, weight: .regular))
+            .lineSpacing(lineSpacing)
+            .foregroundStyle(AgentPalette.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -187,15 +196,13 @@ private struct LiveActivePhraseText: View {
     @State private var progress = 0.0
 
     private var effectMode: LivePhraseEffectMode {
-        if AgentPerformance.prefersReducedVisualEffects ||
-            AgentTheme.current == .matrixRain ||
-            AgentPlatformCompatibility.usesConservativeRendering {
-            return .none
-        }
-        if reduceMotion || reduceTransparency {
-            return .fadeOnly
-        }
-        return .materialize
+        LivePhraseEffectPolicy.mode(
+            prefersReducedVisualEffects: AgentPerformance.prefersReducedVisualEffects,
+            usesMatrixTheme: AgentTheme.current == .matrixRain,
+            usesConservativeRendering: AgentPlatformCompatibility.usesConservativeRendering,
+            reduceMotion: reduceMotion,
+            reduceTransparency: reduceTransparency
+        )
     }
 
     private var animationDuration: TimeInterval {
@@ -204,7 +211,7 @@ private struct LiveActivePhraseText: View {
             return 0
         case .fadeOnly:
             return 0.10
-        case .materialize:
+        case .dustMaterialize:
             switch cadence {
             case .catchingUp, .burst:
                 return 0.075
@@ -214,58 +221,142 @@ private struct LiveActivePhraseText: View {
         }
     }
 
+    private var dustSeed: UInt64 {
+        guard let id = activePhrase?.id else { return 0 }
+        return LivePhraseDustGeometry.phraseSeed(
+            responseID: id.responseID,
+            paragraphOrdinal: id.paragraphOrdinal,
+            phraseOrdinal: id.ordinal
+        )
+    }
+
     private var renderedText: Text {
-        let settled = Text(verbatim: settledTail)
-        guard let activePhrase else { return settled }
-        let active = Text(verbatim: activePhrase.text)
+        guard let activePhrase else {
+            return Text(assistantMarkdownPresentation(settledTail).attributedText)
+        }
+
+        // Parse one combined leaf. Provider chunks routinely split inside an
+        // inline-code filename or emphasis delimiter; parsing the two halves
+        // independently makes punctuation flash and then reflow on completion.
+        let source = settledTail + activePhrase.text
+        let presentation = assistantLiveMarkdownPresentation(source)
+        let attributed = presentation.attributedText
+        let sourceBoundary = source.index(
+            source.endIndex,
+            offsetBy: -activePhrase.text.count
+        )
+        let split = activeAttributedIndex(
+            in: attributed,
+            source: source,
+            sourceBoundary: sourceBoundary
+        )
+        let settled = Text(AttributedString(attributed[..<split]))
+        let active = Text(AttributedString(attributed[split...]))
             .customAttribute(LiveActivePhraseAttribute())
         return Text("\(settled)\(active)")
     }
 
-    var body: some View {
-        renderedText
+    /// Performance and accessibility fallbacks request no materialization at
+    /// all. Keep that path as ordinary text so SwiftUI can use its native draw
+    /// pipeline instead of paying for a no-op custom renderer every frame.
+    private var plainText: Text {
+        guard let activePhrase else {
+            return Text(assistantMarkdownPresentation(settledTail).attributedText)
+        }
+        return Text(
+            assistantLiveMarkdownPresentation(settledTail + activePhrase.text).attributedText
+        )
+    }
+
+    /// Markdown source positions exclude syntax delimiters. That lets the
+    /// visual split land inside a coalesced plain-text run without replaying
+    /// the whole settled tail. If a phrase starts inside one semantic token,
+    /// only the genuinely new visible suffix receives the dust attribute.
+    private func activeAttributedIndex(
+        in attributed: AttributedString,
+        source: String,
+        sourceBoundary: String.Index
+    ) -> AttributedString.Index {
+        if attributed.characters.count == source.count {
+            let visibleDistance = source.distance(from: source.startIndex, to: sourceBoundary)
+            return attributed.characters.index(
+                attributed.startIndex,
+                offsetBy: visibleDistance
+            )
+        }
+
+        for run in attributed.runs {
+            guard let position = run.markdownSourcePosition,
+                  let sourceRange = Range<String.Index>(position, in: source),
+                  sourceRange.upperBound > sourceBoundary else {
+                continue
+            }
+
+            if sourceBoundary <= sourceRange.lowerBound {
+                return run.range.lowerBound
+            }
+
+            let sourceDistance = source.distance(
+                from: sourceRange.lowerBound,
+                to: sourceBoundary
+            )
+            let visibleCount = attributed[run.range].characters.count
+            let visibleDistance = min(max(sourceDistance, 0), visibleCount)
+            return attributed.characters.index(
+                run.range.lowerBound,
+                offsetBy: visibleDistance
+            )
+        }
+        return attributed.endIndex
+    }
+
+    private func styledText(_ text: Text) -> some View {
+        text
             .font(.system(.body, design: .default, weight: .regular))
             .lineSpacing(lineSpacing)
             .foregroundStyle(AgentPalette.ink)
             .fixedSize(horizontal: false, vertical: true)
-            .textRenderer(
-                LivePhraseMaterializationRenderer(
-                    progress: effectMode == .none ? 1 : progress,
-                    mode: effectMode
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if effectMode == .none {
+            styledText(plainText)
+                .accessibilityHidden(true)
+        } else {
+            styledText(renderedText)
+                .textRenderer(
+                    LivePhraseMaterializationRenderer(
+                        progress: progress,
+                        mode: effectMode,
+                        phraseSeed: dustSeed
+                    )
                 )
-            )
-            .task {
-                guard activePhrase != nil else {
-                    progress = 1
-                    return
+                .task {
+                    guard activePhrase != nil else {
+                        progress = 1
+                        return
+                    }
+                    progress = 0
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.linear(duration: animationDuration)) {
+                        progress = 1
+                    }
                 }
-                guard effectMode != .none else {
-                    progress = 1
-                    return
-                }
-                progress = 0
-                await Task.yield()
-                guard !Task.isCancelled else { return }
-                withAnimation(.linear(duration: animationDuration)) {
-                    progress = 1
-                }
-            }
-            .accessibilityHidden(true)
+                .accessibilityHidden(true)
+        }
     }
 }
 
-private enum LivePhraseEffectMode: Equatable {
-    case materialize
-    case fadeOnly
-    case none
-}
-
 /// A single animatable render pass. The active phrase condenses into readable
-/// ink, receives one brief neutral pearl caustic, and then becomes visually
-/// identical to all settled text. Nothing loops after progress reaches 1.
+/// ink while a bounded, phrase-seeded dust path gathers into the glyphs. The
+/// dust reaches zero before completion, so settled text becomes ordinary ink
+/// and performs no continuing animation or drawing work.
 private struct LivePhraseMaterializationRenderer: TextRenderer {
     var progress: Double
     let mode: LivePhraseEffectMode
+    let phraseSeed: UInt64
 
     var animatableData: Double {
         get { progress }
@@ -273,49 +364,95 @@ private struct LivePhraseMaterializationRenderer: TextRenderer {
     }
 
     var displayPadding: EdgeInsets {
-        EdgeInsets(top: 3, leading: 4, bottom: 8, trailing: 4)
+        EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
     }
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         let clamped = min(max(progress, 0), 1)
         let eased = UnitCurve.easeOut.value(at: clamped)
+        let dustPhase = LivePhraseDustGeometry.phase(progress: clamped)
 
-        for line in layout {
-            for run in line {
+        for (lineOrdinal, line) in layout.enumerated() {
+            for (runOrdinal, run) in line.enumerated() {
                 guard run[LiveActivePhraseAttribute.self] != nil else {
                     context.draw(run)
                     continue
                 }
 
-                var activeContext = context
-                // Never make the newest words difficult to read. The phrase
-                // starts as translucent pearl ink, then resolves to the same
-                // opacity as the settled transcript.
-                activeContext.opacity = mode == .none ? 1 : 0.78 + (0.22 * eased)
+                if mode == .dustMaterialize, dustPhase.dustOpacity > 0 {
+                    drawDust(
+                        for: run,
+                        phase: dustPhase,
+                        discriminator: (lineOrdinal * 257) + runOrdinal,
+                        in: &context
+                    )
+                }
 
-                if mode == .materialize {
-                    activeContext.translateBy(x: 0, y: 1.4 * (1 - eased))
-                    activeContext.addFilter(.blur(radius: 0.24 * (1 - eased)))
+                var activeContext = context
+                switch mode {
+                case .dustMaterialize:
+                    activeContext.opacity = dustPhase.textOpacity
+                    activeContext.translateBy(x: 0, y: dustPhase.verticalOffset)
+                    if dustPhase.blurRadius > 0 {
+                        activeContext.addFilter(.blur(radius: dustPhase.blurRadius))
+                    }
+                case .fadeOnly:
+                    activeContext.opacity = 0.72 + (0.28 * eased)
+                case .none:
+                    activeContext.opacity = 1
                 }
 
                 activeContext.draw(run, options: .disablesSubpixelQuantization)
-
-                if mode == .materialize, clamped < 1 {
-                    // A short, neutral optical lift through the glyphs. It is
-                    // deliberately not cyan and falls to zero at completion.
-                    let caustic = (0.12 * (1 - eased)) + (max(0, sin(.pi * clamped)) * 0.35)
-                    if caustic > 0.001 {
-                        var pearlContext = context
-                        pearlContext.opacity = caustic
-                        pearlContext.blendMode = .plusLighter
-                        pearlContext.translateBy(x: -1.5 * (1 - eased), y: -0.4)
-                        pearlContext.addFilter(.brightness(0.28))
-                        pearlContext.addFilter(.blur(radius: 0.35))
-                        pearlContext.draw(run, options: .disablesSubpixelQuantization)
-                    }
-                }
             }
         }
+    }
+
+    private func drawDust(
+        for run: Text.Layout.Run,
+        phase: LivePhraseDustGeometry.Phase,
+        discriminator: Int,
+        in context: inout GraphicsContext
+    ) {
+        guard !run.isEmpty else { return }
+        let requestedCount = max(5, run.count)
+        let particleCount = LivePhraseDustGeometry.particleCount(requested: requestedCount)
+        guard particleCount > 0 else { return }
+
+        let runSeed = LivePhraseDustGeometry.mixedSeed(
+            phraseSeed,
+            discriminator: discriminator
+        )
+        var dustPath = Path()
+
+        for particleOrdinal in 0..<particleCount {
+            let glyphIndex = LivePhraseDustGeometry.sampledGlyphIndex(
+                particleOrdinal: particleOrdinal,
+                glyphCount: run.count,
+                particleCount: particleCount
+            )
+            let particle = LivePhraseDustGeometry.particle(
+                seed: runSeed,
+                particleOrdinal: particleOrdinal,
+                targetBounds: run[glyphIndex].typographicBounds.rect,
+                progress: progress
+            )
+            dustPath.addEllipse(
+                in: CGRect(
+                    x: particle.center.x - particle.radius,
+                    y: particle.center.y - particle.radius,
+                    width: particle.radius * 2,
+                    height: particle.radius * 2
+                )
+            )
+        }
+
+        var dustContext = context
+        dustContext.opacity = phase.dustOpacity
+        dustContext.blendMode = AgentPalette.isLight ? .normal : .plusLighter
+        let tint = AgentPalette.isLight
+            ? AgentPalette.ink.opacity(0.72)
+            : Color.white.opacity(0.92)
+        dustContext.fill(dustPath, with: .color(tint))
     }
 }
 

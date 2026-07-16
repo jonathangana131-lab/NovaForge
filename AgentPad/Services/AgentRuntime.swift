@@ -1,5 +1,10 @@
+import AgentDomain
+import AgentPolicy
+import AgentTools
 import Foundation
+import CoreFoundation
 import Combine
+import CryptoKit
 import Observation
 import SwiftData
 import UIKit
@@ -92,9 +97,35 @@ enum SendDisposition: Equatable, Sendable {
     }
 }
 
+/// The legacy tool bridge still accepts only scalar strings. Preserve the
+/// original JSON scalar type while that bridge is migrated to typed JSONValue
+/// arguments; Core Foundation type IDs are required because JSON Booleans are
+/// also NSNumber instances.
+enum FlatToolArgumentParser {
+    static func parse(_ json: String) -> [String: String] {
+        guard let data = json.data(using: .utf8),
+              let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+
+        return dictionary.reduce(into: [String: String]()) { result, element in
+            if let string = element.value as? String {
+                result[element.key] = string
+            } else if let number = element.value as? NSNumber {
+                if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                    result[element.key] = number.boolValue ? "true" : "false"
+                } else {
+                    result[element.key] = number.stringValue
+                }
+            }
+        }
+    }
+}
+
 enum AgentRuntimeError: LocalizedError {
     case tooManyToolRounds
     case localInferenceTimedOut(String)
+    case invalidMutationReceipt
 
     var errorDescription: String? {
         switch self {
@@ -102,17 +133,8 @@ enum AgentRuntimeError: LocalizedError {
             "The run paused at NovaForge's tool-call safety limit. Continue the run to resume from the saved progress."
         case .localInferenceTimedOut(let model):
             "\(model) did not finish in the local safety window. NovaForge stopped the run so the app stays responsive. First launch after installing or downloading a model can be slow on iPhone 12; wait a moment, then tap Retry."
-        }
-    }
-}
-
-private enum OperationReceiptError: LocalizedError {
-    case missing(UUID)
-
-    var errorDescription: String? {
-        switch self {
-        case .missing(let id):
-            "The durable operation receipt \(id.uuidString) could not be found."
+        case .invalidMutationReceipt:
+            "NovaForge refused a workspace result whose durable identity did not match the requested operation."
         }
     }
 }
@@ -340,6 +362,27 @@ struct AgentRuntimeLifecycleEffects {
     )
 }
 
+/// Debug-only presentation seam. Mutating calls receive this callback only
+/// after AgentPolicy has returned a verified digest receipt; it can customize
+/// legacy fixture text but cannot authorize or execute a workspace effect.
+typealias AgentRuntimeToolPresentationOverride = @Sendable (
+    ToolRequest,
+    SandboxWorkspace,
+    AgentPolicyMutationReceipt?
+) async throws -> String
+
+enum InterruptedDurableWorkRecoveryFetchStage: Equatable, Sendable {
+    case operations
+    case runs
+    case messages(runID: UUID)
+    case toolRuns(runID: UUID)
+}
+
+private struct AgentV1MutationBinding: Sendable {
+    let descriptor: ToolDescriptor
+    let arguments: JSONValue
+}
+
 @MainActor
 @Observable
 final class AgentRuntime {
@@ -394,8 +437,9 @@ final class AgentRuntime {
     private var activeRunWorkspace: SandboxWorkspace?
     private var runWorkspace: SandboxWorkspace { activeRunWorkspace ?? workspace }
     private let keychain = KeychainStore()
-    private let localModelClient = LocalModelClient()
+    private let localModelClient = LocalModelClient.shared
     private let executionCoordinator: AgentExecutionCoordinator
+    private let policyMutationRuntime: AgentPolicyMutationRuntime
     private let lifecycleEffects: AgentRuntimeLifecycleEffects
     /// A run stays one logical session while it pauses for approval. Resuming
     /// must not replay the start haptic, and stopping from approval must still
@@ -416,6 +460,15 @@ final class AgentRuntime {
     private var currentPrompt: String?
     private var lastRunConversation: Conversation?
     private(set) var activeConversationID: UUID?
+    /// The exact model object that owns the currently active legacy run.
+    /// Keeping this reference available to presentation avoids a transient
+    /// SwiftData query refresh turning "Open running chat" into a no-op.
+    var activeRunConversation: Conversation? {
+        guard lastRunConversation?.id == activeConversationID else {
+            return nil
+        }
+        return lastRunConversation
+    }
     private(set) var activeConversationTitle: String?
     private var pendingApprovalRun: ToolRun?
     private var pendingLocalPlanContinuation: PendingLocalPlanContinuation?
@@ -430,9 +483,14 @@ final class AgentRuntime {
     #if DEBUG || targetEnvironment(simulator)
     private var didInjectRecoverableFailureFixture = false
     private var debugCompactedSaveOverride: ((ModelContext) throws -> Void)?
+    private var debugRunReceiptSaveOverride: ((ModelContext) throws -> Void)?
+    private var debugInterruptedRecoveryFetchOverride: ((InterruptedDurableWorkRecoveryFetchStage, ModelContext) throws -> Void)?
+    private var debugInterruptedRecoverySaveOverride: ((ModelContext) throws -> Void)?
     private var debugProviderResponses: [ProviderResponse] = []
+    private var debugRecoverableProviderFailures: [URLError] = []
     private var debugProviderFailure: Error?
     private var debugProviderCredentialOverride = false
+    private var debugToolPresentationOverride: AgentRuntimeToolPresentationOverride?
     private(set) var debugWorkspaceSummaryManifestScanCount = 0
     #endif
 
@@ -501,10 +559,12 @@ final class AgentRuntime {
     init(
         workspace: SandboxWorkspace = SandboxWorkspace(),
         executionCoordinator: AgentExecutionCoordinator = AgentExecutionCoordinator(),
+        policyMutationRuntime: AgentPolicyMutationRuntime = .shared,
         lifecycleEffects: AgentRuntimeLifecycleEffects = .live
     ) {
         self.workspace = workspace
         self.executionCoordinator = executionCoordinator
+        self.policyMutationRuntime = policyMutationRuntime
         self.lifecycleEffects = lifecycleEffects
     }
 
@@ -573,10 +633,20 @@ final class AgentRuntime {
         activeConversationTitle = title.isEmpty ? nil : title
     }
 
+    /// Exact currently owned legacy run identity. Canonical UI actions use
+    /// this only as a fail-closed bridge while M9 moves ownership into the
+    /// shared AgentSystem; a stop captured for any other run is ignored.
+    var currentOwnedRunID: UUID? {
+        activeRunRecord?.id ?? activeRunID
+    }
+
     #if DEBUG || targetEnvironment(simulator)
     var debugHasTrackedTask: Bool { currentTask != nil }
     var debugHasActiveRunIdentity: Bool { activeRunID != nil }
     var debugHasActiveWorkSession: Bool { hasActiveWorkSession }
+    var debugHasActiveRunReceipt: Bool { activeRunRecord != nil }
+    var debugHasCapturedRunWorkspace: Bool { activeRunWorkspace != nil }
+    var debugLastSettledRunID: UUID? { lastSettledRunID }
 
     func debugInstallPendingApproval(
         request: ToolRequest,
@@ -656,14 +726,54 @@ final class AgentRuntime {
         debugCompactedSaveOverride = override
     }
 
+    func debugInstallRunReceiptSaveOverride(_ override: ((ModelContext) throws -> Void)?) {
+        debugRunReceiptSaveOverride = override
+    }
+
+    func debugInstallInterruptedRecoveryFetchOverride(
+        _ override: ((InterruptedDurableWorkRecoveryFetchStage, ModelContext) throws -> Void)?
+    ) {
+        debugInterruptedRecoveryFetchOverride = override
+    }
+
+    func debugInstallInterruptedRecoverySaveOverride(
+        _ override: ((ModelContext) throws -> Void)?
+    ) {
+        debugInterruptedRecoverySaveOverride = override
+    }
+
     func debugInstallProviderResponses(_ responses: [ProviderResponse]) {
         debugProviderCredentialOverride = true
         debugProviderResponses = responses
     }
 
+    func debugInstallRecoverableProviderFailures(_ failures: [URLError]) {
+        debugProviderCredentialOverride = true
+        debugRecoverableProviderFailures = failures
+    }
+
     func debugInstallProviderFailure(_ error: Error) {
         debugProviderCredentialOverride = true
         debugProviderFailure = error
+    }
+
+    func debugInstallToolExecutionOverride(
+        _ override: AgentRuntimeToolPresentationOverride?
+    ) {
+        debugToolPresentationOverride = override
+    }
+
+    func debugExecuteTool(
+        _ request: ToolRequest,
+        context: ModelContext,
+        project: Project? = nil
+    ) async -> String {
+        await executeTool(
+            request,
+            context: context,
+            project: project,
+            recordRun: false
+        )
     }
 
     func debugWorkspaceSummary(for provider: AIProvider) -> String {
@@ -789,33 +899,134 @@ final class AgentRuntime {
     }
     #endif
 
+    /// Restores an already-persisted selection without touching the filesystem.
+    /// This is intentionally distinct from `switchWorkspace(to:context:)`,
+    /// which prepares a possibly new root through the durable gateway first.
     @discardableResult
-    func switchWorkspace(to name: String) -> Bool {
+    func restoreWorkspaceSelection(to name: String) -> Bool {
         let safeName = SandboxWorkspace.sanitizedWorkspaceName(name)
-        guard !isWorking, pendingTool == nil, runState != .waitingForApproval else {
+        guard !isWorking,
+              pendingTool == nil,
+              runState != .waitingForApproval,
+              activeRunRecord == nil else {
             return false
         }
+        activeRunWorkspace = nil
+        guard workspace.workspaceName != safeName else { return true }
+        invalidateWorkspaceSummaryCache()
+        workspace = SandboxWorkspace(name: safeName)
+        return true
+    }
+
+    /// Seeds the target root through the durable mutation gateway before the
+    /// runtime publishes a new selection. Callers may then persist settings or
+    /// project events knowing the root has a completed journal receipt.
+    func prepareWorkspace(named name: String, context: ModelContext) async throws {
+        let safeName = SandboxWorkspace.sanitizedWorkspaceName(name)
+        let targetWorkspace = workspace.workspaceName == safeName
+            ? workspace
+            : SandboxWorkspace(name: safeName)
+        try await ensureSeedWorkspace(in: targetWorkspace)
+    }
+
+    /// Seeds the target root through the durable mutation gateway before the
+    /// runtime publishes a new selection. Callers may then persist settings or
+    /// project events knowing the root has a completed journal receipt.
+    @discardableResult
+    func switchWorkspace(
+        to name: String,
+        context: ModelContext,
+        commitSelection: @MainActor () throws -> Void = {}
+    ) async throws -> Bool {
+        let safeName = SandboxWorkspace.sanitizedWorkspaceName(name)
+        guard !isWorking,
+              pendingTool == nil,
+              runState != .waitingForApproval,
+              activeRunRecord == nil else {
+            return false
+        }
+
+        let targetWorkspace = workspace.workspaceName == safeName
+            ? workspace
+            : SandboxWorkspace(name: safeName)
+        try await prepareWorkspace(named: safeName, context: context)
+
+        // The journal/gateway can suspend while waiting for another mutation.
+        // A run may have acquired this runtime in the meantime; never retarget
+        // that newly active run after the seed completes.
+        guard !isWorking,
+              pendingTool == nil,
+              runState != .waitingForApproval,
+              activeRunRecord == nil else {
+            return false
+        }
+
+        // Settings, project events, and success UI belong after the durable
+        // seed boundary but before publishing the runtime selection. A failed
+        // persistence commit therefore leaves the old selection untouched.
+        try commitSelection()
+
         // Terminal/debug fixtures can settle without a durable receipt callback.
-        // Once the safety guard above passes, no run still owns the capture.
+        // Once both safety checks pass, no run still owns the capture.
         activeRunWorkspace = nil
         if workspace.workspaceName != safeName {
             invalidateWorkspaceSummaryCache()
-            self.workspace = SandboxWorkspace(name: safeName)
-            ensureSeedWorkspace()
+            workspace = targetWorkspace
         }
         return true
     }
 
-    func ensureSeedWorkspace() {
+    func ensureSeedWorkspace(context: ModelContext) async throws {
+        try await ensureSeedWorkspace(in: workspace)
+    }
+
+    private func ensureSeedWorkspace(
+        in targetWorkspace: SandboxWorkspace
+    ) async throws {
         let readme = "README.md"
-        if (try? workspace.read(readme)) == nil {
-            try? workspace.write(readme, contents: """
+        guard !Self.workspaceContainsPath(readme, in: targetWorkspace) else { return }
+
+        let contents = """
             # NovaForge Workspace
 
             This folder lives inside the iOS app sandbox. Ask NovaForge to create notes, edit files, search text, or run safe native commands.
-            """)
-            invalidateWorkspaceSummaryCache()
-        }
+            """
+        let operationID = Self.workspaceLifecycleOperationID(
+            workspace: targetWorkspace,
+            domain: "seed-workspace-v1"
+        )
+        let executionContext = try policyMutationRuntime.makeExecutionContext(
+            workspace: targetWorkspace,
+            operationID: operationID,
+            idempotencyKey: Self.policyIdempotencyKey(
+                origin: "trusted-system-seed-v1",
+                operationID: operationID
+            ),
+            runID: activeRunRecord?.id ?? activeRunID,
+            conversationID: activeConversationID,
+            projectID: activeRunRecord?.projectID,
+            acceptedAt: activeRunRecord?.createdAt ?? Date(),
+            sessionID: "agent-runtime-seed-v1"
+        )
+        try Task.checkCancellation()
+        _ = try await policyMutationRuntime.coordinator().performTrustedSystem(
+            context: executionContext,
+            operation: TrustedSystemPolicyMutationOperation.seedWorkspace(
+                SeedWorkspaceMutationArguments(entries: [
+                    SeedWorkspaceEntry(path: readme, contents: contents),
+                ])
+            )
+        )
+        try Task.checkCancellation()
+        invalidateWorkspaceSummaryCache()
+    }
+
+    private nonisolated static func workspaceContainsPath(
+        _ relativePath: String,
+        in workspace: SandboxWorkspace
+    ) -> Bool {
+        guard let url = try? workspace.resolve(relativePath) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
     }
 
     func apiKey(for provider: AIProvider) -> String {
@@ -881,7 +1092,9 @@ final class AgentRuntime {
         if settings.provider == .local {
             do {
                 let variant = LocalModelCatalog.variant(for: settings.modelID) ?? LocalModelCatalog.defaultVariant
-                _ = try localModels.localFileURL(for: variant)
+                _ = try await LocalModelArtifactVerifier.shared.verifiedURL(
+                    for: variant
+                )
                 return .success(())
             } catch {
                 return .failure(error)
@@ -910,7 +1123,9 @@ final class AgentRuntime {
         if provider == .local {
             do {
                 let variant = LocalModelCatalog.variant(for: modelID) ?? LocalModelCatalog.defaultVariant
-                _ = try localModels.localFileURL(for: variant)
+                _ = try await LocalModelArtifactVerifier.shared.verifiedURL(
+                    for: variant
+                )
                 return .success(())
             } catch {
                 return .failure(error)
@@ -932,6 +1147,9 @@ final class AgentRuntime {
     }
 
     func hasUsableProviderCredential(settings: AgentSettings) -> Bool {
+        guard settings.provider.supportsAgentRuntime,
+              settings.provider.modelOptions.contains(settings.modelID)
+        else { return false }
         if settings.provider == .local { return true }
         #if DEBUG || targetEnvironment(simulator)
         if debugProviderCredentialOverride || !debugProviderResponses.isEmpty || debugProviderFailure != nil { return true }
@@ -952,6 +1170,17 @@ final class AgentRuntime {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .rejected(.emptyPrompt)
         }
+
+        // A completed provider/tool task does not release durable ownership
+        // until its terminal run receipt saves. Retry that settlement before a
+        // new send can replace activeRunRecord or retarget the captured root.
+        if let rejection = settleTerminalReceiptIfNeeded(
+            conversation: conversation,
+            context: context
+        ) {
+            return .rejected(rejection)
+        }
+
         if isWorking || pendingTool != nil {
             if let activeConversationID, activeConversationID != conversation.id {
                 let title = activeConversationTitle?.isEmpty == false ? activeConversationTitle! : "another chat"
@@ -987,7 +1216,11 @@ final class AgentRuntime {
     func retryLastPrompt(conversation: Conversation, settings: AgentSettings, context: ModelContext, project: Project? = nil) {
         guard let lastFailedPrompt else { return }
         let targetConversation = lastRunConversation ?? conversation
-        clearCurrentRunState(keepLastFailure: false)
+        guard settleTerminalReceiptIfNeeded(
+            conversation: targetConversation,
+            context: context
+        ) == nil else { return }
+        guard clearCurrentRunState(keepLastFailure: false) else { return }
         send(
             prompt: lastFailedPrompt,
             conversation: targetConversation,
@@ -1003,7 +1236,11 @@ final class AgentRuntime {
         let lastUserRequest = lastFailedPrompt
             ?? latestUserPrompt(in: targetConversation)
             ?? "Continue."
-        clearCurrentRunState(keepLastFailure: false)
+        guard settleTerminalReceiptIfNeeded(
+            conversation: targetConversation,
+            context: context
+        ) == nil else { return }
+        guard clearCurrentRunState(keepLastFailure: false) else { return }
         send(
             prompt: "Continue from where the previous run stopped. Do not restart completed work unless needed. Original request: \(lastUserRequest)",
             conversation: targetConversation,
@@ -1267,7 +1504,13 @@ final class AgentRuntime {
         }
     }
 
-    func clearCurrentRunState(keepLastFailure: Bool = true) {
+    @discardableResult
+    func clearCurrentRunState(keepLastFailure: Bool = true) -> Bool {
+        // Clearing has no persistence context, so it cannot safely abandon a
+        // receipt that still owns the run. Send/Retry/Continue settle first;
+        // presentation-only clear calls must leave ownership intact.
+        guard activeRunRecord == nil else { return false }
+
         // This is a real lifecycle boundary, not just presentation cleanup.
         // Invalidate ownership before resetting flags so cancelled work cannot
         // resume against a fresh conversation or a newly keyed transcript.
@@ -1311,10 +1554,17 @@ final class AgentRuntime {
         activeRunWorkspace = nil
         setLastRunConversation(nil)
         stopRequested = false
+        return true
     }
 
     @discardableResult
-    func reconcileInterruptedDurableWork(context: ModelContext, now: Date = Date()) -> Int {
+    func reconcileInterruptedDurableWork(
+        context: ModelContext,
+        now: Date = Date(),
+        preservingRunIDs: Set<UUID> = []
+    ) throws -> Int {
+        let recoveryContext = ModelContext(context.container)
+        recoveryContext.autosaveEnabled = false
         let scheduledPhase = ToolOperationPhase.scheduled.rawValue
         let executingPhase = ToolOperationPhase.executing.rawValue
         let appliedPhase = ToolOperationPhase.applied.rawValue
@@ -1337,13 +1587,57 @@ final class AgentRuntime {
         )
         let unfinishedOperations: [ToolOperationRecord]
         let unfinishedRuns: [AgentRunRecord]
+        var runTimelines: [UUID: (messages: [ChatMessage], toolRuns: [ToolRun])] = [:]
         do {
-            unfinishedOperations = try context.fetch(operationDescriptor)
-            unfinishedRuns = try context.fetch(runDescriptor)
+            #if DEBUG || targetEnvironment(simulator)
+            try debugInterruptedRecoveryFetchOverride?(.operations, recoveryContext)
+            #endif
+            // Canonical AgentSystem runs own their recovery lifecycle. They are
+            // still fetched so storage failures remain fail-closed, but legacy
+            // recovery must not mutate any receipt linked to their durable ID.
+            unfinishedOperations = try recoveryContext.fetch(operationDescriptor).filter { operation in
+                guard let runID = operation.runID else { return true }
+                return !preservingRunIDs.contains(runID)
+            }
+            #if DEBUG || targetEnvironment(simulator)
+            try debugInterruptedRecoveryFetchOverride?(.runs, recoveryContext)
+            #endif
+            unfinishedRuns = try recoveryContext.fetch(runDescriptor).filter { record in
+                !preservingRunIDs.contains(record.id)
+            }
+
+            // Prefetch every linked timeline before changing a single phase or
+            // status. A later fetch failure therefore cannot leave a partially
+            // repaired in-memory transaction that a subsequent save might leak.
+            for record in unfinishedRuns {
+                let runIDString = record.id.uuidString
+                let messageDescriptor = FetchDescriptor<ChatMessage>(
+                    predicate: #Predicate { $0.runIDString == runIDString }
+                )
+                let toolRunDescriptor = FetchDescriptor<ToolRun>(
+                    predicate: #Predicate { $0.runIDString == runIDString }
+                )
+                #if DEBUG || targetEnvironment(simulator)
+                try debugInterruptedRecoveryFetchOverride?(
+                    .messages(runID: record.id),
+                    recoveryContext
+                )
+                #endif
+                let messages = try recoveryContext.fetch(messageDescriptor)
+                #if DEBUG || targetEnvironment(simulator)
+                try debugInterruptedRecoveryFetchOverride?(
+                    .toolRuns(runID: record.id),
+                    recoveryContext
+                )
+                #endif
+                let toolRuns = try recoveryContext.fetch(toolRunDescriptor)
+                runTimelines[record.id] = (messages, toolRuns)
+            }
         } catch {
-            presentToast("NovaForge could not inspect interrupted work: \(friendlyError(error))", tone: .error)
-            return 0
+            recoveryContext.rollback()
+            throw error
         }
+
         for operation in unfinishedOperations {
             let previousPhase = operation.phase
             let recoveryDetail: String
@@ -1377,20 +1671,11 @@ final class AgentRuntime {
             if previousStatus == .queued {
                 record.startedAt = nil
             }
-
-            // Interrupted work is normally one run. Query only its scalar links
-            // instead of scanning the user's entire transcript at every launch.
-            let runIDString = record.id.uuidString
-            let messageDescriptor = FetchDescriptor<ChatMessage>(
-                predicate: #Predicate { $0.runIDString == runIDString }
-            )
-            let toolRunDescriptor = FetchDescriptor<ToolRun>(
-                predicate: #Predicate { $0.runIDString == runIDString }
-            )
+            let timeline = runTimelines[record.id] ?? (messages: [], toolRuns: [])
             stampRunTimeline(
                 record: record,
-                messages: (try? context.fetch(messageDescriptor)) ?? [],
-                toolRuns: (try? context.fetch(toolRunDescriptor)) ?? [],
+                messages: timeline.messages,
+                toolRuns: timeline.toolRuns,
                 status: .interrupted
             )
         }
@@ -1398,7 +1683,15 @@ final class AgentRuntime {
         let repairedCount = unfinishedOperations.count + unfinishedRuns.count
         guard repairedCount > 0 else { return 0 }
         do {
-            try context.save()
+            #if DEBUG || targetEnvironment(simulator)
+            if let debugInterruptedRecoverySaveOverride {
+                try debugInterruptedRecoverySaveOverride(recoveryContext)
+            } else {
+                try recoveryContext.save()
+            }
+            #else
+            try recoveryContext.save()
+            #endif
             if !unfinishedOperations.isEmpty, !unfinishedRuns.isEmpty {
                 presentToast(
                     "Recovered \(unfinishedOperations.count) interrupted workspace receipt\(unfinishedOperations.count == 1 ? "" : "s") and \(unfinishedRuns.count) interrupted run\(unfinishedRuns.count == 1 ? "" : "s"). Review the affected paths before retrying.",
@@ -1416,8 +1709,8 @@ final class AgentRuntime {
                 )
             }
         } catch {
-            presentToast("NovaForge could not save interrupted-run recovery: \(friendlyError(error))", tone: .error)
-            return 0
+            recoveryContext.rollback()
+            throw error
         }
         return repairedCount
     }
@@ -1709,7 +2002,12 @@ final class AgentRuntime {
         let runID = beginRunIdentity(activeRunRecord?.id)
         currentTask = Task {
             defer { clearCurrentTaskIfActive(runID) }
-            let output = await executeTool(request, context: context, project: activeProject, recordRun: false)
+            let output = await executeTool(
+                request,
+                context: context,
+                project: activeProject,
+                recordRun: false
+            )
             guard isActiveRun(runID) else { return }
             let previousRunStatus = approvalRun?.status
                 let previousRunOutput = approvalRun?.output
@@ -1920,10 +2218,34 @@ final class AgentRuntime {
         }
     }
 
-    func resetWorkspace() throws {
-        try workspace.reset()
+    func resetWorkspace(context: ModelContext) async throws {
+        let targetWorkspace = workspace
+        let operationID = UUID()
+        let executionContext = try policyMutationRuntime.makeExecutionContext(
+            workspace: targetWorkspace,
+            operationID: operationID,
+            idempotencyKey: Self.policyIdempotencyKey(
+                origin: "control-reset-v1",
+                operationID: operationID
+            ),
+            runID: activeRunRecord?.id ?? activeRunID,
+            conversationID: activeConversationID,
+            projectID: activeRunRecord?.projectID,
+            acceptedAt: Date(),
+            sessionID: "agent-runtime-control"
+        )
+        try Task.checkCancellation()
+        _ = try await policyMutationRuntime.coordinator().performControl(
+            context: executionContext,
+            operation: ControlPolicyMutationOperation.resetWorkspace(
+                ResetWorkspaceMutationArguments()
+            )
+        )
+        try Task.checkCancellation()
+        // The reset capability authorizes only the destructive root reset. A
+        // distinct seed receipt and permit own the README write.
+        try await ensureSeedWorkspace(in: targetWorkspace)
         invalidateWorkspaceSummaryCache()
-        ensureSeedWorkspace()
     }
 
     func noteWorkspaceChanged() {
@@ -2158,18 +2480,11 @@ final class AgentRuntime {
                 outgoingProviderRoleLog = providerResponse.roleLog
 
                 if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
-                    let effectiveToolCalls: [APIToolCall]
-                    if !runAutoApproveWrites,
-                       let firstApprovalIndex = toolCalls.firstIndex(where: { ToolRequest(id: $0.id, name: $0.function.name, arguments: parseArguments($0.function.arguments)).isMutating }) {
-                        // Pause on the first mutating call, and persist only the
-                        // tool_calls that can be answered before that pause. If a
-                        // later call stayed in the assistant message without a tool
-                        // result, the provider transcript sanitizer would correctly
-                        // drop the whole exchange as incomplete after approval.
-                        effectiveToolCalls = Array(toolCalls.prefix(through: firstApprovalIndex))
-                    } else {
-                        effectiveToolCalls = toolCalls
-                    }
+                    // AgentPolicy owns the one authoritative approval. Keep
+                    // every provider call in the exact assistant envelope; a
+                    // mutating call suspends inside the typed broker instead
+                    // of creating a second legacy pendingTool decision.
+                    let effectiveToolCalls = toolCalls
 
                     setActivity("Tool plan ready", detail: "\(effectiveToolCalls.count) action\(effectiveToolCalls.count == 1 ? "" : "s") queued.")
                     pushTrace("Model requested tools", detail: effectiveToolCalls.map { $0.function.name }.joined(separator: ", "), status: .tool)
@@ -2217,7 +2532,6 @@ final class AgentRuntime {
                     try saveCompacted(context)
                     liveStream.finishHandoff(to: assistant.id)
 
-                    var pausedForApproval = false
                     var toolMessages: [ChatMessage] = []
                     var rememberedArtifacts: [WorkspaceArtifact] = []
 
@@ -2227,81 +2541,48 @@ final class AgentRuntime {
                         setActiveTool(toolReq, title: toolReq.isMutating ? "Preparing workspace change" : "Inspecting workspace")
                         pushTrace("Queued \(toolReq.name)", detail: toolReq.argumentsJSON, status: .tool)
 
-                        if toolReq.isMutating && !runAutoApproveWrites {
-                            pendingTool = toolReq
-                            runState = .waitingForApproval
-                            pausedForApproval = true
-                            setActiveTool(toolReq, title: "Approval needed")
-                            pushTrace("Approval needed", detail: toolReq.argumentsJSON, status: .approval)
-
-                            let run = ToolRun(
-                                name: toolReq.name,
-                                argumentsJSON: toolReq.argumentsJSON,
-                                status: .pendingApproval,
-                                requiresApproval: true,
-                                isMutating: true,
-                                project: activeProject,
-                                runID: activeRunRecord?.id ?? activeRunID,
-                                runStatus: .awaitingApproval
-                            )
-                            pendingApprovalRun = run
-                            context.insert(run)
-                            ProjectEventRecorder.record(
-                                project: activeProject,
-                                kind: .toolApprovalRequested,
-                                title: "Approval needed for \(toolReq.name)",
-                                detail: toolReq.argumentsJSON,
-                                severity: .warning,
-                                sourceType: .toolRun,
-                                sourceID: run.id,
-                                context: context
-                            )
-                            try saveCompacted(context)
-                            break
-                        } else {
-                            let output = await executeTool(toolReq, context: context, project: activeProject, recordRun: false)
-                            try requireActiveRun(runID)
-                            try Task.checkCancellation()
-                            if toolReq.isMutating { invalidateWorkspaceSummaryCache() }
-                            let run = insertToolRun(
-                                request: toolReq,
-                                output: output,
-                                status: output.hasPrefix("Error:") ? .failed : .completed,
-                                project: activeProject,
-                                context: context
-                            )
-                            if let artifact = WorkspaceArtifact.fromToolOutput(output) {
-                                currentArtifacts.removeAll { $0.id == artifact.id }
-                                currentArtifacts.insert(artifact, at: 0)
-                                if currentArtifacts.count > 8 {
-                                    currentArtifacts.removeLast(currentArtifacts.count - 8)
-                                }
-                                ProjectEventRecorder.ensureArtifact(
-                                    artifact,
-                                    project: activeProject,
-                                    sourceToolRunID: run.id,
-                                    context: context
-                                )
-                                rememberedArtifacts.append(artifact)
+                        let output = await executeTool(
+                            toolReq,
+                            context: context,
+                            project: activeProject,
+                            recordRun: false
+                        )
+                        try requireActiveRun(runID)
+                        try Task.checkCancellation()
+                        if toolReq.isMutating { invalidateWorkspaceSummaryCache() }
+                        let run = insertToolRun(
+                            request: toolReq,
+                            output: output,
+                            status: output.hasPrefix("Error:") ? .failed : .completed,
+                            project: activeProject,
+                            context: context
+                        )
+                        if let artifact = WorkspaceArtifact.fromToolOutput(output) {
+                            currentArtifacts.removeAll { $0.id == artifact.id }
+                            currentArtifacts.insert(artifact, at: 0)
+                            if currentArtifacts.count > 8 {
+                                currentArtifacts.removeLast(currentArtifacts.count - 8)
                             }
-                            pushTrace("Finished \(toolReq.name)", detail: compactOutputSummary(output), status: output.hasPrefix("Error:") ? .failed : .success)
-                            let toolMsg = ChatMessage(
-                                role: .tool,
-                                content: output,
-                                toolCallID: call.id,
-                                conversation: conversation,
-                                runID: activeRunRecord?.id ?? activeRunID,
-                                runStatus: .running
+                            ProjectEventRecorder.ensureArtifact(
+                                artifact,
+                                project: activeProject,
+                                sourceToolRunID: run.id,
+                                context: context
                             )
-                            conversation.appendMessage(toolMsg)
-                            context.insert(toolMsg)
-                            toolMessages.append(toolMsg)
+                            rememberedArtifacts.append(artifact)
                         }
-                    }
-
-                    if pausedForApproval {
-                        suspendWorkingForApproval()
-                        return
+                        pushTrace("Finished \(toolReq.name)", detail: compactOutputSummary(output), status: output.hasPrefix("Error:") ? .failed : .success)
+                        let toolMsg = ChatMessage(
+                            role: .tool,
+                            content: output,
+                            toolCallID: call.id,
+                            conversation: conversation,
+                            runID: activeRunRecord?.id ?? activeRunID,
+                            runStatus: .running
+                        )
+                        conversation.appendMessage(toolMsg)
+                        context.insert(toolMsg)
+                        toolMessages.append(toolMsg)
                     }
 
                     do {
@@ -2410,7 +2691,11 @@ final class AgentRuntime {
                     sourceID: conversation.id,
                     context: context
                 )
-                saveCompactedIfPossible(context)
+                // Completion is not truthful until its event, proof, and
+                // checkpoint are durable. Propagate failure so the outer path
+                // records a failed run instead of later settling a completed
+                // receipt with its terminal evidence rolled back.
+                try saveCompacted(context)
                 runState = .completed
                 shouldDrainQueuedFollowUps = true
                 break
@@ -2545,221 +2830,405 @@ final class AgentRuntime {
         }
     }
 
-    private func executeTool(_ request: ToolRequest, context: ModelContext, project: Project?, recordRun: Bool = true) async -> String {
-        var operationRecordID: UUID?
-        if request.isMutating {
-            do {
-                // The write-ahead receipt has to commit before a workspace
-                // mutation, but it must not flush the provider transcript
-                // transaction that is still accumulating in `context`.
-                // A dedicated context keeps the safety receipt durable without
-                // turning a later tool-result save failure into partial history.
-                operationRecordID = try createOperationReceipt(
-                    for: request,
-                    project: project,
-                    context: context
-                )
-            } catch {
-                let message = friendlyError(error)
-                presentToast("NovaForge did not run \(request.name) because its safety receipt could not be saved: \(message)", tone: .error)
-                return "Error: safety receipt could not be saved before mutation: \(message)"
-            }
-        }
-
-        var mutationLease: AgentExecutionCoordinator.Lease?
-        defer {
-            // The defer is installed before any post-acquisition receipt save.
-            // Otherwise a failed `.executing` save could strand the shared
-            // workspace lease and block every later mutation in this workspace.
-            if let mutationLease {
-                Task { await executionCoordinator.release(mutationLease) }
-            }
-        }
-        if request.isMutating {
-            setActivity("Coordinating workspace", detail: "Waiting for exclusive access to \(runWorkspace.workspaceName).")
-            do {
-                mutationLease = try await executionCoordinator.acquireMutation(
-                    workspaceName: runWorkspace.workspaceName,
-                    runID: activeRunRecord?.id ?? activeRunID ?? UUID(),
-                    ownerDescription: activeConversationTitle ?? project?.name ?? runWorkspace.workspaceName
-                )
-            } catch is CancellationError {
-                if let operationRecordID {
-                    try? transitionOperationReceipt(
-                        id: operationRecordID,
-                        to: .interrupted,
-                        errorMessage: "Cancelled while waiting for exclusive workspace access.",
-                        context: context
-                    )
-                }
-                return "Error: tool cancelled while waiting for workspace access."
-            } catch {
-                if let operationRecordID {
-                    try? transitionOperationReceipt(
-                        id: operationRecordID,
-                        to: .failed,
-                        errorMessage: error.localizedDescription,
-                        context: context
-                    )
-                }
-                return "Error: could not coordinate workspace access: \(error.localizedDescription)"
-            }
-
-            guard let operationRecordID else {
-                return "Error: safety receipt was unavailable before mutation."
-            }
-            do {
-                try transitionOperationReceipt(
-                    id: operationRecordID,
-                    to: .executing,
-                    context: context
-                )
-            } catch {
-                let message = friendlyError(error)
-                try? transitionOperationReceipt(
-                    id: operationRecordID,
-                    to: .failed,
-                    errorMessage: "Execution did not start because its durable receipt could not advance: \(message)",
-                    context: context
-                )
-                presentToast("NovaForge did not run \(request.name) because its execution receipt could not be advanced: \(message)", tone: .error)
-                return "Error: execution receipt could not be advanced before mutation: \(message)"
-            }
-        }
-
+    private func executeTool(
+        _ request: ToolRequest,
+        context: ModelContext,
+        project: Project?,
+        recordRun: Bool = true
+    ) async -> String {
         let workspace = runWorkspace
-        let task = Task.detached(priority: .userInitiated) {
-            do {
-                try Task.checkCancellation()
-                let output = try SandboxToolExecutor(workspace: workspace).execute(request)
-                // Once a mutation has entered the executor, cancellation cannot
-                // prove that no bytes changed. Always return its concrete result
-                // so the write-ahead receipt advances to applied/completed.
-                if !request.isMutating {
-                    try Task.checkCancellation()
-                }
-                return (output, ToolRunStatus.completed)
-            } catch is CancellationError {
-                return ("Error: tool cancelled.", ToolRunStatus.failed)
-            } catch {
-                return ("Error: \(error.localizedDescription)", ToolRunStatus.failed)
-            }
-        }
-        let result = await withTaskCancellationHandler {
-            await task.value
-        } onCancel: {
-            task.cancel()
-        }
-        let output = result.0
+        #if DEBUG || targetEnvironment(simulator)
+        let presentationOverride = debugToolPresentationOverride
+        #else
+        let presentationOverride: AgentRuntimeToolPresentationOverride? = nil
+        #endif
 
-        if let operationRecordID {
+        let result: (output: String, status: ToolRunStatus)
+        if request.isMutating {
+            setActivity(
+                "Coordinating workspace",
+                detail: "Waiting for exclusive access to \(workspace.workspaceName)."
+            )
+
+            var verifiedReceipt: AgentPolicyMutationReceipt?
             do {
-                if result.1 == .completed {
-                    try transitionOperationReceipt(
-                        id: operationRecordID,
-                        to: .applied,
-                        resultSummary: output,
-                        context: context
+                let runID = activeRunRecord?.id ?? activeRunID
+                let operationID = Self.agentMutationOperationID(
+                    runID: runID,
+                    toolCallID: request.id,
+                    workspace: workspace
+                )
+                let idempotencyKey = Self.policyIdempotencyKey(
+                    origin: "agent-v1-fallback",
+                    operationID: operationID
+                )
+                let typedCallID = Self.agentToolCallUUID(
+                    operationID: operationID,
+                    providerCallID: request.id
+                )
+                let attemptID = Self.derivedMutationUUID(
+                    operationID: operationID,
+                    domain: "model-attempt"
+                )
+                let executionContext = try policyMutationRuntime
+                    .makeExecutionContext(
+                        workspace: workspace,
+                        operationID: operationID,
+                        idempotencyKey: idempotencyKey,
+                        runID: runID,
+                        callID: typedCallID,
+                        operationAttemptID: attemptID,
+                        conversationID: activeConversationID
+                            ?? activeRunRecord?.conversationID,
+                        projectID: project?.id ?? activeRunRecord?.projectID,
+                        acceptedAt: activeRunRecord?.createdAt ?? Date(),
+                        sessionID: "agent-runtime-v1"
                     )
-                    try transitionOperationReceipt(
-                        id: operationRecordID,
-                        to: .completed,
-                        resultSummary: output,
-                        context: context
+                let binding = try Self.agentV1MutationBinding(for: request)
+                let invocation = ToolInvocation(
+                    callID: executionContext.callID,
+                    providerCallID: request.id,
+                    modelAttemptID: executionContext.operationAttemptID,
+                    tool: binding.descriptor.identity,
+                    arguments: binding.arguments,
+                    canonicalArgumentDigest: try binding.descriptor
+                        .canonicalArgumentDigest(for: binding.arguments),
+                    idempotencyKey: executionContext.idempotencyKey,
+                    effectClass: binding.descriptor.effectClass,
+                    locality: .onDevice
+                )
+
+                try Task.checkCancellation()
+                let receipt = try await policyMutationRuntime.coordinator()
+                    .performV1Fallback(
+                        context: executionContext,
+                        descriptor: binding.descriptor,
+                        invocation: invocation
+                    )
+                guard receipt.operationID == operationID,
+                      receipt.runID == executionContext.lineage.runID,
+                      receipt.conversationID
+                        == executionContext.conversationID,
+                      receipt.projectID == executionContext.projectID,
+                      receipt.callID == executionContext.callID,
+                      receipt.operationAttemptID
+                        == executionContext.operationAttemptID,
+                      receipt.origin == .v1Fallback
+                else { throw AgentRuntimeError.invalidMutationReceipt }
+                verifiedReceipt = receipt
+                try Task.checkCancellation()
+
+                let output: String
+                if let presentationOverride {
+                    output = try await presentationOverride(
+                        request,
+                        workspace,
+                        receipt
                     )
                 } else {
-                    try transitionOperationReceipt(
-                        id: operationRecordID,
-                        to: .failed,
-                        errorMessage: output,
-                        context: context
+                    output = try Self.agentV1MutationSuccessSummary(
+                        for: request
                     )
                 }
+                try Task.checkCancellation()
+                result = (output, .completed)
+            } catch is CancellationError {
+                let message = verifiedReceipt == nil
+                    ? "The workspace change was cancelled before NovaForge received a durable receipt; no success was published."
+                    : "The workspace change has a durable receipt, but this run was cancelled before success could be published."
+                presentToast(message, tone: .error)
+                pushTrace(
+                    "Workspace mutation cancelled",
+                    detail: message,
+                    status: .failed
+                )
+                result = ("Error: \(message)", .failed)
             } catch {
                 let message = friendlyError(error)
-                if result.1 == .completed {
-                    // Keep the recoverable state honest if a later caller save
-                    // succeeds after this phase-specific save failed.
-                    try? transitionOperationReceipt(
-                        id: operationRecordID,
-                        to: .applied,
-                        resultSummary: output,
-                        context: context
-                    )
-                }
                 presentToast(
-                    "\(request.name) finished, but NovaForge could not finalize its durable receipt. Review the workspace before retrying: \(message)",
+                    "NovaForge could not safely finish \(request.name): \(message)",
                     tone: .error
                 )
-                pushTrace("Operation receipt incomplete", detail: message, status: .failed)
-                return "Error: tool may have changed the workspace, but its durable receipt did not finish: \(message)"
+                pushTrace(
+                    "Workspace mutation interrupted",
+                    detail: message,
+                    status: .failed
+                )
+                result = ("Error: \(message)", .failed)
+            }
+        } else {
+            do {
+                let output = try await Self.executeReadOnlySandboxTool(
+                    request,
+                    workspace: workspace,
+                    presentationOverride: presentationOverride
+                )
+                result = (output, .completed)
+            } catch is CancellationError {
+                result = ("Error: tool cancelled.", .failed)
+            } catch {
+                result = ("Error: \(error.localizedDescription)", .failed)
             }
         }
 
         if recordRun, !Task.isCancelled {
             insertToolRun(
                 request: request,
-                output: output,
-                status: result.1,
+                output: result.output,
+                status: result.status,
                 project: project,
                 context: context
             )
         }
-        return output
+        return result.output
     }
 
-    /// Persists write-ahead mutation receipts without committing whatever chat
-    /// transcript, evidence, and project-ledger work is still pending in the
-    /// caller's context. `ToolOperationRecord` is scalar-only by design, so a
-    /// short-lived context can own this isolated safety transaction.
-    private func createOperationReceipt(
-        for request: ToolRequest,
-        project: Project?,
-        context: ModelContext
-    ) throws -> UUID {
-        let receiptContext = ModelContext(context.container)
-        receiptContext.autosaveEnabled = false
-        let record = ToolOperationRecord(
-            runID: activeRunRecord?.id ?? activeRunID,
-            projectID: project?.id,
-            conversationID: activeConversationID,
-            workspaceName: runWorkspace.workspaceName,
-            toolCallID: request.id,
-            toolName: request.name,
-            argumentsJSON: request.argumentsJSON,
-            targetPaths: operationTargetPaths(for: request)
-        )
-        receiptContext.insert(record)
-        try receiptContext.save()
-        return record.id
-    }
-
-    private func transitionOperationReceipt(
-        id: UUID,
-        to phase: ToolOperationPhase,
-        resultSummary: String? = nil,
-        errorMessage: String? = nil,
-        context: ModelContext
-    ) throws {
-        let receiptContext = ModelContext(context.container)
-        receiptContext.autosaveEnabled = false
-        let descriptor = FetchDescriptor<ToolOperationRecord>(predicate: #Predicate { $0.id == id })
-        guard let record = try receiptContext.fetch(descriptor).first else {
-            throw OperationReceiptError.missing(id)
+    private nonisolated static func executeReadOnlySandboxTool(
+        _ request: ToolRequest,
+        workspace: SandboxWorkspace,
+        presentationOverride: AgentRuntimeToolPresentationOverride?
+    ) async throws -> String {
+        try Task.checkCancellation()
+        guard !request.isMutating else { throw SandboxError.invalidArguments }
+        if let presentationOverride {
+            let output = try await presentationOverride(
+                request,
+                workspace,
+                nil
+            )
+            try Task.checkCancellation()
+            return output
         }
-        record.transition(
-            to: phase,
-            resultSummary: resultSummary,
-            errorMessage: errorMessage
-        )
-        try receiptContext.save()
+
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let executor = SandboxToolExecutor(workspace: workspace)
+            let output = try executor.execute(request)
+            try Task.checkCancellation()
+            return output
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
-    private func operationTargetPaths(for request: ToolRequest) -> [String] {
-        var seen = Set<String>()
-        return ["path", "from", "to", "cwd"]
-            .compactMap { request.arguments[$0]?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    private nonisolated static func agentV1MutationBinding(
+        for request: ToolRequest
+    ) throws -> AgentV1MutationBinding {
+        func required(_ key: String) throws -> String {
+            guard let value = request.arguments[key], !value.isEmpty else {
+                throw SandboxError.invalidArguments
+            }
+            return value
+        }
+        func present(_ key: String) throws -> String {
+            guard let value = request.arguments[key] else {
+                throw SandboxError.invalidArguments
+            }
+            return value
+        }
+
+        switch request.name {
+        case "write_file":
+            return AgentV1MutationBinding(
+                descriptor: WriteFileTool.descriptor,
+                arguments: .object([
+                    "path": .string(try required("path")),
+                    "contents": .string(try present("contents")),
+                ])
+            )
+        case "append_file":
+            return AgentV1MutationBinding(
+                descriptor: AppendFileTool.descriptor,
+                arguments: .object([
+                    "path": .string(try required("path")),
+                    "contents": .string(try present("contents")),
+                ])
+            )
+        case "replace_text":
+            let replaceAll: JSONValue
+            if let rawValue = request.arguments["replace_all"] {
+                switch rawValue.lowercased() {
+                case "true": replaceAll = .bool(true)
+                case "false": replaceAll = .bool(false)
+                default: throw SandboxError.invalidArguments
+                }
+            } else {
+                replaceAll = .null
+            }
+            return AgentV1MutationBinding(
+                descriptor: ReplaceTextTool.descriptor,
+                arguments: .object([
+                    "path": .string(try required("path")),
+                    "old": .string(try required("old")),
+                    "new": .string(try present("new")),
+                    "replace_all": replaceAll,
+                ])
+            )
+        case "delete_path":
+            return AgentV1MutationBinding(
+                descriptor: DeletePathTool.descriptor,
+                arguments: .object([
+                    "path": .string(try required("path")),
+                ])
+            )
+        case "move_path":
+            return AgentV1MutationBinding(
+                descriptor: MovePathTool.descriptor,
+                arguments: .object([
+                    "from": .string(try required("from")),
+                    "to": .string(try required("to")),
+                ])
+            )
+        case "copy_path":
+            return AgentV1MutationBinding(
+                descriptor: CopyPathTool.descriptor,
+                arguments: .object([
+                    "from": .string(try required("from")),
+                    "to": .string(try required("to")),
+                ])
+            )
+        case "make_directory":
+            return AgentV1MutationBinding(
+                descriptor: MakeDirectoryTool.descriptor,
+                arguments: .object([
+                    "path": .string(try required("path")),
+                ])
+            )
+        case "run_command":
+            let command = try required("command")
+            let draft = TerminalCommandDraft(command)
+            guard draft.canRun, draft.isMutating else {
+                throw SandboxError.invalidArguments
+            }
+            return AgentV1MutationBinding(
+                descriptor: RunCommandTool.descriptor,
+                arguments: .object(["command": .string(command)])
+            )
+        default:
+            throw SandboxError.unsupportedCommand(request.name)
+        }
+    }
+
+    /// UUIDv8 identity for duplicate agent delivery. The exact run, provider
+    /// tool-call ID, and canonical physical root are the complete identity;
+    /// argument changes under that identity conflict closed in AgentPolicy.
+    nonisolated static func agentMutationOperationID(
+        runID: UUID?,
+        toolCallID: String,
+        workspace: SandboxWorkspace
+    ) -> UUID {
+        uuidV8(for: [
+            "novaforge.agent-mutation.v1",
+            runID?.uuidString.lowercased() ?? "no-run",
+            toolCallID.precomposedStringWithCanonicalMapping,
+            canonicalWorkspaceRoot(workspace),
+        ].joined(separator: "\n"))
+    }
+
+    private nonisolated static func workspaceLifecycleOperationID(
+        workspace: SandboxWorkspace,
+        domain: String
+    ) -> UUID {
+        uuidV8(for: [
+            "novaforge.workspace-lifecycle.v1",
+            domain,
+            canonicalWorkspaceRoot(workspace),
+        ].joined(separator: "\n"))
+    }
+
+    private nonisolated static func agentToolCallUUID(
+        operationID: UUID,
+        providerCallID: String
+    ) -> UUID {
+        if let exactUUID = UUID(uuidString: providerCallID) {
+            return exactUUID
+        }
+        return derivedMutationUUID(
+            operationID: operationID,
+            domain: "provider-tool-call:\(providerCallID)"
+        )
+    }
+
+    private nonisolated static func derivedMutationUUID(
+        operationID: UUID,
+        domain: String
+    ) -> UUID {
+        uuidV8(for: [
+            "novaforge.agent-mutation-identity.v1",
+            domain,
+            operationID.uuidString.lowercased(),
+        ].joined(separator: "\n"))
+    }
+
+    private nonisolated static func policyIdempotencyKey(
+        origin: String,
+        operationID: UUID
+    ) -> String {
+        "novaforge.\(origin):\(operationID.uuidString.lowercased())"
+    }
+
+    private nonisolated static func canonicalWorkspaceRoot(
+        _ workspace: SandboxWorkspace
+    ) -> String {
+        workspace.rootURL.standardizedFileURL.path
+            .precomposedStringWithCanonicalMapping
+    }
+
+    private nonisolated static func uuidV8(for identity: String) -> UUID {
+        var bytes = Array(SHA256.hash(data: Data(identity.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+    }
+
+    private nonisolated static func agentV1MutationSuccessSummary(
+        for request: ToolRequest
+    ) throws -> String {
+        func required(_ key: String) throws -> String {
+            guard let value = request.arguments[key], !value.isEmpty else {
+                throw SandboxError.invalidArguments
+            }
+            return value
+        }
+
+        switch request.name {
+        case "write_file": return "Wrote \(try required("path"))"
+        case "append_file": return "Appended \(try required("path"))"
+        case "replace_text":
+            return "Replaced text in \(try required("path"))"
+        case "delete_path": return "Deleted \(try required("path"))"
+        case "move_path":
+            return "Moved \(try required("from")) to \(try required("to"))"
+        case "copy_path":
+            return "Copied \(try required("from")) to \(try required("to"))"
+        case "make_directory":
+            return "Created folder \(try required("path"))"
+        case "run_command":
+            let draft = TerminalCommandDraft(try required("command"))
+            let arguments = Array(draft.tokens.dropFirst())
+            switch draft.commandName {
+            case "mkdir": return "Created \(arguments.first ?? "path")"
+            case "touch": return "Touched \(arguments.first ?? "path")"
+            case "rm": return "Removed \(arguments.first ?? "path")"
+            case "mv":
+                guard arguments.count == 2 else { return "Move completed" }
+                return "Moved \(arguments[0]) to \(arguments[1])"
+            case "cp":
+                guard arguments.count == 2 else { return "Copy completed" }
+                return "Copied \(arguments[0]) to \(arguments[1])"
+            default: return "Command completed."
+            }
+        default:
+            throw SandboxError.unsupportedCommand(request.name)
+        }
     }
 
     private func applyProjectIdentitySuggestionIfNeeded(
@@ -2768,6 +3237,12 @@ final class AgentRuntime {
         prompt: String,
         context: ModelContext
     ) {
+        if ProjectNamingEngine.shouldRenameConversation(conversation.title),
+           let title = ProjectNamingEngine.suggestedConversationTitle(prompt: prompt) {
+            conversation.title = title
+            conversation.updatedAt = Date()
+        }
+
         guard let project, ProjectNamingEngine.shouldRename(project) else { return }
         let projects = (try? context.fetch(FetchDescriptor<Project>())) ?? []
         let existingNames = Set(projects.filter { $0.id != project.id }.map(\.name))
@@ -3036,28 +3511,13 @@ final class AgentRuntime {
         context: ModelContext,
         runID: UUID,
         project: Project?,
-        autoApproveWrites: Bool
+        autoApproveWrites _: Bool
     ) async throws -> Bool {
         guard isActiveRun(runID) else { return false }
         let activeProject = project ?? conversation.project
-        let firstApprovalIndex = autoApproveWrites
-            ? nil
-            : plan.toolCalls.firstIndex(where: { call in
-                ToolRequest(
-                    id: call.id,
-                    name: call.function.name,
-                    arguments: parseArguments(call.function.arguments)
-                ).isMutating
-            })
-        let stageCalls: [APIToolCall]
-        let remainingCalls: [APIToolCall]
-        if let firstApprovalIndex {
-            stageCalls = Array(plan.toolCalls.prefix(through: firstApprovalIndex))
-            remainingCalls = Array(plan.toolCalls.dropFirst(firstApprovalIndex + 1))
-        } else {
-            stageCalls = plan.toolCalls
-            remainingCalls = []
-        }
+        // The typed policy broker is the only approval owner. Preserve the
+        // complete local plan and let each mutation suspend at that boundary.
+        let stageCalls = plan.toolCalls
         liveStream.reset()
         setActivity("Planning local tools", detail: "\(stageCalls.count) native action\(stageCalls.count == 1 ? "" : "s") ready.")
         pushTrace("Local tool plan ready", detail: stageCalls.map { $0.function.name }.joined(separator: ", "), status: .tool)
@@ -3112,46 +3572,14 @@ final class AgentRuntime {
                 arguments: parseArguments(call.function.arguments)
             )
 
-            if request.isMutating && !autoApproveWrites {
-                pendingLocalPlanContinuation = PendingLocalPlanContinuation(
-                    remainingCalls: remainingCalls,
-                    completion: plan.completion
-                )
-                pendingTool = request
-                runState = .waitingForApproval
-                setActiveTool(request, title: "Approval needed")
-                pushTrace("Approval needed", detail: request.argumentsJSON, status: .approval)
-
-                let approvalRun = ToolRun(
-                    name: request.name,
-                    argumentsJSON: request.argumentsJSON,
-                    status: .pendingApproval,
-                    requiresApproval: true,
-                    isMutating: true,
-                    project: activeProject,
-                    runID: activeRunRecord?.id ?? activeRunID,
-                    runStatus: .awaitingApproval
-                )
-                pendingApprovalRun = approvalRun
-                context.insert(approvalRun)
-                ProjectEventRecorder.record(
-                    project: activeProject,
-                    kind: .toolApprovalRequested,
-                    title: "Approval needed for \(request.name)",
-                    detail: request.argumentsJSON,
-                    severity: .warning,
-                    sourceType: .toolRun,
-                    sourceID: approvalRun.id,
-                    context: context
-                )
-                try saveCompacted(context)
-                suspendWorkingForApproval()
-                return false
-            }
-
             setActiveTool(request, title: request.isMutating ? "Updating workspace" : "Inspecting workspace")
             pushTrace("Running \(request.name)", detail: request.argumentsJSON, status: .executing)
-            let output = await executeTool(request, context: context, project: activeProject, recordRun: false)
+            let output = await executeTool(
+                request,
+                context: context,
+                project: activeProject,
+                recordRun: false
+            )
             guard isActiveRun(runID), !Task.isCancelled, !stopRequested else { break }
             if request.isMutating { invalidateWorkspaceSummaryCache() }
             let toolRun = insertToolRun(
@@ -3344,19 +3772,7 @@ final class AgentRuntime {
     }
 
     private func parseArguments(_ json: String) -> [String: String] {
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return [:]
-        }
-        return dict.reduce(into: [String: String]()) { result, element in
-            if let str = element.value as? String {
-                result[element.key] = str
-            } else if let num = element.value as? NSNumber {
-                result[element.key] = num.stringValue
-            } else if let bool = element.value as? Bool {
-                result[element.key] = bool ? "true" : "false"
-            }
-        }
+        FlatToolArgumentParser.parse(json)
     }
 
     private func saveCompacted(_ context: ModelContext) throws {
@@ -3377,6 +3793,16 @@ final class AgentRuntime {
         #if DEBUG || targetEnvironment(simulator)
         if let debugCompactedSaveOverride {
             try debugCompactedSaveOverride(context)
+            return
+        }
+        #endif
+        try context.save()
+    }
+
+    private func saveRunReceipt(_ context: ModelContext) throws {
+        #if DEBUG || targetEnvironment(simulator)
+        if let debugRunReceiptSaveOverride {
+            try debugRunReceiptSaveOverride(context)
             return
         }
         #endif
@@ -3458,6 +3884,35 @@ final class AgentRuntime {
         }
     }
 
+    /// Returns a rejection only when an inactive terminal run still owns a
+    /// receipt that could not be durably settled. Active work continues through
+    /// the normal follow-up queue without attempting terminal settlement.
+    private func settleTerminalReceiptIfNeeded(
+        conversation: Conversation,
+        context: ModelContext
+    ) -> SendRejectionReason? {
+        guard !isWorking, pendingTool == nil, let unsettledRun = activeRunRecord else {
+            return nil
+        }
+
+        let receiptConversation = lastRunConversation ?? conversation
+        let reason = SendRejectionReason.persistenceFailed(
+            detail: "The previous run receipt is not durably settled."
+        )
+        guard persistActiveRunRecordState(
+            runID: unsettledRun.id,
+            conversation: receiptConversation,
+            context: context
+        ) else {
+            return reason
+        }
+        guard activeRunRecord == nil else {
+            presentToast(reason.userMessage, tone: .error)
+            return reason
+        }
+        return nil
+    }
+
     @discardableResult
     private func persistActiveRunRecordState(
         runID expectedRunID: UUID,
@@ -3527,14 +3982,11 @@ final class AgentRuntime {
             status: status
         )
 
-        if status.isTerminal {
-            lastSettledRunID = record.id
-            activeRunWorkspace = nil
-        }
-
         do {
-            try context.save()
+            try saveRunReceipt(context)
             if status.isTerminal {
+                lastSettledRunID = record.id
+                activeRunWorkspace = nil
                 activeRunRecord = nil
             }
             return true
@@ -3546,7 +3998,7 @@ final class AgentRuntime {
     }
 
     private func releaseRunWorkspaceIfSettled() {
-        guard !isWorking, pendingTool == nil else { return }
+        guard !isWorking, pendingTool == nil, activeRunRecord == nil else { return }
         switch runState {
         case .idle, .completed, .cancelled, .failed:
             activeRunWorkspace = nil
@@ -3866,18 +4318,28 @@ final class AgentRuntime {
             )
             throw debugProviderFailure
         }
-        if !debugProviderResponses.isEmpty {
-            let response = debugProviderResponses.removeFirst()
-            if let content = response.message.content,
-               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                try await streamDebugProviderText(content, onContentBatch: onContentBatch)
-            }
-            return response
-        }
         #endif
         var attempt = 0
         while true {
             do {
+                #if DEBUG || targetEnvironment(simulator)
+                if !debugRecoverableProviderFailures.isEmpty {
+                    let failure = debugRecoverableProviderFailures.removeFirst()
+                    try await streamDebugProviderText(
+                        "FAILED-PARTIAL-ATTEMPT",
+                        onContentBatch: onContentBatch
+                    )
+                    throw failure
+                }
+                if !debugProviderResponses.isEmpty {
+                    let response = debugProviderResponses.removeFirst()
+                    if let content = response.message.content,
+                       !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        try await streamDebugProviderText(content, onContentBatch: onContentBatch)
+                    }
+                    return response
+                }
+                #endif
                 return try await AIProviderClient(configuration: configuration).streamingResponse(
                     messages: messages,
                     model: model,
@@ -3890,6 +4352,10 @@ final class AgentRuntime {
                 attempt += 1
                 guard attempt < 3, isRecoverableNetworkError(error), !Task.isCancelled else { throw error }
                 try requireActiveRun(runID)
+                // Provider attempt text is provisional. A recoverable failure
+                // must discard it before the next attempt begins, otherwise
+                // the live response mixes two different completions.
+                liveStream.reset()
                 setActivity("Reconnecting", detail: "Network interrupted. Retry \(attempt) of 2…")
                 pushTrace("Connection interrupted", detail: "Retrying automatically.", status: .paused)
                 try await Task.sleep(for: .seconds(attempt))
@@ -4013,21 +4479,10 @@ final class AgentRuntime {
         #if DEBUG || targetEnvironment(simulator)
         debugWorkspaceSummaryManifestScanCount += 1
         #endif
-        let items = (try? runWorkspace.manifest(maxItems: provider == .local ? 120 : 500, maxDepth: provider == .local ? 3 : 5)) ?? []
-        let text: String
-        if items.isEmpty {
-            text = "No files yet."
-        } else {
-            let limit = provider == .local ? 36 : 160
-            let paths = items.map { item in
-                "\(item.isDirectory ? "folder" : "file"): \(item.relativePath)"
-            }
-            let visible = paths.prefix(limit).joined(separator: "\n")
-            let remaining = max(0, paths.count - limit)
-            text = remaining > 0
-                ? "\(visible)\n... \(remaining) more workspace items hidden for responsive provider setup."
-                : visible
-        }
+        let text = ProviderContextWindow.workspaceSummary(
+            for: runWorkspace,
+            provider: provider
+        )
         cachedWorkspaceSummary = (
             workspaceName: workspaceName,
             revision: workspaceMutationRevision,
@@ -4126,17 +4581,10 @@ final class AgentRuntime {
 
     private nonisolated static func fastLocalResponseIfNeeded(for prompt: String) -> String? {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
 
-        // Local mode now runs the on-device model for real prompts instead of
-        // brushing them off with a canned "switch to cloud" message. We keep only
-        // the explicit test hook and a very high extreme-size guard that would
-        // actually destabilize a constrained device; everything else reaches the
-        // model so Local behaves like genuine on-device AI.
-        if lower.contains("local model is working") {
-            return "Local model is working."
-        }
-
+        // Local mode runs the on-device model for every ordinary prompt. Only
+        // the extreme-size guard remains; device proof must never use a canned
+        // phrase that bypasses llama.cpp.
         if trimmed.count > 2000 {
             return "This prompt is very long for on-device generation. For the most reliable results on a phone, switch to Zen or OpenAI; Local will still try shorter prompts with the actual model."
         }
