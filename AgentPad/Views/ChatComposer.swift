@@ -39,7 +39,7 @@ struct ComposerReasoningControl: View {
 
     @State private var preferences = AgentRunPreferenceStore.shared
     @State private var showingPicker = false
-    @Namespace private var glassNamespace
+    @State private var presentationStartedAt: TimeInterval?
 
     private var tint: Color {
         switch preferences.orchestrationMode {
@@ -75,6 +75,7 @@ struct ComposerReasoningControl: View {
                 preferences.reasoningEffort = .xhigh
                 preferences.orchestrationMode = .standard
             }
+            presentationStartedAt = ProcessInfo.processInfo.systemUptime
             showingPicker = true
         } label: {
             HStack(spacing: 6) {
@@ -107,7 +108,6 @@ struct ComposerReasoningControl: View {
                         lineWidth: 0.65
                     )
             )
-            .agentGlassEffectID("composer-reasoning", in: glassNamespace)
         }
         .buttonStyle(ComposerMenuButtonStyle())
         .popover(isPresented: $showingPicker, attachmentAnchor: .rect(.bounds)) {
@@ -115,7 +115,7 @@ struct ComposerReasoningControl: View {
                 provider: provider,
                 modelID: modelID,
                 preferences: preferences,
-                glassNamespace: glassNamespace
+                onPresented: recordPresentationLatency
             )
             .frame(idealWidth: 354, idealHeight: 176)
             .presentationCompactAdaptation(.popover)
@@ -123,13 +123,22 @@ struct ComposerReasoningControl: View {
         .accessibilityLabel("Reasoning and agent mode, \(label)")
         .accessibilityIdentifier("composerReasoningPickerButton")
     }
+
+    private func recordPresentationLatency() {
+        guard let presentationStartedAt else { return }
+        AgentPerformance.value(
+            "Reasoning Menu Open Duration ms",
+            (ProcessInfo.processInfo.systemUptime - presentationStartedAt) * 1_000
+        )
+        self.presentationStartedAt = nil
+    }
 }
 
 private struct ComposerReasoningPicker: View {
     let provider: AIProvider
     let modelID: String
     @Bindable var preferences: AgentRunPreferenceStore
-    let glassNamespace: Namespace.ID
+    let onPresented: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -169,7 +178,7 @@ private struct ComposerReasoningPicker: View {
 
     var body: some View {
         ZStack {
-            NovaGlassSheetBackground(tint: activeTint)
+            NovaGlassSheetBackground(tint: activeTint, lightweight: true)
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -194,6 +203,9 @@ private struct ComposerReasoningPicker: View {
             }
             .padding(14)
         }
+        .onAppear(perform: onPresented)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("composerReasoningPicker")
     }
 
     private var activeTint: Color {
@@ -250,8 +262,6 @@ private struct ComposerReasoningPicker: View {
                         Capsule(style: .continuous)
                             .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7)
                     )
-                    .agentGlassEffectID("composer-reasoning", in: glassNamespace)
-
                 UltraCodePowerRipple(active: selection == .ultraCode)
                     .frame(height: 46)
                     .clipShape(Capsule(style: .continuous))
@@ -733,11 +743,13 @@ struct ComposerModelMenu: View {
     @State private var showingChooser = false
     @State private var selectionError: String?
     @State private var providerCatalog = ProviderModelCatalogStore.shared
+    @State private var presentationStartedAt: TimeInterval?
 
     var body: some View {
         Button {
             prepareToPresent()
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            presentationStartedAt = ProcessInfo.processInfo.systemUptime
             showingChooser = true
         } label: {
             menuLabel
@@ -754,12 +766,23 @@ struct ComposerModelMenu: View {
                 localModels: localModels,
                 selectionError: selectionError,
                 selectProvider: selectProvider,
-                selectModel: selectModel
+                selectModel: selectModel,
+                onPresented: recordPresentationLatency
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(30)
+            .presentationBackground(.clear)
         }
+    }
+
+    private func recordPresentationLatency() {
+        guard let presentationStartedAt else { return }
+        AgentPerformance.value(
+            "Model Menu Open Duration ms",
+            (ProcessInfo.processInfo.systemUptime - presentationStartedAt) * 1_000
+        )
+        self.presentationStartedAt = nil
     }
 
     private var menuLabel: some View {
@@ -975,6 +998,7 @@ private struct ComposerModelChooserSheet: View {
     let selectionError: String?
     let selectProvider: (AIProvider) -> Void
     let selectModel: (String) -> Void
+    let onPresented: () -> Void
 
     @State private var selectedProvider: AIProvider
     @State private var readyCredentials: Set<AIProvider> = []
@@ -985,20 +1009,22 @@ private struct ComposerModelChooserSheet: View {
         localModels: LocalModelManager,
         selectionError: String?,
         selectProvider: @escaping (AIProvider) -> Void,
-        selectModel: @escaping (String) -> Void
+        selectModel: @escaping (String) -> Void,
+        onPresented: @escaping () -> Void
     ) {
         self.settings = settings
         self.localModels = localModels
         self.selectionError = selectionError
         self.selectProvider = selectProvider
         self.selectModel = selectModel
+        self.onPresented = onPresented
         _selectedProvider = State(initialValue: settings.provider)
     }
 
     var body: some View {
         NavigationStack {
             ZStack {
-                NovaGlassSheetBackground(tint: selectedProvider.tint)
+                NovaGlassSheetBackground(tint: selectedProvider.tint, lightweight: true)
 
                 ScrollView {
                     // This chooser is intentionally small. Materializing the
@@ -1036,7 +1062,10 @@ private struct ComposerModelChooserSheet: View {
                 }
             }
         }
+        .onAppear(perform: onPresented)
         .task(id: selectedProvider) {
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
             refreshCredentialReadiness()
             await providerCatalog.refresh(provider: selectedProvider)
             repairSelectionFromLiveCatalogIfNeeded()

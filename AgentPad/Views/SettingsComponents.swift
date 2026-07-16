@@ -905,27 +905,27 @@ struct ProviderModelPickerSheet: View {
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
 
-    private var filteredModels: [String] {
+    private struct FilteredModelSnapshot {
+        let models: [String]
+        let hiddenCount: Int
+    }
+
+    private var filteredModelSnapshot: FilteredModelSnapshot {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let matches = query.isEmpty ? models : models.filter {
             $0.localizedCaseInsensitiveContains(query)
                 || provider.modelDisplayName($0)
                     .localizedCaseInsensitiveContains(query)
         }
-        return Array(matches.prefix(180))
-    }
-
-    private var hiddenModelCount: Int {
-        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matchCount = query.isEmpty ? models.count : models.lazy.filter {
-            $0.localizedCaseInsensitiveContains(query)
-                || provider.modelDisplayName($0)
-                    .localizedCaseInsensitiveContains(query)
-        }.count
-        return max(0, matchCount - filteredModels.count)
+        let visibleModels = Array(matches.prefix(180))
+        return FilteredModelSnapshot(
+            models: visibleModels,
+            hiddenCount: max(0, matches.count - visibleModels.count)
+        )
     }
 
     var body: some View {
+        let snapshot = filteredModelSnapshot
         ZStack {
             sheetBackground
 
@@ -941,7 +941,7 @@ struct ProviderModelPickerSheet: View {
                         hero
                         searchBar
                         refreshCard
-                        modelList
+                        modelList(snapshot)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
@@ -956,9 +956,12 @@ struct ProviderModelPickerSheet: View {
         }
         .onAppear {
             debouncedSearchText = searchText
-            if models.count <= provider.modelOptions.count && !isLoading {
-                refresh()
-            }
+        }
+        .task {
+            guard models.count <= provider.modelOptions.count, !isLoading else { return }
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            refresh()
         }
     }
 
@@ -1094,13 +1097,13 @@ struct ProviderModelPickerSheet: View {
         return provider == .local ? "Local models are managed on-device" : "Built-in model IDs are listed; an API key is still required to run."
     }
 
-    private var modelList: some View {
+    private func modelList(_ snapshot: FilteredModelSnapshot) -> some View {
         LazyVStack(spacing: 8) {
-            ForEach(filteredModels, id: \.self) { model in
+            ForEach(snapshot.models, id: \.self) { model in
                 modelRow(model)
             }
-            if hiddenModelCount > 0 {
-                Text("Showing first 180 matches. Keep typing to narrow \(hiddenModelCount) more.")
+            if snapshot.hiddenCount > 0 {
+                Text("Showing first 180 matches. Keep typing to narrow \(snapshot.hiddenCount) more.")
                     .font(.system(size: 12, weight: .bold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .center)

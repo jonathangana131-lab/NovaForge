@@ -630,6 +630,7 @@ final class OpenAICodexAuthManager {
 
     static let accessTokenAccount = "oauth_openai_codex_access_token"
     static let refreshTokenAccount = "oauth_openai_codex_refresh_token"
+    static let idTokenAccount = "oauth_openai_codex_id_token"
     static let accountIDAccount = "oauth_openai_codex_account_id"
     static let verificationURL = URL(
         string: "https://auth.openai.com/codex/device"
@@ -673,12 +674,31 @@ final class OpenAICodexAuthManager {
             refresh(refreshToken: refreshToken)
             return
         }
+        let idToken = try? keychain.read(Self.idTokenAccount)
         let savedAccountID = try? keychain.read(Self.accountIDAccount)
-        state = .signedIn(accountID: claims.accountID ?? savedAccountID ?? nil)
+        state = .signedIn(
+            accountID: idToken.flatMap { Self.jwtClaims($0).accountID }
+                ?? claims.accountID
+                ?? savedAccountID
+                ?? nil
+        )
+    }
+
+    /// Called when Safari hands the foreground back to NovaForge. A live
+    /// login task resumes its foreground-aware poll by itself; an interrupted
+    /// attempt re-reads the Keychain so a successfully committed token can
+    /// recover without asking the user to authorize a second time.
+    func applicationDidBecomeActive() {
+        guard loginTask == nil else { return }
+        refreshStoredStatus()
     }
 
     func startLogin() {
         loginTask?.cancel()
+        if case .failed = state {
+            refreshStoredStatus()
+            if isSignedIn { return }
+        }
         ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
         state = .requestingCode
         loginTask = Task { [weak self] in
@@ -699,7 +719,7 @@ final class OpenAICodexAuthManager {
                     .exchange(exchange)
                 try persist(tokens)
                 state = .signedIn(
-                    accountID: Self.jwtClaims(tokens.accessToken).accountID
+                    accountID: Self.accountID(in: tokens)
                 )
             } catch is CancellationError {
                 if !isSignedIn { state = .signedOut }
@@ -724,6 +744,7 @@ final class OpenAICodexAuthManager {
         cancelLogin()
         try? keychain.delete(Self.accessTokenAccount)
         try? keychain.delete(Self.refreshTokenAccount)
+        try? keychain.delete(Self.idTokenAccount)
         try? keychain.delete(Self.accountIDAccount)
         ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
         state = .signedOut
@@ -740,7 +761,7 @@ final class OpenAICodexAuthManager {
                 )
                 try persist(tokens)
                 state = .signedIn(
-                    accountID: Self.jwtClaims(tokens.accessToken).accountID
+                    accountID: Self.accountID(in: tokens)
                 )
             } catch {
                 state = .failed(Self.safeMessage(error))
@@ -750,18 +771,33 @@ final class OpenAICodexAuthManager {
     }
 
     private func persist(_ tokens: OpenAICodexOAuthTokens) throws {
-        try keychain.save(tokens.accessToken, account: Self.accessTokenAccount)
+        // Supporting values are written first and the access token is the
+        // commit marker. This prevents a refresh/account write failure from
+        // leaving a newly issued access token looking like a completed login.
+        if let idToken = tokens.idToken, !idToken.isEmpty {
+            try keychain.save(idToken, account: Self.idTokenAccount)
+        }
         if let refreshToken = tokens.refreshToken, !refreshToken.isEmpty {
             try keychain.save(
                 refreshToken,
                 account: Self.refreshTokenAccount
             )
         }
-        if let accountID = Self.jwtClaims(tokens.accessToken).accountID,
+        if let accountID = Self.accountID(in: tokens),
            !accountID.isEmpty
         {
             try keychain.save(accountID, account: Self.accountIDAccount)
         }
+        try keychain.save(tokens.accessToken, account: Self.accessTokenAccount)
+        guard try keychain.read(Self.accessTokenAccount) == tokens.accessToken
+        else { throw KeychainError.invalidValue }
+    }
+
+    private static func accountID(
+        in tokens: OpenAICodexOAuthTokens
+    ) -> String? {
+        tokens.idToken.flatMap { jwtClaims($0).accountID }
+            ?? jwtClaims(tokens.accessToken).accountID
     }
 
     private static func jwtClaims(
@@ -789,24 +825,39 @@ final class OpenAICodexAuthManager {
         if let error = error as? OpenAICodexOAuthError {
             return error.errorDescription ?? "ChatGPT sign-in failed."
         }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost,
+                 .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+                 .timedOut, .internationalRoamingOff, .dataNotAllowed:
+                return "The connection changed while returning from ChatGPT. Keep NovaForge open and try once more."
+            default:
+                break
+            }
+        }
+        if error is KeychainError {
+            return "ChatGPT approved the sign-in, but iOS could not save it securely. Keep the iPhone unlocked and try once more."
+        }
         return "ChatGPT sign-in could not finish. Try again."
     }
 }
 
-private struct OpenAICodexDeviceCode: Sendable {
+struct OpenAICodexDeviceCode: Sendable {
     let userCode: String
     let deviceAuthID: String
     let interval: Duration
 }
 
-private struct OpenAICodexApprovalExchange: Sendable {
+struct OpenAICodexApprovalExchange: Sendable {
     let authorizationCode: String
     let codeVerifier: String
+    let codeChallenge: String
 }
 
-private struct OpenAICodexOAuthTokens: Sendable {
+struct OpenAICodexOAuthTokens: Sendable, Equatable {
     let accessToken: String
     let refreshToken: String?
+    let idToken: String?
 }
 
 private enum OpenAICodexOAuthError: LocalizedError, Sendable {
@@ -814,6 +865,7 @@ private enum OpenAICodexOAuthError: LocalizedError, Sendable {
     case rateLimited
     case timedOut
     case authorizationFailed
+    case serviceRejected(stage: String, status: Int)
 
     var errorDescription: String? {
         switch self {
@@ -825,31 +877,24 @@ private enum OpenAICodexOAuthError: LocalizedError, Sendable {
             "The sign-in code expired. Start a new sign-in."
         case .authorizationFailed:
             "ChatGPT did not approve this sign-in. Try again."
+        case let .serviceRejected(stage, status):
+            "OpenAI could not finish \(stage) (HTTP \(status)). Try again in a moment."
         }
     }
 }
 
-private enum OpenAICodexOAuthClient {
-    private static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-    private static let issuer = URL(string: "https://auth.openai.com")!
-
-    static func requestDeviceCode() async throws -> OpenAICodexDeviceCode {
-        let body = try JSONSerialization.data(withJSONObject: [
-            "client_id": clientID,
-        ])
-        let (data, response) = try await request(
-            path: "/api/accounts/deviceauth/usercode",
-            contentType: "application/json",
-            body: body
-        )
-        if response.statusCode == 429 { throw OpenAICodexOAuthError.rateLimited }
-        guard response.statusCode == 200,
-              let object = try JSONSerialization.jsonObject(with: data)
-                as? [String: Any],
-              let userCode = object["user_code"] as? String,
+/// Pure validation for OpenAI's device-auth payloads. Keeping wire parsing
+/// separate from URLSession makes response-shape regressions fast to test and
+/// keeps them distinct from browser handoff or connectivity failures.
+enum OpenAICodexOAuthWire {
+    static func deviceCode(from data: Data) throws -> OpenAICodexDeviceCode {
+        guard let object = try JSONSerialization.jsonObject(with: data)
+            as? [String: Any],
+              let userCode = object["user_code"] as? String
+                ?? object["usercode"] as? String,
               let deviceAuthID = object["device_auth_id"] as? String,
-              Self.isSafeToken(userCode, maximumBytes: 128),
-              Self.isSafeToken(deviceAuthID, maximumBytes: 1_024)
+              isSafeToken(userCode, maximumBytes: 128),
+              isSafeToken(deviceAuthID, maximumBytes: 1_024)
         else { throw OpenAICodexOAuthError.invalidResponse }
         let intervalSeconds: Int
         if let number = object["interval"] as? NSNumber {
@@ -866,42 +911,150 @@ private enum OpenAICodexOAuthClient {
         )
     }
 
+    static func approvalExchange(
+        from data: Data
+    ) throws -> OpenAICodexApprovalExchange {
+        guard let object = try JSONSerialization.jsonObject(with: data)
+            as? [String: Any],
+              let authorizationCode = object["authorization_code"] as? String,
+              let codeVerifier = object["code_verifier"] as? String,
+              let codeChallenge = object["code_challenge"] as? String,
+              isSafeToken(authorizationCode, maximumBytes: 4_096),
+              isSafeToken(codeVerifier, maximumBytes: 1_024),
+              isSafeToken(codeChallenge, maximumBytes: 1_024)
+        else { throw OpenAICodexOAuthError.authorizationFailed }
+        return OpenAICodexApprovalExchange(
+            authorizationCode: authorizationCode,
+            codeVerifier: codeVerifier,
+            codeChallenge: codeChallenge
+        )
+    }
+
+    static func tokens(from data: Data) throws -> OpenAICodexOAuthTokens {
+        guard let object = try JSONSerialization.jsonObject(with: data)
+            as? [String: Any],
+              let accessToken = object["access_token"] as? String,
+              isSafeToken(
+                accessToken,
+                maximumBytes: KeychainStore.maximumSecretBytes
+              )
+        else { throw OpenAICodexOAuthError.invalidResponse }
+        let refreshToken = object["refresh_token"] as? String
+        let idToken = object["id_token"] as? String
+        if let refreshToken,
+           !isSafeToken(
+            refreshToken,
+            maximumBytes: KeychainStore.maximumSecretBytes
+           )
+        {
+            throw OpenAICodexOAuthError.invalidResponse
+        }
+        if let idToken,
+           !isSafeToken(
+            idToken,
+            maximumBytes: KeychainStore.maximumSecretBytes
+           )
+        {
+            throw OpenAICodexOAuthError.invalidResponse
+        }
+        return OpenAICodexOAuthTokens(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            idToken: idToken
+        )
+    }
+
+    private static func isSafeToken(
+        _ value: String,
+        maximumBytes: Int
+    ) -> Bool {
+        !value.isEmpty && value.utf8.count <= maximumBytes &&
+            value.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0) &&
+                    !CharacterSet.newlines.contains($0)
+            }
+    }
+}
+
+@MainActor
+private enum OpenAICodexOAuthClient {
+    private static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+    private static let issuer = URL(string: "https://auth.openai.com")!
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 45
+        return URLSession(configuration: configuration)
+    }()
+
+    static func requestDeviceCode() async throws -> OpenAICodexDeviceCode {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "client_id": clientID,
+        ])
+        let (data, response) = try await request(
+            path: "/api/accounts/deviceauth/usercode",
+            contentType: "application/json",
+            body: body
+        )
+        if response.statusCode == 429 { throw OpenAICodexOAuthError.rateLimited }
+        guard response.statusCode == 200 else {
+            throw OpenAICodexOAuthError.serviceRejected(
+                stage: "ChatGPT sign-in setup",
+                status: response.statusCode
+            )
+        }
+        return try OpenAICodexOAuthWire.deviceCode(from: data)
+    }
+
     static func waitForApproval(
         _ code: OpenAICodexDeviceCode
     ) async throws -> OpenAICodexApprovalExchange {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(15 * 60))
         while clock.now < deadline {
-            try await Task.sleep(for: code.interval)
             try Task.checkCancellation()
+            if UIApplication.shared.applicationState != .active {
+                // Opening the verification page moves NovaForge to the
+                // background. Avoid starting an ephemeral foreground request
+                // that iOS will suspend halfway through; it resumes instantly
+                // when the user returns from Safari.
+                try await Task.sleep(for: .milliseconds(250))
+                continue
+            }
             let body = try JSONSerialization.data(withJSONObject: [
                 "device_auth_id": code.deviceAuthID,
                 "user_code": code.userCode,
             ])
-            let (data, response) = try await request(
-                path: "/api/accounts/deviceauth/token",
-                contentType: "application/json",
-                body: body
-            )
+            let data: Data
+            let response: HTTPURLResponse
+            do {
+                (data, response) = try await request(
+                    path: "/api/accounts/deviceauth/token",
+                    contentType: "application/json",
+                    body: body
+                )
+            } catch let error as URLError where isRetryableTransport(error) {
+                try await Task.sleep(for: code.interval)
+                continue
+            }
             if response.statusCode == 403 || response.statusCode == 404 {
+                try await Task.sleep(for: code.interval)
                 continue
             }
             if response.statusCode == 429 {
                 throw OpenAICodexOAuthError.rateLimited
             }
-            guard response.statusCode == 200,
-                  let object = try JSONSerialization.jsonObject(with: data)
-                    as? [String: Any],
-                  let authorizationCode = object["authorization_code"]
-                    as? String,
-                  let codeVerifier = object["code_verifier"] as? String,
-                  isSafeToken(authorizationCode, maximumBytes: 4_096),
-                  isSafeToken(codeVerifier, maximumBytes: 1_024)
-            else { throw OpenAICodexOAuthError.authorizationFailed }
-            return OpenAICodexApprovalExchange(
-                authorizationCode: authorizationCode,
-                codeVerifier: codeVerifier
-            )
+            guard response.statusCode == 200 else {
+                throw OpenAICodexOAuthError.serviceRejected(
+                    stage: "ChatGPT approval",
+                    status: response.statusCode
+                )
+            }
+            return try OpenAICodexOAuthWire.approvalExchange(from: data)
         }
         throw OpenAICodexOAuthError.timedOut
     }
@@ -909,7 +1062,8 @@ private enum OpenAICodexOAuthClient {
     static func exchange(
         _ exchange: OpenAICodexApprovalExchange
     ) async throws -> OpenAICodexOAuthTokens {
-        try await tokenRequest([
+        try await waitUntilApplicationIsActive()
+        return try await tokenRequest([
             "grant_type": "authorization_code",
             "code": exchange.authorizationCode,
             "redirect_uri": "https://auth.openai.com/deviceauth/callback",
@@ -921,7 +1075,7 @@ private enum OpenAICodexOAuthClient {
     static func refresh(
         refreshToken: String
     ) async throws -> OpenAICodexOAuthTokens {
-        try await tokenRequest([
+        return try await tokenRequest([
             "grant_type": "refresh_token",
             "refresh_token": refreshToken,
             "client_id": clientID,
@@ -940,22 +1094,13 @@ private enum OpenAICodexOAuthClient {
             body: body
         )
         if response.statusCode == 429 { throw OpenAICodexOAuthError.rateLimited }
-        guard response.statusCode == 200,
-              let object = try JSONSerialization.jsonObject(with: data)
-                as? [String: Any],
-              let accessToken = object["access_token"] as? String,
-              isSafeToken(accessToken, maximumBytes: 4_096)
-        else { throw OpenAICodexOAuthError.authorizationFailed }
-        let refreshToken = object["refresh_token"] as? String
-        if let refreshToken,
-           !isSafeToken(refreshToken, maximumBytes: 4_096)
-        {
-            throw OpenAICodexOAuthError.invalidResponse
+        guard response.statusCode == 200 else {
+            throw OpenAICodexOAuthError.serviceRejected(
+                stage: "ChatGPT token exchange",
+                status: response.statusCode
+            )
         }
-        return OpenAICodexOAuthTokens(
-            accessToken: accessToken,
-            refreshToken: refreshToken
-        )
+        return try OpenAICodexOAuthWire.tokens(from: data)
     }
 
     private static func request(
@@ -977,32 +1122,35 @@ private enum OpenAICodexOAuthClient {
         request.httpMethod = "POST"
         request.httpShouldHandleCookies = false
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("NovaForge/1.0 iOS", forHTTPHeaderField: "User-Agent")
         request.httpBody = body
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCache = nil
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
         let (data, rawResponse) = try await session.data(for: request)
         guard data.count <= 128 * 1_024,
               let response = rawResponse as? HTTPURLResponse,
-              response.url == url
+              response.url?.scheme == "https",
+              response.url?.host == "auth.openai.com"
         else { throw OpenAICodexOAuthError.invalidResponse }
         return (data, response)
     }
 
-    private static func isSafeToken(
-        _ value: String,
-        maximumBytes: Int
-    ) -> Bool {
-        !value.isEmpty && value.utf8.count <= maximumBytes &&
-            value.unicodeScalars.allSatisfy {
-                !CharacterSet.controlCharacters.contains($0) &&
-                    !CharacterSet.newlines.contains($0)
-            }
+    private static func waitUntilApplicationIsActive() async throws {
+        while UIApplication.shared.applicationState != .active {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    private static func isRetryableTransport(_ error: URLError) -> Bool {
+        switch error.code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost,
+             .networkConnectionLost, .dnsLookupFailed,
+             .notConnectedToInternet, .internationalRoamingOff,
+             .callIsActive, .dataNotAllowed:
+            true
+        case .cancelled:
+            false
+        default:
+            false
+        }
     }
 
     private static func formEncode(_ value: String) -> String {

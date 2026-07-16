@@ -25,7 +25,7 @@ final class KeychainStoreTests: XCTestCase {
         assertInvalidValue { try store.save("", account: "test_account") }
         assertInvalidValue {
             try store.save(
-                String(repeating: "s", count: 4_097),
+                String(repeating: "s", count: KeychainStore.maximumSecretBytes + 1),
                 account: "test_account"
             )
         }
@@ -46,6 +46,51 @@ final class KeychainStoreTests: XCTestCase {
                     scalar.properties.generalCategory != .format
             })
         }
+    }
+
+    func testDeviceCodeParserAcceptsCurrentAndLegacyUserCodeFields() throws {
+        let current = try OpenAICodexOAuthWire.deviceCode(from: Data(
+            #"{"user_code":"NOW-123","device_auth_id":"device-current","interval":7}"#.utf8
+        ))
+        let legacy = try OpenAICodexOAuthWire.deviceCode(from: Data(
+            #"{"usercode":"OLD-456","device_auth_id":"device-legacy","interval":"9"}"#.utf8
+        ))
+
+        XCTAssertEqual(current.userCode, "NOW-123")
+        XCTAssertEqual(current.interval, .seconds(7))
+        XCTAssertEqual(legacy.userCode, "OLD-456")
+        XCTAssertEqual(legacy.interval, .seconds(9))
+    }
+
+    func testOAuthTokenParserKeepsLargeValidChatGPTTokens() throws {
+        let accessToken = "header." + String(repeating: "a", count: 12_000) + ".sig"
+        let idToken = "header." + String(repeating: "i", count: 8_000) + ".sig"
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "access_token": accessToken,
+            "refresh_token": "refresh-token",
+            "id_token": idToken,
+        ])
+
+        let tokens = try OpenAICodexOAuthWire.tokens(from: payload)
+
+        XCTAssertEqual(tokens.accessToken, accessToken)
+        XCTAssertEqual(tokens.refreshToken, "refresh-token")
+        XCTAssertEqual(tokens.idToken, idToken)
+    }
+
+    func testOAuthTokenParserRejectsOversizedOrMultilineSecrets() throws {
+        let oversized = try JSONSerialization.data(withJSONObject: [
+            "access_token": String(
+                repeating: "x",
+                count: KeychainStore.maximumSecretBytes + 1
+            ),
+        ])
+        let multiline = try JSONSerialization.data(withJSONObject: [
+            "access_token": "token\nsmuggled-header",
+        ])
+
+        XCTAssertThrowsError(try OpenAICodexOAuthWire.tokens(from: oversized))
+        XCTAssertThrowsError(try OpenAICodexOAuthWire.tokens(from: multiline))
     }
 
     private func assertInvalidAccount(

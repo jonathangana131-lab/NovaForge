@@ -46,50 +46,48 @@ struct SettingsView: View {
                     // predictable than the old segmented dashboard. Everything is
                     // reachable by normal scrolling, while advanced sheets still use
                     // native NavigationStack/List pickers.
-                    GlassGroup(spacing: 16) {
-                        LazyVStack(alignment: .leading, spacing: 16) {
-                            SettingsHero(
-                                projectName: project.name,
-                                subtitle: "Command deck // theme studio",
-                                tint: AgentPalette.primaryAccent
-                            )
-                            .accessibilityIdentifier("settingsHero")
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        SettingsHero(
+                            projectName: project.name,
+                            subtitle: "Command deck // theme studio",
+                            tint: AgentPalette.primaryAccent
+                        )
+                        .accessibilityIdentifier("settingsHero")
 
-                            SettingsCommandDeck(
-                                readinessTitle: settingsReadinessTitle,
-                                readinessDetail: settingsReadinessDetail,
-                                readinessSymbol: settingsReadinessSymbol,
-                                readinessTint: settingsReadinessTint,
-                                providerName: settings.provider.displayName,
-                                providerSymbol: settings.provider.symbol,
-                                providerTint: settings.provider.tint,
-                                modelName: modelDisplayName(settings.modelID),
-                                modelDetail: modelReadinessDetail,
-                                safetyTitle: safetyModeTitle,
-                                safetyDetail: safetyModeDetail,
-                                safetyTint: safetyModeTint,
-                                buildLabel: bundleVersionLabel,
-                                buildDetail: compactBuildDiagnosticsDetail,
-                                theme: selectedTheme
-                            )
-                            .accessibilityIdentifier("settingsCommandDeck")
+                        SettingsCommandDeck(
+                            readinessTitle: settingsReadinessTitle,
+                            readinessDetail: settingsReadinessDetail,
+                            readinessSymbol: settingsReadinessSymbol,
+                            readinessTint: settingsReadinessTint,
+                            providerName: settings.provider.displayName,
+                            providerSymbol: settings.provider.symbol,
+                            providerTint: settings.provider.tint,
+                            modelName: modelDisplayName(settings.modelID),
+                            modelDetail: modelReadinessDetail,
+                            safetyTitle: safetyModeTitle,
+                            safetyDetail: safetyModeDetail,
+                            safetyTint: safetyModeTint,
+                            buildLabel: bundleVersionLabel,
+                            buildDetail: compactBuildDiagnosticsDetail,
+                            theme: selectedTheme
+                        )
+                        .accessibilityIdentifier("settingsCommandDeck")
 
-                            providerSection
-                            modelSection
-                            presetSection
+                        providerSection
+                        modelSection
+                        presetSection
 
-                            if settings.provider == .openAICodex {
-                                codexSubscriptionSection
-                            } else if settings.provider == .local {
-                                localModelSection
-                            } else {
-                                credentialSection
-                            }
-
-                            behaviorSection
-                            diagnosticsSection
-                            appearanceSection
+                        if settings.provider == .openAICodex {
+                            codexSubscriptionSection
+                        } else if settings.provider == .local {
+                            localModelSection
+                        } else {
+                            credentialSection
                         }
+
+                        behaviorSection
+                        diagnosticsSection
+                        appearanceSection
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, controlContentTopPadding(for: geometry.safeAreaInsets.top))
@@ -141,6 +139,7 @@ struct SettingsView: View {
         }
         .onChange(of: scenePhase) {
             if scenePhase == .active {
+                codexAuth.applicationDidBecomeActive()
                 runtime.localModels.refreshStatus()
             } else {
                 flushPendingSettingsSave()

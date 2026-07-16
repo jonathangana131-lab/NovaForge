@@ -1,16 +1,32 @@
 import Foundation
 import Security
 
-enum KeychainError: Error {
+enum KeychainError: Error, LocalizedError {
     case invalidAccount
     case invalidValue
     case unexpectedStatus(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidAccount:
+            "The secure-storage account name is invalid."
+        case .invalidValue:
+            "The secure credential has an invalid size or encoding."
+        case let .unexpectedStatus(status):
+            "iOS secure storage returned status \(status)."
+        }
+    }
 }
 
 struct KeychainStore {
     private let service = "com.joey.NovaForge"
     private let maximumAccountBytes = 256
-    private let maximumSecretBytes = 4_096
+    // OAuth providers are free to grow JWT claim sets over time. The old 4 KiB
+    // ceiling was appropriate for API keys but could reject an otherwise valid
+    // ChatGPT token after the browser had already approved sign-in. Keychain
+    // generic-password data comfortably supports this bounded 32 KiB envelope.
+    static let maximumSecretBytes = 32 * 1_024
+    private let maximumSecretBytes = Self.maximumSecretBytes
 
     func read(_ account: String) throws -> String? {
         try validateAccount(account)
