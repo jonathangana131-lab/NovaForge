@@ -33,6 +33,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
+      - name: Install source-search dependency
+        run: command -v rg >/dev/null 2>&1 || brew install ripgrep
       - name: Build once, run contracts, units, and critical UI journeys
         run: bash ci/verify.sh
       - name: Upload verification diagnostics
@@ -56,6 +58,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+      - name: Install source-search dependency
+        run: command -v rg >/dev/null 2>&1 || brew install ripgrep
       - name: Run NovaForge visual census
         run: bash ci/pipeline.sh
 
@@ -69,6 +73,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
+      - name: Install source-search dependency
+        run: command -v rg >/dev/null 2>&1 || brew install ripgrep
       - name: Run every NovaForge unit and UI test
         env:
           NOVAFORGE_TEST_LANE: release
