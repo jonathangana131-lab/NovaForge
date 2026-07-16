@@ -23,7 +23,7 @@ struct AIProviderClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuthorization(to: &request, model: model)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if configuration.provider == .openRouter {
             request.setValue("NovaForge", forHTTPHeaderField: "X-Title")
@@ -79,7 +79,7 @@ struct AIProviderClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuthorization(to: &request, model: model)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if configuration.provider == .openRouter {
             request.setValue("NovaForge", forHTTPHeaderField: "X-Title")
@@ -133,7 +133,7 @@ struct AIProviderClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuthorization(to: &request, model: model)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if configuration.provider == .openRouter {
             request.setValue("NovaForge", forHTTPHeaderField: "X-Title")
@@ -187,7 +187,8 @@ struct AIProviderClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if configuration.provider != .openCodeZen,
+           !configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
         }
         if configuration.provider == .openAICodex {
@@ -235,6 +236,20 @@ struct AIProviderClient {
         if lower.hasPrefix("o") && lower.dropFirst().first?.isNumber == true { return false }
         if lower.contains("reasoning") { return false }
         return true
+    }
+
+    private func applyAuthorization(
+        to request: inout URLRequest,
+        model: String
+    ) {
+        guard configuration.provider.requiresCredential(for: model) else {
+            request.setValue(nil, forHTTPHeaderField: "Authorization")
+            return
+        }
+        request.setValue(
+            "Bearer \(configuration.apiKey)",
+            forHTTPHeaderField: "Authorization"
+        )
     }
 
     private func preparedTranscript(

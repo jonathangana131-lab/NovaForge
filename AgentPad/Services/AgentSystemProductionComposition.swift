@@ -181,13 +181,22 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
                     .credentialUnavailable
             }
         case .builtInOpenCodeZenChatCompletions:
-            do {
-                credential = try KeychainStore().read(
-                    AIProvider.openCodeZen.apiKeyAccount
-                )
-            } catch {
-                throw AgentSystemProductionCompositionError
-                    .credentialUnavailable
+            if AIProvider.openCodeZen.requiresCredential(
+                for: providerRoute.modelID.rawValue
+            ) {
+                do {
+                    credential = try KeychainStore().read(
+                        AIProvider.openCodeZen.apiKeyAccount
+                    )
+                } catch {
+                    throw AgentSystemProductionCompositionError
+                        .credentialUnavailable
+                }
+            } else {
+                // Free Zen routes reject a stale/invalid bearer value even
+                // though the same model is intentionally available without
+                // Authorization. Freeze the anonymous route explicitly.
+                credential = ""
             }
         case .builtInOpenAICodexResponses:
             do {

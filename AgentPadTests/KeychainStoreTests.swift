@@ -48,6 +48,45 @@ final class KeychainStoreTests: XCTestCase {
         }
     }
 
+    func testOnlyExplicitZenFreeRoutesCanRunWithoutCredentials() {
+        XCTAssertFalse(
+            AIProvider.openCodeZen.requiresCredential(
+                for: "mimo-v2.5-free"
+            )
+        )
+        XCTAssertFalse(
+            AIProvider.openCodeZen.requiresCredential(
+                for: " NORTH-MINI-CODE-FREE "
+            )
+        )
+        XCTAssertTrue(
+            AIProvider.openCodeZen.requiresCredential(for: "glm-5.1")
+        )
+        XCTAssertTrue(
+            AIProvider.openAI.requiresCredential(for: "gpt-5.1")
+        )
+        XCTAssertFalse(
+            AIProvider.local.requiresCredential(for: "qwen3-0.6b-q4")
+        )
+    }
+
+    @MainActor
+    func testCodexDeviceLoginForcesFreshCredentialEntry() throws {
+        let components = try XCTUnwrap(
+            URLComponents(
+                url: OpenAICodexAuthManager.verificationURL,
+                resolvingAgainstBaseURL: false
+            )
+        )
+
+        XCTAssertEqual(components.host, "auth.openai.com")
+        XCTAssertEqual(components.path, "/codex/device")
+        XCTAssertEqual(
+            components.queryItems,
+            [URLQueryItem(name: "prompt", value: "login")]
+        )
+    }
+
     func testDeviceCodeParserAcceptsCurrentAndLegacyUserCodeFields() throws {
         let current = try OpenAICodexOAuthWire.deviceCode(from: Data(
             #"{"user_code":"NOW-123","device_auth_id":"device-current","interval":7}"#.utf8

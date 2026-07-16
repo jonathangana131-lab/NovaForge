@@ -929,6 +929,18 @@ struct ChatView: View {
             )
         }
 
+        if settings.provider == .openCodeZen,
+           !settings.provider.requiresCredential(for: settings.modelID) {
+            return CleanChatEmptyState.Readiness(
+                title: "Zen Free ready",
+                detail: "This free model uses Zen's anonymous agent route, so a stale saved key cannot block it.",
+                symbol: settings.provider.symbol,
+                tint: settings.provider.tint,
+                actionTitle: nil,
+                badgeTitle: "READY"
+            )
+        }
+
         return CleanChatEmptyState.Readiness(
             title: "\(settings.provider.displayName) key saved",
             detail: "The model route is recognized. Use Check key in Control whenever you want a live provider check.",

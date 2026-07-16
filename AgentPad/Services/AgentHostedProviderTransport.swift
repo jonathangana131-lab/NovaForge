@@ -145,7 +145,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         scope: ProviderAttemptScope
     ) async throws -> AsyncThrowingStream<ProviderWireFrame, any Error> {
         try Task.checkCancellation()
-        try Self.validateCredential(credential)
+        try Self.validateCredential(credential, descriptor: descriptor)
         try Self.validateDescriptor(descriptor, against: authority)
         try Self.validateScope(scope)
         try Self.validateRequestStructure(request.body, limits: limits)
@@ -167,7 +167,8 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         guard body.count <= limits.maximumRequestBodyBytes else {
             throw AgentHostedProviderTransportError.requestBodyTooLarge
         }
-        guard body.range(of: Data(credential.utf8)) == nil else {
+        guard credential.isEmpty ||
+                body.range(of: Data(credential.utf8)) == nil else {
             throw AgentHostedProviderTransportError.credentialPresentInRequestBody
         }
 
@@ -337,7 +338,17 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         return URLSession(configuration: configuration)
     }
 
-    private static func validateCredential(_ credential: String) throws {
+    private static func validateCredential(
+        _ credential: String,
+        descriptor: ProviderAdapterDescriptor
+    ) throws {
+        if credential.isEmpty,
+           descriptor.route.provenance == .builtInOpenCodeZenChatCompletions,
+           !AIProvider.openCodeZen.requiresCredential(
+            for: descriptor.route.modelID.rawValue
+           ) {
+            return
+        }
         guard (1 ... 4_096).contains(credential.utf8.count),
               credential.unicodeScalars.allSatisfy({ (0x21 ... 0x7e).contains($0.value) })
         else {
@@ -650,7 +661,8 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                 throw AgentHostedProviderTransportError.untrustedDescriptor
             }
         }
-        guard !containsCredential(credential, in: request.body) else {
+        guard credential.isEmpty ||
+                !containsCredential(credential, in: request.body) else {
             throw AgentHostedProviderTransportError.credentialPresentInRequestBody
         }
     }
@@ -1213,7 +1225,12 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         )
         result.httpMethod = "POST"
         result.httpShouldHandleCookies = false
-        result.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+        if !credential.isEmpty {
+            result.setValue(
+                "Bearer \(credential)",
+                forHTTPHeaderField: "Authorization"
+            )
+        }
         result.setValue("application/json", forHTTPHeaderField: "Content-Type")
         result.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         if provenance == .builtInOpenAICodexResponses {
@@ -1378,6 +1395,10 @@ private struct HostedProviderCredentialEchoGuard: Sendable {
         _ frame: ProviderWireFrame,
         dialect: ProviderAdapterDialect
     ) throws {
+        // Anonymous Zen Free routes intentionally have no credential to scan.
+        // Besides avoiding pointless work, this keeps the streaming matcher
+        // from indexing an empty pattern.
+        guard !pattern.isEmpty else { return }
         switch frame {
         case let .json(value):
             try rejectCompleteCredential(in: value)

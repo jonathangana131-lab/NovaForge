@@ -1,4 +1,5 @@
 import AgentProviders
+import AuthenticationServices
 import Foundation
 import Observation
 import SwiftUI
@@ -269,6 +270,23 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     func fallbackReasoningEfforts(_ modelID: String) -> [String] {
         guard modelID.lowercased().hasPrefix("gpt-5.6") else { return [] }
         return ["none", "low", "medium", "high", "xhigh", "max"]
+    }
+
+    /// Zen's explicitly suffixed free routes are currently served without an
+    /// Authorization header. Omitting a stale saved key is important: Zen
+    /// rejects an invalid bearer token even when the same free model accepts
+    /// an anonymous request. Paid Zen routes and every other hosted provider
+    /// remain credential-gated.
+    func requiresCredential(for modelID: String) -> Bool {
+        switch self {
+        case .local:
+            false
+        case .openCodeZen:
+            !modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased().hasSuffix("-free")
+        case .openAI, .openAICodex, .openRouter, .custom:
+            true
+        }
     }
 
     /// Moving aliases can point at the same visible model as a dated or
@@ -632,13 +650,24 @@ final class OpenAICodexAuthManager {
     static let refreshTokenAccount = "oauth_openai_codex_refresh_token"
     static let idTokenAccount = "oauth_openai_codex_id_token"
     static let accountIDAccount = "oauth_openai_codex_account_id"
-    static let verificationURL = URL(
-        string: "https://auth.openai.com/codex/device"
-    )!
+    static let verificationURL: URL = {
+        var components = URLComponents(
+            string: "https://auth.openai.com/codex/device"
+        )!
+        // Force a fresh credential entry. The cached-account chooser can
+        // become inert in mobile Safari; prompt=login is forwarded by the
+        // device route and avoids trapping the user on that stale page.
+        components.queryItems = [URLQueryItem(name: "prompt", value: "login")]
+        return components.url!
+    }()
 
     private(set) var state: OpenAICodexAuthState = .signedOut
     @ObservationIgnored private var loginTask: Task<Void, Never>?
     @ObservationIgnored private let keychain = KeychainStore()
+    @ObservationIgnored private var webAuthenticationSession:
+        ASWebAuthenticationSession?
+    @ObservationIgnored private let webPresentationContext =
+        OpenAICodexWebPresentationContext()
 
     var isSignedIn: Bool {
         if case .signedIn = state { return true }
@@ -695,6 +724,8 @@ final class OpenAICodexAuthManager {
 
     func startLogin() {
         loginTask?.cancel()
+        webAuthenticationSession?.cancel()
+        webAuthenticationSession = nil
         if case .failed = state {
             refreshStoredStatus()
             if isSignedIn { return }
@@ -710,7 +741,7 @@ final class OpenAICodexAuthManager {
                     code: code.userCode,
                     expiresAt: Date().addingTimeInterval(15 * 60)
                 )
-                await UIApplication.shared.open(Self.verificationURL)
+                openVerificationPage()
                 let exchange = try await OpenAICodexOAuthClient
                     .waitForApproval(code)
                 try Task.checkCancellation()
@@ -718,6 +749,8 @@ final class OpenAICodexAuthManager {
                 let tokens = try await OpenAICodexOAuthClient
                     .exchange(exchange)
                 try persist(tokens)
+                webAuthenticationSession?.cancel()
+                webAuthenticationSession = nil
                 state = .signedIn(
                     accountID: Self.accountID(in: tokens)
                 )
@@ -731,12 +764,29 @@ final class OpenAICodexAuthManager {
     }
 
     func openVerificationPage() {
-        UIApplication.shared.open(Self.verificationURL)
+        webAuthenticationSession?.cancel()
+        let session = ASWebAuthenticationSession(
+            url: Self.verificationURL,
+            callbackURLScheme: nil
+        ) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.webAuthenticationSession = nil
+            }
+        }
+        session.presentationContextProvider = webPresentationContext
+        session.prefersEphemeralWebBrowserSession = true
+        webAuthenticationSession = session
+        if !session.start() {
+            webAuthenticationSession = nil
+            UIApplication.shared.open(Self.verificationURL)
+        }
     }
 
     func cancelLogin() {
         loginTask?.cancel()
         loginTask = nil
+        webAuthenticationSession?.cancel()
+        webAuthenticationSession = nil
         if !isSignedIn { state = .signedOut }
     }
 
@@ -839,6 +889,29 @@ final class OpenAICodexAuthManager {
             return "ChatGPT approved the sign-in, but iOS could not save it securely. Keep the iPhone unlocked and try once more."
         }
         return "ChatGPT sign-in could not finish. Try again."
+    }
+}
+
+@MainActor
+private final class OpenAICodexWebPresentationContext: NSObject,
+    ASWebAuthenticationPresentationContextProviding
+{
+    func presentationAnchor(
+        for session: ASWebAuthenticationSession
+    ) -> ASPresentationAnchor {
+        let scenes = UIApplication.shared.connectedScenes.compactMap {
+            $0 as? UIWindowScene
+        }
+        if let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) {
+            return keyWindow
+        }
+        if let window = scenes.flatMap(\.windows).first {
+            return window
+        }
+        if #available(iOS 26.0, *), let scene = scenes.first {
+            return ASPresentationAnchor(windowScene: scene)
+        }
+        return ASPresentationAnchor()
     }
 }
 

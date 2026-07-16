@@ -191,10 +191,8 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         )
         XCTAssertEqual(request.url?.absoluteString,
                        "https://opencode.ai/zen/v1/chat/completions")
-        XCTAssertEqual(
-            request.value(forHTTPHeaderField: "Authorization"),
-            "Bearer \(fixture.credential)"
-        )
+        XCTAssertTrue(fixture.credential.isEmpty)
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
         let body = try XCTUnwrap(request.httpBody)
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: body) as? [String: Any]
@@ -205,6 +203,28 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertNil(object["max_completion_tokens"])
         XCTAssertEqual(object["parallel_tool_calls"] as? Bool, false)
         XCTAssertEqual(object["tool_choice"] as? String, "auto")
+    }
+
+    func testOpenCodeZenPaidModelRejectsMissingCredentialBeforeHTTP()
+        async throws
+    {
+        let fixture = try makeZenSingleCallToolsGatewayFixture(
+            requestID: "zen-paid-missing-credential",
+            model: "glm-5.1",
+            credential: ""
+        )
+
+        do {
+            _ = try await collectAttemptEvents(
+                await fixture.gateway.streamAttempt(fixture.invocation)
+            )
+            XCTFail("A paid Zen route dispatched without a credential")
+        } catch {
+            // Expected: the transport rejects the empty credential before
+            // opening the network boundary.
+        }
+
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 0)
     }
 
     func testSingleCallToolsAuthorityRejectsAnyDefinitionSpoofBeforeHTTP()
@@ -1607,7 +1627,8 @@ private func makeSingleCallToolsGatewayFixture(
 
 private func makeZenSingleCallToolsGatewayFixture(
     requestID: String,
-    model: String
+    model: String,
+    credential: String = ""
 ) throws -> HostedGatewayFixture {
     let modelID = ProviderModelID(rawValue: model)
     let catalog = TrustedHostedProviderCatalog.openCodeZenChatCompletions(
@@ -1618,7 +1639,6 @@ private func makeZenSingleCallToolsGatewayFixture(
         adapterID: catalog.adapterID
     )
     let adapter = try catalog.providerCatalog().adapter(id: catalog.adapterID)
-    let credential = "zen-test-only-hosted-credential"
     let transport = AgentHostedProviderTransport(
         credential: credential,
         singleCallToolsCapability: capability,

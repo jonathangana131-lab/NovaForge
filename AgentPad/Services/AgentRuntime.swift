@@ -1150,7 +1150,9 @@ final class AgentRuntime {
         guard settings.provider.supportsAgentRuntime,
               settings.provider.modelOptions.contains(settings.modelID)
         else { return false }
-        if settings.provider == .local { return true }
+        if !settings.provider.requiresCredential(for: settings.modelID) {
+            return true
+        }
         #if DEBUG || targetEnvironment(simulator)
         if debugProviderCredentialOverride || !debugProviderResponses.isEmpty || debugProviderFailure != nil { return true }
         #endif
@@ -2299,7 +2301,10 @@ final class AgentRuntime {
             #else
             let hasDebugProviderOverride = false
             #endif
-            if runProvider != .local && providerConfiguration.apiKey.isEmpty && !hasDebugProviderOverride {
+            if runProvider.requiresCredential(for: runModelID) &&
+                providerConfiguration.apiKey.isEmpty &&
+                !hasDebugProviderOverride
+            {
                 let message = "\(runProvider.missingCredentialMessage) NovaForge did not fake a provider response."
                 lastError = message
                 lastFailedPrompt = currentPrompt

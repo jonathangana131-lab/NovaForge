@@ -271,6 +271,9 @@ struct SettingsView: View {
         if settings.provider == .openAICodex {
             return codexAuth.isSignedIn ? "Connected" : "Sign in"
         }
+        if !settings.provider.requiresCredential(for: settings.modelID) {
+            return "Free route"
+        }
         return apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Needed" : "Saved"
     }
 
@@ -278,6 +281,9 @@ struct SettingsView: View {
         if settings.provider == .local { return AgentPalette.green }
         if settings.provider == .openAICodex {
             return codexAuth.isSignedIn ? AgentPalette.green : AgentPalette.warning
+        }
+        if !settings.provider.requiresCredential(for: settings.modelID) {
+            return AgentPalette.green
         }
         return apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? AgentPalette.storageAccent : AgentPalette.green
     }
@@ -302,6 +308,9 @@ struct SettingsView: View {
         if settings.provider == .openAICodex {
             return codexAuth.isSignedIn ? "Ready to run" : "Sign in with ChatGPT"
         }
+        if !settings.provider.requiresCredential(for: settings.modelID) {
+            return "Ready to run"
+        }
         if settings.provider == .custom,
            let customEndpointValidationMessage {
             return customEndpointValidationMessage == Self.missingCustomEndpointMessage
@@ -319,6 +328,9 @@ struct SettingsView: View {
             return codexAuth.isSignedIn
                 ? "ChatGPT is connected · supported GPT agent runs use your eligible subscription allowance"
                 : "Connect your ChatGPT account below before starting a run"
+        }
+        if !settings.provider.requiresCredential(for: settings.modelID) {
+            return "Zen Free is live without a key · stale saved keys are ignored for this route"
         }
         if settings.provider == .custom,
            let customEndpointValidationMessage {
@@ -568,14 +580,23 @@ struct SettingsView: View {
                     }
 
                     SettingsActionButton(
-                        title: testingConnection ? "Checking" : "Check key",
+                        title: testingConnection
+                            ? "Checking"
+                            : (settings.provider.requiresCredential(
+                                for: settings.modelID
+                            ) ? "Check key" : "Check free route"),
                         symbol: testingConnection ? "hourglass" : "checkmark.shield",
                         tint: AgentPalette.green,
                         prominent: false
                     ) {
                         testConnection()
                     }
-                    .disabled(testingConnection || (settings.provider != .local && apiKey.isEmpty))
+                    .disabled(
+                        testingConnection ||
+                            (settings.provider.requiresCredential(
+                                for: settings.modelID
+                            ) && apiKey.isEmpty)
+                    )
                 }
 
                 if !savedKeyNotice.isEmpty {
@@ -596,7 +617,7 @@ struct SettingsView: View {
                             .foregroundStyle(settings.provider.tint)
                     }
                     Label(
-                        "Zen is hosted: even free models require a Zen account and key, and limited-time availability can change.",
+                        "Zen is hosted: supported free models work without a key; paid models use the saved Zen key. Free availability can change.",
                         systemImage: "cloud.fill"
                     )
                     .font(.caption)
@@ -662,8 +683,8 @@ struct SettingsView: View {
                                     .notificationOccurred(.success)
                             }
                             SettingsActionButton(
-                                title: "Open ChatGPT",
-                                symbol: "safari.fill",
+                                title: "Open private sign-in",
+                                symbol: "lock.shield.fill",
                                 tint: AgentPalette.blue,
                                 prominent: true
                             ) {
@@ -740,7 +761,7 @@ struct SettingsView: View {
         case .requestingCode:
             "Contacting OpenAI’s authorization service."
         case let .awaitingApproval(_, expiresAt):
-            "Approve in the browser. This code expires at \(expiresAt.formatted(date: .omitted, time: .shortened))."
+            "Enter the code in the private OpenAI sign-in sheet. This code expires at \(expiresAt.formatted(date: .omitted, time: .shortened))."
         case .exchanging:
             "Saving the approved credential securely."
         case let .signedIn(accountID):
@@ -1121,6 +1142,10 @@ struct SettingsView: View {
         }
 
         let hasKey = !runtime.apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if provider == .openCodeZen,
+           !provider.requiresCredential(for: settings.modelID) {
+            return ("Free ready", AgentPalette.green)
+        }
         if provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return ("URL needed", AgentPalette.warning)
         }

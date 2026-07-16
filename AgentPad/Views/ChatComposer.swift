@@ -1242,9 +1242,7 @@ private struct ComposerModelChooserSheet: View {
         case .local:
             return "iPhone 12 safe · \(localModels.status.title)"
         case .openCodeZen:
-            return readyCredentials.contains(provider)
-                ? "Key saved · free agent models available"
-                : "Free models need a Zen account key"
+            return "Free models work without a key · paid models use Zen key"
         case .openAICodex:
             return readyCredentials.contains(provider)
                 ? "ChatGPT connected · live models"
