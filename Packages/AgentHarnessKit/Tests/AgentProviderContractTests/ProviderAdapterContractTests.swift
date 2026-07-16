@@ -60,6 +60,68 @@ final class ProviderAdapterContractTests: XCTestCase {
         XCTAssertNil(body["max_completion_tokens"])
     }
 
+    func testChatGPTCodexUsesItsSubscriptionResponsesContract() throws {
+        let model = ProviderModelID(rawValue: "gpt-5.5")
+        let request = CanonicalProviderRequest(
+            requestID: "chatgpt-codex-wire",
+            model: model,
+            messages: [
+                .init(role: .system, content: [.text("System rules.")]),
+                .init(role: .developer, content: [.text("Developer rules.")]),
+                .init(role: .user, content: [.text("Hello")]),
+            ],
+            options: .init(
+                maximumOutputTokens: 4_096,
+                parallelToolCalls: false,
+                toolChoice: .auto,
+                reasoningSummary: true,
+                reasoningEffort: .xhigh
+            ),
+            metadata: .object(["trace": .string("private")])
+        )
+
+        let encoded = try OpenAICodexResponsesAdapter(model: model)
+            .encode(request)
+        let body = try XCTUnwrap(encoded.body.providerTestObject)
+
+        XCTAssertEqual(encoded.relativePath, "/codex/responses")
+        XCTAssertEqual(
+            body["instructions"],
+            .string("System rules.\n\nDeveloper rules.")
+        )
+        XCTAssertEqual(body["store"], .bool(false))
+        XCTAssertNil(body["metadata"])
+        XCTAssertNil(body["max_output_tokens"])
+        XCTAssertNil(body["temperature"])
+        XCTAssertEqual(
+            body["reasoning"],
+            .object([
+                "effort": .string("xhigh"),
+                "summary": .string("auto"),
+            ])
+        )
+        guard case let .array(input)? = body["input"] else {
+            return XCTFail("Expected ChatGPT input array")
+        }
+        XCTAssertEqual(input.count, 1)
+        guard case let .object(message) = input[0] else {
+            return XCTFail("Expected user message")
+        }
+        XCTAssertEqual(message["role"], .string("user"))
+
+        let publicBody = try XCTUnwrap(
+            OpenAIResponsesAdapter(model: model)
+                .encode(request).body.providerTestObject
+        )
+        XCTAssertEqual(publicBody["metadata"], request.metadata)
+        XCTAssertEqual(
+            publicBody["max_output_tokens"],
+            .number(.unsignedInteger(4_096))
+        )
+        XCTAssertNil(publicBody["instructions"])
+        XCTAssertNil(publicBody["store"])
+    }
+
     func testSingleToolGoldenFixturePreservesTypedArgumentsAndUsage() throws {
         try assertStreamFixture("responses_single_tool")
     }

@@ -255,19 +255,18 @@ final class OpenAIClientStreamingTests: XCTestCase {
         {
           "models": [
             {
-              "slug": "gpt-5.6-sol",
-              "display_name": "GPT-5.6 Sol",
-              "supported_reasoning_efforts": [
-                {"reasoning_effort":"low"},
-                {"reasoning_effort":"medium"},
-                {"reasoning_effort":"high"},
-                {"reasoning_effort":"xhigh"},
-                {"reasoning_effort":"max"}
+              "slug": "gpt-5.5",
+              "display_name": "GPT-5.5",
+              "supported_reasoning_levels": [
+                {"effort":"low"},
+                {"effort":"medium"},
+                {"effort":"high"},
+                {"effort":"xhigh"}
               ]
             },
             {"slug":"gpt-4o"},
             {"slug":"gpt-5.3-codex-spark"},
-            {"slug":"gpt-5.6-terra"}
+            {"slug":"codex-auto-review"}
           ]
         }
         """#.utf8)
@@ -277,11 +276,11 @@ final class OpenAIClientStreamingTests: XCTestCase {
             provider: .openAICodex
         )
 
-        XCTAssertEqual(catalog.map(\.id), ["gpt-5.6-sol", "gpt-5.6-terra"])
-        XCTAssertEqual(catalog.first?.displayName, "GPT-5.6 Sol")
+        XCTAssertEqual(catalog.map(\.id), ["gpt-5.5", "gpt-5.3-codex-spark"])
+        XCTAssertEqual(catalog.first?.displayName, "GPT-5.5")
         XCTAssertEqual(
             catalog.first?.supportedReasoningEfforts,
-            ["low", "medium", "high", "xhigh", "max"]
+            ["low", "medium", "high", "xhigh"]
         )
     }
 
@@ -292,32 +291,45 @@ final class OpenAIClientStreamingTests: XCTestCase {
         defer { store.clear(provider: .openAICodex) }
         let entries = store.entries(for: .openAICodex)
         XCTAssertEqual(
-            Array(entries.prefix(3).map(\.id)),
-            ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+            entries.map(\.id),
+            ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]
         )
-        XCTAssertEqual(
-            entries.filter { $0.displayName == "GPT-5.6 Sol" }.count,
-            1,
-            "The moving GPT-5.6 alias and concrete Sol slug must be one visible choice."
-        )
-        XCTAssertFalse(
-            entries.contains {
-                $0.id.localizedCaseInsensitiveContains("codex")
-            }
-        )
-
-        XCTAssertEqual(entries.first?.displayName, "GPT-5.6 Sol")
+        XCTAssertEqual(entries.first?.displayName, "GPT-5.5")
         XCTAssertEqual(
             entries.first?.supportedReasoningEfforts,
-            ["none", "low", "medium", "high", "xhigh", "max"]
+            ["low", "medium", "high", "xhigh"]
         )
         XCTAssertEqual(
             store.displayName(
                 for: .openAICodex,
-                modelID: "gpt-5.6-terra"
+                modelID: "gpt-5.3-codex-spark"
             ),
-            "GPT-5.6 Terra"
+            "GPT-5.3 Codex Spark"
         )
+    }
+
+    func testChatGPTCatalogURLCarriesSemanticClientVersion() throws {
+        let configuration = ProviderConfiguration(
+            provider: .openAICodex,
+            modelID: AIProvider.openAICodex.defaultModel,
+            apiKey: "token",
+            customChatCompletionsURL: ""
+        )
+        let components = try XCTUnwrap(configuration.modelsURL).appendingPathComponent("")
+        let query = try XCTUnwrap(
+            URLComponents(
+                url: components,
+                resolvingAgainstBaseURL: false
+            )
+        ).queryItems
+        let version = try XCTUnwrap(
+            query?.first(where: { $0.name == "client_version" })?.value
+        )
+
+        XCTAssertTrue(version.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression) != nil)
+        XCTAssertEqual(AIProvider.normalizedChatGPTClientVersion("1.0"), "1.0.0")
+        XCTAssertEqual(AIProvider.normalizedChatGPTClientVersion("2.4.7-beta"), "2.4.7")
+        XCTAssertEqual(AIProvider.normalizedChatGPTClientVersion("bad"), "1.0.0")
     }
 
     func testOpenAIModelCatalogParsesDataShapeAndRejectsUnsafeIDs() throws {

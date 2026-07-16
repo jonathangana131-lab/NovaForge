@@ -342,6 +342,10 @@ struct AppRootView: View {
                 await runRootLaunchTasks()
                 presentPendingArtifactShortcutIfAvailable()
             }
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                guard phase == .active else { return }
+                OpenAICodexAuthManager.shared.applicationDidBecomeActive()
+            }
             .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.openTab)) { note in
                 guard let raw = note.userInfo?[NovaForgeIntentSignal.tabKey] as? String,
                       let tab = AppTab.resolve(raw) else { return }
@@ -796,6 +800,14 @@ struct AppRootView: View {
             runtime.localModels.select(LocalModelCatalog.defaultVariant)
             runtime.localModels.debugOverrideStatusForUITest(.ready)
             saveRootLaunchState("settings local model ready fixture")
+        }
+        if arguments.contains("--settings-chatgpt-device-code"),
+           let settings {
+            selectedTab = .settings
+            settings.provider = .openAICodex
+            settings.modelID = AIProvider.openAICodex.defaultModel
+            settings.updatedAt = Date()
+            saveRootLaunchState("ChatGPT device code fixture")
         }
         if arguments.contains("--debug-provider-list-ready"),
            let settings {

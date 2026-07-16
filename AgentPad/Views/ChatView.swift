@@ -1857,7 +1857,7 @@ struct ChatView: View {
                 .zIndex(10)
             }
         }
-        .toolbar((keyboard.isVisible || showingChatDrawer) ? .hidden : .visible, for: .tabBar)
+        .toolbar(showingChatDrawer ? .hidden : .visible, for: .tabBar)
         .onChange(of: projectResumeDraftRevision) {
             applyProjectResumeDraftIfNeeded(focusComposer: true)
         }

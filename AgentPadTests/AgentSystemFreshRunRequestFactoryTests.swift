@@ -32,7 +32,7 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         super.tearDown()
     }
 
-    func testChatGPTReasoningEffortIsBoundAndUltraCodeEscalatesToMax() throws {
+    func testChatGPTReasoningEffortIsBoundAndUltraCodeUsesMaximumSupportedEffort() throws {
         let preferences = AgentRunPreferenceStore.shared
         let previousEffort = preferences.reasoningEffort
         let previousMode = preferences.orchestrationMode
@@ -44,7 +44,7 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         let conversation = Conversation(title: "Reasoning")
         let settings = AgentSettings(
             provider: .openAICodex,
-            modelID: "gpt-5.6-sol",
+            modelID: "gpt-5.5",
             activeWorkspaceName: "ReasoningFactory",
             temperature: 1.7
         )
@@ -77,7 +77,11 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
             workspace: workspace,
             settings: settings
         )
-        XCTAssertEqual(ultraCode.plan.providerOptions.reasoningEffort, .max)
+        XCTAssertEqual(
+            ultraCode.plan.providerOptions.reasoningEffort,
+            .xhigh,
+            "UltraCode should use the live model's deepest supported effort instead of sending an invalid max value."
+        )
         guard case let .send(ultraSend) = ultraCode.command.payload else {
             return XCTFail("Expected send")
         }

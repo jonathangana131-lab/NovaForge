@@ -1270,11 +1270,11 @@ final class AgentPadUITests: XCTestCase {
         pickerButton.tap()
 
         XCTAssertTrue(app.staticTexts["Choose Model"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["GPT-5.6 Sol"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["GPT-5.5"].waitForExistence(timeout: 5))
         let settingsModelSearch = app.textFields["Search models"]
         XCTAssertTrue(settingsModelSearch.waitForExistence(timeout: 5))
         settingsModelSearch.tap()
-        settingsModelSearch.typeText("5.6")
+        settingsModelSearch.typeText("5.5")
         let settingsClear = app.buttons["settingsModelSearchClearButton"]
         XCTAssertTrue(settingsClear.waitForExistence(timeout: 5))
         assertMinimumTouchTarget(settingsClear, named: "settings model search clear")
@@ -1332,6 +1332,44 @@ final class AgentPadUITests: XCTestCase {
         capture("39-chat-chatgpt-subscription-route", app: app)
     }
 
+    func testChatGPTDeviceCodeIsVisibleBeforeSafariHandoff() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-ui",
+            "--settings-chatgpt-device-code",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
+        let subscriptionHeading = app.staticTexts.containing(
+            NSPredicate(
+                format: "label CONTAINS[c] %@",
+                "ChatGPT subscription"
+            )
+        ).firstMatch
+        for _ in 0 ..< 7 where !subscriptionHeading.isHittable { app.swipeUp() }
+        XCTAssertTrue(
+            subscriptionHeading.exists && subscriptionHeading.isHittable,
+            "ChatGPT authorization must be directly reachable below its model."
+        )
+        let codeText = app.staticTexts["TEST-CODE"]
+        capture("38b-settings-chatgpt-device-code-visible", app: app)
+        XCTAssertTrue(
+            codeText.waitForExistence(timeout: 5),
+            "The one-time code must appear in NovaForge before any browser covers it."
+        )
+        XCTAssertEqual(codeText.label, "TEST-CODE")
+        XCTAssertTrue(
+            app.buttons["Copy code & open Safari"].waitForExistence(timeout: 3)
+        )
+        XCTAssertTrue(
+            app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "code is copied")
+            ).firstMatch.exists
+        )
+        XCTAssertTrue(app.buttons["Cancel"].exists)
+    }
+
     func testComposerModelMenuUsesNativeGlassChooser() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
@@ -1371,7 +1409,7 @@ final class AgentPadUITests: XCTestCase {
         composerModelButton.tap()
 
         XCTAssertTrue(
-            app.buttons["composerModel-gpt-5.6-sol"].firstMatch.waitForExistence(timeout: 5),
+            app.buttons["composerModel-gpt-5.5"].firstMatch.waitForExistence(timeout: 5),
             "Repaired OpenAI state should show the current default OpenAI model in the native composer menu."
         )
         XCTAssertFalse(app.staticTexts["Switch model"].exists, "Composer provider switching should not bring back the old custom model sheet.")
@@ -1379,7 +1417,7 @@ final class AgentPadUITests: XCTestCase {
         let chatGPTProvider = app.buttons["composerProvider-openAICodex"].firstMatch
         XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
         chatGPTProvider.tap()
-        XCTAssertTrue(app.buttons["composerModel-gpt-5.6-sol"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composerModel-gpt-5.5"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
         XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
         XCTAssertTrue(composerModelButton.label.contains("ChatGPT"), "Selecting ChatGPT should update the compact composer label immediately.")
@@ -1408,7 +1446,7 @@ final class AgentPadUITests: XCTestCase {
         let chatGPTProvider = app.buttons["composerProvider-openAICodex"]
         XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
         chatGPTProvider.tap()
-        XCTAssertTrue(app.buttons["composerModel-gpt-5.6-sol"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composerModel-gpt-5.5"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
 
         let reasoningButton = app.buttons["composerReasoningPickerButton"]
@@ -2510,7 +2548,7 @@ final class AgentPadUITests: XCTestCase {
 
         for tab in ["Forge", "Workspace", "History", "Control"] {
             let tabButton = app.tabBars.buttons[tab]
-            XCTAssertTrue(tabButton.waitForExistence(timeout: 5), "\(tab) tab should keep its compact label visible on iPhone 12 before the keyboard intentionally hides the tab dock.")
+            XCTAssertTrue(tabButton.waitForExistence(timeout: 5), "\(tab) tab should keep its compact label visible on iPhone 12.")
             assertMinimumTouchTarget(tabButton, named: "\(tab) tab")
             XCTAssertFalse(tabButton.label.contains("..."), "\(tab) tab label should be intentionally compact, not ellipsized.")
         }
@@ -3302,8 +3340,19 @@ final class AgentPadUITests: XCTestCase {
         }
 
         let tabBar = app.tabBars.firstMatch
-        if tabBar.exists {
-            XCTAssertFalse(tabBar.isHittable, "Bottom tab bar should not remain tappable over the keyboard/composer stack.")
+        XCTAssertTrue(
+            tabBar.waitForExistence(timeout: 3),
+            "The four-tab dock must remain visible while typing."
+        )
+        XCTAssertTrue(
+            tabBar.isHittable,
+            "The keyboard must not strand the user in Forge by disabling the dock."
+        )
+        for tab in ["Forge", "Workspace", "History", "Control"] {
+            XCTAssertTrue(
+                tabBar.buttons[tab].waitForExistence(timeout: 2),
+                "\(tab) should remain reachable while the composer is focused."
+            )
         }
     }
 

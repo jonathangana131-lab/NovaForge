@@ -1,5 +1,4 @@
 import AgentProviders
-import AuthenticationServices
 import Foundation
 import Observation
 import SwiftUI
@@ -144,17 +143,26 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     var modelsURL: URL? {
         switch self {
         case .local:
-            nil
+            return nil
         case .openAI:
-            URL(string: "https://api.openai.com/v1/models")
+            return URL(string: "https://api.openai.com/v1/models")
         case .openAICodex:
-            URL(string: "https://chatgpt.com/backend-api/codex/models")
+            var components = URLComponents(
+                string: "https://chatgpt.com/backend-api/codex/models"
+            )
+            components?.queryItems = [
+                URLQueryItem(
+                    name: "client_version",
+                    value: Self.chatGPTClientVersion
+                ),
+            ]
+            return components?.url
         case .openRouter:
-            URL(string: "https://openrouter.ai/api/v1/models")
+            return URL(string: "https://openrouter.ai/api/v1/models")
         case .openCodeZen:
-            URL(string: "https://opencode.ai/zen/v1/models")
+            return URL(string: "https://opencode.ai/zen/v1/models")
         case .custom:
-            nil
+            return nil
         }
     }
 
@@ -164,10 +172,6 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
             LocalModelCatalog.all.map(\.id)
         case .openAI:
             [
-                "gpt-5.6-sol",
-                "gpt-5.6",
-                "gpt-5.6-terra",
-                "gpt-5.6-luna",
                 "gpt-5.5",
                 "gpt-5.4",
                 "gpt-5.4-mini",
@@ -183,13 +187,10 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
             ]
         case .openAICodex:
             [
-                "gpt-5.6-sol",
-                "gpt-5.6",
-                "gpt-5.6-terra",
-                "gpt-5.6-luna",
                 "gpt-5.5",
                 "gpt-5.4",
                 "gpt-5.4-mini",
+                "gpt-5.3-codex-spark",
             ]
         case .openRouter:
             [
@@ -244,32 +245,34 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
 
     func modelDisplayName(_ modelID: String) -> String {
         switch modelID.lowercased() {
-        case "gpt-5.6", "gpt-5.6-sol": "GPT-5.6 Sol"
-        case "gpt-5.6-terra": "GPT-5.6 Terra"
-        case "gpt-5.6-luna": "GPT-5.6 Luna"
         case "gpt-5.5": "GPT-5.5"
         case "gpt-5.4": "GPT-5.4"
         case "gpt-5.4-mini": "GPT-5.4 Mini"
+        case "gpt-5.3-codex-spark": "GPT-5.3 Codex Spark"
         default: modelID
         }
     }
 
     func modelDetail(_ modelID: String) -> String? {
         switch modelID.lowercased() {
-        case "gpt-5.6", "gpt-5.6-sol":
-            "Flagship · complex coding and reasoning"
-        case "gpt-5.6-terra":
-            "Balanced intelligence and speed"
-        case "gpt-5.6-luna":
-            "Fastest GPT-5.6 option"
+        case "gpt-5.5":
+            "Frontier coding, research, and agent work"
+        case "gpt-5.4":
+            "Deep coding and reasoning"
+        case "gpt-5.4-mini":
+            "Faster everyday agent work"
+        case "gpt-5.3-codex-spark":
+            "Fast Codex coding model"
         default:
             nil
         }
     }
 
     func fallbackReasoningEfforts(_ modelID: String) -> [String] {
-        guard modelID.lowercased().hasPrefix("gpt-5.6") else { return [] }
-        return ["none", "low", "medium", "high", "xhigh", "max"]
+        guard self == .openAICodex, modelOptions.contains(modelID) else {
+            return []
+        }
+        return ["low", "medium", "high", "xhigh"]
     }
 
     /// Zen's explicitly suffixed free routes are currently served without an
@@ -289,18 +292,37 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
-    /// Moving aliases can point at the same visible model as a dated or
-    /// concrete slug. Keep the route ID intact for requests, but collapse the
-    /// duplicate in pickers so people never see two identically named rows.
     func visibleModelIdentity(_ modelID: String) -> String {
-        let normalized = modelID
+        modelID
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if self == .openAI || self == .openAICodex,
-           normalized == "gpt-5.6" || normalized == "gpt-5.6-sol" {
-            return "gpt-5.6-sol"
+    }
+
+    static func normalizedChatGPTClientVersion(_ rawValue: String?) -> String {
+        guard let rawValue else { return "1.0.0" }
+        let parts = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ".", omittingEmptySubsequences: false)
+        guard !parts.isEmpty else { return "1.0.0" }
+
+        var normalized: [String] = []
+        for part in parts.prefix(3) {
+            let digits = part.prefix { $0.isNumber }
+            guard !digits.isEmpty, let value = UInt16(digits) else {
+                return "1.0.0"
+            }
+            normalized.append(String(value))
         }
-        return normalized
+        while normalized.count < 3 { normalized.append("0") }
+        return normalized.joined(separator: ".")
+    }
+
+    private static var chatGPTClientVersion: String {
+        normalizedChatGPTClientVersion(
+            Bundle.main.object(
+                forInfoDictionaryKey: "CFBundleShortVersionString"
+            ) as? String
+        )
     }
 }
 
@@ -476,11 +498,7 @@ final class ProviderModelCatalogStore {
         for entry in entries {
             let identity = provider.visibleModelIdentity(entry.id)
             if let position = positions[identity] {
-                // Prefer the concrete Sol slug when both it and the moving
-                // gpt-5.6 alias are returned by the same account catalog.
-                if entry.id.lowercased() == identity {
-                    result[position] = entry
-                }
+                if entry.id.lowercased() == identity { result[position] = entry }
                 continue
             }
             positions[identity] = result.count
@@ -657,17 +675,19 @@ final class OpenAICodexAuthManager {
         // Force a fresh credential entry. The cached-account chooser can
         // become inert in mobile Safari; prompt=login is forwarded by the
         // device route and avoids trapping the user on that stale page.
-        components.queryItems = [URLQueryItem(name: "prompt", value: "login")]
+        components.queryItems = [
+            URLQueryItem(name: "prompt", value: "login"),
+            URLQueryItem(name: "max_age", value: "0"),
+        ]
         return components.url!
     }()
 
     private(set) var state: OpenAICodexAuthState = .signedOut
     @ObservationIgnored private var loginTask: Task<Void, Never>?
     @ObservationIgnored private let keychain = KeychainStore()
-    @ObservationIgnored private var webAuthenticationSession:
-        ASWebAuthenticationSession?
-    @ObservationIgnored private let webPresentationContext =
-        OpenAICodexWebPresentationContext()
+    #if DEBUG || targetEnvironment(simulator)
+    @ObservationIgnored private var deviceCodeFixtureActive = false
+    #endif
 
     var isSignedIn: Bool {
         if case .signedIn = state { return true }
@@ -688,6 +708,9 @@ final class OpenAICodexAuthManager {
     }
 
     func refreshStoredStatus() {
+        #if DEBUG || targetEnvironment(simulator)
+        guard !deviceCodeFixtureActive else { return }
+        #endif
         guard let accessToken = try? keychain.read(Self.accessTokenAccount),
               !accessToken.isEmpty
         else {
@@ -718,14 +741,19 @@ final class OpenAICodexAuthManager {
     /// attempt re-reads the Keychain so a successfully committed token can
     /// recover without asking the user to authorize a second time.
     func applicationDidBecomeActive() {
-        guard loginTask == nil else { return }
+        // Do not let a foreground notification erase a device code that the
+        // user still needs to enter. A live attempt normally owns loginTask,
+        // while previews and UI-test fixtures intentionally model the same
+        // awaiting-approval state without a polling task.
+        guard loginTask == nil, !state.isWorking else { return }
         refreshStoredStatus()
     }
 
     func startLogin() {
+        #if DEBUG || targetEnvironment(simulator)
+        deviceCodeFixtureActive = false
+        #endif
         loginTask?.cancel()
-        webAuthenticationSession?.cancel()
-        webAuthenticationSession = nil
         if case .failed = state {
             refreshStoredStatus()
             if isSignedIn { return }
@@ -741,7 +769,9 @@ final class OpenAICodexAuthManager {
                     code: code.userCode,
                     expiresAt: Date().addingTimeInterval(15 * 60)
                 )
-                openVerificationPage()
+                // The browser covers NovaForge on iPhone, so make the code
+                // available before the user chooses to leave this screen.
+                UIPasteboard.general.string = code.userCode
                 let exchange = try await OpenAICodexOAuthClient
                     .waitForApproval(code)
                 try Task.checkCancellation()
@@ -749,8 +779,6 @@ final class OpenAICodexAuthManager {
                 let tokens = try await OpenAICodexOAuthClient
                     .exchange(exchange)
                 try persist(tokens)
-                webAuthenticationSession?.cancel()
-                webAuthenticationSession = nil
                 state = .signedIn(
                     accountID: Self.accountID(in: tokens)
                 )
@@ -764,29 +792,20 @@ final class OpenAICodexAuthManager {
     }
 
     func openVerificationPage() {
-        webAuthenticationSession?.cancel()
-        let session = ASWebAuthenticationSession(
-            url: Self.verificationURL,
-            callbackURLScheme: nil
-        ) { [weak self] _, _ in
-            Task { @MainActor [weak self] in
-                self?.webAuthenticationSession = nil
-            }
+        if let userCode {
+            UIPasteboard.general.string = userCode
         }
-        session.presentationContextProvider = webPresentationContext
-        session.prefersEphemeralWebBrowserSession = true
-        webAuthenticationSession = session
-        if !session.start() {
-            webAuthenticationSession = nil
-            UIApplication.shared.open(Self.verificationURL)
-        }
+        // Device authorization has no callback. Full Safari avoids the inert
+        // cached-account chooser seen in the embedded authentication sheet.
+        UIApplication.shared.open(Self.verificationURL)
     }
 
     func cancelLogin() {
+        #if DEBUG || targetEnvironment(simulator)
+        deviceCodeFixtureActive = false
+        #endif
         loginTask?.cancel()
         loginTask = nil
-        webAuthenticationSession?.cancel()
-        webAuthenticationSession = nil
         if !isSignedIn { state = .signedOut }
     }
 
@@ -799,6 +818,19 @@ final class OpenAICodexAuthManager {
         ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
         state = .signedOut
     }
+
+    #if DEBUG || targetEnvironment(simulator)
+    func installDeviceCodeFixture(_ code: String) {
+        loginTask?.cancel()
+        loginTask = nil
+        deviceCodeFixtureActive = true
+        state = .awaitingApproval(
+            code: code,
+            expiresAt: Date().addingTimeInterval(15 * 60)
+        )
+        UIPasteboard.general.string = code
+    }
+    #endif
 
     private func refresh(refreshToken: String) {
         guard loginTask == nil else { return }
@@ -889,29 +921,6 @@ final class OpenAICodexAuthManager {
             return "ChatGPT approved the sign-in, but iOS could not save it securely. Keep the iPhone unlocked and try once more."
         }
         return "ChatGPT sign-in could not finish. Try again."
-    }
-}
-
-@MainActor
-private final class OpenAICodexWebPresentationContext: NSObject,
-    ASWebAuthenticationPresentationContextProviding
-{
-    func presentationAnchor(
-        for session: ASWebAuthenticationSession
-    ) -> ASPresentationAnchor {
-        let scenes = UIApplication.shared.connectedScenes.compactMap {
-            $0 as? UIWindowScene
-        }
-        if let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) {
-            return keyWindow
-        }
-        if let window = scenes.flatMap(\.windows).first {
-            return window
-        }
-        if #available(iOS 26.0, *), let scene = scenes.first {
-            return ASPresentationAnchor(windowScene: scene)
-        }
-        return ASPresentationAnchor()
     }
 }
 

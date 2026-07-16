@@ -334,6 +334,7 @@ enum ProviderModelCatalogParser {
                         model["supported_reasoning_efforts"]
                             ?? model["supportedReasoningEfforts"]
                             ?? model["reasoning_efforts"]
+                            ?? model["supported_reasoning_levels"]
                     )
                 )
             )
@@ -388,7 +389,7 @@ enum ProviderModelCatalogParser {
 
     private static func isSupportedChatGPTModelID(_ value: String) -> Bool {
         let lower = value.lowercased()
-        return lower.hasPrefix("gpt-5") && !lower.contains("codex")
+        return lower.hasPrefix("gpt-5") && !lower.contains("auto-review")
     }
 }
 

@@ -534,12 +534,26 @@ private enum ProviderRequestEncoder {
     ) throws -> ProviderEncodedRequest {
         try validate(request, descriptor: descriptor)
 
+        let isChatGPTCodex = descriptor.route.provenance ==
+            .builtInOpenAICodexResponses
+        let inputMessages = isChatGPTCodex
+            ? request.messages.filter {
+                $0.role != .system && $0.role != .developer
+            }
+            : request.messages
         var body: [String: JSONValue] = [
             "model": .string(request.model.rawValue),
-            "input": .array(try request.messages.flatMap(responsesInputs)),
+            "input": .array(try inputMessages.flatMap(responsesInputs)),
             "stream": .bool(true),
-            "metadata": request.metadata,
         ]
+        if isChatGPTCodex {
+            body["store"] = .bool(false)
+            if let instructions = try responsesInstructions(request.messages) {
+                body["instructions"] = .string(instructions)
+            }
+        } else {
+            body["metadata"] = request.metadata
+        }
         if !request.tools.isEmpty {
             body["tools"] = .array(request.tools.map { tool in
                 .object([
@@ -552,7 +566,8 @@ private enum ProviderRequestEncoder {
             })
             body["tool_choice"] = responsesToolChoice(request.options.toolChoice)
         }
-        if let maximum = request.options.maximumOutputTokens {
+        if !isChatGPTCodex,
+           let maximum = request.options.maximumOutputTokens {
             body["max_output_tokens"] = .number(.unsignedInteger(maximum))
         }
         if let temperature = request.options.temperature {
@@ -578,6 +593,37 @@ private enum ProviderRequestEncoder {
             body["previous_response_id"] = .string(previousResponseID)
         }
         return ProviderEncodedRequest(relativePath: descriptor.requestPath, body: .object(body))
+    }
+
+    private static func responsesInstructions(
+        _ messages: [ProviderMessage]
+    ) throws -> String? {
+        let instructionMessages = messages.filter {
+            $0.role == .system || $0.role == .developer
+        }
+        guard !instructionMessages.isEmpty else { return nil }
+
+        var sections: [String] = []
+        for message in instructionMessages {
+            for part in message.content {
+                switch part {
+                case let .text(text):
+                    sections.append(text)
+                case let .structured(value):
+                    sections.append(try canonicalJSONString(value))
+                case .image, .toolCall:
+                    throw EncodingError.invalidValue(
+                        part,
+                        .init(
+                            codingPath: [],
+                            debugDescription: "ChatGPT instructions must be text or structured JSON."
+                        )
+                    )
+                }
+            }
+        }
+        let joined = sections.joined(separator: "\n\n")
+        return joined.isEmpty ? nil : joined
     }
 
     private static func validate(

@@ -83,7 +83,10 @@ final class KeychainStoreTests: XCTestCase {
         XCTAssertEqual(components.path, "/codex/device")
         XCTAssertEqual(
             components.queryItems,
-            [URLQueryItem(name: "prompt", value: "login")]
+            [
+                URLQueryItem(name: "prompt", value: "login"),
+                URLQueryItem(name: "max_age", value: "0"),
+            ]
         )
     }
 

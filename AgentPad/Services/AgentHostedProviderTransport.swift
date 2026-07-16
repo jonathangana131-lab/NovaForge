@@ -856,17 +856,34 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         _ body: [String: JSONValue],
         descriptor: ProviderAdapterDescriptor
     ) throws {
+        let isChatGPTCodex = descriptor.route.provenance ==
+            .builtInOpenAICodexResponses
         let allowedKeys: Set<String> = [
-            "input", "max_output_tokens", "metadata", "model",
+            "input", "instructions", "max_output_tokens", "metadata", "model",
             "parallel_tool_calls", "previous_response_id", "prompt_cache_key",
             "reasoning", "store", "stream", "temperature", "tool_choice",
             "tools",
         ]
+        let metadataIsValid = isChatGPTCodex
+            ? body["metadata"] == nil
+            : body["metadata"].map {
+                if case .object = $0 { true } else { false }
+            } == true
+        let storeIsValid = isChatGPTCodex
+            ? body["store"] == .bool(false)
+            : body["store"] == nil || body["store"] == .bool(false)
+        let outputLimitIsValid = !isChatGPTCodex ||
+            body["max_output_tokens"] == nil
+        let instructionsAreValid = isChatGPTCodex
+            ? validCodexInstructions(body["instructions"])
+            : body["instructions"] == nil
         guard body.keys.allSatisfy(allowedKeys.contains),
               body["parallel_tool_calls"] == .bool(false),
               body["tool_choice"] == .string("auto"),
-              body["store"] == nil || body["store"] == .bool(false),
-              case .object? = body["metadata"],
+              storeIsValid,
+              metadataIsValid,
+              outputLimitIsValid,
+              instructionsAreValid,
               case let .array(input)? = body["input"],
               !input.isEmpty,
               case let .array(tools)? = body["tools"],
@@ -894,11 +911,13 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
             }
             switch type {
             case "message":
+                let allowedRoles = isChatGPTCodex
+                    ? ["assistant", "user"]
+                    : ["assistant", "developer", "system", "user"]
                 guard pendingCallID == nil,
                       Set(item.keys) == Set(["content", "role", "type"]),
                       case let .string(role)? = item["role"],
-                      ["assistant", "developer", "system", "user"]
-                        .contains(role),
+                      allowedRoles.contains(role),
                       case let .array(content)? = item["content"],
                       !content.isEmpty
                 else {
@@ -1041,19 +1060,32 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         _ body: [String: JSONValue],
         descriptor: ProviderAdapterDescriptor
     ) throws {
+        let isChatGPTCodex = descriptor.route.provenance ==
+            .builtInOpenAICodexResponses
         let allowedKeys: Set<String> = [
-            "input", "max_output_tokens", "metadata", "model",
-            "prompt_cache_key", "stream", "temperature",
+            "input", "instructions", "max_output_tokens", "metadata", "model",
+            "prompt_cache_key", "reasoning", "store", "stream", "temperature",
         ]
-        guard let metadata = body["metadata"],
-              let inputValue = body["input"]
-        else {
-            throw AgentHostedProviderTransportError.invalidRequestEnvelope
-        }
+        let metadataIsValid = isChatGPTCodex
+            ? body["metadata"] == nil
+            : body["metadata"].map {
+                if case .object = $0 { true } else { false }
+            } == true
+        let storeIsValid = isChatGPTCodex
+            ? body["store"] == .bool(false)
+            : body["store"] == nil
+        let outputLimitIsValid = !isChatGPTCodex ||
+            body["max_output_tokens"] == nil
+        let instructionsAreValid = isChatGPTCodex
+            ? validCodexInstructions(body["instructions"])
+            : body["instructions"] == nil
         guard body["previous_response_id"] == nil,
               body.keys.allSatisfy(allowedKeys.contains),
-              case .object = metadata,
-              case let .array(items) = inputValue,
+              metadataIsValid,
+              storeIsValid,
+              outputLimitIsValid,
+              instructionsAreValid,
+              case let .array(items)? = body["input"],
               !items.isEmpty
         else {
             throw AgentHostedProviderTransportError.invalidRequestEnvelope
@@ -1064,7 +1096,9 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
             maximumOutputTokens: descriptor.route.capabilities.maximumOutputTokens
         )
 
-        let allowedRoles: Set<String> = ["assistant", "developer", "system", "user"]
+        let allowedRoles: Set<String> = isChatGPTCodex
+            ? ["assistant", "user"]
+            : ["assistant", "developer", "system", "user"]
         for value in items {
             guard case let .object(item) = value,
                   let roleValue = item["role"],
@@ -1143,6 +1177,14 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         } else if body["prompt_cache_key"] != nil {
             throw AgentHostedProviderTransportError.invalidRequestEnvelope
         }
+    }
+
+    private static func validCodexInstructions(_ value: JSONValue?) -> Bool {
+        guard let value else { return true }
+        guard case let .string(instructions) = value else { return false }
+        return !instructions.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty && instructions.utf8.count <= 1_000_000
     }
 
     private static func containsToolDispatchMaterial(_ value: JSONValue) -> Bool {

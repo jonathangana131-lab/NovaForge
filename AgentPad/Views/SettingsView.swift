@@ -75,7 +75,6 @@ struct SettingsView: View {
 
                         providerSection
                         modelSection
-                        presetSection
 
                         if settings.provider == .openAICodex {
                             codexSubscriptionSection
@@ -85,6 +84,7 @@ struct SettingsView: View {
                             credentialSection
                         }
 
+                        presetSection
                         behaviorSection
                         diagnosticsSection
                         appearanceSection
@@ -670,6 +670,7 @@ struct SettingsView: View {
                             .font(.system(.title2, design: .monospaced, weight: .bold))
                             .textSelection(.enabled)
                             .foregroundStyle(AIProvider.openAICodex.tint)
+                            .accessibilityIdentifier("codexDeviceCode")
 
                         HStack(spacing: 8) {
                             SettingsActionButton(
@@ -683,13 +684,14 @@ struct SettingsView: View {
                                     .notificationOccurred(.success)
                             }
                             SettingsActionButton(
-                                title: "Open private sign-in",
-                                symbol: "lock.shield.fill",
+                                title: "Copy code & open Safari",
+                                symbol: "safari.fill",
                                 tint: AgentPalette.blue,
                                 prominent: true
                             ) {
                                 codexAuth.openVerificationPage()
                             }
+                            .accessibilityIdentifier("codexCopyCodeButton")
                         }
                     }
                     .padding(14)
@@ -761,7 +763,7 @@ struct SettingsView: View {
         case .requestingCode:
             "Contacting OpenAI’s authorization service."
         case let .awaitingApproval(_, expiresAt):
-            "Enter the code in the private OpenAI sign-in sheet. This code expires at \(expiresAt.formatted(date: .omitted, time: .shortened))."
+            "The code is copied. Open Safari, paste it into OpenAI, then return here. It expires at \(expiresAt.formatted(date: .omitted, time: .shortened))."
         case .exchanging:
             "Saving the approved credential securely."
         case let .signedIn(accountID):
@@ -1207,6 +1209,9 @@ struct SettingsView: View {
         }
 
         #if DEBUG || targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--settings-chatgpt-device-code") {
+            codexAuth.installDeviceCodeFixture("TEST-CODE")
+        }
         if ProcessInfo.processInfo.arguments.contains("--open-model-picker-demo"), !didPresentModelPickerDemo {
             didPresentModelPickerDemo = true
             Task { @MainActor in
