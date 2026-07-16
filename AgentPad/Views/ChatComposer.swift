@@ -91,11 +91,21 @@ struct ComposerReasoningControl: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
             .frame(minWidth: 88, minHeight: AgentDesign.minimumTouchTarget)
-            .agentControlSurface(
+            .agentGlass(
                 radius: AgentDesign.minimumTouchTarget / 2,
-                tint: tint.opacity(0.11),
-                selected: preferences.orchestrationMode == .ultraCode,
-                nativeGlass: true
+                interactive: true,
+                tint: tint.opacity(
+                    preferences.orchestrationMode == .ultraCode ? 0.18 : 0.08
+                )
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        tint.opacity(
+                            preferences.orchestrationMode == .ultraCode ? 0.42 : 0.16
+                        ),
+                        lineWidth: 0.65
+                    )
             )
             .agentGlassEffectID("composer-reasoning", in: glassNamespace)
         }
@@ -184,7 +194,6 @@ private struct ComposerReasoningPicker: View {
             }
             .padding(14)
         }
-        .accessibilityIdentifier("composerReasoningPicker")
     }
 
     private var activeTint: Color {
@@ -208,81 +217,132 @@ private struct ComposerReasoningPicker: View {
     }
 
     private var reasoningSlider: some View {
-        ZStack(alignment: .top) {
-            UltraCodePowerRipple(active: selection == .ultraCode)
-                .frame(height: 46)
+        GeometryReader { geometry in
+            let levels = Level.allCases
+            let segmentWidth = geometry.size.width / CGFloat(levels.count)
 
-            Capsule(style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: selection == .ultraCode
-                            ? [provider.tint, AgentPalette.lilac, AgentPalette.indigo]
-                            : [provider.tint.opacity(0.92), AgentPalette.lilac.opacity(0.84)],
-                        startPoint: .leading,
-                        endPoint: .trailing
+            ZStack(alignment: .top) {
+                Capsule(style: .continuous)
+                    .fill(Color.clear)
+                    .frame(height: 46)
+                    .agentGlass(
+                        radius: 23,
+                        interactive: true,
+                        tint: activeTint.opacity(selection == .ultraCode ? 0.18 : 0.08)
                     )
-                )
-                .frame(height: 46)
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7)
-                )
-                .shadow(
-                    color: activeTint.opacity(selection == .ultraCode ? 0.34 : 0.14),
-                    radius: selection == .ultraCode ? 10 : 5,
-                    x: 0,
-                    y: 3
-                )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        AgentPalette.cyan.opacity(0.46),
+                                        AgentPalette.lilac.opacity(0.56),
+                                        AgentPalette.indigo.opacity(
+                                            selection == .ultraCode ? 0.90 : 0.72
+                                        ),
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7)
+                    )
+                    .agentGlassEffectID("composer-reasoning", in: glassNamespace)
 
-            HStack(spacing: 0) {
-                ForEach(Level.allCases) { level in
-                    Button {
-                        select(level)
-                    } label: {
-                        VStack(spacing: 3) {
-                            ZStack {
-                                if selection == level {
-                                    Circle()
-                                        .fill(Color.white.opacity(0.96))
-                                        .frame(width: 40, height: 40)
-                                        .shadow(color: Color.black.opacity(0.17), radius: 4, x: 0, y: 2)
-                                    if let symbol = level.symbol {
-                                        Image(systemName: symbol)
-                                            .font(.system(size: 13, weight: .black))
-                                            .foregroundStyle(AgentPalette.indigo)
-                                    } else {
-                                        Circle()
-                                            .fill(activeTint)
-                                            .frame(width: 7, height: 7)
-                                    }
-                                } else {
-                                    Circle()
-                                        .fill(Color.white.opacity(0.46))
-                                        .frame(width: 6, height: 6)
-                                }
-                            }
-                            .frame(height: 46)
+                UltraCodePowerRipple(active: selection == .ultraCode)
+                    .frame(height: 46)
+                    .clipShape(Capsule(style: .continuous))
 
-                            Text(level.title)
-                                .font(.system(size: 8.5, weight: selection == level ? .black : .semibold))
-                                .foregroundStyle(selection == level ? activeTint : AgentPalette.secondaryText)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.72)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 62)
-                        .contentShape(Rectangle())
+                HStack(spacing: 0) {
+                    ForEach(levels) { _ in
+                        Circle()
+                            .fill(Color.white.opacity(0.48))
+                            .frame(width: 6, height: 6)
+                            .frame(maxWidth: .infinity, minHeight: 46)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(level.title) reasoning")
-                    .accessibilityValue(selection == level ? "Selected" : "")
-                    .accessibilityIdentifier("reasoningLevel-\(level.rawValue)")
                 }
+
+                Circle()
+                    .fill(Color.white.opacity(0.97))
+                    .frame(width: 40, height: 40)
+                    .overlay {
+                        if let symbol = selection.symbol {
+                            Image(systemName: symbol)
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundStyle(AgentPalette.indigo)
+                        } else {
+                            Circle()
+                                .fill(activeTint)
+                                .frame(width: 7, height: 7)
+                        }
+                    }
+                    .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 2)
+                    .offset(
+                        x: segmentWidth * (CGFloat(selectionIndex) + 0.5) - 20,
+                        y: 3
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .allowsHitTesting(false)
+
+                HStack(spacing: 0) {
+                    ForEach(levels) { level in
+                        Text(level.title)
+                            .font(.system(size: 8.5, weight: selection == level ? .black : .semibold))
+                            .foregroundStyle(selection == level ? activeTint : AgentPalette.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .offset(y: 49)
+                .allowsHitTesting(false)
             }
-            .agentGlassEffectID("composer-reasoning", in: glassNamespace)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        select(level(at: value.location.x, width: geometry.size.width))
+                    }
+            )
         }
         .frame(height: 64)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Reasoning level slider")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Reasoning effort")
+        .accessibilityValue(selection.title)
+        .accessibilityHint("Drag horizontally or swipe up and down to change effort")
+        .accessibilityAdjustableAction { direction in
+            adjustSelection(direction)
+        }
+        .accessibilityIdentifier("reasoningEffortSlider")
+    }
+
+    private var selectionIndex: Int {
+        Level.allCases.firstIndex(of: selection) ?? 0
+    }
+
+    private func level(at xPosition: CGFloat, width: CGFloat) -> Level {
+        let levels = Level.allCases
+        guard width > 0 else { return selection }
+        let fraction = min(max(xPosition / width, 0), 0.999_999)
+        let index = min(Int(fraction * CGFloat(levels.count)), levels.count - 1)
+        return levels[index]
+    }
+
+    private func adjustSelection(_ direction: AccessibilityAdjustmentDirection) {
+        let levels = Level.allCases
+        let nextIndex: Int
+        switch direction {
+        case .increment:
+            nextIndex = min(selectionIndex + 1, levels.count - 1)
+        case .decrement:
+            nextIndex = max(selectionIndex - 1, 0)
+        @unknown default:
+            return
+        }
+        select(levels[nextIndex])
     }
 
     private func select(_ level: Level) {
@@ -672,6 +732,7 @@ struct ComposerModelMenu: View {
 
     @State private var showingChooser = false
     @State private var selectionError: String?
+    @State private var providerCatalog = ProviderModelCatalogStore.shared
 
     var body: some View {
         Button {
@@ -681,11 +742,11 @@ struct ComposerModelMenu: View {
         } label: {
             menuLabel
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Choose model, \(settings.provider.displayName), \(settings.modelID)")
+                .accessibilityLabel("Choose model, \(settings.provider.displayName), \(selectedModelDisplayName)")
                 .accessibilityIdentifier("composerModelNativeMenu")
         }
         .buttonStyle(ComposerMenuButtonStyle())
-        .accessibilityLabel("Choose model, \(settings.provider.displayName), \(settings.modelID)")
+        .accessibilityLabel("Choose model, \(settings.provider.displayName), \(selectedModelDisplayName)")
         .accessibilityIdentifier("composerModelNativeMenu")
         .sheet(isPresented: $showingChooser) {
             ComposerModelChooserSheet(
@@ -830,8 +891,6 @@ struct ComposerModelMenu: View {
         switch lower {
         case "gpt", "glm", "ai", "api":
             return lower.uppercased()
-        case "codex":
-            return "Code"
         case "deepseek":
             return "DeepSeek"
         case "gemini":
@@ -852,7 +911,15 @@ struct ComposerModelMenu: View {
     }
 
     fileprivate func refinedModelTitle(_ model: String) -> String {
-        LocalModelCatalog.variant(for: model)?.shortName ?? model
+        LocalModelCatalog.variant(for: model)?.shortName
+            ?? providerCatalog.displayName(
+                for: settings.provider,
+                modelID: model
+            )
+    }
+
+    private var selectedModelDisplayName: String {
+        refinedModelTitle(settings.modelID)
     }
 
     private func selectProvider(_ provider: AIProvider) {
@@ -969,12 +1036,10 @@ private struct ComposerModelChooserSheet: View {
                 }
             }
         }
-        .task {
+        .task(id: selectedProvider) {
             refreshCredentialReadiness()
             await providerCatalog.refresh(provider: selectedProvider)
-        }
-        .task(id: selectedProvider) {
-            await providerCatalog.refresh(provider: selectedProvider)
+            repairSelectionFromLiveCatalogIfNeeded()
         }
         .accessibilityIdentifier("composerModelChooserSheet")
     }
@@ -1066,7 +1131,8 @@ private struct ComposerModelChooserSheet: View {
                         }
                         Spacer()
                         if settings.provider == selectedProvider,
-                           settings.modelID == model
+                           selectedProvider.visibleModelIdentity(settings.modelID)
+                            == selectedProvider.visibleModelIdentity(model)
                         {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 12, weight: .black))
@@ -1136,9 +1202,7 @@ private struct ComposerModelChooserSheet: View {
 
     private var modelChoices: [String] {
         var seen = Set<String>()
-        let current = selectedProvider == settings.provider ? [settings.modelID] : []
-        return (providerCatalog.models(for: selectedProvider)
-            + selectedProvider.modelOptions + current).compactMap { value in
+        return providerCatalog.models(for: selectedProvider).compactMap { value in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             return !trimmed.isEmpty && seen.insert(trimmed).inserted ? trimmed : nil
         }
@@ -1166,7 +1230,11 @@ private struct ComposerModelChooserSheet: View {
     }
 
     private func modelTitle(_ model: String) -> String {
-        LocalModelCatalog.variant(for: model)?.shortName ?? model
+        LocalModelCatalog.variant(for: model)?.shortName
+            ?? providerCatalog.displayName(
+                for: selectedProvider,
+                modelID: model
+            )
     }
 
     private func modelDetail(_ model: String) -> String? {
@@ -1175,6 +1243,7 @@ private struct ComposerModelChooserSheet: View {
                 ? "Recommended for iPhone 12"
                 : variant.quantization + " · low-memory fallback"
         }
+        if let detail = selectedProvider.modelDetail(model) { return detail }
         if model.localizedCaseInsensitiveContains("free") { return "Free hosted model" }
         if model == "big-pickle" { return "Limited-time hosted model" }
         return nil
@@ -1182,7 +1251,6 @@ private struct ComposerModelChooserSheet: View {
 
     private func modelSymbol(_ model: String) -> String {
         if LocalModelCatalog.variant(for: model) != nil { return "iphone.gen3" }
-        if model.localizedCaseInsensitiveContains("codex") { return "terminal.fill" }
         if model.localizedCaseInsensitiveContains("gpt") { return "sparkles" }
         return "cube.transparent"
     }
@@ -1210,6 +1278,20 @@ private struct ComposerModelChooserSheet: View {
             }
             return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         })
+    }
+
+    private func repairSelectionFromLiveCatalogIfNeeded() {
+        guard selectedProvider == settings.provider,
+              providerCatalog.hasLiveCatalog(for: selectedProvider)
+        else { return }
+        let liveModels = providerCatalog.models(for: selectedProvider)
+        let selectedIdentity = selectedProvider.visibleModelIdentity(settings.modelID)
+        guard !liveModels.contains(where: {
+                  selectedProvider.visibleModelIdentity($0) == selectedIdentity
+              }),
+              let first = liveModels.first
+        else { return }
+        selectModel(first)
     }
 }
 

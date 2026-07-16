@@ -175,7 +175,12 @@ struct AIProviderClient {
     func modelCatalog() async throws -> [ProviderModelCatalogEntry] {
         guard let url = configuration.modelsURL else {
             return configuration.provider.modelOptions.map {
-                ProviderModelCatalogEntry(id: $0)
+                ProviderModelCatalogEntry(
+                    id: $0,
+                    displayName: configuration.provider.modelDisplayName($0),
+                    supportedReasoningEfforts: configuration.provider
+                        .fallbackReasoningEfforts($0)
+                )
             }
         }
 
@@ -368,7 +373,7 @@ enum ProviderModelCatalogParser {
 
     private static func isSupportedChatGPTModelID(_ value: String) -> Bool {
         let lower = value.lowercased()
-        return lower.hasPrefix("gpt-5") || lower.contains("codex")
+        return lower.hasPrefix("gpt-5") && !lower.contains("codex")
     }
 }
 

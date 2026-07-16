@@ -1246,6 +1246,110 @@ private final class PresentationStoreHarness {
     }
 }
 
+@MainActor
+final class AgentOrchestrationWorkspaceSnapshotTests: XCTestCase {
+    func testUltraCodeDefinesThreeIndependentWorkersBeforeLeadIntegration() {
+        let workers = AgentSystemPresentationStore.workerSpecs(for: .ultraCode)
+
+        XCTAssertEqual(workers.map(\.id), ["explorer", "architect", "verifier"])
+        XCTAssertEqual(Set(workers.map(\.title)).count, 3)
+        XCTAssertTrue(workers.allSatisfy { !$0.instruction.isEmpty })
+    }
+
+    func testSnapshotClonesHiddenAndNestedFilesSkipsSymlinksAndCleansUp()
+        throws
+    {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let sourceRoot = root.appendingPathComponent("Source", isDirectory: true)
+        let nestedRoot = sourceRoot.appendingPathComponent("Sources/App", isDirectory: true)
+        try fileManager.createDirectory(at: nestedRoot, withIntermediateDirectories: true)
+        try Data("secret = false\n".utf8).write(
+            to: sourceRoot.appendingPathComponent(".novaforge")
+        )
+        try Data("print(\"ready\")\n".utf8).write(
+            to: nestedRoot.appendingPathComponent("main.swift")
+        )
+        try fileManager.createSymbolicLink(
+            at: sourceRoot.appendingPathComponent("outside-link"),
+            withDestinationURL: root
+        )
+
+        let source = SandboxWorkspace(rootURL: sourceRoot)
+        let snapshot = SandboxWorkspace(
+            rootURL: root.appendingPathComponent(
+                "UltraCode-fixture-explorer",
+                isDirectory: true
+            )
+        )
+        try AgentOrchestrationWorkspaceSnapshots.clone(
+            from: source,
+            to: [snapshot],
+            fileManager: fileManager
+        )
+
+        XCTAssertEqual(
+            try String(
+                contentsOf: snapshot.rootURL.appendingPathComponent(".novaforge"),
+                encoding: .utf8
+            ),
+            "secret = false\n"
+        )
+        XCTAssertTrue(fileManager.fileExists(
+            atPath: snapshot.rootURL
+                .appendingPathComponent("Sources/App/main.swift").path
+        ))
+        XCTAssertFalse(fileManager.fileExists(
+            atPath: snapshot.rootURL.appendingPathComponent("outside-link").path
+        ))
+
+        AgentOrchestrationWorkspaceSnapshots.remove(
+            [snapshot],
+            fileManager: fileManager
+        )
+        XCTAssertFalse(fileManager.fileExists(atPath: snapshot.rootURL.path))
+    }
+
+    func testCloneCollisionNeverDeletesAnUnownedWorkspace() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let sourceRoot = root.appendingPathComponent("Source", isDirectory: true)
+        try fileManager.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        try Data("source\n".utf8).write(
+            to: sourceRoot.appendingPathComponent("README.md")
+        )
+        let collisionRoot = root.appendingPathComponent(
+            "UltraCode-existing-user-workspace",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: collisionRoot, withIntermediateDirectories: true)
+        try Data("keep\n".utf8).write(
+            to: collisionRoot.appendingPathComponent("keep.txt")
+        )
+
+        XCTAssertThrowsError(
+            try AgentOrchestrationWorkspaceSnapshots.clone(
+                from: SandboxWorkspace(rootURL: sourceRoot),
+                to: [SandboxWorkspace(rootURL: collisionRoot)],
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(
+            try String(
+                contentsOf: collisionRoot.appendingPathComponent("keep.txt"),
+                encoding: .utf8
+            ),
+            "keep\n"
+        )
+    }
+}
+
 private actor PresentationStartGate {
     private var isReleased = false
     private var waiters: [CheckedContinuation<Void, Never>] = []

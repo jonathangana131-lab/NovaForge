@@ -266,6 +266,7 @@ final class OpenAIClientStreamingTests: XCTestCase {
               ]
             },
             {"slug":"gpt-4o"},
+            {"slug":"gpt-5.3-codex-spark"},
             {"slug":"gpt-5.6-terra"}
           ]
         }
@@ -281,6 +282,41 @@ final class OpenAIClientStreamingTests: XCTestCase {
         XCTAssertEqual(
             catalog.first?.supportedReasoningEfforts,
             ["low", "medium", "high", "xhigh", "max"]
+        )
+    }
+
+    @MainActor
+    func testChatGPTFallbackCatalogUsesCurrentFamilyWithoutLegacyProductNames() {
+        let store = ProviderModelCatalogStore.shared
+        store.clear(provider: .openAICodex)
+        defer { store.clear(provider: .openAICodex) }
+        let entries = store.entries(for: .openAICodex)
+        XCTAssertEqual(
+            Array(entries.prefix(3).map(\.id)),
+            ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+        )
+        XCTAssertEqual(
+            entries.filter { $0.displayName == "GPT-5.6 Sol" }.count,
+            1,
+            "The moving GPT-5.6 alias and concrete Sol slug must be one visible choice."
+        )
+        XCTAssertFalse(
+            entries.contains {
+                $0.id.localizedCaseInsensitiveContains("codex")
+            }
+        )
+
+        XCTAssertEqual(entries.first?.displayName, "GPT-5.6 Sol")
+        XCTAssertEqual(
+            entries.first?.supportedReasoningEfforts,
+            ["none", "low", "medium", "high", "xhigh", "max"]
+        )
+        XCTAssertEqual(
+            store.displayName(
+                for: .openAICodex,
+                modelID: "gpt-5.6-terra"
+            ),
+            "GPT-5.6 Terra"
         )
     }
 

@@ -23,6 +23,7 @@ struct SettingsView: View {
     @State private var codexAuth = OpenAICodexAuthManager.shared
     @State private var didPresentModelPickerDemo = false
     @State private var providerModels: [String] = []
+    @State private var hasLoadedProviderModels = false
     @State private var loadingProviderModels = false
     @State private var providerModelError: String? = nil
     @State private var settingsSaveError: String? = nil
@@ -118,6 +119,7 @@ struct SettingsView: View {
         }
         .onChange(of: settings.providerRawValue) {
             providerModels = []
+            hasLoadedProviderModels = false
             providerModelError = nil
             loadingProviderModels = false
             providerModelTask?.cancel()
@@ -912,14 +914,18 @@ struct SettingsView: View {
     }
 
     private var modelChoices: [String] {
-        uniqueModels(settings.provider.modelOptions + providerModels + [settings.modelID])
+        if hasLoadedProviderModels {
+            return uniqueModels(providerModels)
+        }
+        return uniqueModels(settings.provider.modelOptions + [settings.modelID])
     }
 
     private func uniqueModels(_ models: [String]) -> [String] {
         var seen = Set<String>()
         return models.compactMap { model in
             let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { return nil }
+            let identity = settings.provider.visibleModelIdentity(trimmed)
+            guard !trimmed.isEmpty, seen.insert(identity).inserted else { return nil }
             return trimmed
         }
     }
@@ -945,6 +951,7 @@ struct SettingsView: View {
         else {
             providerModelError = "\(requestedProvider.missingCredentialMessage) The built-in list contains only agent-compatible choices."
             providerModels = []
+            hasLoadedProviderModels = false
             return
         }
         loadingProviderModels = true
@@ -967,22 +974,28 @@ struct SettingsView: View {
                     providerModels = uniqueModels(
                         loaded.map(\.id).filter(requestedProvider.modelOptions.contains)
                     )
+                    hasLoadedProviderModels = !providerModels.isEmpty
                     loadingProviderModels = false
                     providerModelTask = nil
                     if providerModels.isEmpty {
                         providerModelError = "No models compatible with NovaForge's canonical agent route were returned. Built-in validated choices remain available."
+                    } else if !providerModels.contains(settings.modelID),
+                              let first = providerModels.first {
+                        _ = persistSettingsChange { $0.modelID = first }
                     }
                 }
             } catch is CancellationError {
                 await MainActor.run {
                     guard settings.provider == requestedProvider else { return }
                     loadingProviderModels = false
+                    hasLoadedProviderModels = false
                     providerModelTask = nil
                 }
             } catch {
                 await MainActor.run {
                     guard settings.provider == requestedProvider else { return }
                     loadingProviderModels = false
+                    hasLoadedProviderModels = false
                     providerModelTask = nil
                     providerModelError = "Could not refresh live \(requestedProvider.displayName) models. Showing the built-in agent-compatible catalog."
                 }
@@ -1181,7 +1194,11 @@ struct SettingsView: View {
     }
 
     private func modelDisplayName(_ model: String) -> String {
-        LocalModelCatalog.variant(for: model)?.shortName ?? model
+        LocalModelCatalog.variant(for: model)?.shortName
+            ?? ProviderModelCatalogStore.shared.displayName(
+                for: settings.provider,
+                modelID: model
+            )
     }
 
     @MainActor

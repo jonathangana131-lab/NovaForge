@@ -271,7 +271,7 @@ struct AgentOrchestrationPresentation: Equatable, Sendable {
     var isActive: Bool { !phase.isTerminal }
 }
 
-private struct AgentOrchestrationWorkerSpec: Sendable {
+struct AgentOrchestrationWorkerSpec: Equatable, Sendable {
     let id: String
     let title: String
     let symbol: String
@@ -284,6 +284,127 @@ private enum AgentOrchestrationError: Error, Sendable {
     case workerRejected
     case workerTimedOut
     case integrationRejected
+}
+
+enum AgentOrchestrationWorkspaceSnapshots {
+    static let maximumFileCount = 20_000
+    static let maximumByteCount: Int64 = 512 * 1_024 * 1_024
+    static let ownershipMarkerName = ".novaforge-ultracode-snapshot-v1"
+    private static let ownershipMarker = Data("NovaForge UltraCode snapshot v1\n".utf8)
+
+    static func clone(
+        from source: SandboxWorkspace,
+        to destinations: [SandboxWorkspace],
+        fileManager: FileManager = .default
+    ) throws {
+        let sourceRoot = source.rootURL.standardizedFileURL
+        let sourcePath = sourceRoot.path
+        let sourcePrefix = sourcePath + "/"
+
+        var created: [SandboxWorkspace] = []
+        do {
+            for destination in destinations {
+                if Task.isCancelled { throw CancellationError() }
+                let destinationRoot = destination.rootURL.standardizedFileURL
+                let destinationPath = destinationRoot.path
+                guard destination.workspaceName.hasPrefix("UltraCode-"),
+                      destinationPath != sourcePath,
+                      !destinationPath.hasPrefix(sourcePrefix),
+                      !sourcePath.hasPrefix(destinationPath + "/"),
+                      !fileManager.fileExists(atPath: destinationPath)
+                else { throw AgentOrchestrationError.workspaceCloneFailed }
+
+                try fileManager.createDirectory(
+                    at: destinationRoot,
+                    withIntermediateDirectories: true
+                )
+                try ownershipMarker.write(
+                    to: destinationRoot.appendingPathComponent(ownershipMarkerName),
+                    options: .atomic
+                )
+                created.append(destination)
+                guard fileManager.fileExists(atPath: sourcePath) else { continue }
+                guard let enumerator = fileManager.enumerator(
+                    at: sourceRoot,
+                    includingPropertiesForKeys: [
+                        .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
+                    ],
+                    options: []
+                ) else { throw AgentOrchestrationError.workspaceCloneFailed }
+
+                var fileCount = 0
+                var byteCount: Int64 = 0
+                while let itemURL = enumerator.nextObject() as? URL {
+                    if Task.isCancelled { throw CancellationError() }
+                    fileCount += 1
+                    guard fileCount <= maximumFileCount else {
+                        throw AgentOrchestrationError.workspaceCloneFailed
+                    }
+                    let itemPath = itemURL.standardizedFileURL.path
+                    guard itemPath.hasPrefix(sourcePrefix) else {
+                        throw AgentOrchestrationError.workspaceCloneFailed
+                    }
+                    let relative = String(itemPath.dropFirst(sourcePrefix.count))
+                    let components = relative.split(
+                        separator: "/",
+                        omittingEmptySubsequences: false
+                    )
+                    guard !relative.isEmpty,
+                          !components.contains(where: { $0 == "." || $0 == ".." })
+                    else { throw AgentOrchestrationError.workspaceCloneFailed }
+
+                    let values = try itemURL.resourceValues(forKeys: [
+                        .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
+                    ])
+                    if values.isSymbolicLink == true {
+                        continue
+                    }
+
+                    let target = destinationRoot
+                        .appendingPathComponent(relative)
+                        .standardizedFileURL
+                    guard target.path.hasPrefix(destinationPath + "/") else {
+                        throw AgentOrchestrationError.workspaceCloneFailed
+                    }
+                    if values.isDirectory == true {
+                        try fileManager.createDirectory(
+                            at: target,
+                            withIntermediateDirectories: true
+                        )
+                    } else {
+                        byteCount += Int64(values.fileSize ?? 0)
+                        guard byteCount <= maximumByteCount else {
+                            throw AgentOrchestrationError.workspaceCloneFailed
+                        }
+                        try fileManager.createDirectory(
+                            at: target.deletingLastPathComponent(),
+                            withIntermediateDirectories: true
+                        )
+                        try fileManager.copyItem(at: itemURL, to: target)
+                    }
+                }
+            }
+        } catch {
+            remove(created, fileManager: fileManager)
+            throw error
+        }
+    }
+
+    static func remove(
+        _ snapshots: [SandboxWorkspace],
+        fileManager: FileManager = .default
+    ) {
+        for snapshot in snapshots {
+            let root = snapshot.rootURL.standardizedFileURL
+            let marker = root.appendingPathComponent(ownershipMarkerName)
+            guard snapshot.workspaceName.hasPrefix("UltraCode-"),
+                  root.lastPathComponent == snapshot.workspaceName,
+                  (try? Data(contentsOf: marker)) == ownershipMarker,
+                  fileManager.fileExists(atPath: root.path)
+            else { continue }
+            try? fileManager.removeItem(at: root)
+        }
+    }
 }
 
 enum AgentSystemPresentationStoreError: Error, Equatable, Sendable {
@@ -759,6 +880,7 @@ final class AgentSystemPresentationStore {
         )
         publishRevision()
 
+        var scratchWorkspaces: [SandboxWorkspace] = []
         do {
             let scratchNames = specs.map {
                 Self.scratchWorkspaceName(
@@ -766,9 +888,10 @@ final class AgentSystemPresentationStore {
                     workerID: $0.id
                 )
             }
-            let scratchWorkspaces = try await Self.cloneWorkspaces(
+            scratchWorkspaces = scratchNames.map { SandboxWorkspace(name: $0) }
+            try await Self.cloneWorkspaces(
                 from: workspace,
-                names: scratchNames
+                destinations: scratchWorkspaces
             )
             let workerConversations = try makeWorkerConversations(
                 specs: specs,
@@ -832,6 +955,7 @@ final class AgentSystemPresentationStore {
             }
             return .accepted(rootRunID)
         } catch {
+            await Self.cleanupWorkspaces(scratchWorkspaces)
             updateOrchestration(scope) { state in
                 state.phase = .failed
                 state.headline = "Could not prepare isolated agents"
@@ -961,6 +1085,7 @@ final class AgentSystemPresentationStore {
             failures[scope] = .runtimeUnavailable
             publishRevision()
         }
+        await Self.cleanupWorkspaces(scratchWorkspaces)
         orchestrationTasks.removeValue(forKey: scope)
     }
 
@@ -1116,7 +1241,7 @@ final class AgentSystemPresentationStore {
         return String(trimmed.prefix(16_000))
     }
 
-    private static func workerSpecs(
+    static func workerSpecs(
         for mode: AgentOrchestrationMode
     ) -> [AgentOrchestrationWorkerSpec] {
         switch mode {
@@ -1235,81 +1360,22 @@ final class AgentSystemPresentationStore {
 
     private static func cloneWorkspaces(
         from source: SandboxWorkspace,
-        names: [String]
-    ) async throws -> [SandboxWorkspace] {
+        destinations: [SandboxWorkspace]
+    ) async throws {
         try await Task.detached(priority: .userInitiated) {
-            try cloneWorkspacesSynchronously(from: source, names: names)
+            try AgentOrchestrationWorkspaceSnapshots.clone(
+                from: source,
+                to: destinations
+            )
         }.value
     }
 
-    private nonisolated static func cloneWorkspacesSynchronously(
-        from source: SandboxWorkspace,
-        names: [String]
-    ) throws -> [SandboxWorkspace] {
-        let fileManager = FileManager()
-        var results: [SandboxWorkspace] = []
-        for name in names {
-            if Task.isCancelled { throw CancellationError() }
-            let destination = SandboxWorkspace(name: name)
-            guard !fileManager.fileExists(atPath: destination.rootURL.path)
-            else { throw AgentOrchestrationError.workspaceCloneFailed }
-            try fileManager.createDirectory(
-                at: destination.rootURL,
-                withIntermediateDirectories: true
-            )
-            if fileManager.fileExists(atPath: source.rootURL.path) {
-                guard let enumerator = fileManager.enumerator(
-                    at: source.rootURL,
-                    includingPropertiesForKeys: [
-                        .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
-                    ],
-                    options: [.skipsHiddenFiles]
-                ) else { throw AgentOrchestrationError.workspaceCloneFailed }
-                var fileCount = 0
-                var byteCount: Int64 = 0
-                while let itemURL = enumerator.nextObject() as? URL {
-                    if Task.isCancelled { throw CancellationError() }
-                    fileCount += 1
-                    guard fileCount <= 20_000 else {
-                        throw AgentOrchestrationError.workspaceCloneFailed
-                    }
-                    let values = try itemURL.resourceValues(forKeys: [
-                        .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
-                    ])
-                    if values.isSymbolicLink == true {
-                        enumerator.skipDescendants()
-                        continue
-                    }
-                    let relative = itemURL.path.replacingOccurrences(
-                        of: source.rootURL.path + "/",
-                        with: ""
-                    )
-                    guard !relative.isEmpty,
-                          !relative.hasPrefix("../"),
-                          !relative.contains("/../")
-                    else { throw AgentOrchestrationError.workspaceCloneFailed }
-                    let target = destination.rootURL.appendingPathComponent(relative)
-                    if values.isDirectory == true {
-                        try fileManager.createDirectory(
-                            at: target,
-                            withIntermediateDirectories: true
-                        )
-                    } else {
-                        byteCount += Int64(values.fileSize ?? 0)
-                        guard byteCount <= 512 * 1_024 * 1_024 else {
-                            throw AgentOrchestrationError.workspaceCloneFailed
-                        }
-                        try fileManager.createDirectory(
-                            at: target.deletingLastPathComponent(),
-                            withIntermediateDirectories: true
-                        )
-                        try fileManager.copyItem(at: itemURL, to: target)
-                    }
-                }
-            }
-            results.append(destination)
-        }
-        return results
+    private static func cleanupWorkspaces(
+        _ snapshots: [SandboxWorkspace]
+    ) async {
+        await Task.detached(priority: .utility) {
+            AgentOrchestrationWorkspaceSnapshots.remove(snapshots)
+        }.value
     }
 
     func retry(

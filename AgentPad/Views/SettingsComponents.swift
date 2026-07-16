@@ -907,13 +907,21 @@ struct ProviderModelPickerSheet: View {
 
     private var filteredModels: [String] {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matches = query.isEmpty ? models : models.filter { $0.localizedCaseInsensitiveContains(query) }
+        let matches = query.isEmpty ? models : models.filter {
+            $0.localizedCaseInsensitiveContains(query)
+                || provider.modelDisplayName($0)
+                    .localizedCaseInsensitiveContains(query)
+        }
         return Array(matches.prefix(180))
     }
 
     private var hiddenModelCount: Int {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matchCount = query.isEmpty ? models.count : models.lazy.filter { $0.localizedCaseInsensitiveContains(query) }.count
+        let matchCount = query.isEmpty ? models.count : models.lazy.filter {
+            $0.localizedCaseInsensitiveContains(query)
+                || provider.modelDisplayName($0)
+                    .localizedCaseInsensitiveContains(query)
+        }.count
         return max(0, matchCount - filteredModels.count)
     }
 
@@ -1102,7 +1110,8 @@ struct ProviderModelPickerSheet: View {
     }
 
     private func modelRow(_ model: String) -> some View {
-        let selected = selectedModel == model
+        let selected = provider.visibleModelIdentity(selectedModel)
+            == provider.visibleModelIdentity(model)
         return Button {
             if select(model) {
                 dismiss()
@@ -1116,7 +1125,10 @@ struct ProviderModelPickerSheet: View {
                     .background((selected ? provider.tint.opacity(0.14) : AgentPalette.row), in: Circle())
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(LocalModelCatalog.variant(for: model)?.shortName ?? model)
+                    Text(
+                        LocalModelCatalog.variant(for: model)?.shortName
+                            ?? provider.modelDisplayName(model)
+                    )
                         .font(.system(size: 15, weight: selected ? .black : .bold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.ink)
                         .lineLimit(1)
@@ -1143,7 +1155,6 @@ struct ProviderModelPickerSheet: View {
 
     private func modelSymbol(for model: String) -> String {
         if LocalModelCatalog.variant(for: model) != nil { return "iphone.gen3" }
-        if model.localizedCaseInsensitiveContains("codex") { return "terminal.fill" }
         if model.localizedCaseInsensitiveContains("gpt") { return "sparkles" }
         return "cube.transparent"
     }

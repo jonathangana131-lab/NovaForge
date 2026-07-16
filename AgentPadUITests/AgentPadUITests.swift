@@ -1252,9 +1252,13 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
-        settingsTab.tap()
+        tapButtonOrCoordinate(
+            settingsTab,
+            in: app,
+            normalizedOffset: CGVector(dx: 0.83, dy: 0.94)
+        )
 
-        let chatGPTProvider = app.staticTexts["ChatGPT"]
+        let chatGPTProvider = app.buttons["settingsProvider-openAICodex"]
         XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
         chatGPTProvider.tap()
 
@@ -1266,7 +1270,7 @@ final class AgentPadUITests: XCTestCase {
         pickerButton.tap()
 
         XCTAssertTrue(app.staticTexts["Choose Model"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["gpt-5.6-sol"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["GPT-5.6 Sol"].waitForExistence(timeout: 5))
         let settingsModelSearch = app.textFields["Search models"]
         XCTAssertTrue(settingsModelSearch.waitForExistence(timeout: 5))
         settingsModelSearch.tap()
@@ -1366,7 +1370,10 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(composerModelButton.label.contains("Qwen Coder"), "Stale local model labels should not survive under the OpenAI provider.")
         composerModelButton.tap()
 
-        XCTAssertTrue(app.buttons["gpt-5.5"].firstMatch.waitForExistence(timeout: 5), "Repaired OpenAI state should show the default OpenAI model in the native composer menu.")
+        XCTAssertTrue(
+            app.buttons["composerModel-gpt-5.6-sol"].firstMatch.waitForExistence(timeout: 5),
+            "Repaired OpenAI state should show the current default OpenAI model in the native composer menu."
+        )
         XCTAssertFalse(app.staticTexts["Switch model"].exists, "Composer provider switching should not bring back the old custom model sheet.")
 
         let chatGPTProvider = app.buttons["composerProvider-openAICodex"].firstMatch
@@ -1415,14 +1422,28 @@ final class AgentPadUITests: XCTestCase {
             reasoningPicker.waitForExistence(timeout: 5) ||
                 app.staticTexts["Reasoning"].waitForExistence(timeout: 5)
         )
-        for level in ["low", "medium", "high", "extraHigh", "ultraCode"] {
-            let button = app.buttons["reasoningLevel-\(level)"]
-            XCTAssertTrue(button.waitForExistence(timeout: 5), "Reasoning level \(level) should be visible.")
-            assertMinimumTouchTarget(button, named: "reasoning level \(level)")
-        }
+        let reasoningSlider = app.descendants(matching: .any)
+            .matching(identifier: "reasoningEffortSlider").firstMatch
+        XCTAssertTrue(reasoningSlider.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(reasoningSlider, named: "reasoning effort slider")
         XCTAssertFalse(app.staticTexts["Agent mode"].exists, "The composer should not reopen the old settings-style mode menu.")
 
-        app.buttons["reasoningLevel-ultraCode"].tap()
+        let dragStart = reasoningSlider.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.14, dy: 0.34)
+        )
+        let dragEnd = reasoningSlider.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.50, dy: 0.34)
+        )
+        dragStart.press(forDuration: 0.12, thenDragTo: dragEnd)
+        XCTAssertEqual(
+            reasoningSlider.value as? String,
+            "High",
+            "Dragging across the glass pill should move the reasoning thumb, not behave like a static menu."
+        )
+
+        reasoningSlider.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
+        ).tap()
         XCTAssertTrue(
             app.staticTexts.containing(
                 NSPredicate(format: "label CONTAINS[c] %@", "workspace")

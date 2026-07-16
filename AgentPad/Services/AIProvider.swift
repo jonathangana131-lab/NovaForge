@@ -163,6 +163,10 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
             LocalModelCatalog.all.map(\.id)
         case .openAI:
             [
+                "gpt-5.6-sol",
+                "gpt-5.6",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
                 "gpt-5.5",
                 "gpt-5.4",
                 "gpt-5.4-mini",
@@ -185,7 +189,6 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
                 "gpt-5.5",
                 "gpt-5.4",
                 "gpt-5.4-mini",
-                "gpt-5.3-codex-spark",
             ]
         case .openRouter:
             [
@@ -236,6 +239,50 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .custom:
             "Any OpenAI-compatible endpoint"
         }
+    }
+
+    func modelDisplayName(_ modelID: String) -> String {
+        switch modelID.lowercased() {
+        case "gpt-5.6", "gpt-5.6-sol": "GPT-5.6 Sol"
+        case "gpt-5.6-terra": "GPT-5.6 Terra"
+        case "gpt-5.6-luna": "GPT-5.6 Luna"
+        case "gpt-5.5": "GPT-5.5"
+        case "gpt-5.4": "GPT-5.4"
+        case "gpt-5.4-mini": "GPT-5.4 Mini"
+        default: modelID
+        }
+    }
+
+    func modelDetail(_ modelID: String) -> String? {
+        switch modelID.lowercased() {
+        case "gpt-5.6", "gpt-5.6-sol":
+            "Flagship · complex coding and reasoning"
+        case "gpt-5.6-terra":
+            "Balanced intelligence and speed"
+        case "gpt-5.6-luna":
+            "Fastest GPT-5.6 option"
+        default:
+            nil
+        }
+    }
+
+    func fallbackReasoningEfforts(_ modelID: String) -> [String] {
+        guard modelID.lowercased().hasPrefix("gpt-5.6") else { return [] }
+        return ["none", "low", "medium", "high", "xhigh", "max"]
+    }
+
+    /// Moving aliases can point at the same visible model as a dated or
+    /// concrete slug. Keep the route ID intact for requests, but collapse the
+    /// duplicate in pickers so people never see two identically named rows.
+    func visibleModelIdentity(_ modelID: String) -> String {
+        let normalized = modelID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if self == .openAI || self == .openAICodex,
+           normalized == "gpt-5.6" || normalized == "gpt-5.6-sol" {
+            return "gpt-5.6-sol"
+        }
+        return normalized
     }
 }
 
@@ -305,8 +352,46 @@ final class ProviderModelCatalogStore {
     private init() {}
 
     func entries(for provider: AIProvider) -> [ProviderModelCatalogEntry] {
-        entriesByProvider[provider]
-            ?? provider.modelOptions.map { ProviderModelCatalogEntry(id: $0) }
+        visibleEntries(
+            entriesByProvider[provider]
+                ?? provider.modelOptions.map {
+                ProviderModelCatalogEntry(
+                    id: $0,
+                    displayName: provider.modelDisplayName($0),
+                    supportedReasoningEfforts: provider.fallbackReasoningEfforts($0)
+                )
+            },
+            provider: provider
+        )
+    }
+
+    func hasLiveCatalog(for provider: AIProvider) -> Bool {
+        entriesByProvider[provider] != nil
+    }
+
+    func entry(
+        for provider: AIProvider,
+        modelID: String
+    ) -> ProviderModelCatalogEntry? {
+        let visibleIdentity = provider.visibleModelIdentity(modelID)
+        return entries(for: provider).first(where: { $0.id == modelID })
+            ?? entries(for: provider).first(where: {
+                provider.visibleModelIdentity($0.id) == visibleIdentity
+            })
+    }
+
+    func displayName(
+        for provider: AIProvider,
+        modelID: String
+    ) -> String {
+        entry(for: provider, modelID: modelID)?.displayName
+            ?? provider.modelDisplayName(modelID)
+    }
+
+    func clear(provider: AIProvider) {
+        entriesByProvider[provider] = nil
+        loadingProviders.remove(provider)
+        errorsByProvider[provider] = nil
     }
 
     func models(for provider: AIProvider) -> [String] {
@@ -317,7 +402,7 @@ final class ProviderModelCatalogStore {
         provider: AIProvider,
         modelID: String
     ) -> [ProviderReasoningEffort] {
-        entries(for: provider).first(where: { $0.id == modelID })?
+        entry(for: provider, modelID: modelID)?
             .supportedReasoningEfforts.compactMap(ProviderReasoningEffort.init(rawValue:)) ?? []
     }
 
@@ -353,12 +438,37 @@ final class ProviderModelCatalogStore {
                 errorsByProvider[provider] = "No currently supported NovaForge agent model was returned."
                 return
             }
-            entriesByProvider[provider] = compatible
+            entriesByProvider[provider] = visibleEntries(
+                compatible,
+                provider: provider
+            )
         } catch is CancellationError {
             return
         } catch {
             errorsByProvider[provider] = "Could not refresh the live \(provider.displayName) model catalog."
         }
+    }
+
+    private func visibleEntries(
+        _ entries: [ProviderModelCatalogEntry],
+        provider: AIProvider
+    ) -> [ProviderModelCatalogEntry] {
+        var result: [ProviderModelCatalogEntry] = []
+        var positions: [String: Int] = [:]
+        for entry in entries {
+            let identity = provider.visibleModelIdentity(entry.id)
+            if let position = positions[identity] {
+                // Prefer the concrete Sol slug when both it and the moving
+                // gpt-5.6 alias are returned by the same account catalog.
+                if entry.id.lowercased() == identity {
+                    result[position] = entry
+                }
+                continue
+            }
+            positions[identity] = result.count
+            result.append(entry)
+        }
+        return result
     }
 }
 
@@ -456,12 +566,27 @@ final class AgentRunPreferenceStore {
 
     private init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        reasoningEffort = ProviderReasoningEffort(
+        let storedEffort = ProviderReasoningEffort(
             rawValue: defaults.string(forKey: Self.effortKey) ?? ""
         ) ?? .medium
-        orchestrationMode = AgentOrchestrationMode(
+        let storedMode = AgentOrchestrationMode(
             rawValue: defaults.string(forKey: Self.orchestrationKey) ?? ""
         ) ?? .standard
+        if storedMode == .ultra {
+            reasoningEffort = .xhigh
+            orchestrationMode = .standard
+            defaults.set(
+                ProviderReasoningEffort.xhigh.rawValue,
+                forKey: Self.effortKey
+            )
+            defaults.set(
+                AgentOrchestrationMode.standard.rawValue,
+                forKey: Self.orchestrationKey
+            )
+        } else {
+            reasoningEffort = storedEffort
+            orchestrationMode = storedMode
+        }
     }
 
     func effectiveReasoningEffort(
@@ -554,6 +679,7 @@ final class OpenAICodexAuthManager {
 
     func startLogin() {
         loginTask?.cancel()
+        ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
         state = .requestingCode
         loginTask = Task { [weak self] in
             guard let self else { return }
@@ -599,6 +725,7 @@ final class OpenAICodexAuthManager {
         try? keychain.delete(Self.accessTokenAccount)
         try? keychain.delete(Self.refreshTokenAccount)
         try? keychain.delete(Self.accountIDAccount)
+        ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
         state = .signedOut
     }
 
