@@ -141,8 +141,14 @@ validate_test_inventory() {
     "${visual_ui_tests[@]}"
   )
   local -A seen=()
+  local -a search_command
+  if command -v rg >/dev/null 2>&1; then
+    search_command=(rg -q)
+  else
+    search_command=(grep -Eq)
+  fi
   for test_name in "${configured[@]}"; do
-    if ! rg -q "^[[:space:]]*func ${test_name}\\(" "$source"; then
+    if ! "${search_command[@]}" "^[[:space:]]*func[[:space:]]+${test_name}\\(" "$source"; then
       echo "Configured UI test does not exist: $test_name" >&2
       return 2
     fi
