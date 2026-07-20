@@ -127,7 +127,10 @@ final class AgentPadUITests: XCTestCase {
         app.launchArguments = []
         app.launch()
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertTrue(identifiedElement("firstRunPowerUp", in: app).waitForExistence(timeout: 8), "Cold launch should return to the local-first setup surface instead of reopening an interrupted draft.")
+        XCTAssertTrue(
+            app.otherElements["cleanChatEmptyState"].waitForExistence(timeout: 8),
+            "Cold launch should open a fresh safe chat instead of reopening an interrupted draft while preserving the selected provider."
+        )
         XCTAssertFalse(app.staticTexts["unfinished draft"].exists)
         capture("48-interrupted-chat-falls-back-ready", app: app)
     }
