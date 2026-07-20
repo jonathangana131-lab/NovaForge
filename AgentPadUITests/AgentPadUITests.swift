@@ -3369,18 +3369,27 @@ final class AgentPadUITests: XCTestCase {
 
     private func preferredIdentifiedElement(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         let query = app.descendants(matching: .any).matching(identifier: identifier)
-        if let visible = query.allElementsBoundByIndex.filter({ element in
-            guard element.exists, !element.frame.isEmpty else { return false }
-            return element.frame.intersects(app.frame)
-        }).max(by: { lhs, rhs in
+        let firstMatch = query.firstMatch
+        guard firstMatch.exists else { return firstMatch }
+
+        let visibleCandidates = query.allElementsBoundByIndex.compactMap { element -> (element: XCUIElement, frame: CGRect)? in
+            // `allElementsBoundByIndex` already resolved these snapshots. A
+            // second `.exists` query can race a transient control disappearing
+            // and make XCTest report a lookup failure instead of returning the
+            // expected non-existent element to the caller.
+            let frame = element.frame
+            guard !frame.isEmpty, frame.intersects(app.frame) else { return nil }
+            return (element, frame)
+        }
+        if let visible = visibleCandidates.max(by: { lhs, rhs in
             if lhs.frame.maxY != rhs.frame.maxY {
                 return lhs.frame.maxY < rhs.frame.maxY
             }
             return lhs.frame.width < rhs.frame.width
         }) {
-            return visible
+            return visible.element
         }
-        return query.firstMatch
+        return firstMatch
     }
 
     private func waitForDebugProviderFixture(
