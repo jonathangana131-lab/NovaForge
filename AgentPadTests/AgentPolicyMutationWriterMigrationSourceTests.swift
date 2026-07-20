@@ -88,7 +88,7 @@ final class AgentPolicyMutationWriterMigrationSourceTests: XCTestCase {
                 "operation: FilesPolicyMutationOperation",
                 "policyRuntime.makeExecutionContext(",
                 "conversationID: scopeConversationID",
-                "projectID: project.id",
+                "projectID: scopeProject?.id",
                 "policyRuntime.coordinator().performFiles(",
                 "FilesCanonicalMutationOperation.makeDirectory(",
                 "FilesPolicyMutationOperation.createFile(",

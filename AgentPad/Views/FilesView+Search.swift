@@ -343,12 +343,6 @@ extension FilesView {
         let fixtureKey = "\(runtime.workspace.rootURL.standardizedFileURL.path)|file-stress-v1"
         Task { @MainActor in
             defer { isSeedingFileStress = false }
-            let approvalTask = Task { @MainActor in
-                await approveExpectedSearchFixtureMutations(
-                    searchFileStressOperations()
-                )
-            }
-            defer { approvalTask.cancel() }
             do {
                 try await FilesDebugFixtureSeedCoordinator.shared.run(key: fixtureKey) {
                     try await seedFileStressFixture()
@@ -386,7 +380,8 @@ extension FilesView {
             return
         }
 
-        for operation in searchFileStressOperations() {
+        for operation in searchFileStressOperations()
+        where !searchFixtureOperationIsSatisfied(operation) {
             try Task.checkCancellation()
             _ = try await performSearchFixtureMutation(operation)
         }
@@ -406,12 +401,6 @@ extension FilesView {
         let fixtureKey = "\(runtime.workspace.rootURL.standardizedFileURL.path)|file-actions-v1"
         Task { @MainActor in
             defer { isSeedingFileStress = false }
-            let approvalTask = Task { @MainActor in
-                await approveExpectedSearchFixtureMutations(
-                    searchFileActionsOperations()
-                )
-            }
-            defer { approvalTask.cancel() }
             do {
                 try await FilesDebugFixtureSeedCoordinator.shared.run(key: fixtureKey) {
                     try await seedFileActionsFixture()
@@ -440,24 +429,10 @@ extension FilesView {
     #if DEBUG
     @MainActor
     private func seedFileActionsFixture() async throws {
-        _ = try await performSearchFixtureMutation(
-            .makeDirectory(PathArguments(path: "Actions"))
-        )
-        _ = try await performSearchFixtureMutation(
-            .writeFile(WriteFileArguments(
-                path: "Actions/notes.md",
-                contents: "# Actions fixture\n\nDuplicate/delete proof.\n"
-            ))
-        )
-
-        for path in ["Actions/notes_copy.md", "Actions/notes_copy 2.md", "Actions/notes_copy 3.md"] {
+        for operation in searchFileActionsOperations()
+        where !searchFixtureOperationIsSatisfied(operation) {
             try Task.checkCancellation()
-            let targetURL = try runtime.workspace.resolve(path)
-            guard FileManager.default.fileExists(atPath: targetURL.path)
-            else { continue }
-            _ = try await performSearchFixtureMutation(
-                .deletePath(PathArguments(path: path))
-            )
+            _ = try await performSearchFixtureMutation(operation)
         }
     }
     #endif
@@ -477,6 +452,10 @@ extension FilesView {
         // durable receipt. The narrowly launch-flagged debug task acts as the
         // test operator, approving only the matching Files preview; production
         // builds contain neither this path nor ambient authorization.
+        let approvalTask = Task { @MainActor in
+            await approveExpectedSearchFixtureMutation(operation)
+        }
+        defer { approvalTask.cancel() }
         let operationID = UUID()
         return try await performFilesMutation(
             operationID: operationID,
@@ -489,18 +468,21 @@ extension FilesView {
 
     #if DEBUG
     @MainActor
-    private func approveExpectedSearchFixtureMutations(
-        _ expectedOperations: [FilesCanonicalMutationOperation]
+    private func approveExpectedSearchFixtureMutation(
+        _ expectedOperation: FilesCanonicalMutationOperation
     ) async {
         let promptCenter = AgentPolicyMutationRuntime.shared.approvalPromptCenter
         while !Task.isCancelled {
             if let item = promptCenter.pendingItem,
                item.origin == .files,
-               expectedOperations.contains(where: {
-                   searchFixturePreview(item.operation, matches: $0)
-               })
+               searchFixturePreview(
+                   item.operation,
+                   matches: expectedOperation
+               )
             {
-                _ = promptCenter.approve(requestID: item.requestID)
+                if promptCenter.approve(requestID: item.requestID) == .accepted {
+                    return
+                }
             }
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -508,6 +490,7 @@ extension FilesView {
 
     private func searchFileStressOperations() -> [FilesCanonicalMutationOperation] {
         var operations: [FilesCanonicalMutationOperation] = [
+            .makeDirectory(PathArguments(path: "Sources")),
             .makeDirectory(PathArguments(path: "Sources/Generated")),
             .makeDirectory(PathArguments(path: "Logs")),
         ]
@@ -539,6 +522,30 @@ extension FilesView {
             contents: "v1"
         )))
         return operations
+    }
+
+    private func searchFixtureOperationIsSatisfied(
+        _ operation: FilesCanonicalMutationOperation
+    ) -> Bool {
+        switch operation {
+        case let .makeDirectory(arguments):
+            guard let targetURL = try? runtime.workspace.resolve(arguments.path)
+            else { return false }
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(
+                atPath: targetURL.path,
+                isDirectory: &isDirectory
+            ) && isDirectory.boolValue
+        case let .writeFile(arguments):
+            return (try? runtime.workspace.read(arguments.path)) ==
+                arguments.contents
+        case let .deletePath(arguments):
+            guard let targetURL = try? runtime.workspace.resolve(arguments.path)
+            else { return false }
+            return !FileManager.default.fileExists(atPath: targetURL.path)
+        case .movePath, .copyPath:
+            return false
+        }
     }
 
     private func searchFileActionsOperations() -> [FilesCanonicalMutationOperation] {

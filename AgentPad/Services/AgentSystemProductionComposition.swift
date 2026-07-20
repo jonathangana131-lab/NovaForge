@@ -50,6 +50,69 @@ protocol AgentSystemRunEnvironmentResolving: Sendable {
     ) async throws -> AgentSystemResolvedRunEnvironment
 }
 
+/// Resolves an opaque accepted workspace identity only within the app-owned
+/// Workspaces directory. The catalog is deliberately bounded and requires one
+/// exact identity match, so unknown IDs and collisions fail closed without
+/// persisting a raw filesystem path in the fresh-run plan.
+enum AgentSystemWorkspaceCatalog {
+    static let maximumCandidateCount = 256
+
+    static func resolve(
+        _ workspaceID: WorkspaceID,
+        fileManager: FileManager = .default
+    ) throws -> SandboxWorkspace {
+        let discoveredNames = SandboxWorkspace.listWorkspaces(
+            fileManager: fileManager
+        )
+        let names = Set(
+            discoveredNames + [AgentRunWorkspaceScope.generalWorkspaceName]
+        )
+        guard names.count <= maximumCandidateCount else {
+            throw AgentSystemProductionCompositionError.workspaceUnavailable
+        }
+        let candidates = names
+            .filter {
+                $0 == SandboxWorkspace.sanitizedWorkspaceName($0)
+            }
+            .sorted()
+            .map { SandboxWorkspace(name: $0, fileManager: fileManager) }
+        return try resolve(workspaceID, candidates: candidates)
+    }
+
+    static func resolve(
+        _ workspaceID: WorkspaceID,
+        candidates: [SandboxWorkspace]
+    ) throws -> SandboxWorkspace {
+        guard candidates.count <= maximumCandidateCount else {
+            throw AgentSystemProductionCompositionError.workspaceUnavailable
+        }
+        var match: SandboxWorkspace?
+        for candidate in candidates {
+            let identity: WorkspaceResourceIdentity
+            do {
+                identity = try WorkspaceResourceIdentity(
+                    workspace: candidate
+                )
+            } catch {
+                throw AgentSystemProductionCompositionError
+                    .workspaceUnavailable
+            }
+            guard WorkspaceID(rawValue: identity.persistentID) == workspaceID
+            else { continue }
+            guard match == nil else {
+                throw AgentSystemProductionCompositionError
+                    .workspaceIdentityMismatch
+            }
+            match = candidate
+        }
+        guard let match else {
+            throw AgentSystemProductionCompositionError
+                .workspaceIdentityMismatch
+        }
+        return match
+    }
+}
+
 /// SwiftData/Keychain implementation used by the iOS process. Every method
 /// creates a private non-autosaving context and returns only copyable values.
 /// Recovery resolves the accepted workspace name from the immutable legacy run
@@ -66,11 +129,12 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
     func resolveFreshEnvironment(
         context: AgentRunContext,
         providerRoute: ProviderRoute
-    ) throws -> AgentSystemResolvedRunEnvironment {
+    ) async throws -> AgentSystemResolvedRunEnvironment {
+        try await prepareCredentialIfNeeded(for: providerRoute)
         let modelContext = ModelContext(container)
         modelContext.autosaveEnabled = false
         let settings = try requireSettings(in: modelContext)
-        let workspaceName: String
+        let workspace: SandboxWorkspace
         if let projectID = context.projectID?.rawValue {
             var descriptor = FetchDescriptor<Project>(
                 predicate: #Predicate { $0.id == projectID }
@@ -81,12 +145,14 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
                 throw AgentSystemProductionCompositionError
                     .projectUnavailable
             }
-            workspaceName = projects[0].workspaceName
+            workspace = SandboxWorkspace(name: projects[0].workspaceName)
         } else {
-            workspaceName = settings.activeWorkspaceName
+            workspace = try AgentSystemWorkspaceCatalog.resolve(
+                context.workspaceID
+            )
         }
         return try makeEnvironment(
-            workspaceName: workspaceName,
+            workspaceName: workspace.workspaceName,
             context: context,
             providerRoute: providerRoute,
             settings: settings
@@ -96,7 +162,8 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
     func resolveRecoveryEnvironment(
         context: AgentRunContext,
         providerRoute: ProviderRoute
-    ) throws -> AgentSystemResolvedRunEnvironment {
+    ) async throws -> AgentSystemResolvedRunEnvironment {
+        try await prepareCredentialIfNeeded(for: providerRoute)
         let modelContext = ModelContext(container)
         modelContext.autosaveEnabled = false
         let settings = try requireSettings(in: modelContext)
@@ -121,6 +188,18 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
             providerRoute: providerRoute,
             settings: settings
         )
+    }
+
+    private func prepareCredentialIfNeeded(
+        for providerRoute: ProviderRoute
+    ) async throws {
+        guard providerRoute.provenance == .builtInOpenAICodexResponses else {
+            return
+        }
+        guard await OpenAICodexAuthManager.shared.prepareCredentialForRun()
+        else {
+            throw AgentSystemProductionCompositionError.credentialUnavailable
+        }
     }
 
     private func requireSettings(

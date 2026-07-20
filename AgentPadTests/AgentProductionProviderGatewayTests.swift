@@ -161,6 +161,42 @@ final class AgentProductionProviderGatewayTests: XCTestCase {
         }
     }
 
+    func testZenFreeCompositionAcceptsAnonymousCredentialButPaidDoesNot()
+        throws
+    {
+        let freeModel = ProviderModelID(rawValue: "deepseek-v4-flash-free")
+        let freeBundle = try AgentProductionProviderGatewayFactory
+            .hostedOpenCodeZenChatCompletions(
+                modelID: freeModel,
+                credential: ""
+            )
+        XCTAssertEqual(freeBundle.route.modelID, freeModel)
+        XCTAssertEqual(
+            freeBundle.selection.lane,
+            .hostedOpenCodeZenChatCompletions
+        )
+        XCTAssertEqual(
+            freeBundle.route.capabilities,
+            .hostedOpenCodeZenChatSingleCallToolsBaseline
+        )
+        XCTAssertTrue(
+            freeBundle.route.capabilities.features.contains(.reasoning)
+        )
+
+        XCTAssertThrowsError(
+            try AgentProductionProviderGatewayFactory
+                .hostedOpenCodeZenChatCompletions(
+                    modelID: ProviderModelID(rawValue: "big-pickle"),
+                    credential: ""
+                )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentProductionProviderGatewayError,
+                .invalidHostedCredential
+            )
+        }
+    }
+
     func testHostedCompositionRejectsWrongModelAdapterAndRouteEvidence()
         throws
     {
@@ -359,6 +395,34 @@ final class AgentProductionProviderGatewayTests: XCTestCase {
                 .freshRunPlanRouteMismatch
             )
         }
+    }
+
+    func testGPT56SolGatewayNegotiatesOnlyItsPinnedExactRoute() async throws {
+        let modelID = ProviderModelID(
+            rawValue: AIProvider.exactGPT56SolModelID
+        )
+        let selection = try AgentProductionProviderRouteSelection
+            .hostedOpenAICodexResponses(modelID: modelID)
+        let bundle = try AgentProductionProviderGatewayFactory
+            .hostedOpenAICodexResponses(
+                selection: selection,
+                credential: "redacted-oauth-token"
+            )
+        let gateway = try bundle.modelGateway(
+            for: selection,
+            freshRunPlan: freshRunPlan(route: bundle.route)
+        )
+
+        let routes = try await gateway.negotiateRoutes(
+            preferredAdapterIDs: [bundle.adapterID],
+            requirements: ProviderCapabilityRequirements(
+                features: bundle.route.capabilities.features
+            )
+        )
+
+        XCTAssertEqual(routes, [bundle.route])
+        XCTAssertEqual(routes.first?.modelID, modelID)
+        XCTAssertEqual(routes.first?.provenance, .builtInOpenAICodexResponses)
     }
 
     func testHostedAndLocalGatewaysRejectCrossRouting() async throws {

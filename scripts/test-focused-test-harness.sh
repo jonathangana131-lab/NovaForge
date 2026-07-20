@@ -20,6 +20,7 @@ grep -q 'Critical lane grew past sixteen UI journeys' "$RUNNER"
 grep -q 'NOVAFORGE_CAPTURE_MODE=off' "$RUNNER" || \
   grep -q 'NOVAFORGE_CAPTURE_MODE:-auto' "$RUNNER"
 rg -q 'captureMode == "off"' "$ROOT_DIR/AgentPadUITests/AgentPadUITests.swift"
+rg -q 'NOVAFORGE_SCREENSHOT_DIR="\$ROOT_DIR/\$NOVAFORGE_SCREENSHOT_DIR"' "$RUNNER"
 rg -q 'localWebArtifactFixtureReady' "$ROOT_DIR/AgentPad/Views/AppRootView.swift"
 rg -q 'localWebArtifactFixtureReady' "$ROOT_DIR/AgentPadUITests/AgentPadUITests.swift"
 

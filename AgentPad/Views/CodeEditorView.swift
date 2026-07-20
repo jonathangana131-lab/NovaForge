@@ -62,7 +62,10 @@ struct CodeEditorView: View {
     let fileName: String
     let relativePath: String
     var workspace: SandboxWorkspace
-    let projectID: UUID
+    /// General conversations have no project identity. Keep that absence in
+    /// the policy lineage instead of attributing a General edit to whichever
+    /// project happens to be active elsewhere in the app.
+    let projectID: UUID?
     let conversationID: UUID
     var initialLineNumber: Int?
     var onSave: () -> Void

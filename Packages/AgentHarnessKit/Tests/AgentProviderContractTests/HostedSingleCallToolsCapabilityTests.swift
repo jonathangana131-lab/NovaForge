@@ -46,6 +46,31 @@ final class HostedSingleCallToolsCapabilityTests: XCTestCase {
             chatCapability.snapshot.descriptorSHA256,
             responsesCapability.snapshot.descriptorSHA256
         )
+
+        let zen = TrustedHostedProviderCatalog
+            .openCodeZenChatCompletions(
+                model: .init(rawValue: "deepseek-v4-flash-free"),
+                capabilities:
+                    .hostedOpenCodeZenChatSingleCallToolsBaseline
+            )
+        let zenCapability = try zen.hostedSingleCallToolsCapability(
+            adapterID: zen.adapterID
+        )
+        XCTAssertEqual(
+            zenCapability.snapshot.provenance,
+            .builtInOpenCodeZenChatCompletions
+        )
+        XCTAssertEqual(
+            zenCapability.snapshot.dialect,
+            .openAIChatCompletions
+        )
+        XCTAssertTrue(
+            zenCapability.snapshot.capabilities.features.contains(.reasoning)
+        )
+        XCTAssertNotEqual(
+            chatCapability.snapshot.descriptorSHA256,
+            zenCapability.snapshot.descriptorSHA256
+        )
     }
 
     func testProductionAuthorityCannotBeMintedFromNarrowOrTextRoutes() throws {
@@ -89,6 +114,10 @@ final class HostedSingleCallToolsCapabilityTests: XCTestCase {
                 capabilities(maximumToolDefinitions: 19),
                 .invalidToolDefinitionLimit(19)
             ),
+            (
+                capabilities(extraFeatures: [.reasoning]),
+                .dialectCapabilityMismatch(.reasoning)
+            ),
         ]
         for (index, fixture) in invalidRoutes.enumerated() {
             let catalog = TrustedHostedProviderCatalog
@@ -106,6 +135,24 @@ final class HostedSingleCallToolsCapabilityTests: XCTestCase {
                     fixture.1
                 )
             }
+        }
+    }
+
+    func testZenAuthorityRequiresExplicitReasoningCapability() {
+        let catalog = TrustedHostedProviderCatalog
+            .openCodeZenChatCompletions(
+                model: .init(rawValue: "deepseek-v4-flash-free"),
+                capabilities: .hostedChatSingleCallToolsBaseline
+            )
+        XCTAssertThrowsError(
+            try catalog.hostedSingleCallToolsCapability(
+                adapterID: catalog.adapterID
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? HostedSingleCallToolsCapabilityError,
+                .requiredCapabilityMissing(.reasoning)
+            )
         }
     }
 

@@ -17,7 +17,7 @@ scripts/codex-test.sh release
 | Lane | Purpose | Contents | Screenshots |
 | --- | --- | --- | --- |
 | `smoke` | Tight edit loop | Four launch/chat/provider/reasoning journeys | Off except required pixel proof |
-| `critical` | Pull request and pre-release gate | Source contracts, 382 package tests, all app unit tests, and at most 16 high-value UI journeys | Off; XCTest retains failure shots |
+| `critical` | Pull request and pre-release gate | Source contracts, all package and app unit tests, and at most 16 high-value UI journeys | Off; XCTest retains failure shots |
 | `unit` | Agent/runtime work | Source contracts, package tests, and all app unit tests | Off |
 | `visual` | UI review | Ten synchronized journeys covering the major surfaces | Written to the lane's `screenshots/` folder |
 | `release` | Scheduled/manual exhaustive gate | Source contracts, package tests, every unit test, and every UI journey | Off; failures still retain XCTest diagnostics |
@@ -93,16 +93,25 @@ Tour fixture matrix:
 | Step | Launch args | Proves |
 | --- | --- | --- |
 | `01-chat-default-clean` | `--reset-ui --open-chat` | Cold launch defaults to clean Chat, without the old project-launch card or duplicate Project Status board. |
-| `02-project-idle` | `--reset-ui --open-project` | Project OS idle command center, one Run action, chosen next step, reason, proof, and approval expectation. |
-| `03-project-running` | `--reset-ui --project-running-demo --open-project` | Project Run active/loading state and live structured progress outside Chat. |
-| `04-project-approval` | `--reset-ui --pending-approval-demo --open-project` | Project OS waiting/approval state with paused tool context. |
-| `05-project-blocked` | `--reset-ui --project-blocked-demo --open-project` | True blocker state with failed run, terminal evidence, and recovery next step. |
-| `06-project-proof` | `--reset-ui --project-proof-demo --open-project` | Completed/proof state with artifact, file change, terminal record, timeline, and proof checkpoint linked. |
-| `07-runs-proof` | `--reset-ui --project-proof-demo --open-runs` | Runs surface agrees with Project proof/run records. |
-| `08-files-proof` | `--reset-ui --project-proof-demo --open-files` | Files surface can show proof artifacts without deleting durable evidence. |
-| `09-terminal-live-record` | `--reset-ui --terminal-live-record-demo --open-terminal` | Terminal proof surface and command record state. |
-| `10-settings-local-ready` | `--reset-ui --settings-local-model-ready --open-settings` | Settings surface with deterministic local model ready state. |
-| `11-chat-pending-approval` | `--reset-ui --pending-approval-demo --open-chat` | Chat remains conversation-first while approval state belongs to the correct run. |
+| `02-mission-dossier-idle` | `--reset-ui --open-project --open-mission-dossier-demo` | Idle mission dossier and its next-action hierarchy. |
+| `03-mission-dossier-running` | `--reset-ui --project-running-demo --open-project --open-mission-dossier-demo` | Active mission progress in the dossier. |
+| `04-mission-dossier-approval` | `--reset-ui --project-waiting-demo --open-project --open-mission-dossier-demo` | Approval-required mission state. |
+| `05-mission-dossier-waiting` | `--reset-ui --project-waiting-demo --open-project --open-mission-dossier-demo` | Stable waiting state and paused context. |
+| `06-mission-dossier-blocked` | `--reset-ui --project-blocked-demo --open-project --open-mission-dossier-demo` | True blocker state and recovery guidance. |
+| `07-mission-dossier-proof` | `--reset-ui --project-proof-demo --open-project --open-mission-dossier-demo` | Completed mission proof and linked evidence. |
+| `08-mission-dossier-resume` | `--reset-ui --project-resume-demo --open-project --open-mission-dossier-demo` | Resume affordance for interrupted work. |
+| `09-mission-dossier-auto-continue-countdown` | `--reset-ui --auto-continue-countdown-demo --open-project --open-mission-dossier-demo` | Bounded auto-continue countdown state. |
+| `10-runs-proof` | `--reset-ui --project-proof-demo --open-runs` | History agrees with completed mission records. |
+| `11-files-proof` | `--reset-ui --project-proof-demo --open-files` | Workspace shows proof artifacts without deleting evidence. |
+| `12-terminal-live-record` | `--reset-ui --terminal-live-record-demo --open-terminal` | Terminal proof and command record state. |
+| `13-settings-local-ready` | `--reset-ui --settings-local-model-ready --open-settings` | Control surface with deterministic local-model readiness. |
+| `14-chat-pending-approval` | `--reset-ui --pending-approval-demo --open-chat` | Forge remains conversation-first while approval belongs to the correct run. |
+| `15-theme-matrix-mission-dossier-running` | Matrix theme plus running dossier fixture | Mission hierarchy remains readable in Matrix Rain. |
+| `16-theme-midnight-chat-general` | Midnight theme plus clean Forge fixture | General chat remains readable in Midnight Black. |
+| `17-theme-whitegold-settings` | White Gold theme plus ready local-model fixture | Control hierarchy remains readable in White Gold. |
+| `18-theme-arctic-runs-proof` | Arctic theme plus proof History fixture | Run evidence remains readable in Arctic Glass. |
+| `19-theme-ember-terminal-proof` | Ember theme plus terminal proof fixture | Terminal evidence remains readable in Ember Core. |
+| `20-mission-dossier-intake-brief` | Mission dossier plus intake fixture | Mission intake content fits and remains actionable. |
 
 ## Fast Trust Gate
 
@@ -117,10 +126,10 @@ scripts/codex-sim-clean-check.sh
 
 Expected proof:
 
-- `scripts/codex-test.sh critical` prints `PASS: NovaForge critical lane`, leaves logs and an `.xcresult` in `QA/codex-tests-<timestamp>-critical/`, and reuses one bounded build cache.
+- `scripts/codex-test.sh critical` prints `PASS: NovaForge critical lane`, leaves logs in `QA/codex-tests-<timestamp>-critical/`, and reuses one bounded build cache. Set `WRITE_RESULT_BUNDLE=1` or `RESULT_BUNDLE_PATH` when a retained `.xcresult` is required.
 - `scripts/codex-performance-gate.sh` reuses that `.xctestrun`, prints `Performance budgets passed`, and leaves `performance-summary.txt` plus raw OSLog output in `QA/codex-performance-gate-<timestamp>/`.
 - `scripts/codex-ai-streaming-video-proof.sh` preserves video, screenshots, contact sheet, and logs while removing its managed `QA/DerivedData/codex-ai-streaming-video-proof/` build cache on exit by default. Set `KEEP_DERIVED_DATA=1` only for debugging; custom `DERIVED_DATA` paths are preserved.
-- `scripts/codex-sim-tour.sh` prints `Tour passed`, leaves eleven required screenshots in `NovaForgeScreenshots/codex-tour-<timestamp>/`, and writes `tour-verification-summary.txt`.
+- `scripts/codex-sim-tour.sh` prints `Tour passed`, leaves every required screenshot in `NovaForgeScreenshots/codex-tour-<timestamp>/`, and writes `tour-verification-summary.txt`.
 - `scripts/codex-sim-clean-check.sh` reports the proof simulator is shutdown and no NovaForge, `xcodebuild`, `simctl`, fast screenshot, or tour helper is lingering.
 
 ## Unit-Only Proof
@@ -138,7 +147,7 @@ Coverage map:
 | Area | Primary proof |
 | --- | --- |
 | Launch recovery | `AgentRuntimeLifecycleTests` launch selection and interrupted tool recovery tests. |
-| Approval gating | `AgentRuntimeLifecycleTests` approve/reject/stop pending approval tests plus tour steps `04-project-approval` and `11-chat-pending-approval`. |
+| Approval gating | `AgentRuntimeLifecycleTests` approve/reject/stop pending approval tests plus tour steps `04-mission-dossier-approval` and `14-chat-pending-approval`. |
 | Approved tool state | `ProjectFoundationTests/testProjectSummaryTreatsApprovedRunAsRunningNotPendingApproval`. |
 | Project OS source of truth | `ProjectFoundationTests` launch repair/project scoping tests plus `testProjectLatestProofPrefersNewerFailedRunOverOlderArtifact`. |
 | Files workspace state | `FilesWorkspacePersistenceTests` project/settings/active-project workspace save and rollback tests plus tour step `08-files-proof`. |
@@ -181,24 +190,49 @@ Fast gate does not fully cover:
 
 - Real paid-provider requests, revoked API keys, or custom endpoint outages beyond unit-level/provider-sanitizer behavior.
 - Real multi-gigabyte local model inference on physical hardware; the fast tour uses deterministic local model fixtures.
-- Full XCUITest regression inventory; the weekly/manual `release` lane owns all 68 UI journeys.
+- Full XCUITest regression inventory; the weekly/manual `release` lane owns every UI journey in the current test target.
 - Physical iPhone install/signing/provisioning.
 - Full accessibility audit across every Dynamic Type size and VoiceOver rotor path.
 - Exhaustive Liquid Glass frame-time analysis across every device/runtime; the fast performance gate enforces the Project scroll, tab switch, and Chat streaming budgets on the proof simulator, while deep performance sweeps remain separate.
 
 ## Physical iPhone Update
 
-Use the guarded phone helper when a verified build needs to be installed on Joey’s plugged-in iPhone:
+The phone helper is fail-closed and never contacts a device by default. First prepare and audit the signed candidate without device contact:
 
 ```sh
-CONFIGURATION=Release scripts/run-on-iphone.sh
+PREPARE_ONLY=1 CONFIGURATION=Release scripts/run-on-iphone.sh
 ```
 
-The helper writes logs under `QA/phone-update-*`, builds into isolated DerivedData, records `QA/latest-phone-update-dir.txt`, checks CoreDevice/USB reachability before install, installs with `devicectl`, launches `com.joey.NovaForge`, and verifies the NovaForge process. If the phone is paired but unavailable, it exits with a clear `PHONE UPDATE BLOCKED` message instead of repeatedly rebuilding or hiding the device issue.
+After the exact same clean commit and version pass the live-provider XCTest on Simulator, create a schema-v2 proof receipt. The receipt generator independently audits the signed iPhoneOS candidate, hashes the exact Simulator app, log, and screenshot, derives its timestamp from the named zero-failure XCTest result, and refuses evidence older than 30 minutes:
+
+```sh
+SIMULATOR_APP_PATH=/absolute/path/to/Debug-iphonesimulator/NovaForge.app \
+DEVICE_CANDIDATE_APP_PATH=/absolute/path/to/Release-iphoneos/NovaForge.app \
+PROVIDER_EVIDENCE_LOG=/absolute/path/to/live-provider-test.log \
+PROVIDER_EVIDENCE_SCREENSHOT=/absolute/path/to/live-provider-proof.png \
+PROVIDER_ID=openCodeZen \
+RESPONSE_MARKER=NF_SIMULATOR_BUILD3 \
+PROVIDER_TEST_IDENTIFIER=AgentPadUITests.AgentPadUITests/testSimulatorAnonymousZenProviderCanaryCompletesAndPersists \
+OUT_RECEIPT=/absolute/path/to/simulator-proof-receipt.json \
+scripts/create-simulator-proof-receipt.sh
+```
+
+Only then opt in to installing that already-audited candidate:
+
+```sh
+ALLOW_DEVICE_INSTALL=1 BUILD_FIRST=0 \
+APP_PATH=/absolute/path/to/Release-iphoneos/NovaForge.app \
+SIMULATOR_PROOF_RECEIPT=/absolute/path/to/simulator-proof-receipt.json \
+scripts/run-on-iphone.sh
+```
+
+Immediately before install, the helper again requires clean committed source, rejects untracked compiled source, re-verifies the source commit embedded inside both app bundles, re-audits the signed iPhoneOS bundle, and rehashes the Simulator app plus provider evidence. It then writes logs under `QA/phone-update-*`, records `QA/latest-phone-update-dir.txt`, checks CoreDevice/USB reachability, installs with `devicectl`, launches `com.joey.NovaForge`, and verifies the NovaForge process. If the phone is paired but unavailable, it exits with a clear `PHONE UPDATE BLOCKED` message.
 
 Useful knobs:
 
 - `APP_PATH=/path/to/NovaForge.app` reuses an already-built app.
+- `PREPARE_ONLY=1` prepares and audits the signed candidate with no device commands.
+- `ALLOW_DEVICE_INSTALL=1` is mandatory for the final install and is accepted only with a fresh schema-v2 Simulator proof receipt.
 - `WAIT_FOR_DEVICE=0` performs one fast reachability check and exits if the phone is unavailable.
 - `MAX_ATTEMPTS=120 SLEEP_SECONDS=10` waits up to ~20 minutes for unlock/replug/trust recovery.
 

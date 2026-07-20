@@ -19,14 +19,17 @@ struct ProviderStreamSession: Sendable {
     private var sequence: UInt64 = 0
     private var responseID: String?
     private var responseModel: ProviderModelID?
+    private var pendingResponsesMetadataID: String?
     private var wireClosed = false
     private var responseCompleted = false
     private var chatFinishReason: ModelFinishReason?
     private var usageReported = false
     private var responsesTextByPart: [ResponsesContentKey: String] = [:]
-    private var responsesReasoningByPart: [ResponsesContentKey: String] = [:]
+    private var responsesReasoningSummaryByPart: [ResponsesContentKey: String] = [:]
+    private var responsesReasoningTextByPart: [ResponsesContentKey: String] = [:]
     private var completedResponsesTextParts: Set<ResponsesContentKey> = []
-    private var completedResponsesReasoningParts: Set<ResponsesContentKey> = []
+    private var completedResponsesReasoningSummaryParts: Set<ResponsesContentKey> = []
+    private var completedResponsesReasoningTextParts: Set<ResponsesContentKey> = []
     private var toolCalls: [Int: PartialToolCall] = [:]
     private var toolOrder: [Int] = []
     private var wireFrameCount = 0
@@ -394,7 +397,7 @@ struct ProviderStreamSession: Sendable {
         else {
             throw ProviderFailureMapper.malformed("provider_responses_event_invalid", descriptor: descriptor)
         }
-        if type != "response.created", type != "error" {
+        if type != "response.created", type != "response.metadata", type != "error" {
             try requireResponsesStarted()
         }
 
@@ -404,6 +407,9 @@ struct ProviderStreamSession: Sendable {
                 throw ProviderFailureMapper.malformed("provider_responses_created_missing_response", descriptor: descriptor)
             }
             return try startResponse(from: response, permitExisting: false)
+
+        case "response.metadata":
+            return try receiveResponsesMetadata(object)
 
         case "response.in_progress", "response.queued":
             return []
@@ -430,12 +436,68 @@ struct ProviderStreamSession: Sendable {
             completedResponsesTextParts.insert(key)
             return []
 
+        case "response.reasoning_summary_part.added":
+            try requireOutputBeforeUsage()
+            try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
+            let key = try responsesContentKey(
+                object,
+                partIndexKeys: ["summary_index"],
+                code: "provider_responses_reasoning_index_missing"
+            )
+            guard let part = object["part"]?.providerObject,
+                  part["type"]?.providerString == "summary_text",
+                  let text = part["text"]?.providerString
+            else {
+                throw ProviderFailureMapper.malformed(
+                    "provider_responses_reasoning_part_invalid",
+                    descriptor: descriptor
+                )
+            }
+            // The added event is lifecycle metadata, not an output delta. A
+            // non-empty value here would otherwise bypass output accounting.
+            guard text.isEmpty,
+                  responsesReasoningSummaryByPart[key, default: ""].isEmpty,
+                  !completedResponsesReasoningSummaryParts.contains(key)
+            else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_reasoning_part_added_mismatch",
+                    descriptor: descriptor
+                )
+            }
+            return []
+
+        case "response.reasoning_summary_part.done":
+            try requireOutputBeforeUsage()
+            try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
+            let key = try responsesContentKey(
+                object,
+                partIndexKeys: ["summary_index"],
+                code: "provider_responses_reasoning_index_missing"
+            )
+            guard let part = object["part"]?.providerObject,
+                  part["type"]?.providerString == "summary_text",
+                  let text = part["text"]?.providerString
+            else {
+                throw ProviderFailureMapper.malformed(
+                    "provider_responses_reasoning_part_invalid",
+                    descriptor: descriptor
+                )
+            }
+            guard responsesReasoningSummaryByPart[key, default: ""] == text else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_reasoning_part_done_mismatch",
+                    descriptor: descriptor
+                )
+            }
+            completedResponsesReasoningSummaryParts.insert(key)
+            return []
+
         case "response.reasoning_summary_text.done":
             try requireOutputBeforeUsage()
             try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
             let key = try responsesContentKey(
                 object,
-                partIndexKeys: ["summary_index", "content_index"],
+                partIndexKeys: ["summary_index"],
                 code: "provider_responses_reasoning_index_missing"
             )
             guard let text = object["text"]?.providerString else {
@@ -444,23 +506,86 @@ struct ProviderStreamSession: Sendable {
                     descriptor: descriptor
                 )
             }
-            guard responsesReasoningByPart[key, default: ""] == text else {
+            guard responsesReasoningSummaryByPart[key, default: ""] == text else {
                 throw ProviderFailureMapper.protocolViolation(
                     "provider_responses_reasoning_done_mismatch",
                     descriptor: descriptor
                 )
             }
-            completedResponsesReasoningParts.insert(key)
+            completedResponsesReasoningSummaryParts.insert(key)
+            return []
+
+        case "response.reasoning_text.done":
+            try requireOutputBeforeUsage()
+            try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
+            let key = try responsesContentKey(
+                object,
+                partIndexKeys: ["content_index"],
+                code: "provider_responses_reasoning_index_missing"
+            )
+            guard let text = object["text"]?.providerString else {
+                throw ProviderFailureMapper.malformed(
+                    "provider_responses_reasoning_done_missing",
+                    descriptor: descriptor
+                )
+            }
+            guard responsesReasoningTextByPart[key, default: ""] == text else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_reasoning_done_mismatch",
+                    descriptor: descriptor
+                )
+            }
+            completedResponsesReasoningTextParts.insert(key)
             return []
 
         case "response.content_part.added", "response.content_part.done":
-            if let part = object["part"]?.providerObject,
-               let partType = part["type"]?.providerString,
-               partType != "output_text" {
+            guard let part = object["part"]?.providerObject,
+                  let partType = part["type"]?.providerString
+            else {
+                throw ProviderFailureMapper.malformed(
+                    "provider_responses_content_part_invalid",
+                    descriptor: descriptor
+                )
+            }
+            guard partType == "output_text" || partType == "reasoning_text" else {
                 throw ProviderFailureMapper.protocolViolation(
                     "provider_nontext_output_not_supported",
                     descriptor: descriptor
                 )
+            }
+            guard partType == "reasoning_text" else { return [] }
+
+            try requireOutputBeforeUsage()
+            try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
+            let key = try responsesContentKey(
+                object,
+                partIndexKeys: ["content_index"],
+                code: "provider_responses_reasoning_index_missing"
+            )
+            guard let text = part["text"]?.providerString else {
+                throw ProviderFailureMapper.malformed(
+                    "provider_responses_reasoning_part_invalid",
+                    descriptor: descriptor
+                )
+            }
+            if type == "response.content_part.added" {
+                guard text.isEmpty,
+                      responsesReasoningTextByPart[key, default: ""].isEmpty,
+                      !completedResponsesReasoningTextParts.contains(key)
+                else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_text_part_added_mismatch",
+                        descriptor: descriptor
+                    )
+                }
+            } else {
+                guard responsesReasoningTextByPart[key, default: ""] == text else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_text_part_done_mismatch",
+                        descriptor: descriptor
+                    )
+                }
+                completedResponsesReasoningTextParts.insert(key)
             }
             return []
 
@@ -486,11 +611,10 @@ struct ProviderStreamSession: Sendable {
             }
             return delta.isEmpty ? [] : [.textDelta(.init(outputIndex: key.outputIndex, text: delta))]
 
-        case "response.reasoning_summary_text.delta", "response.reasoning_summary.delta",
-             "response.reasoning_text.delta":
+        case "response.reasoning_summary_text.delta", "response.reasoning_summary.delta":
             let key = try responsesContentKey(
                 object,
-                partIndexKeys: ["summary_index", "content_index"],
+                partIndexKeys: ["summary_index"],
                 code: "provider_responses_reasoning_index_missing"
             )
             guard let delta = object["delta"]?.providerString else {
@@ -502,14 +626,40 @@ struct ProviderStreamSession: Sendable {
             try requireOutputBeforeUsage()
             try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
             if !delta.isEmpty {
-                guard !completedResponsesReasoningParts.contains(key) else {
+                guard !completedResponsesReasoningSummaryParts.contains(key) else {
                     throw ProviderFailureMapper.protocolViolation(
                         "provider_responses_output_after_done",
                         descriptor: descriptor
                     )
                 }
                 try recordOutput(delta)
-                responsesReasoningByPart[key, default: ""].append(delta)
+                responsesReasoningSummaryByPart[key, default: ""].append(delta)
+            }
+            return delta.isEmpty ? [] : [.reasoningDelta(.init(outputIndex: key.outputIndex, text: delta))]
+
+        case "response.reasoning_text.delta":
+            let key = try responsesContentKey(
+                object,
+                partIndexKeys: ["content_index"],
+                code: "provider_responses_reasoning_index_missing"
+            )
+            guard let delta = object["delta"]?.providerString else {
+                throw ProviderFailureMapper.malformed(
+                    "provider_responses_reasoning_delta_missing",
+                    descriptor: descriptor
+                )
+            }
+            try requireOutputBeforeUsage()
+            try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
+            if !delta.isEmpty {
+                guard !completedResponsesReasoningTextParts.contains(key) else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_output_after_done",
+                        descriptor: descriptor
+                    )
+                }
+                try recordOutput(delta)
+                responsesReasoningTextByPart[key, default: ""].append(delta)
             }
             return delta.isEmpty ? [] : [.reasoningDelta(.init(outputIndex: key.outputIndex, text: delta))]
 
@@ -609,6 +759,78 @@ struct ProviderStreamSession: Sendable {
         }
     }
 
+    /// ChatGPT's Codex Responses stream can carry provider-owned control-plane
+    /// metadata before `response.created` or between ordinary output events.
+    /// It is deliberately accepted only on that pinned route and never exposed
+    /// as model output or broadened into a generic unknown-event escape hatch.
+    private mutating func receiveResponsesMetadata(
+        _ object: [String: JSONValue]
+    ) throws -> [ProviderStreamEvent] {
+        guard descriptor.route.provenance == .builtInOpenAICodexResponses else {
+            throw ProviderFailureMapper.protocolViolation(
+                "provider_responses_metadata_not_supported",
+                descriptor: descriptor
+            )
+        }
+        try rejectUnknownFields(
+            object,
+            allowed: [
+                "type",
+                "sequence_number",
+                "response_id",
+                "headers",
+                "metadata",
+                "safety_buffering",
+            ],
+            code: "provider_responses_metadata_field_unknown"
+        )
+
+        if let sequenceNumber = object["sequence_number"],
+           !sequenceNumber.isProviderNull,
+           sequenceNumber.providerUInt64 == nil {
+            throw ProviderFailureMapper.protocolViolation(
+                "provider_responses_metadata_sequence_invalid",
+                descriptor: descriptor
+            )
+        }
+        for field in ["headers", "metadata", "safety_buffering"] {
+            if let value = object[field],
+               !value.isProviderNull,
+               value.providerObject == nil {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_metadata_\(field)_invalid",
+                    descriptor: descriptor
+                )
+            }
+        }
+
+        if let responseIDValue = object["response_id"] {
+            guard let candidate = responseIDValue.providerString,
+                  Self.isSafeWireIdentity(candidate, maximumUTF8Count: 512)
+            else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_metadata_response_id_invalid",
+                    descriptor: descriptor
+                )
+            }
+            if let responseID, responseID != candidate {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_metadata_identity_changed",
+                    descriptor: descriptor
+                )
+            }
+            if let pendingResponsesMetadataID,
+               pendingResponsesMetadataID != candidate {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_metadata_identity_changed",
+                    descriptor: descriptor
+                )
+            }
+            pendingResponsesMetadataID = candidate
+        }
+        return []
+    }
+
     private mutating func startResponse(
         from response: [String: JSONValue],
         permitExisting: Bool
@@ -619,6 +841,13 @@ struct ProviderStreamSession: Sendable {
             throw ProviderFailureMapper.malformed("provider_responses_start_metadata_missing", descriptor: descriptor)
         }
         try validateResponseIdentity(id: id, model: model)
+        if let pendingResponsesMetadataID,
+           pendingResponsesMetadataID != id {
+            throw ProviderFailureMapper.protocolViolation(
+                "provider_responses_metadata_identity_changed",
+                descriptor: descriptor
+            )
+        }
         if let responseID {
             guard responseID == id, responseModel == ProviderModelID(rawValue: model) else {
                 throw ProviderFailureMapper.protocolViolation(
@@ -954,8 +1183,7 @@ struct ProviderStreamSession: Sendable {
                 descriptor: descriptor
             )
         }
-        if let requestedMaximum = request.options.maximumOutputTokens,
-           usage.outputTokens > requestedMaximum {
+        if usage.outputTokens > wireMaximumOutputTokens {
             throw ProviderFailureMapper.protocolViolation(
                 "provider_usage_request_output_limit_exceeded",
                 descriptor: descriptor
@@ -1126,7 +1354,12 @@ struct ProviderStreamSession: Sendable {
                 code: "provider_reasoning_output_not_supported"
             )
             guard let outputIndex else { return }
-            let summary = item["summary"]?.providerArray ?? []
+            guard let summary = item["summary"]?.providerArray else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_reasoning_snapshot_invalid",
+                    descriptor: descriptor
+                )
+            }
             var representedParts: Set<ResponsesContentKey> = []
             for (summaryIndex, partValue) in summary.enumerated() {
                 guard let part = partValue.providerObject,
@@ -1143,19 +1376,66 @@ struct ProviderStreamSession: Sendable {
                     partIndex: summaryIndex
                 )
                 representedParts.insert(key)
-                guard responsesReasoningByPart[key, default: ""] == text else {
+                guard responsesReasoningSummaryByPart[key, default: ""] == text else {
                     throw ProviderFailureMapper.protocolViolation(
                         "provider_responses_reasoning_snapshot_mismatch",
                         descriptor: descriptor
                     )
                 }
             }
-            let hasUnrepresentedReasoning = responsesReasoningByPart.contains { key, text in
+            let hasUnrepresentedSummary = responsesReasoningSummaryByPart.contains { key, text in
                 key.outputIndex == outputIndex &&
                     !text.isEmpty &&
                     !representedParts.contains(key)
             }
-            guard !hasUnrepresentedReasoning else {
+            guard !hasUnrepresentedSummary else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_reasoning_snapshot_mismatch",
+                    descriptor: descriptor
+                )
+            }
+
+            let content: [JSONValue]
+            if let contentValue = item["content"], !contentValue.isProviderNull {
+                guard let parts = contentValue.providerArray else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_snapshot_invalid",
+                        descriptor: descriptor
+                    )
+                }
+                content = parts
+            } else {
+                content = []
+            }
+            var representedContentParts: Set<ResponsesContentKey> = []
+            for (contentIndex, partValue) in content.enumerated() {
+                guard let part = partValue.providerObject,
+                      part["type"]?.providerString == "reasoning_text",
+                      let text = part["text"]?.providerString
+                else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_snapshot_invalid",
+                        descriptor: descriptor
+                    )
+                }
+                let key = ResponsesContentKey(
+                    outputIndex: outputIndex,
+                    partIndex: contentIndex
+                )
+                representedContentParts.insert(key)
+                guard responsesReasoningTextByPart[key, default: ""] == text else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_snapshot_mismatch",
+                        descriptor: descriptor
+                    )
+                }
+            }
+            let hasUnrepresentedContent = responsesReasoningTextByPart.contains { key, text in
+                key.outputIndex == outputIndex &&
+                    !text.isEmpty &&
+                    !representedContentParts.contains(key)
+            }
+            guard !hasUnrepresentedContent else {
                 throw ProviderFailureMapper.protocolViolation(
                     "provider_responses_reasoning_snapshot_mismatch",
                     descriptor: descriptor
@@ -1278,11 +1558,20 @@ struct ProviderStreamSession: Sendable {
     }
 
     private var maximumOutputUTF8Bytes: Int {
-        let routeLimit = descriptor.route.capabilities.maximumOutputTokens
-        let tokenLimit = min(request.options.maximumOutputTokens ?? routeLimit, routeLimit)
-        let multiplied = tokenLimit.multipliedReportingOverflow(by: 64)
+        let multiplied = wireMaximumOutputTokens.multipliedReportingOverflow(by: 64)
         let proposed = multiplied.overflow ? UInt64.max : multiplied.partialValue
         return Int(min(UInt64(8 * 1_024 * 1_024), max(UInt64(64 * 1_024), proposed)))
+    }
+
+    /// Mirrors the limit encoded on the wire. The ChatGPT Codex endpoint does
+    /// not accept `max_output_tokens`, so that route is bounded by the pinned
+    /// route capability rather than a request option the provider never saw.
+    private var wireMaximumOutputTokens: UInt64 {
+        let routeLimit = descriptor.route.capabilities.maximumOutputTokens
+        guard descriptor.route.provenance != .builtInOpenAICodexResponses else {
+            return routeLimit
+        }
+        return min(request.options.maximumOutputTokens ?? routeLimit, routeLimit)
     }
 
     private static func measureWireJSON(

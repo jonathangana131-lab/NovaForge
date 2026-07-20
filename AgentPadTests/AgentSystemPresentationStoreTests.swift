@@ -838,7 +838,13 @@ final class AgentSystemPresentationStoreTests: XCTestCase {
     ) {
         let conversation = Conversation(title: "Presentation \(seed)")
         conversation.id = presentationUUID(seed)
-        let workspace = SandboxWorkspace(name: workspaceName)
+        // A nil-project presentation is a user-facing General conversation.
+        // Its accepted physical workspace is always Default; the settings
+        // value deliberately remains different so these tests also guard
+        // against borrowing the currently active project's workspace.
+        let workspace = SandboxWorkspace(
+            name: AgentRunWorkspaceScope.generalWorkspaceName
+        )
         let settings = AgentSettings(
             provider: .local,
             modelID: AIProvider.local.defaultModel,

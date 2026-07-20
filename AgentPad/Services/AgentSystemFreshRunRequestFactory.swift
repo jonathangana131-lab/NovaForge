@@ -29,6 +29,37 @@ enum AgentSystemFreshRunRequestFactoryError: Error, Equatable, Sendable {
     case commandConstructionMismatch
 }
 
+/// One source of truth for the physical workspace attached to a fresh run.
+/// User-facing General conversations are always isolated in `Default` even
+/// while Settings continues to remember an active project's workspace.
+enum AgentRunWorkspaceScope {
+    static let generalWorkspaceName = "Default"
+
+    static func userWorkspace(for project: Project?) -> SandboxWorkspace {
+        SandboxWorkspace(
+            name: project?.workspaceName ?? generalWorkspaceName
+        )
+    }
+
+    static func expectedName(
+        project: Project?,
+        requestedWorkspace: SandboxWorkspace,
+        origin: AgentRunRecordOrigin
+    ) -> String {
+        if let project {
+            return SandboxWorkspace.sanitizedWorkspaceName(
+                project.workspaceName
+            )
+        }
+        if origin == .system {
+            // Ultra/UltraCode workers intentionally run in isolated snapshots
+            // with no persisted Project relationship.
+            return requestedWorkspace.workspaceName
+        }
+        return generalWorkspaceName
+    }
+}
+
 /// The only production constructor for a fresh V2 command/plan pair.
 ///
 /// Callers supply user and UI scope values, but no provider descriptor, tool
@@ -65,9 +96,14 @@ enum AgentSystemFreshRunRequestFactory {
         acceptedAt: AgentInstant = AgentInstant(Date())
     ) throws -> AgentSystemFreshRunRequest {
         try validateProjectScope(conversation: conversation, project: project)
+        let acceptedWorkspaceName = AgentRunWorkspaceScope.expectedName(
+            project: project,
+            requestedWorkspace: workspace,
+            origin: origin
+        )
         let workspaceIdentity = try validatedWorkspaceIdentity(
             workspace: workspace,
-            expectedName: project?.workspaceName ?? settings.activeWorkspaceName
+            expectedName: acceptedWorkspaceName
         )
         let provider = try validatedProvider(settings)
         let selection = try providerSelection(
@@ -311,9 +347,17 @@ private extension AgentSystemFreshRunRequestFactory {
                     .unsupportedProvider
             }
             let expectedCapabilities: ProviderModelCapabilities =
-                provider == .openAICodex
-                    ? .hostedResponsesSingleCallToolsBaseline
-                    : .hostedChatSingleCallToolsBaseline
+                switch provider {
+                case .openAICodex:
+                    .hostedResponsesSingleCallToolsBaseline
+                case .openCodeZen:
+                    .hostedOpenCodeZenChatSingleCallToolsBaseline
+                case .openAI:
+                    .hostedChatSingleCallToolsBaseline
+                default:
+                    throw AgentSystemFreshRunRequestFactoryError
+                        .unsupportedProvider
+                }
             guard route.provenance == expectedProvenance,
                   route.deployment == .hostedService,
                   route.capabilities == expectedCapabilities,

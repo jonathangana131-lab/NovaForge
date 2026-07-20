@@ -267,6 +267,194 @@ final class AgentPadUITests: XCTestCase {
         capture("sev0-chat-send-stream-final", app: app)
     }
 
+    /// Opt-in physical-device proof for the real selected hosted provider.
+    /// This deliberately has no debug transport fixture: it preserves the
+    /// phone's provider selection and Keychain credential, sends one harmless
+    /// nonce, and requires that nonce inside a completed assistant bubble.
+    func testPhysicalHostedProviderCanaryReturnsRealResponse() throws {
+        guard ProcessInfo.processInfo.environment[
+            "NOVAFORGE_RUN_PHYSICAL_PROVIDER_CANARY"
+        ] == "1" else {
+            throw XCTSkip("Requires an explicitly authorized physical-device provider run.")
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["currentChatTitle"].waitForExistence(timeout: 12),
+            "Forge should launch on the physical device."
+        )
+        let modelMenu = app.descendants(matching: .any)[
+            "composerModelNativeMenu"
+        ]
+        XCTAssertTrue(
+            modelMenu.waitForExistence(timeout: 8),
+            "The physical canary needs a visible selected hosted model."
+        )
+        XCTAssertFalse(
+            modelMenu.label.localizedCaseInsensitiveContains("Local"),
+            "The physical hosted-provider canary must not silently use the local model."
+        )
+
+        let nonce = "NF_" + String(
+            UUID().uuidString
+                .replacingOccurrences(of: "-", with: "")
+                .prefix(10)
+        )
+        let prompt = "Reply with exactly \(nonce). Do not call tools."
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap()
+        composer.typeText(prompt)
+        tapReadySendButton(in: app)
+
+        XCTAssertTrue(
+            app.staticTexts[prompt].firstMatch.waitForExistence(timeout: 10),
+            "The real provider canary prompt should be durably accepted."
+        )
+        let assistantText = app.otherElements
+            .matching(identifier: "chatAssistantResponse")
+            .staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", nonce))
+            .firstMatch
+        XCTAssertTrue(
+            assistantText.waitForExistence(timeout: 90),
+            "The selected hosted provider did not return the physical canary nonce."
+        )
+        XCTAssertFalse(
+            app.staticTexts.containing(
+                NSPredicate(
+                    format: "label CONTAINS[c] %@",
+                    "provider connection failed"
+                )
+            ).firstMatch.exists,
+            "The repaired physical run must not fall back to the old generic transport failure."
+        )
+    }
+
+    /// Opt-in clean-Simulator proof for the anonymous Zen route that exposed
+    /// the production reasoning-stream contract failure. This is deliberately
+    /// stronger than a transport log: the nonce must reach a completed Forge
+    /// bubble and the same run must materialize as a durable History receipt.
+    func testSimulatorAnonymousZenProviderCanaryCompletesAndPersists() throws {
+        guard ProcessInfo.processInfo.environment[
+            "NOVAFORGE_RUN_SIMULATOR_ZEN_CANARY"
+        ] == "1" else {
+            throw XCTSkip(
+                "Requires an explicitly authorized live Simulator provider run."
+            )
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-ui",
+            "--open-chat",
+            "--debug-simulator-provider-canary-zen",
+        ]
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["currentChatTitle"].waitForExistence(timeout: 12),
+            "Forge should launch in the clean Simulator."
+        )
+        let prompt = "Reply with exactly NF_SIMULATOR_BUILD3. Do not call tools."
+        let modelMenu = app.descendants(matching: .any)[
+            "composerModelNativeMenu"
+        ]
+        XCTAssertTrue(
+            modelMenu.waitForExistence(timeout: 45),
+            "The clean Simulator must expose the selected Zen model."
+        )
+        let zenReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "label CONTAINS[c] %@",
+                "Zen"
+            ),
+            object: modelMenu
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [zenReady], timeout: 45),
+            .completed,
+            "The live canary must route through anonymous Zen, not Local."
+        )
+
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap()
+        composer.typeText(prompt)
+        tapReadySendButton(in: app)
+
+        let acceptedPrompt = app.otherElements
+            .matching(identifier: "chatUserMessageBubble")
+            .firstMatch
+        XCTAssertTrue(
+            acceptedPrompt.waitForExistence(timeout: 20),
+            "The real Zen canary prompt should be durably accepted."
+        )
+        XCTAssertTrue(
+            acceptedPrompt.staticTexts[prompt].waitForExistence(timeout: 5),
+            "The durable user bubble must contain the exact canary prompt."
+        )
+
+        let assistantText = app.otherElements
+            .matching(identifier: "chatAssistantResponse")
+            .staticTexts
+            .containing(
+                NSPredicate(
+                    format: "label CONTAINS %@",
+                    "NF_SIMULATOR_BUILD3"
+                )
+            )
+            .firstMatch
+        XCTAssertTrue(
+            assistantText.waitForExistence(timeout: 120),
+            "The live Zen stream did not produce the canary nonce in Forge."
+        )
+        XCTAssertFalse(
+            app.staticTexts.containing(
+                NSPredicate(
+                    format: "label CONTAINS[c] %@",
+                    "provider stream violated"
+                )
+            ).firstMatch.exists,
+            "The repaired Zen stream must not surface an adapter-contract failure."
+        )
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(
+            keyboard.waitForNonExistence(timeout: 5),
+            "A successful live send must dismiss the keyboard before tab navigation."
+        )
+        let historyTab = app.tabBars.buttons["History"]
+        XCTAssertTrue(historyTab.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            historyTab.isHittable,
+            "History must be tappable after the live send finishes."
+        )
+        historyTab.tap()
+        let historySelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "selected == true"),
+            object: historyTab
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [historySelected], timeout: 8),
+            .completed,
+            "The live proof must actually navigate from Forge to History."
+        )
+        XCTAssertTrue(
+            identifiedElement("historyLatestMissionOutcome", in: app)
+                .waitForExistence(timeout: 20),
+            "The completed live provider run must persist into History."
+        )
+        XCTAssertTrue(
+            app.staticTexts["Completed"].firstMatch.waitForExistence(timeout: 8),
+            "History must record the live provider run as completed."
+        )
+        capture("live-zen-provider-completed-and-persisted", app: app)
+    }
+
     func testForgeChatFailedSendShowsTranscriptErrorAndRecoversComposer() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--debug-provider-send-fails", "--open-chat"]
@@ -2195,13 +2383,32 @@ final class AgentPadUITests: XCTestCase {
         app.terminate()
         app.launchArguments = [
             "--reset-ui",
-            "--theme-world=matrixRain",
             "--settings-local-model-ready",
             "--open-chat",
         ]
         app.launch()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
         app.tabBars.buttons["Control"].tap()
+        let matrixTheme = identifiedElement(
+            "settingsThemeStudioCard-matrixRain",
+            in: app
+        )
+        scrollUntilHittable(matrixTheme, in: app)
+        XCTAssertTrue(
+            matrixTheme.isHittable,
+            "Matrix theme studio card should be reachable from Control."
+        )
+        matrixTheme.tap()
+        let matrixSelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"),
+            object: matrixTheme
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [matrixSelected], timeout: 5),
+            .completed,
+            "Control should durably select Matrix before switching away from it."
+        )
+
         let midnightTheme = identifiedElement(
             "settingsThemeStudioCard-midnightBlack",
             in: app
@@ -2212,6 +2419,16 @@ final class AgentPadUITests: XCTestCase {
             "Midnight theme studio card should be reachable from Control."
         )
         midnightTheme.tap()
+        let midnightSelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"),
+            object: midnightTheme
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [midnightSelected], timeout: 5),
+            .completed,
+            "Control should finish applying Midnight before visual proof is captured."
+        )
+        XCTAssertFalse(matrixTheme.isSelected, "Only the selected theme card may remain active.")
         capture("goal-theme-switched-midnight-settings", app: app)
 
         app.tabBars.buttons["Forge"].tap()

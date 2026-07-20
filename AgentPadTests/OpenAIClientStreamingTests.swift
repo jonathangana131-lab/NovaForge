@@ -2,6 +2,40 @@ import Foundation
 import XCTest
 
 final class OpenAIClientStreamingTests: XCTestCase {
+    func testLegacyClientRejectsChatGPTResponsesRouteBeforeHTTP() async throws {
+        RejectingOpenAIClientURLProtocol.reset()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [
+            RejectingOpenAIClientURLProtocol.self,
+        ]
+        let client = AIProviderClient(
+            configuration: ProviderConfiguration(
+                provider: .openAICodex,
+                modelID: AIProvider.exactGPT56SolModelID,
+                apiKey: "test-token",
+                customChatCompletionsURL: ""
+            ),
+            session: URLSession(configuration: sessionConfiguration)
+        )
+
+        do {
+            _ = try await client.streamingResponse(
+                messages: [],
+                model: AIProvider.exactGPT56SolModelID,
+                temperature: 0,
+                customSystemPrompt: nil,
+                workspaceSummary: "",
+                onContentBatch: { _ in }
+            )
+            XCTFail("Expected the legacy Chat Completions client to fail closed")
+        } catch {
+            XCTAssertTrue(
+                error.localizedDescription.contains("canonical Responses runtime")
+            )
+        }
+        XCTAssertEqual(RejectingOpenAIClientURLProtocol.requestCount, 0)
+    }
+
     func testDecodesValidContentStreamEndingInDone() async throws {
         let message = try await StreamingResponseDecoder.decode(
             lines: [
@@ -292,12 +326,20 @@ final class OpenAIClientStreamingTests: XCTestCase {
         let entries = store.entries(for: .openAICodex)
         XCTAssertEqual(
             entries.map(\.id),
-            ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]
+            [
+                AIProvider.exactGPT56SolModelID,
+                AIProvider.exactGPT56TerraModelID,
+                AIProvider.exactGPT56LunaModelID,
+                "gpt-5.5",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.3-codex-spark",
+            ]
         )
-        XCTAssertEqual(entries.first?.displayName, "GPT-5.5")
+        XCTAssertEqual(entries.first?.displayName, "GPT-5.6 Sol")
         XCTAssertEqual(
             entries.first?.supportedReasoningEfforts,
-            ["low", "medium", "high", "xhigh"]
+            ["none", "low", "medium", "high", "xhigh", "max"]
         )
         XCTAssertEqual(
             store.displayName(
@@ -396,4 +438,36 @@ private func XCTAssertThrowsAsyncError<T>(
     } catch {
         errorHandler(error)
     }
+}
+
+private final class RejectingOpenAIClientURLProtocol:
+    URLProtocol,
+    @unchecked Sendable
+{
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var storedRequestCount = 0
+
+    static var requestCount: Int {
+        lock.withLock { storedRequestCount }
+    }
+
+    static func reset() {
+        lock.withLock { storedRequestCount = 0 }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        Self.lock.withLock { Self.storedRequestCount += 1 }
+        client?.urlProtocol(
+            self,
+            didFailWithError: URLError(.dataNotAllowed)
+        )
+    }
+
+    override func stopLoading() {}
 }

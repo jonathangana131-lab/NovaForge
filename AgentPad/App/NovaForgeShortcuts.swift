@@ -14,13 +14,71 @@ import Foundation
 // MARK: - Intent → app handoff
 
 enum NovaForgeIntentSignal {
+    enum PendingCommand: Codable, Equatable {
+        case openTab(String)
+        case askPrompt(String)
+    }
+
     static let openTab = Notification.Name("NovaForgeIntentOpenTab")
     static let askPrompt = Notification.Name("NovaForgeIntentAskPrompt")
     static let playArtifact = Notification.Name("NovaForgeIntentPlayArtifact")
     static let tabKey = "tab"
     static let promptKey = "prompt"
     static let artifactIDKey = "artifactID"
+    private static let pendingCommandKey = "NovaForge.PendingIntentCommand.v1"
     private static let pendingArtifactKey = "NovaForge.PendingArtifactIntent"
+
+    /// Persist before posting the live notification. NotificationCenter is an
+    /// in-process fast path and can have no subscribers while a terminated app
+    /// is being launched by Siri or Shortcuts; this one-shot command is the
+    /// cold-launch fallback.
+    @MainActor
+    static func storePendingCommand(
+        _ command: PendingCommand,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let data = try? JSONEncoder().encode(command) else { return }
+        defaults.set(data, forKey: pendingCommandKey)
+    }
+
+    @MainActor
+    static func takePendingCommand(
+        defaults: UserDefaults = .standard
+    ) -> PendingCommand? {
+        guard let data = defaults.data(forKey: pendingCommandKey) else {
+            return nil
+        }
+        // Consume before decoding so corrupt or obsolete payloads cannot
+        // poison every future launch.
+        defaults.removeObject(forKey: pendingCommandKey)
+        return try? JSONDecoder().decode(PendingCommand.self, from: data)
+    }
+
+    @MainActor
+    static func acknowledgePendingCommand(
+        _ command: PendingCommand,
+        defaults: UserDefaults = .standard
+    ) {
+        guard pendingCommand(defaults: defaults) == command else { return }
+        defaults.removeObject(forKey: pendingCommandKey)
+    }
+
+    @MainActor
+    private static func pendingCommand(
+        defaults: UserDefaults
+    ) -> PendingCommand? {
+        guard let data = defaults.data(forKey: pendingCommandKey) else {
+            return nil
+        }
+        guard let command = try? JSONDecoder().decode(
+            PendingCommand.self,
+            from: data
+        ) else {
+            defaults.removeObject(forKey: pendingCommandKey)
+            return nil
+        }
+        return command
+    }
 
     @MainActor
     static func storePendingArtifact(_ artifact: NovaForgeArtifactEntity) {
@@ -38,6 +96,25 @@ enum NovaForgeIntentSignal {
         else { return nil }
         UserDefaults.standard.removeObject(forKey: pendingArtifactKey)
         return artifact
+    }
+}
+
+/// Value semantics for the one-shot Ask-intent composer handoff. Consuming a
+/// draft advances the revision as well as clearing the text so Equatable tab
+/// surfaces cannot retain a view whose input still contains the old prompt.
+struct NovaForgeComposerDraftHandoff: Equatable {
+    let prompt: String
+    let revision: Int
+
+    var shouldApply: Bool {
+        revision > 0 && !prompt.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty
+    }
+
+    func consuming(revision consumedRevision: Int) -> Self? {
+        guard consumedRevision == revision, shouldApply else { return nil }
+        return Self(prompt: "", revision: revision &+ 1)
     }
 }
 
@@ -153,6 +230,9 @@ struct OpenNovaForgeIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        NovaForgeIntentSignal.storePendingCommand(
+            .openTab(NovaForgeTab.forge.rawValue)
+        )
         NotificationCenter.default.post(
             name: NovaForgeIntentSignal.openTab,
             object: nil,
@@ -176,6 +256,7 @@ struct OpenNovaForgeTabIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        NovaForgeIntentSignal.storePendingCommand(.openTab(tab.rawValue))
         NotificationCenter.default.post(
             name: NovaForgeIntentSignal.openTab,
             object: nil,
@@ -199,6 +280,9 @@ struct AskNovaForgeIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .result() }
+        NovaForgeIntentSignal.storePendingCommand(.askPrompt(prompt))
         NotificationCenter.default.post(
             name: NovaForgeIntentSignal.askPrompt,
             object: nil,

@@ -17,6 +17,7 @@ struct AIProviderClient {
         customSystemPrompt: String?,
         workspaceSummary: String
     ) async throws -> ProviderResponse {
+        try requireChatCompletionsRoute()
         guard let url = configuration.chatCompletionsURL else {
             throw OpenAIError.requestFailed("The provider endpoint URL is invalid.")
         }
@@ -73,6 +74,7 @@ struct AIProviderClient {
         workspaceSummary: String,
         onContentBatch: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> ProviderResponse {
+        try requireChatCompletionsRoute()
         guard let url = configuration.chatCompletionsURL else {
             throw OpenAIError.requestFailed("The provider endpoint URL is invalid.")
         }
@@ -127,6 +129,7 @@ struct AIProviderClient {
     }
 
     func testConnection(model: String) async throws {
+        try requireChatCompletionsRoute()
         guard let url = configuration.chatCompletionsURL else {
             throw OpenAIError.requestFailed("The provider endpoint URL is invalid.")
         }
@@ -236,6 +239,20 @@ struct AIProviderClient {
         if lower.hasPrefix("o") && lower.dropFirst().first?.isNumber == true { return false }
         if lower.contains("reasoning") { return false }
         return true
+    }
+
+    /// This client owns only Chat Completions. ChatGPT subscription runs use
+    /// the package-backed AgentSystem Responses route, which freezes
+    /// `store: false`, tool authority, and returned wire-model identity before
+    /// any output can be accepted. Rejecting the subscription provider here
+    /// prevents a legacy runtime call from encoding a Chat Completions body for
+    /// the `/codex/responses` endpoint.
+    private func requireChatCompletionsRoute() throws {
+        guard configuration.provider != .openAICodex else {
+            throw OpenAIError.requestFailed(
+                "ChatGPT agent requests must use NovaForge’s canonical Responses runtime."
+            )
+        }
     }
 
     private func applyAuthorization(

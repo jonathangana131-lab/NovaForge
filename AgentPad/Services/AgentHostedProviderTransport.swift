@@ -11,10 +11,11 @@ import Foundation
 /// or production canonical-tool authority; text-only still rejects every
 /// tool-bearing envelope, while tool modes compare the entire definition list
 /// to the frozen app registry. Its transport contract is intentionally
-/// stricter than the generic package gateway: scopes use
-/// `${requestID}:provider-attempt:<canonical UInt>`, Responses continuation is
+/// stricter than the generic package gateway: Responses continuation is
 /// disabled, and hosted models must be the selected alias or its date-versioned
-/// snapshot.
+/// snapshot. Attempt scopes use the package's safe-identity contract because
+/// `AgentEngine` supplies a durable UUID while `ModelGateway`'s multi-route
+/// helper supplies a request-derived ordinal identity.
 final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable {
     struct Limits: Equatable, Sendable {
         let maximumRequestBodyBytes: Int
@@ -144,17 +145,42 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         descriptor: ProviderAdapterDescriptor,
         scope: ProviderAttemptScope
     ) async throws -> AsyncThrowingStream<ProviderWireFrame, any Error> {
-        try Task.checkCancellation()
-        try Self.validateCredential(credential, descriptor: descriptor)
-        try Self.validateDescriptor(descriptor, against: authority)
-        try Self.validateScope(scope)
-        try Self.validateRequestStructure(request.body, limits: limits)
-        try Self.validateEnvelope(
-            request,
-            descriptor: descriptor,
-            credential: credential,
-            authority: authority
-        )
+        #if DEBUG
+        Self.debugDiagnostic("stream-entered")
+        #endif
+        do {
+            try Task.checkCancellation()
+            try Self.validateCredential(credential, descriptor: descriptor)
+            #if DEBUG
+            Self.debugDiagnostic("credential-valid")
+            #endif
+            try Self.validateDescriptor(descriptor, against: authority)
+            #if DEBUG
+            Self.debugDiagnostic("descriptor-valid")
+            #endif
+            try Self.validateScope(scope)
+            #if DEBUG
+            Self.debugDiagnostic("scope-valid")
+            #endif
+            try Self.validateRequestStructure(request.body, limits: limits)
+            #if DEBUG
+            Self.debugDiagnostic("request-structure-valid")
+            #endif
+            try Self.validateEnvelope(
+                request,
+                descriptor: descriptor,
+                credential: credential,
+                authority: authority
+            )
+            #if DEBUG
+            Self.debugDiagnostic("request-envelope-valid")
+            #endif
+        } catch {
+            #if DEBUG
+            Self.debugFailure(error, stage: "preflight")
+            #endif
+            throw error
+        }
 
         let body: Data
         do {
@@ -178,6 +204,9 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
             credential: credential,
             authority: authority
         )
+        #if DEBUG
+        Self.debugDiagnostic("url-request-valid")
+        #endif
         try await attempts.reserve(scope)
         // A cancelled caller must not start HTTP after waiting for the
         // process-local reservation actor. The durable barrier has already
@@ -189,6 +218,10 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let adapterID = descriptor.route.adapterID
         let dialect = descriptor.dialect
         let expectedModelID = descriptor.route.modelID
+        let isOpenCodeZen = descriptor.route.provenance ==
+            .builtInOpenCodeZenChatCompletions
+        let permitsMissingContentType =
+            descriptor.route.provenance == .builtInOpenAICodexResponses
         let responseCredential = credential
         let producerDidTerminate = producerDidTerminate
         let httpErrorBodyDidConsume = httpErrorBodyDidConsume
@@ -200,6 +233,9 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                 defer { producerDidTerminate?() }
                 do {
                     try Task.checkCancellation()
+                    #if DEBUG
+                    Self.debugDiagnostic("http-started")
+                    #endif
                     let (bytes, response) = try await session.bytes(
                         for: urlRequest,
                         delegate: HostedProviderNoRedirectDelegate.shared
@@ -214,7 +250,19 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                         throw AgentHostedProviderTransportError.redirectedResponse
                     }
 
+                    #if DEBUG
+                    Self.debugDiagnostic(
+                        "http-response-\(http.statusCode)-" +
+                            Self.debugContentTypeCategory(
+                                http.value(forHTTPHeaderField: "Content-Type")
+                            )
+                    )
+                    #endif
+
                     guard (200 ..< 300).contains(http.statusCode) else {
+                        #if DEBUG
+                        Self.debugDiagnostic("http-status-\(http.statusCode)")
+                        #endif
                         var consumed = 0
                         for try await _ in bytes {
                             try Task.checkCancellation()
@@ -232,12 +280,16 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                     }
 
                     guard Self.isEventStreamContentType(
-                        http.value(forHTTPHeaderField: "Content-Type")
+                        http.value(forHTTPHeaderField: "Content-Type"),
+                        permitsMissing: permitsMissingContentType
                     ) else {
                         throw AgentHostedProviderTransportError.invalidContentType
                     }
 
-                    var parser = HostedProviderSSEParser(limits: limits)
+                    var parser = HostedProviderSSEParser(
+                        limits: limits,
+                        allowsPostDoneJSON: isOpenCodeZen
+                    )
                     var identityValidator = HostedProviderWireIdentityValidator(
                         dialect: dialect,
                         expectedModelID: expectedModelID
@@ -252,7 +304,17 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                         try Task.checkCancellation()
                         let frames = try parser.consume(byte)
                         for frame in frames {
+                            #if DEBUG
+                            Self.debugFrameType(frame)
+                            #endif
                             try credentialGuard.validate(frame, dialect: dialect)
+                            if isOpenCodeZen,
+                               try Self.isOpenCodeZenBillingFrame(frame) {
+                                #if DEBUG
+                                Self.debugDiagnostic("zen-billing-frame-filtered")
+                                #endif
+                                continue
+                            }
                             try Self.validateSentinel(frame, dialect: dialect)
                             try identityValidator.validate(frame)
                             try Self.yield(frame, to: continuation)
@@ -260,7 +322,17 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                     }
 
                     for frame in try parser.finish() {
+                        #if DEBUG
+                        Self.debugFrameType(frame)
+                        #endif
                         try credentialGuard.validate(frame, dialect: dialect)
+                        if isOpenCodeZen,
+                           try Self.isOpenCodeZenBillingFrame(frame) {
+                            #if DEBUG
+                            Self.debugDiagnostic("zen-billing-frame-filtered")
+                            #endif
+                            continue
+                        }
                         try Self.validateSentinel(frame, dialect: dialect)
                         try identityValidator.validate(frame)
                         try Self.yield(frame, to: continuation)
@@ -268,11 +340,19 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                     if dialect == .openAIChatCompletions, !parser.didReceiveDone {
                         throw AgentHostedProviderTransportError.chatStreamEndedWithoutDone
                     }
+                    _ = try identityValidator.validatedModel()
                     // Both dialects drain through transport EOF. Trusted Chat
                     // additionally requires `[DONE]`; Responses completion is
                     // owned by ProviderStreamSession and needs no sentinel.
+                    #if DEBUG
+                    Self.debugDiagnostic("wire-model-valid")
+                    Self.debugDiagnostic("stream-finished")
+                    #endif
                     continuation.finish()
                 } catch {
+                    #if DEBUG
+                    Self.debugFailure(error, stage: "producer")
+                    #endif
                     let sanitized = Self.sanitized(
                         error,
                         providerID: providerID,
@@ -304,6 +384,72 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         }
     }
 
+    #if DEBUG
+    /// Debug-device proof only. Stages and fixed error classifications contain
+    /// no credential, request body, response body, URL, or provider text.
+    private static func debugDiagnostic(_ value: String) {
+        print("NOVAFORGE_PROVIDER_DIAGNOSTIC \(value)")
+    }
+
+    private static func debugFailure(_ error: any Error, stage: String) {
+        if let internalError = error as? AgentHostedProviderTransportError {
+            debugDiagnostic("\(stage)-internal-\(String(describing: internalError))")
+        } else if let trusted = error as? HostedProviderTrustedFailure {
+            let status = trusted.failure.statusCode.map(String.init) ?? "none"
+            debugDiagnostic(
+                "\(stage)-trusted-\(trusted.failure.category.rawValue)-" +
+                    "\(trusted.failure.code)-status-\(status)"
+            )
+        } else if let urlError = error as? URLError {
+            debugDiagnostic("\(stage)-url-error-\(urlError.code.rawValue)")
+        } else if error is CancellationError {
+            debugDiagnostic("\(stage)-cancelled")
+        } else {
+            debugDiagnostic("\(stage)-unclassified")
+        }
+    }
+
+    private static func debugContentTypeCategory(_ rawValue: String?) -> String {
+        guard let rawValue else { return "content-type-missing" }
+        let mediaType = rawValue.split(separator: ";", maxSplits: 1).first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return switch mediaType {
+        case "text/event-stream": "content-type-event-stream"
+        case "application/json": "content-type-json"
+        case "text/html": "content-type-html"
+        case "application/octet-stream": "content-type-octet-stream"
+        default: "content-type-other"
+        }
+    }
+
+    /// Prints only the fixed Responses event name (or frame category). This
+    /// intentionally excludes every other provider field and all output text.
+    private static func debugFrameType(_ frame: ProviderWireFrame) {
+        switch frame {
+        case let .json(value):
+            guard case let .object(object) = value,
+                  case let .string(type)? = object["type"],
+                  type.unicodeScalars.allSatisfy({ scalar in
+                      scalar.properties.isAlphabetic ||
+                          scalar.properties.numericType != nil ||
+                          scalar == "." || scalar == "_" || scalar == "-"
+                  }),
+                  type.utf8.count <= 128
+            else {
+                debugDiagnostic("wire-frame-json-type-unavailable")
+                return
+            }
+            debugDiagnostic("wire-frame-json-\(type)")
+        case .done:
+            debugDiagnostic("wire-frame-done")
+        case .cancelled:
+            debugDiagnostic("wire-frame-cancelled")
+        }
+    }
+    #endif
+
     private static func validateSentinel(
         _ frame: ProviderWireFrame,
         dialect: ProviderAdapterDialect
@@ -313,8 +459,81 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         }
     }
 
-    private static func isEventStreamContentType(_ rawValue: String?) -> Bool {
-        guard let rawValue else { return false }
+    /// Zen appends provider-owned accounting frames around the Chat
+    /// Completions `[DONE]` sentinel. They are not model output and do not
+    /// carry response identity, so forwarding them would make the canonical
+    /// OpenAI stream session reject a successful answer. Accept only the two
+    /// observed, bounded Zen billing schemas; credential scanning still runs
+    /// before this filter and every other sideband shape fails closed.
+    private static func isOpenCodeZenBillingFrame(
+        _ frame: ProviderWireFrame
+    ) throws -> Bool {
+        guard case let .json(.object(object)) = frame,
+              case let .array(choices)? = object["choices"],
+              choices.isEmpty,
+              case let .string(cost)? = object["cost"]
+        else { return false }
+
+        guard isSafeDecimalCost(cost) else {
+            throw AgentHostedProviderTransportError.malformedSSE
+        }
+        let keys = Set(object.keys)
+        if keys == Set(["choices", "cost"]) { return true }
+
+        guard keys == Set([
+            "choices", "cost", "normalizedUsage", "x-opencode-type",
+        ]),
+            object["x-opencode-type"] == .string("inference-cost"),
+            case let .object(usage)? = object["normalizedUsage"]
+        else {
+            throw AgentHostedProviderTransportError.malformedSSE
+        }
+        let allowedUsageKeys: Set<String> = [
+            "inputTokens", "outputTokens", "reasoningTokens",
+            "cacheReadTokens", "cacheWrite5mTokens", "cacheWrite1hTokens",
+        ]
+        guard usage["inputTokens"] != nil,
+              usage["outputTokens"] != nil,
+              !usage.isEmpty,
+              usage.keys.allSatisfy(allowedUsageKeys.contains),
+              usage.values.allSatisfy({ value in
+                  if case .number = value { return true }
+                  return false
+              })
+        else {
+            throw AgentHostedProviderTransportError.malformedSSE
+        }
+        return true
+    }
+
+    private static func isSafeDecimalCost(_ value: String) -> Bool {
+        guard (1 ... 64).contains(value.utf8.count) else { return false }
+        var decimalPoints = 0
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x30 ... 0x39:
+                continue
+            case 0x2e:
+                decimalPoints += 1
+                guard decimalPoints == 1 else { return false }
+            default:
+                return false
+            }
+        }
+        return value.unicodeScalars.contains { (0x30 ... 0x39).contains($0.value) }
+    }
+
+    private static func isEventStreamContentType(
+        _ rawValue: String?,
+        permitsMissing: Bool
+    ) -> Bool {
+        // Some iOS URLSession/CoreDevice combinations surface the pinned
+        // ChatGPT Codex HTTP 200 response without this header. Every request
+        // has already passed exact route, origin, redirect, and envelope
+        // validation; the bounded SSE parser and wire-identity validator still
+        // fail closed before any provider output is accepted. A present but
+        // incorrect media type remains rejected.
+        guard let rawValue else { return permitsMissing }
         guard let firstComponent = rawValue.split(
             separator: ";",
             maxSplits: 1,
@@ -505,20 +724,19 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
     }
 
     private static func validateScope(_ scope: ProviderAttemptScope) throws {
-        let requestID = scope.requestID
-        let attemptID = scope.attemptID.rawValue
-        guard isSafeIdentity(requestID, maximumUTF8Count: 512),
-              isSafeIdentity(attemptID, maximumUTF8Count: 512)
+        // Keep this identical to ModelGateway's public single-attempt
+        // contract. Production AgentEngine attempts are durable UUIDs, while
+        // ModelGateway's internal retry loop uses
+        // `<request>:provider-attempt:<ordinal>`. Requiring only the latter
+        // rejected every real AgentEngine hosted request before URLSession was
+        // reached, even though the package had already bound the scope to the
+        // canonical request and the registry below still prevents reuse.
+        guard isSafeIdentity(scope.requestID, maximumUTF8Count: 512),
+              isSafeIdentity(
+                scope.attemptID.rawValue,
+                maximumUTF8Count: 512
+              )
         else {
-            throw AgentHostedProviderTransportError.invalidAttemptScope
-        }
-
-        let prefix = requestID + ":provider-attempt:"
-        guard attemptID.hasPrefix(prefix) else {
-            throw AgentHostedProviderTransportError.invalidAttemptScope
-        }
-        let suffix = String(attemptID.dropFirst(prefix.count))
-        guard let number = UInt64(suffix), number > 0, String(number) == suffix else {
             throw AgentHostedProviderTransportError.invalidAttemptScope
         }
     }
@@ -682,8 +900,14 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         "extract_outline",
     ]
 
+    private static let canonicalSingleCallToolDescriptors =
+        SandboxToolCatalog.all.map(\.descriptor).sorted { lhs, rhs in
+            if lhs.name == rhs.name { return lhs.version < rhs.version }
+            return lhs.name < rhs.name
+        }
+
     private static let canonicalReadOnlyToolDefinitions: [JSONValue] =
-        SandboxToolCatalog.all.map(\.descriptor).filter {
+        canonicalSingleCallToolDescriptors.filter {
             $0.effectClass == .readOnlyLocal
         }.map { descriptor in
             let definition = AgentTools.ProviderToolDefinition(
@@ -703,11 +927,11 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         }
 
     private static let canonicalSingleCallToolNames: Set<String> = Set(
-        SandboxToolCatalog.all.map(\.descriptor.name)
+        canonicalSingleCallToolDescriptors.map(\.name)
     )
 
     private static let canonicalSingleCallToolDefinitions: [JSONValue] =
-        SandboxToolCatalog.all.map(\.descriptor).map { descriptor in
+        canonicalSingleCallToolDescriptors.map { descriptor in
             let definition = AgentTools.ProviderToolDefinition(
                 descriptor: descriptor
             )
@@ -725,7 +949,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         }
 
     private static let canonicalResponsesSingleCallToolDefinitions: [JSONValue] =
-        SandboxToolCatalog.all.map(\.descriptor).map { descriptor in
+        canonicalSingleCallToolDescriptors.map { descriptor in
             let definition = AgentTools.ProviderToolDefinition(
                 descriptor: descriptor
             )
@@ -877,21 +1101,81 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let instructionsAreValid = isChatGPTCodex
             ? validCodexInstructions(body["instructions"])
             : body["instructions"] == nil
-        guard body.keys.allSatisfy(allowedKeys.contains),
-              body["parallel_tool_calls"] == .bool(false),
-              body["tool_choice"] == .string("auto"),
-              storeIsValid,
-              metadataIsValid,
-              outputLimitIsValid,
-              instructionsAreValid,
-              case let .array(input)? = body["input"],
-              !input.isEmpty,
-              case let .array(tools)? = body["tools"],
-              tools == canonicalResponsesSingleCallToolDefinitions,
-              tools.count == Int(
-                  descriptor.route.capabilities.maximumToolDefinitions
-              )
-        else {
+        guard body.keys.allSatisfy(allowedKeys.contains) else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-keys")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard body["parallel_tool_calls"] == .bool(false) else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-parallel-tools")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard body["tool_choice"] == .string("auto") else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-tool-choice")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard storeIsValid else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-store")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard metadataIsValid else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-metadata")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard outputLimitIsValid else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-output-limit")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard instructionsAreValid else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-instructions")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard case let .array(input)? = body["input"], !input.isEmpty else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-input")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard case let .array(tools)? = body["tools"] else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-missing-tools")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard tools.count == Int(
+            descriptor.route.capabilities.maximumToolDefinitions
+        ) else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-tool-count-\(tools.count)")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard tools == canonicalResponsesSingleCallToolDefinitions else {
+            #if DEBUG
+            let actualNames = Set(tools.compactMap { value -> String? in
+                guard case let .object(tool) = value,
+                      case let .string(name)? = tool["name"] else { return nil }
+                return name
+            })
+            let namesMatch = actualNames == canonicalSingleCallToolNames
+            debugDiagnostic(
+                "responses-envelope-tool-definitions-mismatch-names-" +
+                    (namesMatch ? "match" : "differ")
+            )
+            #endif
             throw AgentHostedProviderTransportError.invalidRequestEnvelope
         }
         try validateGenerationOptions(
@@ -1401,8 +1685,11 @@ private struct HostedProviderTrustedFailure: Error, Sendable {
 private struct HostedProviderCredentialEchoGuard: Sendable {
     private enum TextChannel: Hashable, Sendable {
         case chat(choiceIndex: Int?)
+        case chatReasoning(choiceIndex: Int?)
         case chatTool(choiceIndex: Int?, toolIndex: Int?)
-        case responses(outputIndex: Int?, contentIndex: Int?)
+        case responses(outputIndex: Int?, contentIndex: Int)
+        case responsesReasoningSummary(outputIndex: Int?, partIndex: Int)
+        case responsesReasoningContent(outputIndex: Int?, partIndex: Int)
         case responsesTool(outputIndex: Int?)
     }
 
@@ -1518,6 +1805,25 @@ private struct HostedProviderCredentialEchoGuard: Sendable {
                 if case let .string(text)? = delta["content"] {
                     fragments.append((.chat(choiceIndex: choiceIndex), text))
                 }
+                // `ProviderStreamSession` treats `reasoning_content` and
+                // `reasoning` as aliases for one per-choice output channel.
+                // Mirror that canonicalization here so a credential split
+                // across frames -- including a provider switching aliases --
+                // cannot evade the streaming matcher.
+                let reasoning: String?
+                if case let .string(text)? = delta["reasoning_content"] {
+                    reasoning = text
+                } else if case let .string(text)? = delta["reasoning"] {
+                    reasoning = text
+                } else {
+                    reasoning = nil
+                }
+                if let reasoning {
+                    fragments.append((
+                        .chatReasoning(choiceIndex: choiceIndex),
+                        reasoning
+                    ))
+                }
                 if case let .array(calls)? = delta["tool_calls"] {
                     for callValue in calls {
                         guard case let .object(call) = callValue,
@@ -1541,7 +1847,11 @@ private struct HostedProviderCredentialEchoGuard: Sendable {
                 return [(
                     .responses(
                         outputIndex: Self.exactInt(object["output_index"]),
-                        contentIndex: Self.exactInt(object["content_index"])
+                        // ProviderStreamSession canonicalizes an omitted
+                        // content index to part zero. Use the same channel key
+                        // so switching between omitted and explicit zero
+                        // cannot reset the streaming credential matcher.
+                        contentIndex: Self.exactInt(object["content_index"]) ?? 0
                     ),
                     text,
                 )]
@@ -1551,6 +1861,37 @@ private struct HostedProviderCredentialEchoGuard: Sendable {
                 return [(
                     .responsesTool(
                         outputIndex: Self.exactInt(object["output_index"])
+                    ),
+                    fragment,
+                )]
+            }
+            let isReasoningSummaryDelta =
+                object["type"] == .string(
+                    "response.reasoning_summary_text.delta"
+                ) || object["type"] == .string(
+                    "response.reasoning_summary.delta"
+                )
+            if isReasoningSummaryDelta,
+               case let .string(fragment)? = object["delta"] {
+                // Both summary event spellings append to the same summary
+                // array. An omitted summary index denotes canonical part zero.
+                return [(
+                    .responsesReasoningSummary(
+                        outputIndex: Self.exactInt(object["output_index"]),
+                        partIndex: Self.exactInt(object["summary_index"]) ?? 0
+                    ),
+                    fragment,
+                )]
+            }
+            if object["type"] == .string("response.reasoning_text.delta"),
+               case let .string(fragment)? = object["delta"] {
+                // Full reasoning content is a separate item array from its
+                // summary. Never concatenate their matcher state merely
+                // because both arrays use numeric part zero.
+                return [(
+                    .responsesReasoningContent(
+                        outputIndex: Self.exactInt(object["output_index"]),
+                        partIndex: Self.exactInt(object["content_index"]) ?? 0
                     ),
                     fragment,
                 )]
@@ -1691,6 +2032,8 @@ private struct HostedProviderWireIdentityValidator: Sendable {
 
         let identityRequired = type == "response.created" ||
             type == "response.completed" || type == "response.incomplete"
+        var responseIdentity: (id: String, model: String)?
+        var responseHeaderModel: String?
         if let responseValue = object["response"] {
             guard case let .object(response) = responseValue,
                   let idValue = response["id"],
@@ -1700,9 +2043,32 @@ private struct HostedProviderWireIdentityValidator: Sendable {
             else {
                 throw AgentHostedProviderTransportError.invalidWireIdentity
             }
-            try bind(id: id, model: model)
+            responseIdentity = (id, model)
+            responseHeaderModel = try Self.servingModel(
+                inHeaders: response["headers"]
+            )
         } else if identityRequired {
             throw AgentHostedProviderTransportError.invalidWireIdentity
+        }
+
+        // ChatGPT can report the effective serving model in control-plane
+        // headers. The response object's headers take precedence, while a
+        // top-level metadata header is the pre-created fallback. Bind that
+        // identity before the ordinary response model so a safety reroute or
+        // conflicting provider claim can never be certified as the requested
+        // model.
+        let metadataHeaderModel = type == "response.metadata"
+            ? try Self.servingModel(inHeaders: object["headers"])
+            : nil
+        if let responseHeaderModel, let metadataHeaderModel,
+           responseHeaderModel != metadataHeaderModel {
+            throw AgentHostedProviderTransportError.invalidWireIdentity
+        }
+        if let effectiveModel = responseHeaderModel ?? metadataHeaderModel {
+            try bind(model: effectiveModel)
+        }
+        if let responseIdentity {
+            try bind(id: responseIdentity.id, model: responseIdentity.model)
         }
 
         if let responseIDValue = object["response_id"] {
@@ -1716,25 +2082,99 @@ private struct HostedProviderWireIdentityValidator: Sendable {
     }
 
     private mutating func bind(id: String, model: String) throws {
-        guard Self.isSafeIdentity(id, maximumUTF8Count: 512),
-              Self.isSafeIdentity(model, maximumUTF8Count: 256),
-              Self.isPermittedModel(model, expected: expectedModelID.rawValue)
-        else {
+        guard Self.isSafeIdentity(id, maximumUTF8Count: 512) else {
             throw AgentHostedProviderTransportError.invalidWireIdentity
         }
+        try bind(model: model)
         if let responseID, responseID != id {
+            throw AgentHostedProviderTransportError.invalidWireIdentity
+        }
+        responseID = id
+    }
+
+    private mutating func bind(model: String) throws {
+        guard Self.isSafeIdentity(model, maximumUTF8Count: 256),
+              Self.isPermittedModel(model, expected: expectedModelID.rawValue)
+        else {
             throw AgentHostedProviderTransportError.invalidWireIdentity
         }
         if let responseModel, responseModel != model {
             throw AgentHostedProviderTransportError.invalidWireIdentity
         }
-        responseID = id
         responseModel = model
+    }
+
+    /// Extracts the effective model from the bounded JSON representation of
+    /// provider response headers. Header names are case-insensitive, and both
+    /// string and one-or-more identical string array values are accepted to
+    /// match the wire forms used by ChatGPT. Duplicate model headers must
+    /// agree; ambiguity fails closed.
+    private static func servingModel(
+        inHeaders value: JSONValue?
+    ) throws -> String? {
+        guard let value, value != .null else { return nil }
+        guard case let .object(headers) = value,
+              headers.count <= 128
+        else {
+            throw AgentHostedProviderTransportError.invalidWireIdentity
+        }
+
+        var result: String?
+        for (name, value) in headers {
+            guard name.utf8.count <= 128 else { continue }
+            let isModelHeader = name.caseInsensitiveCompare("openai-model") ==
+                    .orderedSame ||
+                name.caseInsensitiveCompare("x-openai-model") == .orderedSame
+            guard isModelHeader else { continue }
+
+            let candidate = try servingModelHeaderValue(value)
+            if let result, result != candidate {
+                throw AgentHostedProviderTransportError.invalidWireIdentity
+            }
+            result = candidate
+        }
+        return result
+    }
+
+    private static func servingModelHeaderValue(
+        _ value: JSONValue
+    ) throws -> String {
+        let values: [String]
+        switch value {
+        case let .string(value):
+            values = [value]
+        case let .array(items):
+            guard (1 ... 8).contains(items.count) else {
+                throw AgentHostedProviderTransportError.invalidWireIdentity
+            }
+            values = try items.map { item in
+                guard case let .string(value) = item else {
+                    throw AgentHostedProviderTransportError.invalidWireIdentity
+                }
+                return value
+            }
+        default:
+            throw AgentHostedProviderTransportError.invalidWireIdentity
+        }
+
+        guard let first = values.first,
+              isSafeIdentity(first, maximumUTF8Count: 256),
+              values.allSatisfy({ $0 == first })
+        else {
+            throw AgentHostedProviderTransportError.invalidWireIdentity
+        }
+        return first
     }
 
     /// Hosted aliases may resolve only to their exact YYYY-MM-DD snapshot.
     /// Arbitrary prefix matches (for example `model-untrusted`) are rejected.
     private static func isPermittedModel(_ actual: String, expected: String) -> Bool {
+        // Owner proof policy for this route is absolute: a dated snapshot or
+        // related alias is not sufficient evidence for an exact GPT-5.6 Sol
+        // run. Every other hosted alias keeps the existing date-snapshot rule.
+        if expected == AIProvider.exactGPT56SolModelID {
+            return actual == expected
+        }
         if actual == expected { return true }
         guard !hasDateVersionSuffix(expected) else { return false }
         let prefix = expected + "-"
@@ -1780,6 +2220,13 @@ private struct HostedProviderWireIdentityValidator: Sendable {
             maximumDay = 31
         }
         return (1 ... maximumDay).contains(day)
+    }
+
+    func validatedModel() throws -> String {
+        guard let responseModel else {
+            throw AgentHostedProviderTransportError.invalidWireIdentity
+        }
+        return responseModel
     }
 
     private static func isSafeIdentity(
@@ -1833,6 +2280,7 @@ final class HostedProviderNoRedirectDelegate: NSObject, URLSessionTaskDelegate, 
 
 private struct HostedProviderSSEParser {
     private let limits: AgentHostedProviderTransport.Limits
+    private let allowsPostDoneJSON: Bool
     private var totalBytes = 0
     private var currentLine: [UInt8] = []
     private var dataLines: [String] = []
@@ -1842,8 +2290,12 @@ private struct HostedProviderSSEParser {
 
     var didReceiveDone: Bool { receivedDone }
 
-    init(limits: AgentHostedProviderTransport.Limits) {
+    init(
+        limits: AgentHostedProviderTransport.Limits,
+        allowsPostDoneJSON: Bool = false
+    ) {
         self.limits = limits
+        self.allowsPostDoneJSON = allowsPostDoneJSON
         currentLine.reserveCapacity(min(limits.maximumSSELineBytes, 4_096))
     }
 
@@ -1915,16 +2367,20 @@ private struct HostedProviderSSEParser {
         dataLines.removeAll(keepingCapacity: true)
         eventBytes = 0
 
-        guard !receivedDone else {
-            throw AgentHostedProviderTransportError.malformedSSE
-        }
         frameCount += 1
         guard frameCount <= limits.maximumFrameCount else {
             throw AgentHostedProviderTransportError.frameLimitExceeded
         }
         if payload == "[DONE]" {
+            guard !receivedDone else {
+                throw AgentHostedProviderTransportError.malformedSSE
+            }
             receivedDone = true
             return [.done]
+        }
+
+        guard !receivedDone || allowsPostDoneJSON else {
+            throw AgentHostedProviderTransportError.malformedSSE
         }
 
         let value: JSONValue

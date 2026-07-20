@@ -121,6 +121,70 @@ final class ProviderStreamHardeningTests: XCTestCase {
         }
     }
 
+    func testOpenCodeZenAcceptsLiveReasoningContentFrames() throws {
+        var session = zenReasoningChatSession()
+        let responseID = "0f0147ea-07e8-4b39-854d-dad783dbf42f"
+        let model = "deepseek-v4-flash-free"
+
+        let first = try session.receive(.json(.object([
+            "id": .string(responseID),
+            "object": .string("chat.completion.chunk"),
+            "created": .number(.integer(1_784_501_832)),
+            "model": .string(model),
+            "choices": .array([.object([
+                "index": .number(.integer(0)),
+                "finish_reason": .null,
+                "logprobs": .null,
+                "delta": .object([
+                    "role": .string("assistant"),
+                    "content": .null,
+                    "reasoning_content": .string(""),
+                ]),
+            ])]),
+            "usage": .null,
+        ])))
+        XCTAssertEqual(first.map(\.event), [
+            .responseStarted(.init(
+                responseID: responseID,
+                model: .init(rawValue: model)
+            )),
+        ])
+
+        let second = try session.receive(.json(.object([
+            "id": .string(responseID),
+            "object": .string("chat.completion.chunk"),
+            "created": .number(.integer(1_784_501_832)),
+            "model": .string(model),
+            "choices": .array([.object([
+                "index": .number(.integer(0)),
+                "finish_reason": .null,
+                "logprobs": .null,
+                "delta": .object([
+                    "content": .null,
+                    "reasoning_content": .string("The"),
+                ]),
+            ])]),
+            "usage": .null,
+        ])))
+        XCTAssertEqual(second.map(\.event), [
+            .reasoningDelta(.init(outputIndex: 0, text: "The")),
+        ])
+    }
+
+    func testGenericChatDoesNotGainZenReasoningAuthority() throws {
+        var session = chatSession()
+        XCTAssertThrowsError(try session.receive(chatFrame(
+            index: 0,
+            delta: ["reasoning_content": .string("private reasoning")],
+            finishReason: nil
+        ))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_reasoning_output_not_supported"
+            )
+        }
+    }
+
     func testChatRejectsEveryOutputKindAfterFinishReason() throws {
         for delta in [
             ["content": JSONValue.string("late text")],
@@ -239,6 +303,555 @@ final class ProviderStreamHardeningTests: XCTestCase {
             XCTAssertEqual(
                 (error as? ProviderFailure)?.code,
                 "provider_responses_event_type_unknown"
+            )
+        }
+    }
+
+    func testChatGPTMetadataBeforeCreatedBindsResponseIdentity() throws {
+        var session = codexResponsesSession()
+        XCTAssertEqual(try session.receive(.json(.object([
+            "type": .string("response.metadata"),
+            "sequence_number": .number(.integer(1)),
+            "response_id": .string("response-1"),
+            "headers": .object(["x-codex-turn-state": .string("turn-1")]),
+            "metadata": .object([
+                "openai_verification_recommendation": .array([]),
+            ]),
+            "safety_buffering": .object(["retry_model": .string("fixture-model")]),
+        ]))), [])
+
+        let events = try session.receive(responseCreated())
+        XCTAssertEqual(events.map(\.event), [
+            .responseStarted(.init(
+                responseID: "response-1",
+                model: .init(rawValue: "fixture-model")
+            )),
+        ])
+    }
+
+    func testChatGPTMetadataBetweenTextDeltasIsIgnoredAsControlPlaneData() throws {
+        var session = codexResponsesSession()
+        _ = try session.receive(responseCreated())
+        _ = try session.receive(.json(.object([
+            "type": .string("response.output_text.delta"),
+            "output_index": .number(.integer(0)),
+            "content_index": .number(.integer(0)),
+            "delta": .string("hello"),
+        ])))
+
+        XCTAssertEqual(try session.receive(.json(.object([
+            "type": .string("response.metadata"),
+            "response_id": .string("response-1"),
+            "metadata": .object([
+                "openai_chatgpt_moderation_metadata": .object([:]),
+            ]),
+        ]))), [])
+
+        _ = try session.receive(.json(.object([
+            "type": .string("response.output_text.delta"),
+            "output_index": .number(.integer(0)),
+            "content_index": .number(.integer(0)),
+            "delta": .string(" world"),
+        ])))
+        XCTAssertNoThrow(try session.receive(responsesCompletion(output: [])))
+    }
+
+    func testChatGPTLiveReasoningAndMessageLifecycleShapeCompletes() throws {
+        var session = codexResponsesSession()
+        let reasoningItem: JSONValue = .object([
+            "id": .string("reasoning-1"),
+            "type": .string("reasoning"),
+            "summary": .array([.object([
+                "type": .string("summary_text"),
+                "text": .string("R"),
+            ])]),
+        ])
+        let messageItem: JSONValue = .object([
+            "id": .string("message-1"),
+            "type": .string("message"),
+            "role": .string("assistant"),
+            "status": .string("completed"),
+            "content": .array([.object([
+                "type": .string("output_text"),
+                "text": .string("OK"),
+            ])]),
+        ])
+        let frames: [ProviderWireFrame] = [
+            responseCreated(),
+            .json(.object([
+                "type": .string("response.in_progress"),
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.added"),
+                "output_index": .number(.integer(0)),
+                "item": .object([
+                    "id": .string("reasoning-1"),
+                    "type": .string("reasoning"),
+                    "summary": .array([]),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_summary_part.added"),
+                "output_index": .number(.integer(0)),
+                "summary_index": .number(.integer(0)),
+                "part": .object([
+                    "type": .string("summary_text"),
+                    "text": .string(""),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_summary_text.delta"),
+                "output_index": .number(.integer(0)),
+                "summary_index": .number(.integer(0)),
+                "delta": .string("R"),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_summary_text.done"),
+                "output_index": .number(.integer(0)),
+                "summary_index": .number(.integer(0)),
+                "text": .string("R"),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_summary_part.done"),
+                "output_index": .number(.integer(0)),
+                "summary_index": .number(.integer(0)),
+                "part": .object([
+                    "type": .string("summary_text"),
+                    "text": .string("R"),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.done"),
+                "output_index": .number(.integer(0)),
+                "item": reasoningItem,
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.added"),
+                "output_index": .number(.integer(1)),
+                "item": .object([
+                    "id": .string("message-1"),
+                    "type": .string("message"),
+                    "role": .string("assistant"),
+                    "status": .string("in_progress"),
+                    "content": .array([]),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.content_part.added"),
+                "output_index": .number(.integer(1)),
+                "content_index": .number(.integer(0)),
+                "part": .object([
+                    "type": .string("output_text"),
+                    "text": .string(""),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.output_text.delta"),
+                "output_index": .number(.integer(1)),
+                "content_index": .number(.integer(0)),
+                "delta": .string("O"),
+            ])),
+            .json(.object([
+                "type": .string("response.output_text.delta"),
+                "output_index": .number(.integer(1)),
+                "content_index": .number(.integer(0)),
+                "delta": .string("K"),
+            ])),
+            .json(.object([
+                "type": .string("response.output_text.done"),
+                "output_index": .number(.integer(1)),
+                "content_index": .number(.integer(0)),
+                "text": .string("OK"),
+            ])),
+            .json(.object([
+                "type": .string("response.content_part.done"),
+                "output_index": .number(.integer(1)),
+                "content_index": .number(.integer(0)),
+                "part": .object([
+                    "type": .string("output_text"),
+                    "text": .string("OK"),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.done"),
+                "output_index": .number(.integer(1)),
+                "item": messageItem,
+            ])),
+            responsesCompletion(
+                output: [reasoningItem, messageItem],
+                inputTokens: 2,
+                outputTokens: 3
+            ),
+        ]
+
+        var canonical: [ProviderStreamEvent] = []
+        for frame in frames {
+            canonical.append(contentsOf: try session.receive(frame).map(\.event))
+        }
+        XCTAssertEqual(canonical.compactMap { event -> String? in
+            guard case let .reasoningDelta(delta) = event else { return nil }
+            return delta.text
+        }.joined(), "R")
+        XCTAssertEqual(canonical.compactMap { event -> String? in
+            guard case let .textDelta(delta) = event else { return nil }
+            return delta.text
+        }.joined(), "OK")
+        XCTAssertTrue(canonical.contains { event in
+            guard case let .responseCompleted(completion) = event else {
+                return false
+            }
+            return completion.responseID == "response-1" &&
+                completion.finishReason == .completed
+        })
+    }
+
+    func testChatGPTMetadataRejectsMismatchedResponseIdentity() throws {
+        var session = codexResponsesSession()
+        _ = try session.receive(responseCreated())
+        XCTAssertThrowsError(try session.receive(.json(.object([
+            "type": .string("response.metadata"),
+            "response_id": .string("response-other"),
+        ])))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_responses_metadata_identity_changed"
+            )
+        }
+    }
+
+    func testChatGPTMetadataRejectsScalarControlObjects() throws {
+        for field in ["headers", "metadata", "safety_buffering"] {
+            var session = codexResponsesSession()
+            XCTAssertThrowsError(try session.receive(.json(.object([
+                "type": .string("response.metadata"),
+                field: .string("not-an-object"),
+            ])))) { error in
+                XCTAssertEqual(
+                    (error as? ProviderFailure)?.code,
+                    "provider_responses_metadata_\(field)_invalid"
+                )
+            }
+        }
+    }
+
+    func testChatGPTMetadataRejectsInvalidSequenceNumbers() throws {
+        for sequenceNumber in [
+            JSONValue.number(.integer(-1)),
+            .number(.floatingPoint(1.5)),
+        ] {
+            var session = codexResponsesSession()
+            XCTAssertThrowsError(try session.receive(.json(.object([
+                "type": .string("response.metadata"),
+                "sequence_number": sequenceNumber,
+            ])))) { error in
+                XCTAssertEqual(
+                    (error as? ProviderFailure)?.code,
+                    "provider_responses_metadata_sequence_invalid"
+                )
+            }
+        }
+    }
+
+    func testGenericResponsesRouteDoesNotGainChatGPTMetadataAuthority() throws {
+        var session = responsesSession()
+        XCTAssertThrowsError(try session.receive(.json(.object([
+            "type": .string("response.metadata"),
+            "metadata": .object([:]),
+        ])))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_responses_metadata_not_supported"
+            )
+        }
+    }
+
+    func testChatGPTUsageUsesRouteLimitWhenRequestLimitWasNotSent() throws {
+        var session = codexResponsesSession(maximumOutputTokens: 4_096)
+        _ = try session.receive(responseCreated())
+        XCTAssertNoThrow(try session.receive(responsesCompletion(
+            output: [],
+            inputTokens: 1,
+            outputTokens: 4_097
+        )))
+    }
+
+    func testChatGPTUsageStillRejectsOutputBeyondPinnedRouteLimit() throws {
+        var session = codexResponsesSession(maximumOutputTokens: 4_096)
+        _ = try session.receive(responseCreated())
+        XCTAssertThrowsError(try session.receive(responsesCompletion(
+            output: [],
+            inputTokens: 1,
+            outputTokens: 16_385
+        ))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_usage_counts_invalid"
+            )
+        }
+    }
+
+    func testGenericResponsesUsageStillEnforcesSentRequestLimit() throws {
+        var session = responsesSession(maximumOutputTokens: 4_096)
+        _ = try session.receive(responseCreated())
+        XCTAssertThrowsError(try session.receive(responsesCompletion(
+            output: [],
+            inputTokens: 1,
+            outputTokens: 4_097
+        ))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_usage_request_output_limit_exceeded"
+            )
+        }
+    }
+
+    func testResponsesReasoningSummaryPartLifecycleIsAcceptedAndReconciled() throws {
+        var session = reasoningResponsesSession()
+        _ = try session.receive(responseCreated())
+
+        XCTAssertEqual(try session.receive(.json(.object([
+            "type": .string("response.reasoning_summary_part.added"),
+            "output_index": .number(.integer(0)),
+            "summary_index": .number(.integer(0)),
+            "part": .object([
+                "type": .string("summary_text"),
+                "text": .string(""),
+            ]),
+        ]))), [])
+
+        let delta = try session.receive(.json(.object([
+            "type": .string("response.reasoning_summary_text.delta"),
+            "output_index": .number(.integer(0)),
+            "summary_index": .number(.integer(0)),
+            "delta": .string("Checked the constraints."),
+        ])))
+        XCTAssertEqual(delta.count, 1)
+
+        XCTAssertEqual(try session.receive(.json(.object([
+            "type": .string("response.reasoning_summary_text.done"),
+            "output_index": .number(.integer(0)),
+            "summary_index": .number(.integer(0)),
+            "text": .string("Checked the constraints."),
+        ]))), [])
+        XCTAssertEqual(try session.receive(.json(.object([
+            "type": .string("response.reasoning_summary_part.done"),
+            "output_index": .number(.integer(0)),
+            "summary_index": .number(.integer(0)),
+            "part": .object([
+                "type": .string("summary_text"),
+                "text": .string("Checked the constraints."),
+            ]),
+        ]))), [])
+    }
+
+    func testResponsesReasoningSummaryPartCannotSmuggleUnstreamedText() throws {
+        var session = reasoningResponsesSession()
+        _ = try session.receive(responseCreated())
+
+        XCTAssertThrowsError(try session.receive(.json(.object([
+            "type": .string("response.reasoning_summary_part.added"),
+            "output_index": .number(.integer(0)),
+            "summary_index": .number(.integer(0)),
+            "part": .object([
+                "type": .string("summary_text"),
+                "text": .string("unaccounted output"),
+            ]),
+        ])))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_responses_reasoning_part_added_mismatch"
+            )
+        }
+    }
+
+    func testResponsesReasoningSummaryAndTextReconcileAsDistinctChannels() throws {
+        var session = reasoningResponsesSession()
+        let item: JSONValue = .object([
+            "id": .string("reasoning-1"),
+            "type": .string("reasoning"),
+            "summary": .array([.object([
+                "type": .string("summary_text"),
+                "text": .string("Summary"),
+            ])]),
+            "content": .array([.object([
+                "type": .string("reasoning_text"),
+                "text": .string("Full reasoning"),
+            ])]),
+        ])
+        let frames: [ProviderWireFrame] = [
+            responseCreated(),
+            .json(.object([
+                "type": .string("response.reasoning_summary_text.delta"),
+                "output_index": .number(.integer(0)),
+                "summary_index": .number(.integer(0)),
+                "delta": .string("Summary"),
+            ])),
+            .json(.object([
+                "type": .string("response.content_part.added"),
+                "output_index": .number(.integer(0)),
+                "content_index": .number(.integer(0)),
+                "part": .object([
+                    "type": .string("reasoning_text"),
+                    "text": .string(""),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_text.delta"),
+                "output_index": .number(.integer(0)),
+                "content_index": .number(.integer(0)),
+                "delta": .string("Full reasoning"),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_summary_text.done"),
+                "output_index": .number(.integer(0)),
+                "summary_index": .number(.integer(0)),
+                "text": .string("Summary"),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_text.done"),
+                "output_index": .number(.integer(0)),
+                "content_index": .number(.integer(0)),
+                "text": .string("Full reasoning"),
+            ])),
+            .json(.object([
+                "type": .string("response.content_part.done"),
+                "output_index": .number(.integer(0)),
+                "content_index": .number(.integer(0)),
+                "part": .object([
+                    "type": .string("reasoning_text"),
+                    "text": .string("Full reasoning"),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.done"),
+                "output_index": .number(.integer(0)),
+                "item": item,
+            ])),
+            responsesCompletion(output: [item]),
+        ]
+
+        var canonical: [ProviderStreamEvent] = []
+        for frame in frames {
+            canonical.append(contentsOf: try session.receive(frame).map(\.event))
+        }
+
+        XCTAssertEqual(canonical.compactMap { event -> String? in
+            guard case let .reasoningDelta(delta) = event else { return nil }
+            return delta.text
+        }, ["Summary", "Full reasoning"])
+        XCTAssertTrue(canonical.contains { event in
+            guard case .responseCompleted = event else { return false }
+            return true
+        })
+    }
+
+    func testResponsesReasoningTextContentPartDoneMustMatchStream() throws {
+        var session = reasoningResponsesSession()
+        _ = try session.receive(responseCreated())
+        _ = try session.receive(.json(.object([
+            "type": .string("response.content_part.added"),
+            "output_index": .number(.integer(0)),
+            "content_index": .number(.integer(0)),
+            "part": .object([
+                "type": .string("reasoning_text"),
+                "text": .string(""),
+            ]),
+        ])))
+        _ = try session.receive(.json(.object([
+            "type": .string("response.reasoning_text.delta"),
+            "output_index": .number(.integer(0)),
+            "content_index": .number(.integer(0)),
+            "delta": .string("streamed reasoning"),
+        ])))
+
+        XCTAssertThrowsError(try session.receive(.json(.object([
+            "type": .string("response.content_part.done"),
+            "output_index": .number(.integer(0)),
+            "content_index": .number(.integer(0)),
+            "part": .object([
+                "type": .string("reasoning_text"),
+                "text": .string("different reasoning"),
+            ]),
+        ])))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_responses_reasoning_text_part_done_mismatch"
+            )
+        }
+    }
+
+    func testResponsesReasoningTextRejectsUnstreamedSnapshotContent() throws {
+        var session = reasoningResponsesSession()
+        _ = try session.receive(responseCreated())
+
+        XCTAssertThrowsError(try session.receive(.json(.object([
+            "type": .string("response.output_item.done"),
+            "output_index": .number(.integer(0)),
+            "item": .object([
+                "id": .string("reasoning-1"),
+                "type": .string("reasoning"),
+                "summary": .array([]),
+                "content": .array([.object([
+                    "type": .string("reasoning_text"),
+                    "text": .string("not streamed"),
+                ])]),
+            ]),
+        ])))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_responses_reasoning_snapshot_mismatch"
+            )
+        }
+    }
+
+    func testResponsesReasoningTextRejectsStreamedContentMissingFromSnapshot() throws {
+        var session = reasoningResponsesSession()
+        _ = try session.receive(responseCreated())
+        _ = try session.receive(.json(.object([
+            "type": .string("response.reasoning_text.delta"),
+            "output_index": .number(.integer(0)),
+            "content_index": .number(.integer(0)),
+            "delta": .string("streamed reasoning"),
+        ])))
+        _ = try session.receive(.json(.object([
+            "type": .string("response.reasoning_text.done"),
+            "output_index": .number(.integer(0)),
+            "content_index": .number(.integer(0)),
+            "text": .string("streamed reasoning"),
+        ])))
+
+        XCTAssertThrowsError(try session.receive(.json(.object([
+            "type": .string("response.output_item.done"),
+            "output_index": .number(.integer(0)),
+            "item": .object([
+                "id": .string("reasoning-1"),
+                "type": .string("reasoning"),
+                "summary": .array([]),
+            ]),
+        ])))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_responses_reasoning_snapshot_mismatch"
+            )
+        }
+    }
+
+    func testResponsesReasoningTerminalSnapshotRequiresSummaryArray() throws {
+        var session = reasoningResponsesSession()
+        _ = try session.receive(responseCreated())
+
+        XCTAssertThrowsError(try session.receive(.json(.object([
+            "type": .string("response.output_item.done"),
+            "output_index": .number(.integer(0)),
+            "item": .object([
+                "id": .string("reasoning-1"),
+                "type": .string("reasoning"),
+                "content": .array([]),
+            ]),
+        ])))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_responses_reasoning_snapshot_invalid"
             )
         }
     }
@@ -362,9 +975,52 @@ final class ProviderStreamHardeningTests: XCTestCase {
         }
     }
 
-    private func responsesSession() -> ProviderStreamSession {
+    private func responsesSession(
+        maximumOutputTokens: UInt64? = nil
+    ) -> ProviderStreamSession {
         let adapter = OpenAIResponsesAdapter(model: .init(rawValue: "fixture-model"))
-        let request = textRequest(model: "fixture-model")
+        let request = textRequest(
+            model: "fixture-model",
+            maximumOutputTokens: maximumOutputTokens
+        )
+        return ProviderStreamSession(
+            descriptor: adapter.descriptor,
+            scope: .init(
+                requestID: request.requestID,
+                attemptID: .init(rawValue: "attempt-1")
+            ),
+            request: request
+        )
+    }
+
+    private func codexResponsesSession(
+        maximumOutputTokens: UInt64 = 4_096
+    ) -> ProviderStreamSession {
+        let adapter = OpenAICodexResponsesAdapter(
+            model: .init(rawValue: "fixture-model")
+        )
+        let request = textRequest(
+            model: "fixture-model",
+            maximumOutputTokens: maximumOutputTokens
+        )
+        return ProviderStreamSession(
+            descriptor: adapter.descriptor,
+            scope: .init(
+                requestID: request.requestID,
+                attemptID: .init(rawValue: "attempt-1")
+            ),
+            request: request
+        )
+    }
+
+    private func reasoningResponsesSession() -> ProviderStreamSession {
+        let adapter = OpenAIResponsesAdapter(model: .init(rawValue: "fixture-model"))
+        let request = CanonicalProviderRequest(
+            requestID: "request-1",
+            model: .init(rawValue: "fixture-model"),
+            messages: [.init(role: .user, content: [.text("Reply")])],
+            options: .init(reasoningSummary: true)
+        )
         return ProviderStreamSession(
             descriptor: adapter.descriptor,
             scope: .init(
@@ -419,6 +1075,23 @@ final class ProviderStreamHardeningTests: XCTestCase {
         )
     }
 
+    private func zenReasoningChatSession() -> ProviderStreamSession {
+        let model = "deepseek-v4-flash-free"
+        let adapter = OpenCodeZenChatCompletionsAdapter(
+            model: .init(rawValue: model),
+            capabilities: .hostedOpenCodeZenChatSingleCallToolsBaseline
+        )
+        let request = textRequest(model: model)
+        return ProviderStreamSession(
+            descriptor: adapter.descriptor,
+            scope: .init(
+                requestID: request.requestID,
+                attemptID: .init(rawValue: "attempt-1")
+            ),
+            request: request
+        )
+    }
+
     private func toolRequest(
         model: String,
         parallelToolCalls: Bool? = nil
@@ -443,11 +1116,15 @@ final class ProviderStreamHardeningTests: XCTestCase {
         )
     }
 
-    private func textRequest(model: String) -> CanonicalProviderRequest {
+    private func textRequest(
+        model: String,
+        maximumOutputTokens: UInt64? = nil
+    ) -> CanonicalProviderRequest {
         CanonicalProviderRequest(
             requestID: "request-1",
             model: .init(rawValue: model),
-            messages: [.init(role: .user, content: [.text("Reply")])]
+            messages: [.init(role: .user, content: [.text("Reply")])],
+            options: .init(maximumOutputTokens: maximumOutputTokens)
         )
     }
 
@@ -501,14 +1178,33 @@ final class ProviderStreamHardeningTests: XCTestCase {
     }
 
     private func responsesCompletion(output: [JSONValue]) -> ProviderWireFrame {
-        .json(.object([
+        responsesCompletion(
+            output: output,
+            inputTokens: nil,
+            outputTokens: nil
+        )
+    }
+
+    private func responsesCompletion(
+        output: [JSONValue],
+        inputTokens: UInt64?,
+        outputTokens: UInt64?
+    ) -> ProviderWireFrame {
+        var response: [String: JSONValue] = [
+            "id": .string("response-1"),
+            "model": .string("fixture-model"),
+            "status": .string("completed"),
+            "output": .array(output),
+        ]
+        if let inputTokens, let outputTokens {
+            response["usage"] = .object([
+                "input_tokens": .number(.unsignedInteger(inputTokens)),
+                "output_tokens": .number(.unsignedInteger(outputTokens)),
+            ])
+        }
+        return .json(.object([
             "type": .string("response.completed"),
-            "response": .object([
-                "id": .string("response-1"),
-                "model": .string("fixture-model"),
-                "status": .string("completed"),
-                "output": .array(output),
-            ]),
+            "response": .object(response),
         ]))
     }
 

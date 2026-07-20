@@ -2211,6 +2211,28 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(settings.modelID, AIProvider.openAI.defaultModel)
     }
 
+    func testGPT56AliasesRemainBlockedUntilExplicitExactSelection() {
+        for alias in ["gpt-5.6", "gpt-5.6-sol-2026-07-16", "GPT-5.6-SOL"] {
+            let settings = AgentSettings(
+                provider: .openAICodex,
+                modelID: alias
+            )
+
+            XCTAssertFalse(settings.repairStaleModelSelection(), alias)
+            XCTAssertEqual(settings.modelID, alias)
+            XCTAssertFalse(settings.provider.modelOptions.contains(alias))
+            XCTAssertTrue(
+                settings.provider.requiresExplicitGPT56ModelSelection(alias)
+            )
+            XCTAssertNotEqual(
+                settings.provider.visibleModelIdentity(alias),
+                settings.provider.visibleModelIdentity(
+                    AIProvider.exactGPT56SolModelID
+                )
+            )
+        }
+    }
+
     func testRuntimeRepairsStaleProviderModelBeforeMissingKeyFailure() async throws {
         let schema = TestModelSchema.projectFoundation
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
@@ -4716,6 +4738,66 @@ final class ProjectFoundationTests: XCTestCase {
         XCTAssertEqual(run.status, .failed)
         XCTAssertEqual(run.blockerReason, "The write was rejected before proof.")
         XCTAssertTrue(run.steps.contains { $0.status == .failed })
+    }
+
+    func testRejectedCanonicalProjectStartSettlesTheJustStartedLedgerRun()
+        throws
+    {
+        let container = try ModelContainer(
+            for: TestModelSchema.projectFoundation,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let context = container.mainContext
+        let project = Project(
+            name: "Canonical Start Rejection",
+            mission: "Never leave a rejected start looking active.",
+            workspaceName: "Default"
+        )
+        let conversation = Conversation(
+            title: "Canonical Start Rejection",
+            project: project
+        )
+        context.insert(project)
+        context.insert(conversation)
+        let summary = ProjectMissionSummarizer.summarize(
+            project: project,
+            context: context
+        )
+        let run = ProjectOSRunLedger.startRun(
+            project: project,
+            summary: summary,
+            intent: .continueMission,
+            operatorNote: "",
+            sourceConversationID: conversation.id,
+            origin: .manual,
+            context: context,
+            now: Date(timeIntervalSince1970: 1_225)
+        )
+
+        ProjectEventRecorder.record(
+            project: project,
+            kind: .runFailed,
+            title: "Project command did not start",
+            detail: AgentSystemPresentationFailure.workspaceBusy.userMessage,
+            severity: .failure,
+            sourceType: .conversation,
+            sourceID: conversation.id,
+            context: context,
+            now: Date(timeIntervalSince1970: 1_226)
+        )
+        try context.save()
+
+        XCTAssertEqual(run.status, .failed)
+        XCTAssertNotNil(run.completedAt)
+        XCTAssertEqual(
+            run.blockerReason,
+            AgentSystemPresentationFailure.workspaceBusy.userMessage
+        )
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<ProjectOSRun>()).count,
+            1,
+            "Settling a rejected start must not synthesize a second ledger run."
+        )
     }
 
     func testProjectOSIntentDerivesModesObjectsAndHistoryFromRuntimeEvents() throws {

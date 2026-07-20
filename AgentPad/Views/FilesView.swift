@@ -128,7 +128,7 @@ struct FilesView: View {
                 operationID: operationID
             ),
             conversationID: scopeConversationID,
-            projectID: project.id,
+            projectID: scopeProject?.id,
             sessionID: "files"
         )
         return try await policyRuntime.coordinator().performFiles(
@@ -153,7 +153,7 @@ struct FilesView: View {
                 operationID: operationID
             ),
             conversationID: scopeConversationID,
-            projectID: project.id,
+            projectID: scopeProject?.id,
             sessionID: "files"
         )
         return try await policyRuntime.coordinator().performFiles(
@@ -1544,7 +1544,7 @@ struct FilesView: View {
                 fileName: target.item.name,
                 relativePath: target.item.relativePath,
                 workspace: runtime.workspace,
-                projectID: project.id,
+                projectID: scopeProject?.id,
                 conversationID: scopeConversationID,
                 initialLineNumber: target.focusedLineNumber,
                 onSave: {
@@ -1852,6 +1852,11 @@ struct FilesView: View {
 
     func switchWorkspace(to name: String, clearDraftOnSuccess: Bool = false) {
         let safeName = SandboxWorkspace.sanitizedWorkspaceName(name)
+        guard let scopeProject else {
+            workspaceSaveError = "General uses the Default workspace. Choose a project in Forge before switching project workspaces."
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
         guard !isWorkspaceRoutingLocked() else {
             workspaceSaveError = "Finish or stop the active mission before switching workspaces. NovaForge kept the current workspace unchanged."
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
@@ -1870,9 +1875,9 @@ struct FilesView: View {
                     to: safeName,
                     context: modelContext
                 ) {
-                    if project.workspaceName != safeName {
+                    if scopeProject.workspaceName != safeName {
                         ProjectEventRecorder.record(
-                            project: project,
+                            project: scopeProject,
                             kind: .workspaceChanged,
                             title: "Workspace changed",
                             detail: safeName,
@@ -1883,7 +1888,7 @@ struct FilesView: View {
                     }
                     try FilesWorkspacePersistence.persistProjectWorkspaceSelection(
                         safeName,
-                        project: project,
+                        project: scopeProject,
                         settings: settings,
                         save: { try modelContext.save() }
                     )

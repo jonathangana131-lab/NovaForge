@@ -420,6 +420,7 @@ struct ChatView: View {
     let setConversationProjectScope: (Conversation, Project?) -> Void
     var projectResumeDraft: String = ""
     var projectResumeDraftRevision: Int = 0
+    var consumeProjectResumeDraft: (Int) -> Void = { _ in }
     let openWorkspaceSurface: (AppTab) -> Void
     let openArtifactLandscapeFullScreen: (WorkspaceArtifact) -> Void
     var isVisibleForFrameProfiling: Bool = true
@@ -444,6 +445,7 @@ struct ChatView: View {
     @State private var showingChatDrawer = false
     @State private var showingRunDetails = false
     @State private var messageRenderLimit = 80
+    @State private var codexAuth = OpenAICodexAuthManager.shared
     #if DEBUG
     @State private var debugSendDisposition = "idle"
     #endif
@@ -599,6 +601,19 @@ struct ChatView: View {
         )
     }
 
+    /// The deterministic performance fixture already owns a classified
+    /// `LiveStreamBuffer`. Rendering that exact buffer avoids reparsing and
+    /// re-revealing every DEBUG stress chunk through a second main-actor
+    /// buffer; production AgentSystem runs continue to use `agentLiveStream`.
+    private var renderedAgentLiveStream: LiveStreamBuffer {
+        #if DEBUG
+        if AgentCanonicalStreamingPerformanceFixture.isEnabled {
+            return runtime.liveStream
+        }
+        #endif
+        return agentLiveStream
+    }
+
     private var agentOrchestrationPresentation: AgentOrchestrationPresentation? {
         agentSystemPresentation.orchestrationPresentation(
             for: agentPresentationScope
@@ -606,9 +621,7 @@ struct ChatView: View {
     }
 
     private var agentWorkspace: SandboxWorkspace {
-        SandboxWorkspace(
-            name: scopedProject?.workspaceName ?? settings.activeWorkspaceName
-        )
+        AgentRunWorkspaceScope.userWorkspace(for: scopedProject)
     }
 
     private var selectedWorkspaceID: WorkspaceID? {
@@ -871,7 +884,10 @@ struct ChatView: View {
     }
 
     private var missingCredentialSetup: Bool {
-        settings.provider != .local &&
+        // Reading the observable auth state here makes the Forge composer
+        // update immediately after sign-in, refresh, failure, or sign-out.
+        _ = codexAuth.state
+        return settings.provider != .local &&
             !runtime.hasUsableProviderCredential(settings: settings)
     }
 
@@ -1092,6 +1108,7 @@ struct ChatView: View {
             return false
         }
     }
+
     #endif
 
     private var conversationRefreshID: String {
@@ -1617,7 +1634,7 @@ struct ChatView: View {
                                                 .padding(.horizontal, 18)
                                             case .live:
                                                 ChatLiveResponseIsland(
-                                                    stream: agentLiveStream,
+                                                    stream: renderedAgentLiveStream,
                                                     isWorking: canonicalRunIsWorking,
                                                     isVisibleForFrameProfiling: isVisibleForFrameProfiling
                                                 )
@@ -1697,12 +1714,6 @@ struct ChatView: View {
                             handleRunStateChange(newState)
                         }
                         .onReceive(runtime.liveStream.$layoutRevision) { _ in
-                            #if DEBUG
-                            if AgentCanonicalStreamingPerformanceFixture
-                                .isEnabled {
-                                synchronizeAgentLiveStream()
-                            }
-                            #endif
                             keepLiveStreamReadableDuringGrowth()
                         }
                         .onReceive(agentLiveStream.$layoutRevision) { _ in
@@ -1998,6 +2009,14 @@ struct ChatView: View {
     }
 
     private func synchronizeAgentLiveStream() {
+        #if DEBUG
+        // `--stress-streaming` renders the retired runtime's already-classified
+        // buffer directly. Copying it here created a second parsing/reveal loop
+        // and duplicate layout/scroll invalidations in the performance lane.
+        guard !AgentCanonicalStreamingPerformanceFixture.isEnabled else {
+            return
+        }
+        #endif
         let presentation = agentRunPresentation
         guard let runID = presentation.liveText?.runID ??
                 presentation.activeGroup?.identity.runID
@@ -2049,16 +2068,21 @@ struct ChatView: View {
     }
 
     private func applyProjectResumeDraftIfNeeded(focusComposer: Bool) {
-        let draft = projectResumeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard projectResumeDraftRevision > 0, !draft.isEmpty else { return }
-        guard prompt != projectResumeDraft else { return }
-        prompt = projectResumeDraft
-        forceScrollToBottom = conversation.messageCount > 0 || (ownsActiveRunState && runtime.isWorking)
-        if focusComposer {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                composerFocused = true
+        let handoff = NovaForgeComposerDraftHandoff(
+            prompt: projectResumeDraft,
+            revision: projectResumeDraftRevision
+        )
+        guard handoff.shouldApply else { return }
+        if prompt != projectResumeDraft {
+            prompt = projectResumeDraft
+            forceScrollToBottom = conversation.messageCount > 0 || (ownsActiveRunState && runtime.isWorking)
+            if focusComposer {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    composerFocused = true
+                }
             }
         }
+        consumeProjectResumeDraft(projectResumeDraftRevision)
     }
 
     private func restorePersistedDraftIfAvailable() {
@@ -2622,6 +2646,12 @@ struct ChatView: View {
             #endif
             return
         }
+        // A provider-backed start can spend time crossing the durable
+        // acceptance boundary. Drop focus as soon as Send is accepted by the
+        // composer so the keyboard cannot cover the bottom navigation while
+        // that work begins. Busy/rejected dispositions explicitly restore
+        // focus below.
+        dismissComposerKeyboard()
         AgentPerformance.event("Chat Prompt Send")
         let submittedDraft = prompt
         let submittedConversationID = conversation.id
@@ -2642,8 +2672,7 @@ struct ChatView: View {
                    prompt == submittedDraft {
                     prompt = ""
                     flushDraftPersistence("", for: submittedConversationID)
-                    composerFocused = false
-                    keyboard.reset()
+                    dismissComposerKeyboard()
                 }
                 forceScrollToBottom = true
                 scrollAttachment = .restoring
@@ -2670,6 +2699,18 @@ struct ChatView: View {
                 composerFocused = true
             }
         }
+    }
+
+    @MainActor
+    private func dismissComposerKeyboard() {
+        composerFocused = false
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+        keyboard.reset()
     }
 
     #if DEBUG
@@ -2735,8 +2776,7 @@ struct ChatView: View {
                 case .removeAndClearVisible:
                     flushDraftPersistence("", for: identity.conversationID)
                     prompt = ""
-                    composerFocused = false
-                    keyboard.reset()
+                    dismissComposerKeyboard()
                 case .replacePersistedWithVisible:
                     // Durable acceptance raced a newer editor revision. Keep
                     // the new text both visible and crash-recoverable.
@@ -2766,8 +2806,7 @@ struct ChatView: View {
 
         switch disposition {
         case .reserved:
-            composerFocused = false
-            keyboard.reset()
+            dismissComposerKeyboard()
             forceScrollToBottom = true
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         case .busy:

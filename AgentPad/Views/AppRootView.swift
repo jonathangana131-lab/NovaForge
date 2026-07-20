@@ -143,6 +143,12 @@ struct AppRootView: View {
         AgentSystemPresentationStore.shared
     @State private var approvalPromptCenter =
         AgentPolicyMutationRuntime.shared.approvalPromptCenter
+    @State private var approvalSheetItem:
+        AgentApprovalPromptCenter.PendingItem?
+    @State private var approvalSheetIsPresented = false
+    @State private var approvalSheetDismissalInFlight = false
+    @State private var approvalSheetPresentationTask: Task<Void, Never>?
+    @State private var approvalSheetScheduledRequestID: ApprovalRequestID?
     @State private var selectedConversationID: UUID?
     @State private var optimisticSelectedConversation: Conversation?
     @State private var landscapeGameArtifact: WorkspaceArtifact?
@@ -150,6 +156,7 @@ struct AppRootView: View {
     @State private var terminalFocus: TerminalConsoleFocusRequest?
     @State private var rootPrompt = ""
     @State private var rootPromptRevision = 0
+    @State private var didCompleteRootLaunchTasks = false
     @State private var rootError: String?
     @State private var pendingTabSwitch: AppTab?
     @State private var tabSwitchStartedAt: Date?
@@ -340,24 +347,78 @@ struct AppRootView: View {
             .environment(\.novaActiveTab, selectedTab)
             .task {
                 await runRootLaunchTasks()
+                guard selectedConversation != nil,
+                      settings != nil,
+                      activeProject != nil,
+                      agentSystemPresentation.phase == .ready else {
+                    return
+                }
+                didCompleteRootLaunchTasks = true
+                // Let launch-time selection changes deliver their onChange
+                // callbacks before an Ask intent installs its composer draft.
+                await Task.yield()
+                applyPendingIntentCommandIfAvailable()
                 presentPendingArtifactShortcutIfAvailable()
             }
             .onChange(of: scenePhase, initial: true) { _, phase in
                 guard phase == .active else { return }
                 OpenAICodexAuthManager.shared.applicationDidBecomeActive()
+                if didCompleteRootLaunchTasks {
+                    applyPendingIntentCommandIfAvailable()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.openTab)) { note in
                 guard let raw = note.userInfo?[NovaForgeIntentSignal.tabKey] as? String,
-                      let tab = AppTab.resolve(raw) else { return }
-                selectedTab = tab
+                      AppTab.resolve(raw) != nil else { return }
+                let command = NovaForgeIntentSignal.PendingCommand.openTab(raw)
+                applyIntentCommand(command)
+                acknowledgePendingIntentCommandIfLaunchIsReady(command)
             }
-            .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.askPrompt)) { _ in
-                // ChatView owns the composer prefill; the root just lands on Forge.
-                selectedTab = .forge
+            .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.askPrompt)) { note in
+                guard let prompt = note.userInfo?[NovaForgeIntentSignal.promptKey] as? String,
+                      !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return
+                }
+                let command = NovaForgeIntentSignal.PendingCommand.askPrompt(
+                    prompt
+                )
+                applyIntentCommand(command)
+                acknowledgePendingIntentCommandIfLaunchIsReady(command)
             }
             .onReceive(NotificationCenter.default.publisher(for: NovaForgeIntentSignal.playArtifact)) { _ in
                 presentPendingArtifactShortcutIfAvailable()
             }
+    }
+
+    private func applyPendingIntentCommandIfAvailable() {
+        guard let command = NovaForgeIntentSignal.takePendingCommand() else {
+            return
+        }
+        applyIntentCommand(command)
+    }
+
+    private func acknowledgePendingIntentCommandIfLaunchIsReady(
+        _ command: NovaForgeIntentSignal.PendingCommand
+    ) {
+        guard didCompleteRootLaunchTasks else { return }
+        NovaForgeIntentSignal.acknowledgePendingCommand(command)
+    }
+
+    private func applyIntentCommand(
+        _ command: NovaForgeIntentSignal.PendingCommand
+    ) {
+        switch command {
+        case .openTab(let rawValue):
+            guard let tab = AppTab.resolve(rawValue) else { return }
+            selectedTab = tab
+        case .askPrompt(let prompt):
+            guard !prompt.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty else { return }
+            selectedTab = .forge
+            rootPrompt = prompt
+            rootPromptRevision &+= 1
+        }
     }
 
     private func presentPendingArtifactShortcutIfAvailable() {
@@ -471,7 +532,10 @@ struct AppRootView: View {
                 missionDossierCover
             }
             .fullScreenCover(item: $terminalFocus, content: terminalConsoleCover)
-            .sheet(item: approvalPromptBinding) { item in
+            .sheet(
+                item: approvalSheetBinding,
+                onDismiss: completeApprovalSheetDismissal
+            ) { item in
                 NavigationStack {
                     AgentApprovalDecisionView(
                         item: item,
@@ -486,6 +550,15 @@ struct AppRootView: View {
                     .id(item.requestID)
                 }
                 .presentationDragIndicator(.hidden)
+                .onAppear {
+                    approvalSheetIsPresented = true
+                }
+                .onDisappear {
+                    approvalSheetIsPresented = false
+                }
+            }
+            .onChange(of: desiredApprovalSheetItem, initial: true) { _, _ in
+                reconcileApprovalSheetPresentation()
             }
             .alert(
                 "NovaForge Save Failed",
@@ -503,34 +576,130 @@ struct AppRootView: View {
     /// A system-initiated dismissal is a rejection-safe cancellation, never an
     /// implicit approval. The review view disables interactive dismissal, and
     /// every visible action still carries the exact durable request identity.
-    private var approvalPromptBinding:
+    private var desiredApprovalSheetItem:
+        AgentApprovalPromptCenter.PendingItem?
+    {
+        #if DEBUG
+        if let canonicalActivityA11yApprovalItem {
+            return canonicalActivityA11yApprovalItem
+        }
+        #endif
+        return approvalPromptCenter.pendingItem
+    }
+
+    private var approvalSheetBinding:
         Binding<AgentApprovalPromptCenter.PendingItem?>
     {
         Binding(
-            get: {
-                #if DEBUG
-                if let canonicalActivityA11yApprovalItem {
-                    return canonicalActivityA11yApprovalItem
-                }
-                #endif
-                return approvalPromptCenter.pendingItem
-            },
+            get: { approvalSheetItem },
             set: { proposedItem in
-                guard proposedItem == nil else { return }
+                guard proposedItem == nil else {
+                    approvalSheetItem = proposedItem
+                    return
+                }
+                guard let presentedItem = approvalSheetItem else {
+                    return
+                }
+                approvalSheetDismissalInFlight = true
+                approvalSheetItem = nil
                 #if DEBUG
-                if canonicalActivityA11yApprovalItem != nil {
+                if canonicalActivityA11yApprovalItem?.requestID
+                    == presentedItem.requestID
+                {
                     resolveCanonicalActivityA11yApprovalFixture()
                     return
                 }
                 #endif
-                guard let pendingItem = approvalPromptCenter.pendingItem else {
-                    return
-                }
                 _ = approvalPromptCenter.cancelPending(
-                    requestID: pendingItem.requestID
+                    requestID: presentedItem.requestID
                 )
             }
         )
+    }
+
+    /// Keep sheet dismissal bound to the durable identity that was actually
+    /// presented. A rapid old-request dismissal must never cancel a newer
+    /// queued approval that became `pendingItem` during the animation.
+    private func reconcileApprovalSheetPresentation() {
+        guard !approvalSheetDismissalInFlight else { return }
+        let desiredItem = desiredApprovalSheetItem
+
+        guard let presentedItem = approvalSheetItem else {
+            // SwiftUI can keep the old sheet alive for the remainder of its
+            // dismissal animation after the item binding became nil. Do not
+            // install a newer durable request into that stale presentation.
+            guard !approvalSheetIsPresented else {
+                approvalSheetDismissalInFlight = true
+                return
+            }
+            guard let desiredItem else {
+                cancelScheduledApprovalSheetPresentation()
+                return
+            }
+            scheduleApprovalSheetPresentation(desiredItem)
+            return
+        }
+        cancelScheduledApprovalSheetPresentation()
+        guard presentedItem.requestID != desiredItem?.requestID else {
+            if presentedItem != desiredItem {
+                approvalSheetItem = desiredItem
+            }
+            return
+        }
+
+        guard approvalSheetIsPresented else {
+            approvalSheetItem = desiredItem
+            return
+        }
+        approvalSheetDismissalInFlight = true
+        approvalSheetItem = nil
+    }
+
+    /// Avoid scheduling a sheet for a request that an in-process trusted
+    /// operator resolves in the same turn (for example a DEBUG fixture).
+    /// User-owned approvals remain pending and present after this short
+    /// coalescing window, without flashing stale sheets between queued items.
+    private func scheduleApprovalSheetPresentation(
+        _ item: AgentApprovalPromptCenter.PendingItem
+    ) {
+        guard approvalSheetScheduledRequestID != item.requestID else {
+            return
+        }
+        cancelScheduledApprovalSheetPresentation()
+        let requestID = item.requestID
+        approvalSheetScheduledRequestID = requestID
+        approvalSheetPresentationTask = Task { @MainActor in
+            defer {
+                if approvalSheetScheduledRequestID == requestID {
+                    approvalSheetScheduledRequestID = nil
+                    approvalSheetPresentationTask = nil
+                }
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(120))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled,
+                  !approvalSheetDismissalInFlight,
+                  !approvalSheetIsPresented,
+                  approvalSheetItem == nil,
+                  desiredApprovalSheetItem?.requestID == requestID
+            else { return }
+            approvalSheetItem = desiredApprovalSheetItem
+        }
+    }
+
+    private func cancelScheduledApprovalSheetPresentation() {
+        approvalSheetPresentationTask?.cancel()
+        approvalSheetPresentationTask = nil
+        approvalSheetScheduledRequestID = nil
+    }
+
+    private func completeApprovalSheetDismissal() {
+        approvalSheetIsPresented = false
+        approvalSheetDismissalInFlight = false
+        reconcileApprovalSheetPresentation()
     }
 
     private func approvePresentedApproval(
@@ -828,6 +997,15 @@ struct AppRootView: View {
                 )
             ])
             saveRootLaunchState("debug provider list ready fixture")
+        }
+        if arguments.contains("--debug-simulator-provider-canary-zen"),
+           let settings {
+            selectedTab = .chat
+            settings.provider = .openCodeZen
+            settings.modelID = "deepseek-v4-flash-free"
+            settings.temperature = min(settings.temperature, 0.2)
+            settings.updatedAt = Date()
+            saveRootLaunchState("anonymous Zen Simulator canary ready")
         }
         if arguments.contains("--debug-provider-send-ready"),
            let settings {
@@ -1661,6 +1839,8 @@ struct AppRootView: View {
                     key: runsTabRenderKey,
                     project: activeProject,
                     missionConversation: activeMissionConversation,
+                    missionPresentation: canonicalMissionPresentation,
+                    missionStatus: projectRuntimeStatus,
                     scopeConversation: chatConversation,
                     runtime: activeMissionRuntime,
                     settings: settings
@@ -1704,6 +1884,20 @@ struct AppRootView: View {
                     setConversationProjectScope: setConversationProjectScope,
                     projectResumeDraft: rootPrompt,
                     projectResumeDraftRevision: rootPromptRevision,
+                    consumeProjectResumeDraft: { revision in
+                        Task { @MainActor in
+                            await Task.yield()
+                            let handoff = NovaForgeComposerDraftHandoff(
+                                prompt: rootPrompt,
+                                revision: rootPromptRevision
+                            )
+                            guard let consumed = handoff.consuming(
+                                revision: revision
+                            ) else { return }
+                            rootPrompt = consumed.prompt
+                            rootPromptRevision = consumed.revision
+                        }
+                    },
                     openWorkspaceSurface: openTab,
                     openArtifactLandscapeFullScreen: openArtifactLandscapeFullScreen,
                     isVisibleForFrameProfiling: key.isVisibleForFrameProfiling,
@@ -1763,7 +1957,13 @@ struct AppRootView: View {
         decision: ApprovalDecision,
         fallback: @escaping () -> Void
     ) {
-        guard let approval = presentation?.pendingApproval else {
+        // `StableTabSurface` may retain this closure across presentation-only
+        // revisions. Resolve the current scope at tap time so a repeated tool
+        // name can never route a decision to an earlier approval command.
+        let currentPresentation = presentation.map {
+            agentSystemPresentation.presentation(for: $0.scope)
+        }
+        guard let approval = currentPresentation?.pendingApproval else {
             fallback()
             return
         }
@@ -1786,7 +1986,12 @@ struct AppRootView: View {
         _ presentation: AgentSystemScopePresentation?,
         fallback: @escaping () -> Void
     ) {
-        guard let group = presentation?.activeGroup,
+        // As with approvals, cancellation must target the latest run in this
+        // scope rather than the snapshot captured when the tab was rendered.
+        let currentPresentation = presentation.map {
+            agentSystemPresentation.presentation(for: $0.scope)
+        }
+        guard let group = currentPresentation?.activeGroup,
               group.accepts(group.cancelCommand) else {
             fallback()
             return
@@ -1832,6 +2037,8 @@ struct AppRootView: View {
         key: RunsTabKey,
         project: Project,
         missionConversation: Conversation,
+        missionPresentation: AgentSystemScopePresentation?,
+        missionStatus: WorkspaceStatusSnapshot,
         scopeConversation: Conversation,
         runtime: AgentRuntime,
         settings: AgentSettings
@@ -1840,6 +2047,7 @@ struct AppRootView: View {
             tabWorldSurface(for: .history) {
                 RunsView(
                     runtime: runtime,
+                    missionStatus: missionStatus,
                     project: project,
                     scopeProjectID: scopeConversation.project?.id,
                     scopeName: scopeConversation.project?.name ?? "General",
@@ -1848,10 +2056,38 @@ struct AppRootView: View {
                     openTerminalRecord: openTerminalRecord,
                     openProject: presentMissionDossier,
                     approvePendingTool: {
-                        runtime.approvePendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: missionConversation.project)
+                        resolveMissionApproval(
+                            missionPresentation,
+                            decision: .approved
+                        ) {
+                            runtime.approvePendingTool(
+                                conversation: missionConversation,
+                                settings: settings,
+                                context: modelContext,
+                                project: missionConversation.project
+                            )
+                        }
                     },
                     rejectPendingTool: {
-                        runtime.rejectPendingTool(conversation: missionConversation, settings: settings, context: modelContext, project: missionConversation.project)
+                        resolveMissionApproval(
+                            missionPresentation,
+                            decision: .rejected
+                        ) {
+                            runtime.rejectPendingTool(
+                                conversation: missionConversation,
+                                settings: settings,
+                                context: modelContext,
+                                project: missionConversation.project
+                            )
+                        }
+                    },
+                    stopActiveRun: {
+                        stopMission(
+                            missionPresentation,
+                            fallback: {
+                                runtime.stopGenerating(context: modelContext)
+                            }
+                        )
                     },
                     openChat: { openTab(.forge) },
                     openConversationInForge: { conversationID in
@@ -2242,11 +2478,12 @@ struct AppRootView: View {
     }
 
     private func runtimeWorkspaceName(for activeProject: Project) -> String {
-        if selectedTab == .chat {
-            guard let chatProject = selectedConversation?.project else { return "Default" }
-            return SandboxWorkspace.sanitizedWorkspaceName(chatProject.workspaceName)
+        guard let chatProject = selectedConversation?.project else {
+            return "Default"
         }
-        return SandboxWorkspace.sanitizedWorkspaceName(activeProject.workspaceName)
+        return SandboxWorkspace.sanitizedWorkspaceName(
+            chatProject.workspaceName
+        )
     }
 
     private func syncRuntimeWorkspaceForCurrentSurface(activeProject: Project) {
@@ -2647,8 +2884,14 @@ struct AppRootView: View {
         selectedTab = .project
         Task { @MainActor in
             await Task.yield()
-            queueProjectCommand(project, intent: intent, operatorNote: operatorNote, shouldRunImmediately: true)
-            if pendingProjectRunDispatchID == project.id {
+            let didDispatch = queueProjectCommand(
+                project,
+                intent: intent,
+                operatorNote: operatorNote,
+                shouldRunImmediately: true
+            )
+            if !didDispatch,
+               pendingProjectRunDispatchID == project.id {
                 pendingProjectRunDispatchID = nil
             }
         }
@@ -2658,34 +2901,45 @@ struct AppRootView: View {
         queueProjectCommand(project, intent: intent, operatorNote: operatorNote, shouldRunImmediately: false)
     }
 
+    @discardableResult
     private func queueProjectCommand(
         _ project: Project,
         intent: ProjectCommandIntent,
         operatorNote: String,
         shouldRunImmediately: Bool
-    ) {
+    ) -> Bool {
         if activeProject?.id != project.id, workspaceRoutingIsLocked {
             runtime.presentToast("Pause or finish the active run before switching projects.", tone: .info)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            return
+            return false
+        }
+        if shouldRunImmediately,
+           agentSystemPresentation.hasBlockingActivity {
+            runtime.presentToast(
+                "Finish, stop, or approve the active agent run before starting another project command.",
+                tone: .info
+            )
+            selectedTab = .project
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return false
         }
         if shouldRunImmediately, projectRuntime.isWorking || projectRuntime.pendingTool != nil {
             runtime.presentToast("Finish the current run before starting another project command.", tone: .info)
             selectedTab = .project
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            return
+            return false
         }
         if shouldRunImmediately, runtime.isWorking || runtime.pendingTool != nil {
             runtime.presentToast("Finish the active Forge run before starting a project command in the same workspace.", tone: .info)
             selectedTab = .project
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            return
+            return false
         }
 
         if activeProject?.id != project.id {
-            guard selectProject(project) else { return }
+            guard selectProject(project) else { return false }
         }
-        guard let settings else { return }
+        guard let settings else { return false }
         let now = Date()
         let conversation = projectConversation(for: project, now: now)
         applyProjectIdentitySuggestionIfNeeded(to: project, conversation: conversation)
@@ -2751,7 +3005,7 @@ struct AppRootView: View {
             )
         }
         guard saveRootContext("Could not queue the project command.") else {
-            return
+            return false
         }
         preserveGeneralChatSelection()
         selectedTab = .project
@@ -2759,6 +3013,11 @@ struct AppRootView: View {
         rootPromptRevision += 1
         if shouldRunImmediately {
             Task { @MainActor in
+                defer {
+                    if pendingProjectRunDispatchID == project.id {
+                        pendingProjectRunDispatchID = nil
+                    }
+                }
                 let disposition = await agentSystemPresentation.start(
                     prompt: instruction,
                     conversation: conversation,
@@ -2777,8 +3036,10 @@ struct AppRootView: View {
                     title: "Project command"
                 )
             }
+            return true
         } else {
             runtime.presentToast("Project command drafted in the Project timeline.", tone: .success)
+            return false
         }
     }
 
@@ -3509,8 +3770,11 @@ struct AppRootView: View {
                     return
                 }
             }
-            runtime.restoreWorkspaceSelection(to: safeName)
-            projectRuntime.restoreWorkspaceSelection(to: safeName)
+            if let activeProject {
+                syncRuntimeWorkspaceForCurrentSurface(
+                    activeProject: activeProject
+                )
+            }
         } catch {
             showRootSaveFailure("Could not repair the active workspace name.", error)
         }

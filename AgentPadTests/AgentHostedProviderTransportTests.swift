@@ -168,11 +168,72 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertEqual(object["tool_choice"] as? String, "auto")
     }
 
+    func testChatGPTCodexGatewayAcceptsAgentEngineUUIDAndDispatches()
+        async throws
+    {
+        let model = AIProvider.exactGPT56SolModelID
+        let responseID = "resp-codex-engine-scope"
+        let created = responsesCreatedJSON(
+            responseID: responseID,
+            model: model
+        )
+        let delta = responsesTextDeltaJSON(
+            responseID: responseID,
+            text: "Hello"
+        )
+        let completed = responsesCompletionJSON(
+            responseID: responseID,
+            model: model
+        )
+        installSSE(
+            "data: \(created)\n\ndata: \(delta)\n\ndata: \(completed)\n\n"
+        )
+        let fixture = try makeCodexSingleCallToolsGatewayFixture(
+            requestID: "novaforge:physical-device-regression:provider-turn:2",
+            model: model
+        )
+
+        _ = try await collectAttemptEvents(
+            await fixture.gateway.streamAttempt(fixture.invocation)
+        )
+
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+        let request = try XCTUnwrap(
+            HostedTransportURLProtocolRegistry.shared.requests.first
+        )
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://chatgpt.com/backend-api/codex/responses"
+        )
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "Authorization"),
+            "Bearer \(fixture.credential)"
+        )
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "originator"),
+            "novaforge_ios"
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        XCTAssertEqual(object["model"] as? String, model)
+        XCTAssertEqual(object["store"] as? Bool, false)
+        XCTAssertNil(object["metadata"])
+        XCTAssertNil(object["max_output_tokens"])
+        XCTAssertEqual((object["tools"] as? [Any])?.count, 20)
+        XCTAssertEqual(object["parallel_tool_calls"] as? Bool, false)
+        XCTAssertEqual(object["tool_choice"] as? String, "auto")
+        let reasoning = try XCTUnwrap(object["reasoning"] as? [String: Any])
+        XCTAssertEqual(reasoning["effort"] as? String, "high")
+        XCTAssertEqual(reasoning["summary"] as? String, "auto")
+    }
+
     func testOpenCodeZenFreeModelDispatchesThroughItsPinnedCanonicalRoute()
         async throws
     {
         let model = "mimo-v2.5-free"
-        installSSE(chatIntegrationSSE(
+        installSSE(openCodeZenIntegrationSSE(
             responseID: "chatcmpl-zen-free",
             model: model
         ))
@@ -203,6 +264,32 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertNil(object["max_completion_tokens"])
         XCTAssertEqual(object["parallel_tool_calls"] as? Bool, false)
         XCTAssertEqual(object["tool_choice"] as? String, "auto")
+    }
+
+    func testOpenCodeZenRejectsUnknownPostDoneSidebandFrame() async throws {
+        let model = "mimo-v2.5-free"
+        let payload = chatIntegrationSSE(
+            responseID: "chatcmpl-zen-invalid-sideband",
+            model: model
+        ).replacingOccurrences(
+            of: "data: [DONE]\n\n",
+            with: "data: [DONE]\n\ndata: {\"choices\":[],\"unknown\":true}\n\n"
+        )
+        installSSE(payload)
+        let fixture = try makeZenSingleCallToolsGatewayFixture(
+            requestID: "zen-invalid-sideband",
+            model: model
+        )
+
+        do {
+            _ = try await collectAttemptEvents(
+                await fixture.gateway.streamAttempt(fixture.invocation)
+            )
+            XCTFail("Zen accepted an unknown post-DONE sideband frame")
+        } catch {
+            // The exact accounting schemas are the only accepted sideband.
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
     }
 
     func testOpenCodeZenPaidModelRejectsMissingCredentialBeforeHTTP()
@@ -603,6 +690,242 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
     }
 
+    func testChatCredentialSplitAcrossReasoningAliasesNeverYieldsCompletingFrame() async throws {
+        let aliases = ["reasoning_content", "reasoning"]
+        for (aliasIndex, alias) in aliases.enumerated() {
+            let fixture = try makeFixture(
+                dialect: .openAIChatCompletions,
+                requestID: "credential-chat-reasoning-\(aliasIndex)"
+            )
+            let responseID = "chat-credential-reasoning-\(aliasIndex)"
+            let fragments = [
+                String(fixture.credential.prefix(7)),
+                String(fixture.credential.dropFirst(7).prefix(9)),
+                String(fixture.credential.dropFirst(16)),
+            ]
+            let payload = fragments.map { fragment in
+                let json = chatReasoningDeltaJSON(
+                    responseID: responseID,
+                    text: fragment,
+                    field: alias
+                )
+                return "data: \(json)\n\n"
+            }.joined() + "data: [DONE]\n\n"
+            installSSE(payload)
+
+            let frames = await collectExpectingCredentialEchoRejection(
+                try await fixture.openStream(),
+                credential: fixture.credential
+            )
+
+            XCTAssertEqual(frames.count, fragments.count - 1)
+            XCTAssertFalse(frames.contains(.done))
+        }
+        XCTAssertEqual(
+            HostedTransportURLProtocolRegistry.shared.requestCount,
+            aliases.count
+        )
+    }
+
+    func testChatCredentialSplitWhileSwitchingReasoningAliasesNeverYieldsCompletingFrame() async throws {
+        let fixture = try makeFixture(
+            dialect: .openAIChatCompletions,
+            requestID: "credential-chat-reasoning-alias-switch"
+        )
+        let responseID = "chat-credential-reasoning-alias-switch"
+        let fragments = [
+            String(fixture.credential.prefix(7)),
+            String(fixture.credential.dropFirst(7)),
+        ]
+        let first = chatReasoningDeltaJSON(
+            responseID: responseID,
+            text: fragments[0],
+            field: "reasoning_content"
+        )
+        let second = chatReasoningDeltaJSON(
+            responseID: responseID,
+            text: fragments[1],
+            field: "reasoning"
+        )
+        let payload = "data: \(first)\n\n" +
+            "data: \(second)\n\n" +
+            "data: [DONE]\n\n"
+        installSSE(payload)
+
+        let frames = await collectExpectingCredentialEchoRejection(
+            try await fixture.openStream(),
+            credential: fixture.credential
+        )
+
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertFalse(frames.contains(.done))
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testResponsesCredentialSplitAcrossReasoningSummaryAliasesNeverYieldsCompletingFrame() async throws {
+        let fixture = try makeFixture(
+            dialect: .openAIResponses,
+            requestID: "credential-responses-reasoning-split"
+        )
+        let responseID = "resp-credential-reasoning-split"
+        let fragments = [
+            String(fixture.credential.prefix(7)),
+            String(fixture.credential.dropFirst(7).prefix(9)),
+            String(fixture.credential.dropFirst(16)),
+        ]
+        let types = [
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_summary.delta",
+            "response.reasoning_summary_text.delta",
+        ]
+        let completion = responsesCompletionJSON(
+            responseID: responseID,
+            text: "must-not-yield"
+        )
+        let payload = "data: \(responsesCreatedJSON(responseID: responseID))\n\n" +
+            zip(types, fragments).map { type, fragment in
+                let json = responsesReasoningDeltaJSON(
+                    responseID: responseID,
+                    type: type,
+                    text: fragment
+                )
+                return "data: \(json)\n\n"
+            }.joined() +
+            "data: \(completion)\n\n"
+        installSSE(payload)
+
+        let frames = await collectExpectingCredentialEchoRejection(
+            try await fixture.openStream(),
+            credential: fixture.credential
+        )
+
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertEqual(
+            frames.first,
+            .json(try decodeJSON(responsesCreatedJSON(responseID: responseID)))
+        )
+        XCTAssertFalse(frames.contains(.json(try decodeJSON(
+            responsesCompletionJSON(
+                responseID: responseID,
+                text: "must-not-yield"
+            )
+        ))))
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testResponsesCredentialSplitAcrossReasoningTextDeltasNeverYieldsCompletingFrame() async throws {
+        let fixture = try makeFixture(
+            dialect: .openAIResponses,
+            requestID: "credential-responses-reasoning-text-split"
+        )
+        let responseID = "resp-credential-reasoning-text-split"
+        let fragments = [
+            String(fixture.credential.prefix(7)),
+            String(fixture.credential.dropFirst(7).prefix(9)),
+            String(fixture.credential.dropFirst(16)),
+        ]
+        let payload = "data: \(responsesCreatedJSON(responseID: responseID))\n\n" +
+            fragments.map { fragment in
+                let json = responsesReasoningDeltaJSON(
+                    responseID: responseID,
+                    type: "response.reasoning_text.delta",
+                    text: fragment
+                )
+                return "data: \(json)\n\n"
+            }.joined()
+        installSSE(payload)
+
+        let frames = await collectExpectingCredentialEchoRejection(
+            try await fixture.openStream(),
+            credential: fixture.credential
+        )
+
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertEqual(
+            frames.first,
+            .json(try decodeJSON(responsesCreatedJSON(responseID: responseID)))
+        )
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testResponsesReasoningSummaryAndContentDoNotShareCredentialMatcherState() async throws {
+        let fixture = try makeFixture(
+            dialect: .openAIResponses,
+            requestID: "credential-responses-reasoning-channel-separation"
+        )
+        let responseID = "resp-credential-reasoning-channel-separation"
+        let fragments = [
+            String(fixture.credential.prefix(7)),
+            String(fixture.credential.dropFirst(7)),
+        ]
+        let summary = responsesReasoningDeltaJSON(
+            responseID: responseID,
+            type: "response.reasoning_summary_text.delta",
+            text: fragments[0]
+        )
+        let content = responsesReasoningDeltaJSON(
+            responseID: responseID,
+            type: "response.reasoning_text.delta",
+            text: fragments[1]
+        )
+        let completion = responsesCompletionJSON(
+            responseID: responseID,
+            text: "allowed"
+        )
+        let payload = "data: \(responsesCreatedJSON(responseID: responseID))\n\n" +
+            "data: \(summary)\n\n" +
+            "data: \(content)\n\n" +
+            "data: \(completion)\n\n"
+        installSSE(payload)
+
+        let frames = try await collect(try await fixture.openStream())
+
+        XCTAssertEqual(frames.count, 4)
+        XCTAssertEqual(
+            frames.last,
+            .json(try decodeJSON(completion))
+        )
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testResponsesCredentialSplitAcrossImplicitAndExplicitZeroContentIndexNeverYieldsCompletingFrame() async throws {
+        let fixture = try makeFixture(
+            dialect: .openAIResponses,
+            requestID: "credential-responses-content-index-zero"
+        )
+        let responseID = "resp-credential-content-index-zero"
+        let fragments = [
+            String(fixture.credential.prefix(7)),
+            String(fixture.credential.dropFirst(7)),
+        ]
+        let first = responsesTextDeltaJSON(
+            responseID: responseID,
+            text: fragments[0],
+            contentIndex: nil
+        )
+        let second = responsesTextDeltaJSON(
+            responseID: responseID,
+            text: fragments[1],
+            contentIndex: 0
+        )
+        let payload = "data: \(responsesCreatedJSON(responseID: responseID))\n\n" +
+            "data: \(first)\n\n" +
+            "data: \(second)\n\n"
+        installSSE(payload)
+
+        let frames = await collectExpectingCredentialEchoRejection(
+            try await fixture.openStream(),
+            credential: fixture.credential
+        )
+
+        XCTAssertEqual(frames.count, 2)
+        XCTAssertEqual(
+            frames.first,
+            .json(try decodeJSON(responsesCreatedJSON(responseID: responseID)))
+        )
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
     func testCredentialPrefixOnlyAndOrdinarySplitTextRemainAllowed() async throws {
         let fixture = try makeFixture(
             dialect: .openAIChatCompletions,
@@ -642,7 +965,9 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
     }
 
-    func testAttemptScopeRequiresExactCanonicalPositiveUIntSuffix() async throws {
+    func testAttemptScopeAcceptsEngineUUIDAndRejectsUnsafeIdentities()
+        async throws
+    {
         let completion = responsesCompletionJSON(responseID: "resp-scope")
         installSSE("data: \(completion)\n\n")
         let fixture = try makeFixture(
@@ -651,32 +976,20 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         )
         let invalidScopes = [
             ProviderAttemptScope(
-                requestID: "scope-rule",
-                attemptID: .init(rawValue: "attempt-1")
-            ),
-            ProviderAttemptScope(
-                requestID: "scope-rule",
-                attemptID: .init(rawValue: "scope-rule:provider-attempt:0")
-            ),
-            ProviderAttemptScope(
-                requestID: "scope-rule",
-                attemptID: .init(rawValue: "scope-rule:provider-attempt:01")
-            ),
-            ProviderAttemptScope(
-                requestID: "scope-rule",
-                attemptID: .init(rawValue: "scope-rule:provider-attempt:+1")
-            ),
-            ProviderAttemptScope(
-                requestID: "scope-rule",
-                attemptID: .init(rawValue: "scope-rule:provider-attempt:18446744073709551616")
+                requestID: "",
+                attemptID: .init(rawValue: UUID().uuidString)
             ),
             ProviderAttemptScope(
                 requestID: "scope rule",
-                attemptID: .init(rawValue: "scope rule:provider-attempt:1")
+                attemptID: .init(rawValue: UUID().uuidString)
             ),
             ProviderAttemptScope(
                 requestID: "scope-rule",
-                attemptID: .init(rawValue: "scope-rule:provider-attempt:1\u{200D}")
+                attemptID: .init(rawValue: "attempt\u{200D}")
+            ),
+            ProviderAttemptScope(
+                requestID: "scope-rule",
+                attemptID: .init(rawValue: String(repeating: "a", count: 513))
             ),
         ]
 
@@ -687,11 +1000,13 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         }
         XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 0)
 
-        let validScope = ProviderAttemptScope(
+        // This is the exact identity shape persisted by AgentEngine and seen
+        // in the physical-device failure receipt.
+        let engineScope = ProviderAttemptScope(
             requestID: "scope-rule",
-            attemptID: .init(rawValue: "scope-rule:provider-attempt:42")
+            attemptID: .init(rawValue: UUID().uuidString.lowercased())
         )
-        _ = try await collect(try await fixture.openStream(scope: validScope))
+        _ = try await collect(try await fixture.openStream(scope: engineScope))
         XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
     }
 
@@ -748,6 +1063,102 @@ final class AgentHostedProviderTransportTests: XCTestCase {
             HostedTransportURLProtocolRegistry.shared.requestCount,
             cases.count + 1
         )
+    }
+
+    func testGPT56SolRequiresExactWireModelIdentity() async throws {
+        let model = AIProvider.exactGPT56SolModelID
+        let datedAlias = model + "-2026-07-16"
+        installSSE(
+            "data: \(responsesCreatedJSON(responseID: "resp-gpt56-dated", model: datedAlias))\n\n"
+        )
+        let datedFixture = try makeFixture(
+            dialect: .openAIResponses,
+            requestID: "gpt56-exact-wire-dated",
+            model: model
+        )
+        await assertTransportError(.invalidWireIdentity) {
+            _ = try await collect(try await datedFixture.openStream())
+        }
+
+        let responseID = "resp-gpt56-exact"
+        installSSE(
+            "data: \(responsesCreatedJSON(responseID: responseID, model: model))\n\n" +
+                "data: \(responsesCompletionJSON(responseID: responseID, model: model))\n\n"
+        )
+        let exactFixture = try makeFixture(
+            dialect: .openAIResponses,
+            requestID: "gpt56-exact-wire-valid",
+            model: model
+        )
+        _ = try await collect(try await exactFixture.openStream())
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 2)
+    }
+
+    func testChatGPTMetadataBeforeCreatedBindsCaseInsensitiveServingModelHeader()
+        async throws
+    {
+        let model = AIProvider.exactGPT56SolModelID
+        let responseID = "resp-metadata-serving-model"
+        let metadata =
+            "{\"type\":\"response.metadata\",\"sequence_number\":1," +
+            "\"response_id\":\"\(responseID)\",\"headers\":{" +
+            "\"X-OpEnAi-MoDeL\":[\"\(model)\"]}}"
+        installSSE(
+            "data: \(metadata)\n\n" +
+                "data: \(responsesCreatedJSON(responseID: responseID, model: model))\n\n" +
+                "data: \(responsesCompletionJSON(responseID: responseID, model: model))\n\n"
+        )
+        let fixture = try makeCodexTransportFixture(
+            requestID: "codex-metadata-serving-model",
+            model: model
+        )
+
+        let frames = try await collect(try await fixture.openStream())
+
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testChatGPTMetadataBeforeCreatedRejectsMismatchedServingModelHeader()
+        async throws
+    {
+        let model = AIProvider.exactGPT56SolModelID
+        let responseID = "resp-metadata-serving-model-mismatch"
+        let metadata =
+            "{\"type\":\"response.metadata\",\"response_id\":\"\(responseID)\"," +
+            "\"headers\":{\"openai-model\":\"gpt-5.6-terra\"}}"
+        installSSE(
+            "data: \(metadata)\n\n" +
+                "data: \(responsesCreatedJSON(responseID: responseID, model: model))\n\n"
+        )
+        let fixture = try makeCodexTransportFixture(
+            requestID: "codex-metadata-serving-model-mismatch",
+            model: model
+        )
+
+        await assertTransportError(.invalidWireIdentity) {
+            _ = try await collect(try await fixture.openStream())
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testChatGPTResponseHeaderRejectsBodyModelMismatch() async throws {
+        let model = AIProvider.exactGPT56SolModelID
+        let responseID = "resp-response-header-model-mismatch"
+        let created =
+            "{\"type\":\"response.created\",\"response\":{" +
+            "\"id\":\"\(responseID)\",\"model\":\"\(model)\"," +
+            "\"headers\":{\"OpenAI-Model\":\"gpt-5.6-terra\"}}}"
+        installSSE("data: \(created)\n\n")
+        let fixture = try makeCodexTransportFixture(
+            requestID: "codex-response-header-model-mismatch",
+            model: model
+        )
+
+        await assertTransportError(.invalidWireIdentity) {
+            _ = try await collect(try await fixture.openStream())
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
     }
 
     func testWireIdentityCannotChangeAcrossChatOrResponsesFrames() async throws {
@@ -847,6 +1258,58 @@ final class AgentHostedProviderTransportTests: XCTestCase {
             _ = try await collect(try await fixture.openStream())
         }
         XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testChatGPTCodexRouteAcceptsMissingContentTypeWhenBodyIsValidSSE()
+        async throws
+    {
+        let model = AIProvider.exactGPT56SolModelID
+        let responseID = "resp-missing-content-type"
+        let completion = responsesCompletionJSON(
+            responseID: responseID,
+            model: model,
+            text: "ok"
+        )
+        let payload =
+            "data: \(responsesCreatedJSON(responseID: responseID, model: model))\n\n" +
+            "data: \(responsesTextDeltaJSON(responseID: responseID, text: "ok"))\n\n" +
+            "data: \(completion)\n\n"
+        HostedTransportURLProtocolRegistry.shared.install(.init(
+            statusCode: 200,
+            headers: [:],
+            chunks: [Data(payload.utf8)]
+        ))
+        let fixture = try makeCodexSingleCallToolsGatewayFixture(
+            requestID: "missing-content-type-valid-sse",
+            model: model
+        )
+
+        let frames = try await collectAttemptEvents(
+            await fixture.gateway.streamAttempt(fixture.invocation)
+        )
+
+        XCTAssertFalse(frames.isEmpty)
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testOpenAIAPIRouteRejectsMissingContentType() async throws {
+        let responseID = "resp-openai-missing-content-type"
+        HostedTransportURLProtocolRegistry.shared.install(.init(
+            statusCode: 200,
+            headers: [:],
+            chunks: [Data(
+                "data: \(responsesCompletionJSON(responseID: responseID))\n\n"
+                    .utf8
+            )]
+        ))
+        let fixture = try makeFixture(
+            dialect: .openAIResponses,
+            requestID: "openai-missing-content-type"
+        )
+
+        await assertTransportError(.invalidContentType) {
+            _ = try await collect(try await fixture.openStream())
+        }
     }
 
     func testRedirectDelegateRejectsCredentialedProposalWithoutStartingNetwork() throws {
@@ -1525,7 +1988,7 @@ private func makeReadToolsGatewayFixture(
         attemptID: .init(rawValue: "\(requestID):provider-attempt:1")
     )
     let barrier = DurableRecordingDispatchBarrier()
-    var tools = SandboxToolCatalog.all.map(\.descriptor).filter {
+    var tools = try SandboxToolCatalog.canonicalRegistry().descriptors.filter {
         $0.effectClass == .readOnlyLocal
     }.map {
         AgentHostedReadOnlyCanaryCoordinator.providerDefinition(for: $0)
@@ -1561,6 +2024,25 @@ private func makeReadToolsGatewayFixture(
     )
 }
 
+private func canonicalProviderToolDefinitions() ->
+    [AgentProviders.ProviderToolDefinition]
+{
+    SandboxToolCatalog.all.map(\.descriptor).sorted { lhs, rhs in
+        if lhs.name == rhs.name { return lhs.version < rhs.version }
+        return lhs.name < rhs.name
+    }.map { descriptor in
+        let definition = AgentTools.ProviderToolDefinition(
+            descriptor: descriptor
+        )
+        return AgentProviders.ProviderToolDefinition(
+            name: definition.function.name,
+            description: definition.function.description,
+            parameters: definition.function.parameters,
+            strict: definition.function.strict
+        )
+    }
+}
+
 private func makeSingleCallToolsGatewayFixture(
     requestID: String,
     messages: [ProviderMessage]? = nil,
@@ -1591,9 +2073,7 @@ private func makeSingleCallToolsGatewayFixture(
         attemptID: .init(rawValue: "\(requestID):provider-attempt:1")
     )
     let barrier = DurableRecordingDispatchBarrier()
-    var tools = SandboxToolCatalog.all.map(\.descriptor).map {
-        AgentHostedReadOnlyCanaryCoordinator.providerDefinition(for: $0)
-    }
+    var tools = canonicalProviderToolDefinitions()
     mutateTools?(&tools)
     let request = CanonicalProviderRequest(
         requestID: requestID,
@@ -1633,7 +2113,7 @@ private func makeZenSingleCallToolsGatewayFixture(
     let modelID = ProviderModelID(rawValue: model)
     let catalog = TrustedHostedProviderCatalog.openCodeZenChatCompletions(
         model: modelID,
-        capabilities: .hostedChatSingleCallToolsBaseline
+        capabilities: .hostedOpenCodeZenChatSingleCallToolsBaseline
     )
     let capability = try catalog.hostedSingleCallToolsCapability(
         adapterID: catalog.adapterID
@@ -1651,12 +2131,14 @@ private func makeZenSingleCallToolsGatewayFixture(
     )
     let scope = ProviderAttemptScope(
         requestID: requestID,
-        attemptID: .init(rawValue: "\(requestID):provider-attempt:1")
+        // AgentEngine owns the production single-attempt identity and uses a
+        // durable UUID. Keep this integration fixture on that exact path so a
+        // transport-only ordinal assumption cannot break every Zen model
+        // before URLSession is reached again.
+        attemptID: .init(rawValue: UUID().uuidString.lowercased())
     )
     let barrier = DurableRecordingDispatchBarrier()
-    let tools = SandboxToolCatalog.all.map(\.descriptor).map {
-        AgentHostedReadOnlyCanaryCoordinator.providerDefinition(for: $0)
-    }
+    let tools = canonicalProviderToolDefinitions()
     let request = CanonicalProviderRequest(
         requestID: requestID,
         model: modelID,
@@ -1683,6 +2165,116 @@ private func makeZenSingleCallToolsGatewayFixture(
         barrier: barrier,
         descriptor: adapter.descriptor,
         scope: scope,
+        credential: credential
+    )
+}
+
+private func makeCodexSingleCallToolsGatewayFixture(
+    requestID: String,
+    model: String
+) throws -> HostedGatewayFixture {
+    let modelID = ProviderModelID(rawValue: model)
+    let catalog = TrustedHostedProviderCatalog.openAICodexResponses(
+        model: modelID,
+        capabilities: .hostedResponsesSingleCallToolsBaseline
+    )
+    let capability = try catalog.hostedSingleCallToolsCapability(
+        adapterID: catalog.adapterID
+    )
+    let adapter = try catalog.providerCatalog().adapter(id: catalog.adapterID)
+    let credential = "codex-test-access-token"
+    let transport = AgentHostedProviderTransport(
+        credential: credential,
+        singleCallToolsCapability: capability,
+        session: makeHostedTransportTestSession(),
+        limits: testLimits()
+    )
+    let gateway = ModelGateway(
+        catalog: try catalog.providerCatalog(),
+        transport: transport
+    )
+    let scope = ProviderAttemptScope(
+        requestID: requestID,
+        attemptID: .init(rawValue: UUID().uuidString.lowercased())
+    )
+    let barrier = DurableRecordingDispatchBarrier()
+    let tools = canonicalProviderToolDefinitions()
+    let request = CanonicalProviderRequest(
+        requestID: requestID,
+        model: modelID,
+        messages: [
+            .init(role: .system, content: [.text("Use canonical tools.")]),
+            .init(role: .user, content: [.text("Say hello.")]),
+        ],
+        tools: tools,
+        options: .init(
+            maximumOutputTokens: 4_096,
+            temperature: nil,
+            parallelToolCalls: false,
+            toolChoice: .auto,
+            reasoningSummary: true,
+            reasoningEffort: .high
+        )
+    )
+    return HostedGatewayFixture(
+        gateway: gateway,
+        invocation: ProviderSingleAttemptInvocation(
+            request: request,
+            adapterID: catalog.adapterID,
+            scope: scope,
+            barrier: barrier
+        ),
+        barrier: barrier,
+        descriptor: adapter.descriptor,
+        scope: scope,
+        credential: credential
+    )
+}
+
+private func makeCodexTransportFixture(
+    requestID: String,
+    model: String
+) throws -> HostedTransportFixture {
+    let modelID = ProviderModelID(rawValue: model)
+    let catalog = TrustedHostedProviderCatalog.openAICodexResponses(
+        model: modelID,
+        capabilities: .hostedResponsesSingleCallToolsBaseline
+    )
+    let capability = try catalog.hostedSingleCallToolsCapability(
+        adapterID: catalog.adapterID
+    )
+    let adapter = try catalog.providerCatalog().adapter(id: catalog.adapterID)
+    let credential = "codex-test-access-token"
+    let canonicalRequest = CanonicalProviderRequest(
+        requestID: requestID,
+        model: modelID,
+        messages: [
+            .init(role: .system, content: [.text("Use canonical tools.")]),
+            .init(role: .user, content: [.text("Say hello.")]),
+        ],
+        tools: canonicalProviderToolDefinitions(),
+        options: .init(
+            maximumOutputTokens: 4_096,
+            temperature: nil,
+            parallelToolCalls: false,
+            toolChoice: .auto,
+            reasoningSummary: true,
+            reasoningEffort: .high
+        )
+    )
+    return HostedTransportFixture(
+        transport: AgentHostedProviderTransport(
+            credential: credential,
+            singleCallToolsCapability: capability,
+            session: makeHostedTransportTestSession(),
+            limits: testLimits()
+        ),
+        request: try adapter.encode(canonicalRequest),
+        descriptor: adapter.descriptor,
+        scope: ProviderAttemptScope(
+            requestID: requestID,
+            attemptID: .init(rawValue: UUID().uuidString.lowercased())
+        ),
         credential: credential
     )
 }
@@ -1717,9 +2309,7 @@ private func makeFullCatalogWithReadOnlyTransportFixture(
         attemptID: .init(rawValue: "\(requestID):provider-attempt:1")
     )
     let barrier = DurableRecordingDispatchBarrier()
-    let tools = SandboxToolCatalog.all.map(\.descriptor).map {
-        AgentHostedReadOnlyCanaryCoordinator.providerDefinition(for: $0)
-    }
+    let tools = canonicalProviderToolDefinitions()
     let request = CanonicalProviderRequest(
         requestID: requestID,
         model: model,
@@ -1889,6 +2479,18 @@ private func chatTextDeltaJSON(
         "\"finish_reason\":null}]}"
 }
 
+private func chatReasoningDeltaJSON(
+    responseID: String,
+    text: String,
+    field: String,
+    model: String = baseModel
+) -> String {
+    "{\"id\":\"\(responseID)\",\"model\":\"\(model)\"," +
+        "\"choices\":[{\"index\":0,\"delta\":{" +
+        "\"role\":\"assistant\",\"\(field)\":\"\(text)\"}," +
+        "\"finish_reason\":null}]}"
+}
+
 private func responsesCreatedJSON(
     responseID: String,
     model: String = baseModel
@@ -1907,11 +2509,26 @@ private func responsesTextDeltaJSON(
     responseID: String,
     text: String,
     outputIndex: Int = 0,
-    contentIndex: Int = 0
+    contentIndex: Int? = 0
 ) -> String {
-    "{\"type\":\"response.output_text.delta\"," +
+    let contentIndexJSON = contentIndex.map { "\"content_index\":\($0)," } ?? ""
+    return "{\"type\":\"response.output_text.delta\"," +
         "\"response_id\":\"\(responseID)\",\"output_index\":\(outputIndex)," +
-        "\"content_index\":\(contentIndex),\"delta\":\"\(text)\"}"
+        contentIndexJSON + "\"delta\":\"\(text)\"}"
+}
+
+private func responsesReasoningDeltaJSON(
+    responseID: String,
+    type: String,
+    text: String,
+    outputIndex: Int = 0,
+    partIndex: Int = 0
+) -> String {
+    let indexKey = type == "response.reasoning_text.delta"
+        ? "content_index" : "summary_index"
+    return "{\"type\":\"\(type)\"," +
+        "\"response_id\":\"\(responseID)\",\"output_index\":\(outputIndex)," +
+        "\"\(indexKey)\":\(partIndex),\"delta\":\"\(text)\"}"
 }
 
 private func responsesCompletionJSON(
@@ -1941,6 +2558,47 @@ private func chatIntegrationSSE(
         "\"created\":1750000000,\"model\":\"\(model)\"," +
         "\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1}}"
     return "data: \(first)\n\ndata: \(finished)\n\ndata: \(usage)\n\ndata: [DONE]\n\n"
+}
+
+private func openCodeZenIntegrationSSE(
+    responseID: String,
+    model: String
+) -> String {
+    let started = "{\"id\":\"\(responseID)\",\"object\":\"chat.completion.chunk\"," +
+        "\"created\":1784501832,\"model\":\"\(model)\"," +
+        "\"choices\":[{\"index\":0,\"finish_reason\":null,\"logprobs\":null," +
+        "\"delta\":{\"role\":\"assistant\",\"content\":null," +
+        "\"reasoning_content\":\"\"}}],\"usage\":null}"
+    let reasoning = "{\"id\":\"\(responseID)\",\"object\":\"chat.completion.chunk\"," +
+        "\"created\":1784501832,\"model\":\"\(model)\"," +
+        "\"choices\":[{\"index\":0,\"finish_reason\":null,\"logprobs\":null," +
+        "\"delta\":{\"content\":null,\"reasoning_content\":\"The\"}}]," +
+        "\"usage\":null}"
+    let content = "{\"id\":\"\(responseID)\",\"object\":\"chat.completion.chunk\"," +
+        "\"created\":1784501832,\"model\":\"\(model)\"," +
+        "\"choices\":[{\"index\":0,\"finish_reason\":null,\"logprobs\":null," +
+        "\"delta\":{\"content\":\"Hello\",\"reasoning_content\":null}}]," +
+        "\"usage\":null}"
+    let finished = "{\"id\":\"\(responseID)\",\"object\":\"chat.completion.chunk\"," +
+        "\"created\":1784501832,\"model\":\"\(model)\"," +
+        "\"choices\":[{\"index\":0,\"finish_reason\":\"stop\"," +
+        "\"logprobs\":null,\"delta\":{}}],\"usage\":null}"
+    let usage = "{\"id\":\"\(responseID)\",\"object\":\"chat.completion.chunk\"," +
+        "\"created\":1784501832,\"model\":\"\(model)\",\"choices\":[]," +
+        "\"usage\":{\"total_tokens\":105,\"prompt_cache_hit_tokens\":0," +
+        "\"prompt_cache_miss_tokens\":62,\"prompt_tokens\":62," +
+        "\"completion_tokens\":43," +
+        "\"prompt_tokens_details\":{\"cached_tokens\":0}," +
+        "\"completion_tokens_details\":{\"reasoning_tokens\":36}}}"
+    let detailedCost = "{\"choices\":[],\"x-opencode-type\":\"inference-cost\"," +
+        "\"cost\":\"0.00000000\",\"normalizedUsage\":{" +
+        "\"inputTokens\":62,\"outputTokens\":43,\"reasoningTokens\":36," +
+        "\"cacheReadTokens\":192,\"cacheWrite5mTokens\":0," +
+        "\"cacheWrite1hTokens\":0}}"
+    let trailingCost = "{\"choices\":[],\"cost\":\"0\"}"
+    return [started, reasoning, content, finished, usage, detailedCost]
+        .map { "data: \($0)\n\n" }
+        .joined() + "data: [DONE]\n\ndata: \(trailingCost)\n\n"
 }
 
 private func responsesIntegrationSSE() -> String {

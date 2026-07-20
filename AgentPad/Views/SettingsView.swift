@@ -3,6 +3,16 @@ import AgentTools
 import SwiftData
 import SwiftUI
 
+enum SettingsProviderReadinessModelResolver {
+    static func modelID(
+        for provider: AIProvider,
+        selectedProvider: AIProvider,
+        selectedModelID: String
+    ) -> String {
+        provider == selectedProvider ? selectedModelID : provider.defaultModel
+    }
+}
+
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -93,6 +103,10 @@ struct SettingsView: View {
                     .padding(.top, controlContentTopPadding(for: geometry.safeAreaInsets.top))
                     .padding(.bottom, 24)
                 }
+                // Give the ScrollView itself a real top boundary. Content
+                // padding alone preserves the launch position but still lets
+                // later rows paint through the status bar while scrolling.
+                .padding(.top, geometry.safeAreaInsets.top)
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
                 .agentDockEdgeFade()
@@ -937,7 +951,9 @@ struct SettingsView: View {
 
     private var modelChoices: [String] {
         if hasLoadedProviderModels {
-            return uniqueModels(providerModels)
+            // A live catalog may lag or omit a pinned model. Keep the exact
+            // saved selection visible rather than silently replacing it.
+            return uniqueModels(providerModels + [settings.modelID])
         }
         return uniqueModels(settings.provider.modelOptions + [settings.modelID])
     }
@@ -1001,9 +1017,14 @@ struct SettingsView: View {
                     providerModelTask = nil
                     if providerModels.isEmpty {
                         providerModelError = "No models compatible with NovaForge's canonical agent route were returned. Built-in validated choices remain available."
-                    } else if !providerModels.contains(settings.modelID),
-                              let first = providerModels.first {
-                        _ = persistSettingsChange { $0.modelID = first }
+                    } else if !providerModels.contains(settings.modelID) {
+                        if requestedProvider.requiresExplicitGPT56ModelSelection(
+                            settings.modelID
+                        ) {
+                            providerModelError = "The live catalog did not return the selected GPT-5.6 model. NovaForge kept the exact selection and will not substitute another model."
+                        } else if let first = providerModels.first {
+                            _ = persistSettingsChange { $0.modelID = first }
+                        }
                     }
                 }
             } catch is CancellationError {
@@ -1144,8 +1165,13 @@ struct SettingsView: View {
         }
 
         let hasKey = !runtime.apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let readinessModelID = SettingsProviderReadinessModelResolver.modelID(
+            for: provider,
+            selectedProvider: settings.provider,
+            selectedModelID: settings.modelID
+        )
         if provider == .openCodeZen,
-           !provider.requiresCredential(for: settings.modelID) {
+           !provider.requiresCredential(for: readinessModelID) {
             return ("Free ready", AgentPalette.green)
         }
         if provider == .custom && settings.resolvedCustomChatCompletionsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1187,7 +1213,7 @@ struct SettingsView: View {
     }
 
     private func controlContentTopPadding(for topSafeArea: CGFloat) -> CGFloat {
-        max(28, topSafeArea + 10)
+        topSafeArea > 0 ? 10 : 28
     }
 
     private func prepare() {

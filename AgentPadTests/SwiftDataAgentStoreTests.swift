@@ -9,6 +9,21 @@ import XCTest
 
 @MainActor
 final class SwiftDataAgentStoreTests: XCTestCase {
+    func testLegacyProviderResolverPreservesCanonicalHostedProviderIDs() {
+        XCTAssertEqual(
+            SwiftDataLegacyProviderResolver.resolve("openai-codex"),
+            .openAICodex
+        )
+        XCTAssertEqual(
+            SwiftDataLegacyProviderResolver.resolve("opencode-zen"),
+            .openCodeZen
+        )
+        XCTAssertEqual(
+            SwiftDataLegacyProviderResolver.resolve("open_router"),
+            .openRouter
+        )
+    }
+
     func testAcceptanceAtomicallyPersistsMetadataAndOpaqueIndexedFirstEvent() async throws {
         let container = try makeContainer()
         let instant = AgentInstant(rawValue: 1_800_000_000_100)

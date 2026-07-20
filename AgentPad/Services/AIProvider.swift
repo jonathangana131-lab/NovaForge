@@ -5,6 +5,10 @@ import SwiftUI
 import UIKit
 
 enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
+    static let exactGPT56SolModelID = "gpt-5.6-sol"
+    static let exactGPT56TerraModelID = "gpt-5.6-terra"
+    static let exactGPT56LunaModelID = "gpt-5.6-luna"
+
     case local
     case openAI
     case openAICodex
@@ -172,6 +176,9 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
             LocalModelCatalog.all.map(\.id)
         case .openAI:
             [
+                Self.exactGPT56SolModelID,
+                Self.exactGPT56TerraModelID,
+                Self.exactGPT56LunaModelID,
                 "gpt-5.5",
                 "gpt-5.4",
                 "gpt-5.4-mini",
@@ -187,6 +194,9 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
             ]
         case .openAICodex:
             [
+                Self.exactGPT56SolModelID,
+                Self.exactGPT56TerraModelID,
+                Self.exactGPT56LunaModelID,
                 "gpt-5.5",
                 "gpt-5.4",
                 "gpt-5.4-mini",
@@ -245,6 +255,9 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
 
     func modelDisplayName(_ modelID: String) -> String {
         switch modelID.lowercased() {
+        case Self.exactGPT56SolModelID: "GPT-5.6 Sol"
+        case Self.exactGPT56TerraModelID: "GPT-5.6 Terra"
+        case Self.exactGPT56LunaModelID: "GPT-5.6 Luna"
         case "gpt-5.5": "GPT-5.5"
         case "gpt-5.4": "GPT-5.4"
         case "gpt-5.4-mini": "GPT-5.4 Mini"
@@ -255,6 +268,12 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
 
     func modelDetail(_ modelID: String) -> String? {
         switch modelID.lowercased() {
+        case Self.exactGPT56SolModelID:
+            "Flagship · complex coding and reasoning"
+        case Self.exactGPT56TerraModelID:
+            "Balanced intelligence and cost"
+        case Self.exactGPT56LunaModelID:
+            "Cost-sensitive, high-volume work"
         case "gpt-5.5":
             "Frontier coding, research, and agent work"
         case "gpt-5.4":
@@ -271,6 +290,9 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     func fallbackReasoningEfforts(_ modelID: String) -> [String] {
         guard self == .openAICodex, modelOptions.contains(modelID) else {
             return []
+        }
+        if modelID.lowercased().hasPrefix("gpt-5.6") {
+            return ["none", "low", "medium", "high", "xhigh", "max"]
         }
         return ["low", "medium", "high", "xhigh"]
     }
@@ -293,9 +315,18 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 
     func visibleModelIdentity(_ modelID: String) -> String {
-        modelID
+        // Picker equality must preserve the exact wire identity. Treating a
+        // family alias or differently-cased value as `gpt-5.6-sol` can make
+        // the UI show a valid selection that the request factory will reject.
+        modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func requiresExplicitGPT56ModelSelection(_ modelID: String) -> Bool {
+        guard self == .openAI || self == .openAICodex else { return false }
+        let normalized = modelID
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+        return normalized == "gpt-5.6" || normalized.hasPrefix("gpt-5.6-")
     }
 
     static func normalizedChatGPTClientVersion(_ rawValue: String?) -> String {
@@ -719,11 +750,18 @@ final class OpenAICodexAuthManager {
         }
         let claims = Self.jwtClaims(accessToken)
         if let expiration = claims.expiration,
-           expiration <= Date().addingTimeInterval(90),
-           let refreshToken = try? keychain.read(Self.refreshTokenAccount),
-           !refreshToken.isEmpty
+           expiration <= Date().addingTimeInterval(90)
         {
-            refresh(refreshToken: refreshToken)
+            if let refreshToken = try? keychain.read(
+                Self.refreshTokenAccount
+            ), !refreshToken.isEmpty {
+                refresh(refreshToken: refreshToken)
+            } else {
+                // An expired access token is not a usable credential. Keeping
+                // it in Keychain is harmless, but presenting it as connected
+                // lets the composer start a run that can only receive a 401.
+                state = .signedOut
+            }
             return
         }
         let idToken = try? keychain.read(Self.idTokenAccount)
@@ -747,6 +785,29 @@ final class OpenAICodexAuthManager {
         // awaiting-approval state without a polling task.
         guard loginTask == nil, !state.isWorking else { return }
         refreshStoredStatus()
+    }
+
+    /// Revalidates the saved subscription credential immediately before an
+    /// agent run. If the access token is near expiry, this waits for the
+    /// bounded refresh already owned by this manager instead of allowing the
+    /// provider transport to race it with a stale bearer token.
+    func prepareCredentialForRun() async -> Bool {
+        #if DEBUG || targetEnvironment(simulator)
+        guard !deviceCodeFixtureActive else { return false }
+        #endif
+        if state.isWorking {
+            guard case .exchanging = state, let loginTask else {
+                return false
+            }
+            await loginTask.value
+            return isSignedIn
+        }
+
+        refreshStoredStatus()
+        if case .exchanging = state, let loginTask {
+            await loginTask.value
+        }
+        return isSignedIn
     }
 
     func startLogin() {

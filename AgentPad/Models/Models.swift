@@ -2165,6 +2165,18 @@ final class AgentSettings {
             return false
         }
 
+        // GPT-5.6-sol is an exact provenance boundary, not a model family.
+        // Keep unsupported aliases visible and blocked so launch/runtime repair
+        // cannot silently convert them into the exact selection.
+        if selectedProvider.requiresExplicitGPT56ModelSelection(trimmedModel) {
+            if trimmedModel != modelID {
+                modelID = trimmedModel
+                updatedAt = Date()
+                return true
+            }
+            return false
+        }
+
         if selectedProvider == .local {
             modelID = selectedProvider.defaultModel
             updatedAt = Date()

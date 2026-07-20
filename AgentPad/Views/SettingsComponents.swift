@@ -1462,6 +1462,8 @@ struct SettingsThemeStudioCard: View {
         )
         .shadow(color: selected ? palette.glow.opacity(0.20) : .clear, radius: 12, x: 0, y: 6)
         .accessibilityIdentifier("settingsThemeStudioCard-\(theme.rawValue)")
+        .accessibilityValue(selected ? "Active" : "Preview")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var studioPreview: some View {

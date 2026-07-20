@@ -178,11 +178,19 @@ extension ProviderAdapterDescriptor {
             throw HostedSingleCallToolsCapabilityError
                 .dialectCapabilityMismatch(.responseContinuation)
         }
-        if dialect != .openAIResponses,
+        let permitsReasoning = dialect == .openAIResponses ||
+            expectedProvenance == .builtInOpenCodeZenChatCompletions
+        if !permitsReasoning,
            route.capabilities.features.contains(.reasoning)
         {
             throw HostedSingleCallToolsCapabilityError
                 .dialectCapabilityMismatch(.reasoning)
+        }
+        if expectedProvenance == .builtInOpenCodeZenChatCompletions,
+           !route.capabilities.features.contains(.reasoning)
+        {
+            throw HostedSingleCallToolsCapabilityError
+                .requiredCapabilityMissing(.reasoning)
         }
         guard route.capabilities.contextWindowTokens > 0,
               route.capabilities.maximumOutputTokens > 0,
@@ -319,5 +327,26 @@ public extension ProviderModelCapabilities {
             maximumOutputTokens: 16_384,
             maximumToolDefinitions: 20,
             maximumToolCallsPerTurn: 1
+        )
+
+    /// OpenCode Zen's OpenAI-compatible Chat Completions stream can emit
+    /// `delta.reasoning_content` before ordinary content. Keep this authority
+    /// separate from the generic Chat baseline so other Chat routes do not
+    /// silently gain permission to surface reasoning output.
+    static let hostedOpenCodeZenChatSingleCallToolsBaseline =
+        ProviderModelCapabilities(
+            features: ProviderCapabilitySet(
+                hostedChatSingleCallToolsBaseline.features.values + [
+                    .reasoning,
+                ]
+            ),
+            contextWindowTokens:
+                hostedChatSingleCallToolsBaseline.contextWindowTokens,
+            maximumOutputTokens:
+                hostedChatSingleCallToolsBaseline.maximumOutputTokens,
+            maximumToolDefinitions:
+                hostedChatSingleCallToolsBaseline.maximumToolDefinitions,
+            maximumToolCallsPerTurn:
+                hostedChatSingleCallToolsBaseline.maximumToolCallsPerTurn
         )
 }

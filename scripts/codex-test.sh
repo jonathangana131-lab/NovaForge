@@ -53,6 +53,13 @@ NOVAFORGE_TEST_INCLUDE_PREFLIGHT="${NOVAFORGE_TEST_INCLUDE_PREFLIGHT:-auto}"
 NOVAFORGE_TEST_INCLUDE_PACKAGE="${NOVAFORGE_TEST_INCLUDE_PACKAGE:-auto}"
 NOVAFORGE_CAPTURE_MODE="${NOVAFORGE_CAPTURE_MODE:-auto}"
 NOVAFORGE_SCREENSHOT_DIR="${NOVAFORGE_SCREENSHOT_DIR:-$LOG_DIR/screenshots}"
+NOVAFORGE_SOURCE_COMMIT="${NOVAFORGE_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)}"
+# XCTest runs in a separate working directory. Keep screenshot evidence on an
+# absolute repository path even when callers provide a convenient relative
+# LOG_DIR/NOVAFORGE_SCREENSHOT_DIR override.
+if [[ "$NOVAFORGE_SCREENSHOT_DIR" != /* ]]; then
+  NOVAFORGE_SCREENSHOT_DIR="$ROOT_DIR/$NOVAFORGE_SCREENSHOT_DIR"
+fi
 MANAGED_DERIVED_DATA_LOCKED=0
 
 smoke_ui_tests=(
@@ -96,6 +103,7 @@ preflight_scripts=(
   scripts/test-focused-test-harness.sh
   scripts/test-m5-scorecard.sh
   scripts/test-release-candidate-audit.sh
+  scripts/test-run-on-iphone-guard.sh
 )
 
 case "$LANE" in
@@ -290,6 +298,7 @@ project_xcodebuild() {
       -skipMacroValidation \
       ONLY_ACTIVE_ARCH=YES \
       CODE_SIGNING_ALLOWED=NO \
+      NOVAFORGE_SOURCE_COMMIT="$NOVAFORGE_SOURCE_COMMIT" \
       "$@"
 }
 

@@ -1459,14 +1459,9 @@ struct NovaForgeMainApp: App {
             let settings: AgentSettings
             if let existing = existingSettings.first {
                 settings = existing
-                if settings.provider == .openAI,
-                   settings.modelID == "gpt-5.5" {
-                    settings.provider = .local
-                    settings.modelID = AIProvider.local.defaultModel
-                    settings.updatedAt = Date()
-                } else if settings.provider == .local,
-                          let selectedVariant = LocalModelCatalog.variant(for: settings.modelID),
-                          LocalModelCatalog.compatibilityMessage(for: selectedVariant) != nil {
+                if settings.provider == .local,
+                   let selectedVariant = LocalModelCatalog.variant(for: settings.modelID),
+                   LocalModelCatalog.compatibilityMessage(for: selectedVariant) != nil {
                     settings.modelID = LocalModelCatalog.defaultVariant.id
                     settings.updatedAt = Date()
                 }

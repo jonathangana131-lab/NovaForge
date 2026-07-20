@@ -85,6 +85,131 @@ final class AgentSystemProductionCompositionTests: XCTestCase {
         }
     }
 
+    func testFreshGeneralEnvironmentUsesAcceptedDefaultInsteadOfActiveProjectWorkspace()
+        async throws
+    {
+        let container = try makeContainer()
+        let context = container.mainContext
+        context.insert(AgentSettings(
+            provider: .local,
+            activeWorkspaceName: "Active Project Workspace"
+        ))
+        try context.save()
+
+        let workspace = SandboxWorkspace(
+            name: AgentRunWorkspaceScope.generalWorkspaceName
+        )
+        let runContext = makeRunContext(
+            projectID: nil,
+            workspace: workspace
+        )
+        let resolver = SwiftDataAgentSystemRunEnvironmentResolver(
+            container: container
+        )
+
+        let resolved = try await resolver.resolveFreshEnvironment(
+            context: runContext,
+            providerRoute: localRoute()
+        )
+
+        XCTAssertEqual(resolved.workspace.workspaceName, "Default")
+    }
+
+    func testFreshSystemWorkerEnvironmentUsesAcceptedIsolatedWorkspace()
+        async throws
+    {
+        let container = try makeContainer()
+        let context = container.mainContext
+        context.insert(AgentSettings(
+            provider: .local,
+            activeWorkspaceName: "Active Project Workspace"
+        ))
+        try context.save()
+
+        let workspaceName = "UltraCode-Isolated-\(UUID().uuidString)"
+        let workspace = SandboxWorkspace(name: workspaceName)
+        try FileManager.default.createDirectory(
+            at: workspace.rootURL,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: workspace.rootURL) }
+        let runContext = makeRunContext(
+            projectID: nil,
+            workspace: workspace
+        )
+        let resolver = SwiftDataAgentSystemRunEnvironmentResolver(
+            container: container
+        )
+
+        let resolved = try await resolver.resolveFreshEnvironment(
+            context: runContext,
+            providerRoute: localRoute()
+        )
+
+        XCTAssertEqual(
+            resolved.workspace.workspaceName,
+            workspaceName
+        )
+    }
+
+    func testWorkspaceCatalogRejectsUnknownAcceptedIdentity() throws {
+        let known = SandboxWorkspace(name: "Known-Catalog-Workspace")
+        let unknown = SandboxWorkspace(name: "Unknown-Catalog-Workspace")
+        let unknownIdentity = try WorkspaceResourceIdentity(
+            workspace: unknown
+        )
+
+        XCTAssertThrowsError(
+            try AgentSystemWorkspaceCatalog.resolve(
+                WorkspaceID(rawValue: unknownIdentity.persistentID),
+                candidates: [known]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentSystemProductionCompositionError,
+                .workspaceIdentityMismatch
+            )
+        }
+    }
+
+    func testWorkspaceCatalogRejectsAmbiguousIdentityCollision() throws {
+        let workspace = SandboxWorkspace(name: "Duplicate-Catalog-Workspace")
+        let identity = try WorkspaceResourceIdentity(workspace: workspace)
+
+        XCTAssertThrowsError(
+            try AgentSystemWorkspaceCatalog.resolve(
+                WorkspaceID(rawValue: identity.persistentID),
+                candidates: [workspace, workspace]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentSystemProductionCompositionError,
+                .workspaceIdentityMismatch
+            )
+        }
+    }
+
+    func testWorkspaceCatalogRejectsAnUnboundedCandidateSet() throws {
+        let workspace = SandboxWorkspace(name: "Bounded-Catalog-Workspace")
+        let identity = try WorkspaceResourceIdentity(workspace: workspace)
+        let candidates = Array(
+            repeating: workspace,
+            count: AgentSystemWorkspaceCatalog.maximumCandidateCount + 1
+        )
+
+        XCTAssertThrowsError(
+            try AgentSystemWorkspaceCatalog.resolve(
+                WorkspaceID(rawValue: identity.persistentID),
+                candidates: candidates
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentSystemProductionCompositionError,
+                .workspaceUnavailable
+            )
+        }
+    }
+
     func testRecoveryUsesAcceptedRunWorkspaceInsteadOfCurrentSelection()
         async throws
     {

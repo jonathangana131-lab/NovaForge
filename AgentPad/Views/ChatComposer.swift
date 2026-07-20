@@ -1231,7 +1231,13 @@ private struct ComposerModelChooserSheet: View {
 
     private var modelChoices: [String] {
         var seen = Set<String>()
-        return providerCatalog.models(for: selectedProvider).compactMap { value in
+        var values = providerCatalog.models(for: selectedProvider)
+        if selectedProvider == settings.provider {
+            // Keep a pinned exact selection visible even when a live catalog
+            // temporarily omits it. Catalog refresh cannot own model changes.
+            values.append(settings.modelID)
+        }
+        return values.compactMap { value in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             return !trimmed.isEmpty && seen.insert(trimmed).inserted ? trimmed : nil
         }
@@ -1311,6 +1317,14 @@ private struct ComposerModelChooserSheet: View {
         guard selectedProvider == settings.provider,
               providerCatalog.hasLiveCatalog(for: selectedProvider)
         else { return }
+        guard !selectedProvider.requiresExplicitGPT56ModelSelection(
+            settings.modelID
+        )
+        else {
+            // GPT-5.6 selection is fail-closed: catalog refresh cannot reroute
+            // an exact selection or alias to another hosted model.
+            return
+        }
         let liveModels = providerCatalog.models(for: selectedProvider)
         let selectedIdentity = selectedProvider.visibleModelIdentity(settings.modelID)
         guard !liveModels.contains(where: {

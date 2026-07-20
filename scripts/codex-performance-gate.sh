@@ -27,7 +27,7 @@ XCTESTRUN_PATH="${XCTESTRUN_PATH:-}"
 BUILD_IF_NEEDED="${BUILD_IF_NEEDED:-0}"
 REQUIRE_QUIET_LANE="${REQUIRE_QUIET_LANE:-1}"
 REQUIRE_QUIET_HOST="${REQUIRE_QUIET_HOST:-1}"
-MAX_HOST_LOAD_PER_CPU="${MAX_HOST_LOAD_PER_CPU:-4}"
+MAX_HOST_LOAD_PER_CPU="${MAX_HOST_LOAD_PER_CPU:-2}"
 SHUTDOWN_SIMULATOR_AFTER_TESTS="${SHUTDOWN_SIMULATOR_AFTER_TESTS:-1}"
 REUSE_BOOTED_SIMULATOR="${REUSE_BOOTED_SIMULATOR:-0}"
 TIMEOUT_RUNNER="$ROOT_DIR/scripts/codex-timeout-runner.pl"
@@ -35,6 +35,7 @@ TIMEOUT_RUNNER="$ROOT_DIR/scripts/codex-timeout-runner.pl"
 PERFORMANCE_LOG="${PERFORMANCE_LOG:-$LOG_DIR/performance.log}"
 TEST_LOG="${TEST_LOG:-$LOG_DIR/ui-performance-test.log}"
 SUMMARY_LOG="${SUMMARY_LOG:-$LOG_DIR/performance-summary.txt}"
+HOST_ENVIRONMENT_LOG="${HOST_ENVIRONMENT_LOG:-$LOG_DIR/host-environment.txt}"
 BOOT_LOG="$LOG_DIR/simulator-bootstatus.log"
 BOOT_COMMAND_LOG="$LOG_DIR/simulator-boot.log"
 TERMINATE_LOG="$LOG_DIR/simulator-terminate.log"
@@ -131,6 +132,12 @@ require_quiet_lane() {
   logical_cpus="$(sysctl -n hw.logicalcpu)"
   one_minute_load="$(sysctl -n vm.loadavg | awk '{print $2}')"
   max_load=$(( logical_cpus * MAX_HOST_LOAD_PER_CPU ))
+  {
+    printf 'logicalCPUs=%s\n' "$logical_cpus"
+    printf 'oneMinuteLoad=%s\n' "$one_minute_load"
+    printf 'maximumAcceptedLoad=%s\n' "$max_load"
+    printf 'maximumLoadPerCPU=%s\n' "$MAX_HOST_LOAD_PER_CPU"
+  } > "$HOST_ENVIRONMENT_LOG"
   if (( one_minute_load > max_load )); then
     echo "Host load ${one_minute_load} is above the performance-proof ceiling ${max_load} (${logical_cpus} CPUs × ${MAX_HOST_LOAD_PER_CPU})." >&2
     echo "Refusing to report simulator FPS while the shared Mac is saturated. Wait for the host to settle or set REQUIRE_QUIET_HOST=0 only for diagnostic runs." >&2

@@ -59,25 +59,32 @@ extension FilesView {
             }
 
             Menu {
-                ForEach(workspaces, id: \.self) { ws in
-                    Button {
-                        switchWorkspace(to: ws)
-                    } label: {
-                        HStack {
-                            Text(ws)
-                            if ws == runtime.workspace.workspaceName {
-                                Image(systemName: "checkmark")
+                if scopeProject != nil {
+                    ForEach(workspaces, id: \.self) { ws in
+                        Button {
+                            switchWorkspace(to: ws)
+                        } label: {
+                            HStack {
+                                Text(ws)
+                                if ws == runtime.workspace.workspaceName {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
-                }
 
-                Divider()
+                    Divider()
 
-                Button {
-                    showingCreateWorkspace = true
-                } label: {
-                    Label("New Workspace...", systemImage: "plus.rectangle.on.folder")
+                    Button {
+                        showingCreateWorkspace = true
+                    } label: {
+                        Label("New Workspace...", systemImage: "plus.rectangle.on.folder")
+                    }
+                } else {
+                    Label(
+                        "General stays in Default",
+                        systemImage: "checkmark.circle.fill"
+                    )
                 }
 
                 Button {

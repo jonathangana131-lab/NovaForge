@@ -6,6 +6,7 @@ struct RunsView: View {
     @Environment(\.modelContext) var modelContext
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     var runtime: AgentRuntime
+    let missionStatus: WorkspaceStatusSnapshot
     var project: Project
     let scopeProjectID: UUID?
     let scopeName: String
@@ -15,6 +16,7 @@ struct RunsView: View {
     let openProject: () -> Void
     let approvePendingTool: () -> Void
     let rejectPendingTool: () -> Void
+    let stopActiveRun: () -> Void
     let openChat: () -> Void
     let openConversationInForge: (UUID) -> Void
     @Query var runs: [ToolRun]
@@ -51,7 +53,7 @@ struct RunsView: View {
     }
 
     var liveStatus: WorkspaceStatusSnapshot {
-        WorkspaceStatusSnapshot(runtime: runtime)
+        missionStatus
     }
 
     var scopedProject: Project? {
@@ -69,6 +71,7 @@ struct RunsView: View {
 
     init(
         runtime: AgentRuntime,
+        missionStatus: WorkspaceStatusSnapshot,
         project: Project,
         scopeProjectID: UUID?,
         scopeName: String,
@@ -78,10 +81,12 @@ struct RunsView: View {
         openProject: @escaping () -> Void,
         approvePendingTool: @escaping () -> Void,
         rejectPendingTool: @escaping () -> Void,
+        stopActiveRun: @escaping () -> Void,
         openChat: @escaping () -> Void,
         openConversationInForge: @escaping (UUID) -> Void
     ) {
         self.runtime = runtime
+        self.missionStatus = missionStatus
         self.project = project
         self.scopeProjectID = scopeProjectID
         self.scopeName = scopeName
@@ -91,6 +96,7 @@ struct RunsView: View {
         self.openProject = openProject
         self.approvePendingTool = approvePendingTool
         self.rejectPendingTool = rejectPendingTool
+        self.stopActiveRun = stopActiveRun
         self.openChat = openChat
         self.openConversationInForge = openConversationInForge
 
@@ -1142,7 +1148,7 @@ struct RunsView: View {
                 autoContinue: .disabled,
                 approve: approvePendingTool,
                 reject: rejectPendingTool,
-                stop: { runtime.stopGenerating(context: modelContext) },
+                stop: stopActiveRun,
                 pauseAutoContinue: {},
                 openDossier: openProject
             )
@@ -1357,7 +1363,8 @@ struct RunsView: View {
             expanded: expansionBinding(for: row),
             // History's ForgeMissionStrip owns the live decision controls.
             // Tool rows remain durable evidence, never a second approval UI.
-            hasLivePendingApproval: runtime.pendingTool != nil && !shouldShowHistoryMissionStrip,
+            hasLivePendingApproval: liveStatus.tone == .approval &&
+                !shouldShowHistoryMissionStrip,
             deleteRun: { deleteRun(id: row.id) },
             openArtifact: { artifact in
                 preview(artifact)
@@ -1623,7 +1630,7 @@ struct RunsView: View {
             subtitle: runsHeaderStatusLine,
             symbol: "waveform.path.ecg",
             tint: AgentPalette.lilac,
-            isActive: runtime.isWorking
+            isActive: liveStatus.isWorking
         )
     }
 
@@ -1637,7 +1644,7 @@ struct RunsView: View {
     }
 
     var shouldShowHistoryMissionStrip: Bool {
-        runtime.isWorking || runtime.pendingTool != nil
+        liveStatus.isWorking || liveStatus.blocksCommand
     }
 
     var shouldShowRuntimeReceiptBanner: Bool {

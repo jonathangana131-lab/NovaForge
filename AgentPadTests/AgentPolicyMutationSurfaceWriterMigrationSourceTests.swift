@@ -124,7 +124,7 @@ final class AgentPolicyMutationSurfaceWriterMigrationSourceTests: XCTestCase {
             [
                 "policyRuntime.makeExecutionContext(",
                 "conversationID: scopeConversationID",
-                "projectID: project.id",
+                "projectID: scopeProject?.id",
                 "policyRuntime.coordinator().performFiles(",
                 "sessionID: \"files\"",
             ]

@@ -298,7 +298,12 @@ enum AgentProductionProviderGatewayFactory {
                 actual: selection.lane
             )
         }
-        try validateHostedCredential(credential)
+        try validateHostedCredential(
+            credential,
+            permitsEmpty: !AIProvider.openCodeZen.requiresCredential(
+                for: selection.modelID.rawValue
+            )
+        )
         let authority = try OpenCodeZenAuthority(modelID: selection.modelID)
         guard selection.declaredDescriptor == authority.descriptor else {
             throw AgentProductionProviderGatewayError
@@ -462,8 +467,10 @@ enum AgentProductionProviderGatewayFactory {
     }
 
     private static func validateHostedCredential(
-        _ credential: String
+        _ credential: String,
+        permitsEmpty: Bool = false
     ) throws {
+        if permitsEmpty, credential.isEmpty { return }
         guard (1 ... 4_096).contains(credential.utf8.count),
               credential.unicodeScalars.allSatisfy({
                   (0x21 ... 0x7e).contains($0.value)
@@ -531,7 +538,8 @@ private struct OpenCodeZenAuthority: Sendable {
         let trusted = TrustedHostedProviderCatalog
             .openCodeZenChatCompletions(
                 model: modelID,
-                capabilities: .hostedChatSingleCallToolsBaseline
+                capabilities:
+                    .hostedOpenCodeZenChatSingleCallToolsBaseline
             )
         let catalog = try trusted.providerCatalog()
         let adapterID = trusted.adapterID
@@ -546,7 +554,8 @@ private struct OpenCodeZenAuthority: Sendable {
               route.adapterID == ProviderAdapterID(
                   rawValue: "opencode-zen-chat-completions"
               ),
-              route.capabilities == .hostedChatSingleCallToolsBaseline,
+              route.capabilities ==
+                .hostedOpenCodeZenChatSingleCallToolsBaseline,
               route.deployment == .hostedService,
               route.provenance == .builtInOpenCodeZenChatCompletions,
               descriptor.dialect == .openAIChatCompletions,

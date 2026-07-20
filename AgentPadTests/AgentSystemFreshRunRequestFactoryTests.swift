@@ -10,8 +10,8 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
     private var previousReasoningEffort: ProviderReasoningEffort?
     private var previousOrchestrationMode: AgentOrchestrationMode?
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         let preferences = AgentRunPreferenceStore.shared
         previousReasoningEffort = preferences.reasoningEffort
         previousOrchestrationMode = preferences.orchestrationMode
@@ -19,7 +19,7 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         preferences.orchestrationMode = .standard
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         let preferences = AgentRunPreferenceStore.shared
         if let previousReasoningEffort {
             preferences.reasoningEffort = previousReasoningEffort
@@ -29,7 +29,7 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         }
         previousReasoningEffort = nil
         previousOrchestrationMode = nil
-        super.tearDown()
+        try await super.tearDown()
     }
 
     func testChatGPTReasoningEffortIsBoundAndUltraCodeUsesMaximumSupportedEffort() throws {
@@ -48,7 +48,9 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
             activeWorkspaceName: "ReasoningFactory",
             temperature: 1.7
         )
-        let workspace = SandboxWorkspace(name: settings.activeWorkspaceName)
+        let workspace = SandboxWorkspace(
+            name: AgentRunWorkspaceScope.generalWorkspaceName
+        )
 
         preferences.orchestrationMode = .standard
         preferences.reasoningEffort = .xhigh
@@ -91,6 +93,73 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         XCTAssertTrue(
             ultraSend.context.features.contains("v2IsolatedAgentWorkspaces")
         )
+    }
+
+    func testExactGPT56SolUsesCanonicalChatGPTResponsesRoute() throws {
+        let conversation = Conversation(title: "Exact GPT proof")
+        let settings = AgentSettings(
+            provider: .openAICodex,
+            modelID: AIProvider.exactGPT56SolModelID,
+            activeWorkspaceName: "ExactGPT56Proof",
+            temperature: 0
+        )
+        let request = try AgentSystemFreshRunRequestFactory.make(
+            prompt: "Create one bounded proof artifact.",
+            conversation: conversation,
+            project: nil,
+            workspace: SandboxWorkspace(
+                name: AgentRunWorkspaceScope.generalWorkspaceName
+            ),
+            settings: settings
+        )
+
+        XCTAssertEqual(
+            request.plan.providerRoute.modelID.rawValue,
+            AIProvider.exactGPT56SolModelID
+        )
+        XCTAssertEqual(
+            request.plan.providerRoute.provenance,
+            .builtInOpenAICodexResponses
+        )
+        XCTAssertEqual(
+            request.plan.providerRoute.adapterID.rawValue,
+            "openai-codex-responses"
+        )
+        XCTAssertNil(request.plan.providerOptions.temperature)
+        XCTAssertFalse(
+            request.plan.providerOptions.parallelToolCalls ?? true
+        )
+    }
+
+    func testGPT56AliasesFailClosedBeforeRouteMinting() throws {
+        let conversation = Conversation(title: "Exact GPT aliases")
+        let workspace = SandboxWorkspace(
+            name: AgentRunWorkspaceScope.generalWorkspaceName
+        )
+
+        for alias in [
+            "gpt-5.6",
+            "gpt-5.6-sol-2026-07-16",
+            "GPT-5.6-SOL",
+        ] {
+            let settings = AgentSettings(
+                provider: .openAICodex,
+                modelID: alias,
+                activeWorkspaceName: workspace.workspaceName,
+                temperature: 0
+            )
+            XCTAssertFactoryError(
+                .unsupportedModel,
+                try AgentSystemFreshRunRequestFactory.make(
+                    prompt: "Do not substitute this alias.",
+                    conversation: conversation,
+                    project: nil,
+                    workspace: workspace,
+                    settings: settings
+                ),
+                line: #line
+            )
+        }
     }
 
     func testHostedRequestBindsExactProductionAuthorities() throws {
@@ -220,7 +289,9 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
             activeWorkspaceName: "FactoryLocal",
             temperature: 0.05
         )
-        let workspace = SandboxWorkspace(name: settings.activeWorkspaceName)
+        let workspace = SandboxWorkspace(
+            name: AgentRunWorkspaceScope.generalWorkspaceName
+        )
 
         let request = try AgentSystemFreshRunRequestFactory.make(
             prompt: "Answer on device.",
@@ -308,6 +379,17 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
             XCTAssertEqual(
                 request.plan.providerRoute.provenance,
                 .builtInOpenCodeZenChatCompletions,
+                modelID
+            )
+            XCTAssertEqual(
+                request.plan.providerRoute.capabilities,
+                .hostedOpenCodeZenChatSingleCallToolsBaseline,
+                modelID
+            )
+            XCTAssertTrue(
+                request.plan.providerRoute.capabilities.features.contains(
+                    .reasoning
+                ),
                 modelID
             )
             XCTAssertEqual(request.plan.toolLocalities.count, 20, modelID)
@@ -435,6 +517,86 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
                 workspace: substitutedRoot,
                 settings: fixture.settings
             )
+        )
+    }
+
+    func testGeneralUserRunIsPinnedToDefaultInsteadOfActiveProjectWorkspace()
+        throws
+    {
+        let conversation = Conversation(title: "General isolation")
+        let settings = AgentSettings(
+            provider: .local,
+            modelID: LocalModelCatalog.defaultVariant.id,
+            activeWorkspaceName: "Active Project Workspace"
+        )
+        let defaultWorkspace = SandboxWorkspace(
+            name: AgentRunWorkspaceScope.generalWorkspaceName
+        )
+
+        let request = try AgentSystemFreshRunRequestFactory.make(
+            prompt: "Keep General isolated.",
+            conversation: conversation,
+            project: nil,
+            workspace: defaultWorkspace,
+            settings: settings
+        )
+
+        XCTAssertEqual(
+            AgentRunWorkspaceScope.expectedName(
+                project: nil,
+                requestedWorkspace: defaultWorkspace,
+                origin: .user
+            ),
+            "Default"
+        )
+        guard case let .send(send) = request.command.payload else {
+            return XCTFail("Expected send")
+        }
+        XCTAssertEqual(
+            try WorkspaceResourceIdentity(workspace: defaultWorkspace)
+                .persistentID,
+            send.context.workspaceID.rawValue
+        )
+
+        XCTAssertFactoryError(
+            .invalidWorkspaceSelection,
+            try AgentSystemFreshRunRequestFactory.make(
+                prompt: "Do not borrow the active project.",
+                conversation: conversation,
+                project: nil,
+                workspace: SandboxWorkspace(
+                    name: settings.activeWorkspaceName
+                ),
+                settings: settings
+            )
+        )
+    }
+
+    func testSystemWorkerRunBindsItsIsolatedSnapshotWorkspace() throws {
+        let conversation = Conversation(title: "Isolated worker")
+        let settings = AgentSettings(
+            provider: .local,
+            modelID: LocalModelCatalog.defaultVariant.id,
+            activeWorkspaceName: "UltraCode-Isolated-Proof"
+        )
+        let workspace = SandboxWorkspace(name: settings.activeWorkspaceName)
+
+        let request = try AgentSystemFreshRunRequestFactory.make(
+            prompt: "Inspect the isolated snapshot.",
+            conversation: conversation,
+            project: nil,
+            workspace: workspace,
+            settings: settings,
+            origin: .system
+        )
+
+        XCTAssertEqual(
+            AgentRunWorkspaceScope.expectedName(
+                project: nil,
+                requestedWorkspace: workspace,
+                origin: .system
+            ),
+            "UltraCode-Isolated-Proof"
         )
     }
 

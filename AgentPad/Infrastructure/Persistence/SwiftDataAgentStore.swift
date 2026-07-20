@@ -22,6 +22,28 @@ enum SwiftDataLegacyIdentityKind: String, Equatable, Sendable {
     case projectOSRun
 }
 
+/// Maps canonical provider route identifiers back onto the legacy UI model.
+/// Canonical IDs are kebab-cased (for example `openai-codex`), while older
+/// persisted settings used camel case or underscores. Keep this normalization
+/// in one testable boundary so receipts never silently fall back to Custom.
+enum SwiftDataLegacyProviderResolver {
+    static func resolve(_ rawValue: String) -> AIProvider {
+        let normalized = rawValue
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+
+        return switch normalized {
+        case "local", "ondevice": .local
+        case "openai": .openAI
+        case "openaicodex", "codex": .openAICodex
+        case "openrouter": .openRouter
+        case "opencodezen", "zen": .openCodeZen
+        default: .custom
+        }
+    }
+}
+
 /// V1 model identifiers predate uniqueness constraints. Projection code must
 /// never pick an arbitrary row when a damaged store contains duplicates.
 enum SwiftDataAgentStoreIntegrityError: Error, Equatable, Sendable {
@@ -3317,14 +3339,7 @@ private extension SwiftDataAgentStore {
     }
 
     func legacyProvider(_ rawValue: String) -> AIProvider {
-        switch rawValue.lowercased().replacingOccurrences(of: "_", with: "") {
-        case "local", "ondevice": .local
-        case "openai": .openAI
-        case "openaicodex", "codex": .openAICodex
-        case "openrouter": .openRouter
-        case "opencodezen", "zen": .openCodeZen
-        default: .custom
-        }
+        SwiftDataLegacyProviderResolver.resolve(rawValue)
     }
 
     func stageLegacyAcceptance(

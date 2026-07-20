@@ -1156,6 +1156,9 @@ final class AgentRuntime {
         #if DEBUG || targetEnvironment(simulator)
         if debugProviderCredentialOverride || !debugProviderResponses.isEmpty || debugProviderFailure != nil { return true }
         #endif
+        if settings.provider == .openAICodex {
+            return OpenAICodexAuthManager.shared.isSignedIn
+        }
         return !apiKey(for: settings.provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
