@@ -1,0 +1,53 @@
+name: NovaForge Founding Builder beta application
+description: Apply to test NovaForge with a real iPhone development workflow.
+title: "[Founding Builder] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape NovaForge. This public issue is an application, not a purchase or guaranteed beta invitation. Do not include email addresses, credentials, private repository details, or other sensitive information.
+
+  - type: textarea
+    id: building
+    attributes:
+      label: What are you building?
+      description: Describe the app or workflow at a high level. Keep private project details out of this public issue.
+      placeholder: "Example: An iPhone app with a small Swift package and a repeatable build/test workflow."
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Which iPhone and iOS version could you test on?
+      placeholder: "Example: iPhone 16 Pro, iOS 26"
+    validations:
+      required: true
+
+  - type: textarea
+    id: trust-proof
+    attributes:
+      label: What proof must an AI coding agent show before you trust it with a repository?
+      description: Examples include exact file changes, commands, test results, approval gates, or a durable run history.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: price-research
+    attributes:
+      label: Price research (not a live offer)
+      description: If NovaForge proves that workflow and an invite is available, would a $199 one-time Founding Builder pass be worth considering?
+      options:
+        - "Yes"
+        - "Maybe"
+        - "No"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgement
+    attributes:
+      label: Public application acknowledgement
+      options:
+        - label: I understand this issue is public, contains no private contact or repository information, requests no payment, and does not guarantee beta access.
+          required: true
