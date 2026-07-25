@@ -945,40 +945,61 @@ struct ComposerModelMenu: View {
         refinedModelTitle(settings.modelID)
     }
 
-    private func selectProvider(_ provider: AIProvider) {
+    @discardableResult
+    private func selectProvider(_ provider: AIProvider) -> Bool {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        guard settings.provider != provider else { return }
-        guard persistSettingsChange(failureTitle: "Provider Not Saved", mutate: { settings in
-            settings.switchProvider(to: provider)
-        }) else { return }
+        guard settings.provider != provider else { return true }
+        let targetModelID = AgentSettingsPersistence.coherentModelID(
+            for: provider,
+            currentModelID: settings.modelID
+        )
+        guard persistProviderModelSelection(
+            provider: provider,
+            modelID: targetModelID,
+            failureTitle: "Provider Not Saved"
+        ) else { return false }
         if provider == .local,
            let variant = LocalModelCatalog.variant(for: settings.modelID)
         {
             _ = localModels.select(variant)
         }
         selectionError = nil
+        return true
     }
 
-    private func selectModel(_ model: String) {
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+    @discardableResult
+    private func selectModel(
+        provider: AIProvider,
+        model modelID: String
+    ) -> Bool {
+        let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        if persistSettingsChange(failureTitle: "Model Not Saved", mutate: { settings in
-            settings.modelID = trimmed
-        }) {
+        if persistProviderModelSelection(
+            provider: provider,
+            modelID: trimmed,
+            failureTitle: "Model Not Saved"
+        ) {
             if let variant = LocalModelCatalog.variant(for: trimmed) {
                 _ = localModels.select(variant)
             }
             selectionError = nil
+            return true
         }
+        return false
     }
 
     @discardableResult
-    private func persistSettingsChange(failureTitle: String, mutate: (AgentSettings) -> Void) -> Bool {
+    private func persistProviderModelSelection(
+        provider: AIProvider,
+        modelID: String,
+        failureTitle: String
+    ) -> Bool {
         do {
-            try AgentSettingsPersistence.persist(
+            try AgentSettingsPersistence.persistProviderModelSelection(
+                provider: provider,
+                modelID: modelID,
                 settings: settings,
-                mutate: mutate,
                 save: { try modelContext.save() }
             )
             return true
@@ -996,8 +1017,8 @@ private struct ComposerModelChooserSheet: View {
     @Bindable var settings: AgentSettings
     var localModels: LocalModelManager
     let selectionError: String?
-    let selectProvider: (AIProvider) -> Void
-    let selectModel: (String) -> Void
+    let selectProvider: (AIProvider) -> Bool
+    let selectModel: (AIProvider, String) -> Bool
     let onPresented: () -> Void
 
     @State private var selectedProvider: AIProvider
@@ -1008,8 +1029,8 @@ private struct ComposerModelChooserSheet: View {
         settings: AgentSettings,
         localModels: LocalModelManager,
         selectionError: String?,
-        selectProvider: @escaping (AIProvider) -> Void,
-        selectModel: @escaping (String) -> Void,
+        selectProvider: @escaping (AIProvider) -> Bool,
+        selectModel: @escaping (AIProvider, String) -> Bool,
         onPresented: @escaping () -> Void
     ) {
         self.settings = settings
@@ -1089,9 +1110,12 @@ private struct ComposerModelChooserSheet: View {
             chooserHeader("Provider", detail: providerSectionDetail)
             ForEach(supportedProviders) { provider in
                 Button {
-                    selectedProvider = provider
-                    selectProvider(provider)
-                    UISelectionFeedbackGenerator().selectionChanged()
+                    if selectProvider(provider) {
+                        selectedProvider = provider
+                        UISelectionFeedbackGenerator().selectionChanged()
+                    } else {
+                        selectedProvider = settings.provider
+                    }
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: provider.symbol)
@@ -1135,11 +1159,12 @@ private struct ComposerModelChooserSheet: View {
             chooserHeader("Model", detail: selectedProvider.displayName)
             ForEach(modelChoices, id: \.self) { model in
                 Button {
-                    if selectedProvider != settings.provider {
-                        selectProvider(selectedProvider)
+                    if selectModel(selectedProvider, model) {
+                        selectedProvider = settings.provider
+                        UISelectionFeedbackGenerator().selectionChanged()
+                    } else {
+                        selectedProvider = settings.provider
                     }
-                    selectModel(model)
-                    UISelectionFeedbackGenerator().selectionChanged()
                 } label: {
                     HStack(spacing: 11) {
                         Image(systemName: modelSymbol(model))
@@ -1332,7 +1357,9 @@ private struct ComposerModelChooserSheet: View {
               }),
               let first = liveModels.first
         else { return }
-        selectModel(first)
+        if !selectModel(selectedProvider, first) {
+            selectedProvider = settings.provider
+        }
     }
 }
 

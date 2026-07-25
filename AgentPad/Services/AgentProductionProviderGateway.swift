@@ -13,6 +13,7 @@ enum AgentProductionProviderLane: String, Codable, Equatable, Sendable {
 
 enum AgentProductionProviderGatewayError: Error, Equatable, Sendable {
     case invalidHostedCredential
+    case invalidHostedAccountID
     case unavailableLocalModel(ProviderModelID)
     case selectionLaneMismatch(
         expected: AgentProductionProviderLane,
@@ -237,17 +238,23 @@ enum AgentProductionProviderGatewayFactory {
 
     static func hostedOpenAICodexResponses(
         modelID: ProviderModelID,
-        credential: String
+        credential: String,
+        accountID: String? = nil,
+        authenticationDidFail: (@Sendable (String) async -> Void)? = nil
     ) throws -> AgentProductionProviderGatewayBundle {
         try hostedOpenAICodexResponses(
             selection: .hostedOpenAICodexResponses(modelID: modelID),
-            credential: credential
+            credential: credential,
+            accountID: accountID,
+            authenticationDidFail: authenticationDidFail
         )
     }
 
     static func hostedOpenAICodexResponses(
         selection: AgentProductionProviderRouteSelection,
-        credential: String
+        credential: String,
+        accountID: String? = nil,
+        authenticationDidFail: (@Sendable (String) async -> Void)? = nil
     ) throws -> AgentProductionProviderGatewayBundle {
         guard selection.lane == .hostedOpenAICodexResponses else {
             throw AgentProductionProviderGatewayError.selectionLaneMismatch(
@@ -255,7 +262,11 @@ enum AgentProductionProviderGatewayFactory {
                 actual: selection.lane
             )
         }
-        try validateHostedCredential(credential)
+        try validateHostedCredential(
+            credential,
+            kind: .openAICodexOAuthAccessToken
+        )
+        try validateHostedAccountID(accountID)
         let authority = try OpenAICodexAuthority(modelID: selection.modelID)
         guard selection.declaredDescriptor == authority.descriptor else {
             throw AgentProductionProviderGatewayError
@@ -263,7 +274,9 @@ enum AgentProductionProviderGatewayFactory {
         }
         let transport = AgentHostedProviderTransport(
             credential: credential,
-            singleCallToolsCapability: authority.capability
+            chatGPTAccountID: accountID,
+            singleCallToolsCapability: authority.capability,
+            authenticationDidFail: authenticationDidFail
         )
         let router = try AgentProviderTransportRouter(bindings: [
             .init(descriptor: authority.descriptor, transport: transport),
@@ -466,18 +479,44 @@ enum AgentProductionProviderGatewayFactory {
         )
     }
 
+    private enum HostedCredentialKind {
+        case apiKey
+        case openAICodexOAuthAccessToken
+
+        var maximumBytes: Int {
+            switch self {
+            case .apiKey:
+                4_096
+            case .openAICodexOAuthAccessToken:
+                KeychainStore.maximumSecretBytes
+            }
+        }
+    }
+
     private static func validateHostedCredential(
         _ credential: String,
-        permitsEmpty: Bool = false
+        permitsEmpty: Bool = false,
+        kind: HostedCredentialKind = .apiKey
     ) throws {
         if permitsEmpty, credential.isEmpty { return }
-        guard (1 ... 4_096).contains(credential.utf8.count),
+        guard (1 ... kind.maximumBytes).contains(credential.utf8.count),
               credential.unicodeScalars.allSatisfy({
                   (0x21 ... 0x7e).contains($0.value)
               })
         else {
             throw AgentProductionProviderGatewayError
                 .invalidHostedCredential
+        }
+    }
+
+    private static func validateHostedAccountID(_ accountID: String?) throws {
+        guard let accountID else { return }
+        guard (1 ... 512).contains(accountID.utf8.count),
+              accountID.unicodeScalars.allSatisfy({
+                  (0x21 ... 0x7e).contains($0.value)
+              })
+        else {
+            throw AgentProductionProviderGatewayError.invalidHostedAccountID
         }
     }
 }

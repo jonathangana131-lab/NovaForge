@@ -1,4 +1,5 @@
 import AgentProviders
+import CryptoKit
 import Foundation
 import Observation
 import SwiftUI
@@ -690,15 +691,78 @@ enum OpenAICodexAuthState: Equatable, Sendable {
     }
 }
 
+private enum OpenAICodexAuthLifecycleError: Error, Sendable {
+    case rejectedAccessToken
+}
+
+/// Injectable edges around the ChatGPT device-auth lifecycle. Production uses
+/// the real OAuth client and Keychain, while unit tests can deterministically
+/// suspend individual stages without making network or Security.framework
+/// calls.
+@MainActor
+struct OpenAICodexAuthDependencies {
+    var readCredential: @MainActor (String) throws -> String?
+    var saveCredential: @MainActor (String, String) throws -> Void
+    var deleteCredential: @MainActor (String) throws -> Void
+    var requestDeviceCode:
+        @MainActor () async throws -> OpenAICodexDeviceCode
+    var waitForApproval: @MainActor (
+        OpenAICodexDeviceCode
+    ) async throws -> OpenAICodexApprovalExchange
+    var exchange: @MainActor (
+        OpenAICodexApprovalExchange
+    ) async throws -> OpenAICodexOAuthTokens
+    var refresh:
+        @MainActor (String) async throws -> OpenAICodexOAuthTokens
+    var copyUserCode: @MainActor (String) -> Void
+    var clearModelCatalog: @MainActor () -> Void
+    var now: @MainActor () -> Date
+
+    static var live: Self {
+        let keychain = KeychainStore()
+        return Self(
+            readCredential: { try keychain.read($0) },
+            saveCredential: { value, account in
+                try keychain.save(value, account: account)
+            },
+            deleteCredential: { try keychain.delete($0) },
+            requestDeviceCode: {
+                try await OpenAICodexOAuthClient.requestDeviceCode()
+            },
+            waitForApproval: {
+                try await OpenAICodexOAuthClient.waitForApproval($0)
+            },
+            exchange: {
+                try await OpenAICodexOAuthClient.exchange($0)
+            },
+            refresh: {
+                try await OpenAICodexOAuthClient.refresh(refreshToken: $0)
+            },
+            copyUserCode: { UIPasteboard.general.string = $0 },
+            clearModelCatalog: {
+                ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
+            },
+            now: Date.init
+        )
+    }
+}
+
 @MainActor
 @Observable
 final class OpenAICodexAuthManager {
     static let shared = OpenAICodexAuthManager()
 
-    static let accessTokenAccount = "oauth_openai_codex_access_token"
-    static let refreshTokenAccount = "oauth_openai_codex_refresh_token"
-    static let idTokenAccount = "oauth_openai_codex_id_token"
-    static let accountIDAccount = "oauth_openai_codex_account_id"
+    // These are immutable Keychain identifiers, not actor-owned state. They
+    // are also needed by the nonisolated production composition path that
+    // resolves a run before handing UI state back to the main actor.
+    nonisolated static let accessTokenAccount =
+        "oauth_openai_codex_access_token"
+    nonisolated static let refreshTokenAccount =
+        "oauth_openai_codex_refresh_token"
+    nonisolated static let idTokenAccount = "oauth_openai_codex_id_token"
+    nonisolated static let accountIDAccount = "oauth_openai_codex_account_id"
+    private static let authenticationFailureMessage =
+        "ChatGPT rejected this session. Sign in again before retrying."
     static let verificationURL: URL = {
         var components = URLComponents(
             string: "https://auth.openai.com/codex/device"
@@ -715,7 +779,11 @@ final class OpenAICodexAuthManager {
 
     private(set) var state: OpenAICodexAuthState = .signedOut
     @ObservationIgnored private var loginTask: Task<Void, Never>?
-    @ObservationIgnored private let keychain = KeychainStore()
+    @ObservationIgnored private var operationGeneration: UInt64 = 0
+    @ObservationIgnored private var activeOperationID: UInt64?
+    @ObservationIgnored private var readyAccessTokenDigest: Data?
+    @ObservationIgnored private var rejectedAccessTokenDigest: Data?
+    @ObservationIgnored private let dependencies: OpenAICodexAuthDependencies
     #if DEBUG || targetEnvironment(simulator)
     @ObservationIgnored private var deviceCodeFixtureActive = false
     #endif
@@ -730,8 +798,14 @@ final class OpenAICodexAuthManager {
         return code
     }
 
-    private init() {
-        refreshStoredStatus()
+    init(
+        dependencies: OpenAICodexAuthDependencies = .live,
+        refreshStoredStatusOnInit: Bool = true
+    ) {
+        self.dependencies = dependencies
+        if refreshStoredStatusOnInit {
+            refreshStoredStatus()
+        }
     }
 
     deinit {
@@ -742,17 +816,32 @@ final class OpenAICodexAuthManager {
         #if DEBUG || targetEnvironment(simulator)
         guard !deviceCodeFixtureActive else { return }
         #endif
-        guard let accessToken = try? keychain.read(Self.accessTokenAccount),
+        // A live device-login or token-refresh operation owns the state until
+        // it finishes. Re-reading storage mid-operation could otherwise make
+        // a foreground notification overwrite its progress.
+        guard activeOperationID == nil else { return }
+        guard let accessToken = try? dependencies.readCredential(
+            Self.accessTokenAccount
+        ),
               !accessToken.isEmpty
         else {
+            readyAccessTokenDigest = nil
             state = .signedOut
+            return
+        }
+        let accessTokenDigest = Self.credentialDigest(accessToken)
+        if rejectedAccessTokenDigest == accessTokenDigest {
+            readyAccessTokenDigest = nil
+            try? dependencies.deleteCredential(Self.accessTokenAccount)
+            state = .failed(Self.authenticationFailureMessage)
             return
         }
         let claims = Self.jwtClaims(accessToken)
         if let expiration = claims.expiration,
-           expiration <= Date().addingTimeInterval(90)
+           expiration <= dependencies.now().addingTimeInterval(90)
         {
-            if let refreshToken = try? keychain.read(
+            readyAccessTokenDigest = nil
+            if let refreshToken = try? dependencies.readCredential(
                 Self.refreshTokenAccount
             ), !refreshToken.isEmpty {
                 refresh(refreshToken: refreshToken)
@@ -764,8 +853,11 @@ final class OpenAICodexAuthManager {
             }
             return
         }
-        let idToken = try? keychain.read(Self.idTokenAccount)
-        let savedAccountID = try? keychain.read(Self.accountIDAccount)
+        let idToken = try? dependencies.readCredential(Self.idTokenAccount)
+        let savedAccountID = try? dependencies.readCredential(
+            Self.accountIDAccount
+        )
+        readyAccessTokenDigest = accessTokenDigest
         state = .signedIn(
             accountID: idToken.flatMap { Self.jwtClaims($0).accountID }
                 ?? claims.accountID
@@ -814,47 +906,22 @@ final class OpenAICodexAuthManager {
         #if DEBUG || targetEnvironment(simulator)
         deviceCodeFixtureActive = false
         #endif
-        loginTask?.cancel()
-        if case .failed = state {
-            refreshStoredStatus()
-            if isSignedIn { return }
-        }
-        ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
+        let operationID = beginOperation()
+        // An explicit retry is always a new device-login operation. In
+        // particular, do not call refreshStoredStatus() from `.failed`: that
+        // method may start a token refresh which the device-login task would
+        // immediately replace, allowing both operations to persist.
+        dependencies.clearModelCatalog()
+        readyAccessTokenDigest = nil
         state = .requestingCode
         loginTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let code = try await OpenAICodexOAuthClient.requestDeviceCode()
-                try Task.checkCancellation()
-                state = .awaitingApproval(
-                    code: code.userCode,
-                    expiresAt: Date().addingTimeInterval(15 * 60)
-                )
-                // The browser covers NovaForge on iPhone, so make the code
-                // available before the user chooses to leave this screen.
-                UIPasteboard.general.string = code.userCode
-                let exchange = try await OpenAICodexOAuthClient
-                    .waitForApproval(code)
-                try Task.checkCancellation()
-                state = .exchanging
-                let tokens = try await OpenAICodexOAuthClient
-                    .exchange(exchange)
-                try persist(tokens)
-                state = .signedIn(
-                    accountID: Self.accountID(in: tokens)
-                )
-            } catch is CancellationError {
-                if !isSignedIn { state = .signedOut }
-            } catch {
-                state = .failed(Self.safeMessage(error))
-            }
-            loginTask = nil
+            await self?.performDeviceLogin(operationID: operationID)
         }
     }
 
     func openVerificationPage() {
         if let userCode {
-            UIPasteboard.general.string = userCode
+            dependencies.copyUserCode(userCode)
         }
         // Device authorization has no callback. Full Safari avoids the inert
         // cached-account chooser seen in the embedded authentication sheet.
@@ -865,75 +932,215 @@ final class OpenAICodexAuthManager {
         #if DEBUG || targetEnvironment(simulator)
         deviceCodeFixtureActive = false
         #endif
-        loginTask?.cancel()
-        loginTask = nil
+        invalidateActiveOperation()
         if !isSignedIn { state = .signedOut }
     }
 
     func signOut() {
         cancelLogin()
-        try? keychain.delete(Self.accessTokenAccount)
-        try? keychain.delete(Self.refreshTokenAccount)
-        try? keychain.delete(Self.idTokenAccount)
-        try? keychain.delete(Self.accountIDAccount)
-        ProviderModelCatalogStore.shared.clear(provider: .openAICodex)
+        try? dependencies.deleteCredential(Self.accessTokenAccount)
+        try? dependencies.deleteCredential(Self.refreshTokenAccount)
+        try? dependencies.deleteCredential(Self.idTokenAccount)
+        try? dependencies.deleteCredential(Self.accountIDAccount)
+        dependencies.clearModelCatalog()
+        readyAccessTokenDigest = nil
+        rejectedAccessTokenDigest = nil
         state = .signedOut
+    }
+
+    /// A provider request received an HTTP 401 for the currently usable
+    /// ChatGPT session. Remove the access-token commit marker and immediately
+    /// make the composer treat the session as unavailable. This deliberately
+    /// does not replay the failed request; the user can start a fresh login,
+    /// and a later run is a new, bounded operation.
+    func invalidateAfterAuthenticationFailure(
+        rejectedAccessToken: String
+    ) {
+        // Bind the callback to the exact credential that received the 401. A
+        // late response from an older in-flight request must never delete a
+        // token committed by a newer login. The token is compared only in
+        // memory and is never interpolated into state, logs, or errors.
+        let rejectedDigest = Self.credentialDigest(rejectedAccessToken)
+        let shouldDeleteStoredToken: Bool
+        do {
+            let storedAccessToken = try dependencies.readCredential(
+                Self.accessTokenAccount
+            )
+            if let storedAccessToken {
+                guard storedAccessToken == rejectedAccessToken else { return }
+                shouldDeleteStoredToken = true
+            } else {
+                guard readyAccessTokenDigest == rejectedDigest else { return }
+                shouldDeleteStoredToken = false
+            }
+        } catch {
+            // Fail closed for the in-memory ready credential, but never issue
+            // a blind delete when Keychain could not prove which token is now
+            // stored. A newer login may already have replaced it.
+            guard readyAccessTokenDigest == rejectedDigest else { return }
+            shouldDeleteStoredToken = false
+        }
+        rejectedAccessTokenDigest = rejectedDigest
+        readyAccessTokenDigest = nil
+        if shouldDeleteStoredToken {
+            try? dependencies.deleteCredential(Self.accessTokenAccount)
+        }
+        dependencies.clearModelCatalog()
+        // If a new login or bounded refresh is already active, leave its state
+        // and operation identity untouched. It can commit a replacement token
+        // normally; failure already transitions that operation to `.failed`.
+        if activeOperationID == nil {
+            state = .failed(Self.authenticationFailureMessage)
+        }
     }
 
     #if DEBUG || targetEnvironment(simulator)
     func installDeviceCodeFixture(_ code: String) {
-        loginTask?.cancel()
-        loginTask = nil
+        invalidateActiveOperation()
         deviceCodeFixtureActive = true
         state = .awaitingApproval(
             code: code,
-            expiresAt: Date().addingTimeInterval(15 * 60)
+            expiresAt: dependencies.now().addingTimeInterval(15 * 60)
         )
-        UIPasteboard.general.string = code
+        dependencies.copyUserCode(code)
     }
     #endif
 
     private func refresh(refreshToken: String) {
-        guard loginTask == nil else { return }
+        guard activeOperationID == nil else { return }
+        let operationID = beginOperation()
         state = .exchanging
         loginTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let tokens = try await OpenAICodexOAuthClient.refresh(
-                    refreshToken: refreshToken
-                )
-                try persist(tokens)
-                state = .signedIn(
-                    accountID: Self.accountID(in: tokens)
-                )
-            } catch {
-                state = .failed(Self.safeMessage(error))
-            }
-            loginTask = nil
+            await self?.performRefresh(
+                refreshToken: refreshToken,
+                operationID: operationID
+            )
         }
     }
 
-    private func persist(_ tokens: OpenAICodexOAuthTokens) throws {
+    private func performDeviceLogin(operationID: UInt64) async {
+        do {
+            let code = try await dependencies.requestDeviceCode()
+            try requireCurrentOperation(operationID)
+            state = .awaitingApproval(
+                code: code.userCode,
+                expiresAt: dependencies.now().addingTimeInterval(15 * 60)
+            )
+            // The browser covers NovaForge on iPhone, so make the code
+            // available before the user chooses to leave this screen.
+            dependencies.copyUserCode(code.userCode)
+            let exchange = try await dependencies.waitForApproval(code)
+            try requireCurrentOperation(operationID)
+            state = .exchanging
+            let tokens = try await dependencies.exchange(exchange)
+            try requireCurrentOperation(operationID)
+            try persist(tokens, operationID: operationID)
+            try requireCurrentOperation(operationID)
+            state = .signedIn(accountID: Self.accountID(in: tokens))
+        } catch is CancellationError {
+            if isCurrentOperation(operationID), !isSignedIn {
+                state = .signedOut
+            }
+        } catch {
+            if isCurrentOperation(operationID) {
+                state = .failed(Self.safeMessage(error))
+            }
+        }
+        finishOperation(operationID)
+    }
+
+    private func performRefresh(
+        refreshToken: String,
+        operationID: UInt64
+    ) async {
+        do {
+            let tokens = try await dependencies.refresh(refreshToken)
+            try requireCurrentOperation(operationID)
+            try persist(tokens, operationID: operationID)
+            try requireCurrentOperation(operationID)
+            state = .signedIn(accountID: Self.accountID(in: tokens))
+        } catch is CancellationError {
+            if isCurrentOperation(operationID), !isSignedIn {
+                state = .signedOut
+            }
+        } catch {
+            if isCurrentOperation(operationID) {
+                state = .failed(Self.safeMessage(error))
+            }
+        }
+        finishOperation(operationID)
+    }
+
+    private func persist(
+        _ tokens: OpenAICodexOAuthTokens,
+        operationID: UInt64
+    ) throws {
+        try requireCurrentOperation(operationID)
+        let accessTokenDigest = Self.credentialDigest(tokens.accessToken)
+        guard rejectedAccessTokenDigest != accessTokenDigest else {
+            throw OpenAICodexAuthLifecycleError.rejectedAccessToken
+        }
         // Supporting values are written first and the access token is the
         // commit marker. This prevents a refresh/account write failure from
         // leaving a newly issued access token looking like a completed login.
         if let idToken = tokens.idToken, !idToken.isEmpty {
-            try keychain.save(idToken, account: Self.idTokenAccount)
+            try dependencies.saveCredential(idToken, Self.idTokenAccount)
         }
         if let refreshToken = tokens.refreshToken, !refreshToken.isEmpty {
-            try keychain.save(
+            try dependencies.saveCredential(
                 refreshToken,
-                account: Self.refreshTokenAccount
+                Self.refreshTokenAccount
             )
         }
         if let accountID = Self.accountID(in: tokens),
            !accountID.isEmpty
         {
-            try keychain.save(accountID, account: Self.accountIDAccount)
+            try dependencies.saveCredential(accountID, Self.accountIDAccount)
         }
-        try keychain.save(tokens.accessToken, account: Self.accessTokenAccount)
-        guard try keychain.read(Self.accessTokenAccount) == tokens.accessToken
+        try dependencies.saveCredential(
+            tokens.accessToken,
+            Self.accessTokenAccount
+        )
+        guard try dependencies.readCredential(Self.accessTokenAccount)
+            == tokens.accessToken
         else { throw KeychainError.invalidValue }
+        readyAccessTokenDigest = accessTokenDigest
+        rejectedAccessTokenDigest = nil
+    }
+
+    private func beginOperation() -> UInt64 {
+        let previousTask = loginTask
+        operationGeneration &+= 1
+        let operationID = operationGeneration
+        activeOperationID = operationID
+        loginTask = nil
+        previousTask?.cancel()
+        return operationID
+    }
+
+    private func invalidateActiveOperation() {
+        let previousTask = loginTask
+        operationGeneration &+= 1
+        activeOperationID = nil
+        loginTask = nil
+        previousTask?.cancel()
+    }
+
+    private func isCurrentOperation(_ operationID: UInt64) -> Bool {
+        activeOperationID == operationID
+    }
+
+    private func requireCurrentOperation(_ operationID: UInt64) throws {
+        try Task.checkCancellation()
+        guard isCurrentOperation(operationID) else {
+            throw CancellationError()
+        }
+    }
+
+    private func finishOperation(_ operationID: UInt64) {
+        guard isCurrentOperation(operationID) else { return }
+        activeOperationID = nil
+        loginTask = nil
     }
 
     private static func accountID(
@@ -941,6 +1148,10 @@ final class OpenAICodexAuthManager {
     ) -> String? {
         tokens.idToken.flatMap { jwtClaims($0).accountID }
             ?? jwtClaims(tokens.accessToken).accountID
+    }
+
+    private static func credentialDigest(_ credential: String) -> Data {
+        Data(SHA256.hash(data: Data(credential.utf8)))
     }
 
     private static func jwtClaims(
@@ -965,6 +1176,9 @@ final class OpenAICodexAuthManager {
     }
 
     private static func safeMessage(_ error: any Error) -> String {
+        if error is OpenAICodexAuthLifecycleError {
+            return authenticationFailureMessage
+        }
         if let error = error as? OpenAICodexOAuthError {
             return error.errorDescription ?? "ChatGPT sign-in failed."
         }

@@ -102,7 +102,9 @@ struct FilesView: View {
     @State var didOpenFilesSurfaceDemo = false
     @FocusState var searchFocused: Bool
     
-    var settings: AgentSettings? { settingsList.first }
+    var settings: AgentSettings? {
+        try? AgentSettingsRecordSelection.canonical(from: settingsList)
+    }
     @State var isExporting = false
     @State var recentCutoff = Date().addingTimeInterval(-300)
     @State var cachedStats = FileStats()
@@ -231,6 +233,15 @@ struct FilesView: View {
         self.isWorkspaceRoutingLocked = isWorkspaceRoutingLocked
         self.openArtifactLandscapeFullScreen = openArtifactLandscapeFullScreen
         self.openChat = openChat
+
+        var settingsDescriptor = FetchDescriptor<AgentSettings>(
+            sortBy: [
+                SortDescriptor(\AgentSettings.updatedAt, order: .reverse)
+            ]
+        )
+        settingsDescriptor.fetchLimit =
+            AgentSettingsRecordSelection.boundedFetchLimit
+        _settingsList = Query(settingsDescriptor)
 
         let scopeProjectID = scopeProject?.id
         _scopedArtifactRecords = Query(Self.artifactRecordsDescriptor(scopeProjectID: scopeProjectID))

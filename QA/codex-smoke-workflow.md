@@ -195,6 +195,59 @@ Fast gate does not fully cover:
 - Full accessibility audit across every Dynamic Type size and VoiceOver rotor path.
 - Exhaustive Liquid Glass frame-time analysis across every device/runtime; the fast performance gate enforces the Project scroll, tab switch, and Chat streaming budgets on the proof simulator, while deep performance sweeps remain separate.
 
+## Live Provider Simulator Canaries
+
+Build the UI test bundle first, then run the anonymous Zen canary against the
+exact `.xctestrun` that will back the release proof. Set both environment forms
+because Xcode versions differ in whether shell variables reach the XCTest runner
+with a `TEST_RUNNER_` prefix:
+
+```sh
+NOVAFORGE_RUN_SIMULATOR_ZEN_CANARY=1 \
+TEST_RUNNER_NOVAFORGE_RUN_SIMULATOR_ZEN_CANARY=1 \
+xcodebuild test-without-building \
+  -xctestrun /absolute/path/to/AgentPad_iphonesimulator26.1-x86_64.xctestrun \
+  -destination 'platform=iOS Simulator,id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' \
+  -only-testing:AgentPadUITests/AgentPadUITests/testSimulatorAnonymousZenProviderCanaryCompletesAndPersists
+```
+
+The ChatGPT subscription canary is optional additional coverage. First sign in
+through NovaForge Control inside that exact Simulator. Do not erase the
+Simulator, reset its content, or uninstall NovaForge afterward: the canary
+intentionally consumes the app-owned Keychain session and never copies a token
+through a test argument, environment variable, log, or screenshot.
+
+```sh
+NOVAFORGE_RUN_SIMULATOR_CHATGPT_CANARY=1 \
+TEST_RUNNER_NOVAFORGE_RUN_SIMULATOR_CHATGPT_CANARY=1 \
+xcodebuild test-without-building \
+  -xctestrun /absolute/path/to/AgentPad_iphonesimulator26.1-x86_64.xctestrun \
+  -destination 'platform=iOS Simulator,id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' \
+  -only-testing:AgentPadUITests/AgentPadUITests/testSimulatorChatGPTProviderCanaryCompletesAndPersists
+```
+
+Run the exact screenshot route separately after the standard ChatGPT canary.
+This proof resets ordinary UI/run state, explicitly reselects ChatGPT GPT-5.5
+and UltraCode, observes the delegated-run rail, rejects adapter/recovery UI,
+and requires the visible integrator request, response marker, provider/model,
+and Completed result to survive in History:
+
+```sh
+NOVAFORGE_RUN_SIMULATOR_CHATGPT_ULTRACODE_CANARY=1 \
+TEST_RUNNER_NOVAFORGE_RUN_SIMULATOR_CHATGPT_ULTRACODE_CANARY=1 \
+xcodebuild test-without-building \
+  -xctestrun /absolute/path/to/AgentPad_iphonesimulator26.1-x86_64.xctestrun \
+  -destination 'platform=iOS Simulator,id=4B9AB34A-404C-485F-B0BC-964F24D0AE83' \
+  -only-testing:AgentPadUITests/AgentPadUITests/testSimulatorChatGPTUltraCodeCanaryCompletesAndPersists
+```
+
+All three canaries require a completed assistant bubble and a Completed
+History receipt. The anonymous Zen canary remains the credential-free baseline
+used by the schema-v2 phone-install receipt. The UltraCode canary has a bounded
+17-minute XCTest allowance because it performs three real isolated worker runs
+and one real visible integrator run; any known failure surface aborts its polling
+early instead of consuming that allowance.
+
 ## Physical iPhone Update
 
 The phone helper is fail-closed and never contacts a device by default. First prepare and audit the signed candidate without device contact:

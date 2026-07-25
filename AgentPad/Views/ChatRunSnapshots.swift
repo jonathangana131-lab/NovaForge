@@ -77,6 +77,64 @@ struct ChatTerminalProofSnapshot: Identifiable, Equatable {
     }
 }
 
+/// `@Query` reports inserts and removals, but its collection can compare equal
+/// after an in-place SwiftData model mutation because the identities did not
+/// change. History renders copied rows, so these value signatures cover every
+/// mutable field consumed by those copies.
+struct HistoryToolRunCacheSignature: Equatable {
+    let id: UUID
+    let name: String
+    let argumentsJSON: String
+    let output: String
+    let statusRawValue: String
+    let createdAt: Date
+    let completedAt: Date?
+    let requiresApproval: Bool
+    let isMutating: Bool
+    let runIDString: String?
+    let runSequence: Int?
+    let runStatusRawValue: String?
+
+    init(_ run: ToolRun) {
+        id = run.id
+        name = run.name
+        argumentsJSON = run.argumentsJSON
+        output = run.output
+        statusRawValue = run.statusRawValue
+        createdAt = run.createdAt
+        completedAt = run.completedAt
+        requiresApproval = run.requiresApproval
+        isMutating = run.isMutating
+        runIDString = run.runIDString
+        runSequence = run.runSequence
+        runStatusRawValue = run.runStatusRawValue
+    }
+}
+
+struct HistoryTerminalRecordCacheSignature: Equatable {
+    let id: UUID
+    let command: String
+    let output: String
+    let statusRawValue: String
+    let workspaceName: String
+    let createdAt: Date
+    let completedAt: Date
+    let durationMs: Double
+    let sourceToolRunIDString: String?
+
+    init(_ record: TerminalCommandRecord) {
+        id = record.id
+        command = record.command
+        output = record.output
+        statusRawValue = record.statusRawValue
+        workspaceName = record.workspaceName
+        createdAt = record.createdAt
+        completedAt = record.completedAt
+        durationMs = record.durationMs
+        sourceToolRunIDString = record.sourceToolRunIDString
+    }
+}
+
 struct ChatProjectOSRunSnapshot: Identifiable, Equatable {
     let id: UUID
     let status: ProjectOSRunStatus

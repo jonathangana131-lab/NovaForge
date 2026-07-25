@@ -628,7 +628,8 @@ final class AgentSystemPresentationStoreTests: XCTestCase {
             )
         }
         try await eventually {
-            store.presentation(for: firstScope).isAccepting
+            store.presentation(for: firstScope).isAccepting &&
+                harness.startedCommands.count == 1
         }
 
         let blocked = await store.start(
@@ -820,6 +821,328 @@ final class AgentSystemPresentationStoreTests: XCTestCase {
         _ = try await store.route(group.cancelCommand)
     }
 
+    func testUltraCodeCancelDuringCloneStartsNothingAndCleansAfterCancellation()
+        async throws
+    {
+        let preferences = AgentRunPreferenceStore.shared
+        let previousMode = preferences.orchestrationMode
+        defer { preferences.orchestrationMode = previousMode }
+        preferences.orchestrationMode = .ultraCode
+
+        let harness = PresentationStoreHarness()
+        let cloneGate = PresentationStartGate()
+        harness.cloneGate = cloneGate
+        let store = AgentSystemPresentationStore(
+            dependencies: harness.dependencies()
+        )
+        try await store.bind(container: makeContainer())
+        let input = makeStartInput(seed: 810, workspaceName: "CloneCancel")
+        let scope = AgentSystemPresentationScope(
+            project: nil,
+            conversation: input.conversation
+        )
+
+        let startTask = Task { @MainActor in
+            await store.startConfigured(
+                prompt: "Keep this exact draft until visible acceptance.",
+                conversation: input.conversation,
+                project: nil,
+                workspace: input.workspace,
+                settings: input.settings
+            )
+        }
+        try await eventually { !harness.clonedWorkspaceNames.isEmpty }
+        XCTAssertEqual(
+            store.orchestrationPresentation(for: scope)?.phase,
+            .preparing
+        )
+
+        await store.cancelOrchestration(scope: scope)
+        XCTAssertEqual(
+            store.orchestrationPresentation(for: scope)?.phase,
+            .stopping
+        )
+        await cloneGate.release()
+
+        let cancelledDisposition = await startTask.value
+        XCTAssertEqual(
+            cancelledDisposition,
+            .rejected(.requestInvalid)
+        )
+        XCTAssertTrue(harness.startedCommands.isEmpty)
+        XCTAssertEqual(harness.cleanedWorkspaceNames.count, 1)
+        XCTAssertEqual(
+            store.orchestrationPresentation(for: scope)?.phase,
+            .cancelled
+        )
+        XCTAssertEqual(
+            harness.orchestrationEvents,
+            ["clone-start", "cleanup"]
+        )
+        XCTAssertFalse(store.hasBlockingActivity)
+    }
+
+    func testUltraCodeCancelDuringRootAcceptanceRetainsAndSettlesAcceptedHandle()
+        async throws
+    {
+        let preferences = AgentRunPreferenceStore.shared
+        let previousMode = preferences.orchestrationMode
+        defer { preferences.orchestrationMode = previousMode }
+        preferences.orchestrationMode = .ultraCode
+
+        let harness = PresentationStoreHarness()
+        harness.freshRunPhase = .running
+        harness.freshActivityState = .running
+        let acceptanceGate = PresentationStartGate()
+        harness.startGate = acceptanceGate
+        harness.startGateAtCallCount = 1
+        let store = AgentSystemPresentationStore(
+            dependencies: harness.dependencies()
+        )
+        try await store.bind(container: makeContainer())
+        let input = makeStartInput(seed: 815, workspaceName: "AcceptCancel")
+        let scope = AgentSystemPresentationScope(
+            project: nil,
+            conversation: input.conversation
+        )
+
+        let startTask = Task { @MainActor in
+            await store.startConfigured(
+                prompt: "Cancel exactly while durable acceptance is in flight.",
+                conversation: input.conversation,
+                project: nil,
+                workspace: input.workspace,
+                settings: input.settings
+            )
+        }
+        try await eventually { harness.startedCommands.count == 1 }
+        guard case let .send(rootSend) = harness.startedCommands[0].payload else {
+            await acceptanceGate.release()
+            return XCTFail("Expected hidden root send command")
+        }
+
+        await store.cancelOrchestration(scope: scope)
+        XCTAssertEqual(
+            store.orchestrationPresentation(for: scope)?.phase,
+            .stopping
+        )
+        await acceptanceGate.release()
+
+        let disposition = await startTask.value
+        XCTAssertEqual(disposition, .rejected(.requestInvalid))
+        XCTAssertEqual(harness.startedCommands.count, 1)
+        XCTAssertEqual(
+            harness.cancelledRunIDs,
+            [rootSend.context.lineage.runID]
+        )
+        let cancelIndex = try XCTUnwrap(
+            harness.orchestrationEvents.firstIndex(where: {
+                $0.hasPrefix("cancel:")
+            })
+        )
+        let cleanupIndex = try XCTUnwrap(
+            harness.orchestrationEvents.firstIndex(of: "cleanup")
+        )
+        XCTAssertLessThan(cancelIndex, cleanupIndex)
+        XCTAssertEqual(
+            store.orchestrationPresentation(for: scope)?.phase,
+            .cancelled
+        )
+        XCTAssertFalse(store.hasBlockingActivity)
+    }
+
+    func testUltraCodeChildRejectionCancelsAcceptedRootBeforeCleanupAndRetainsDraft()
+        async throws
+    {
+        let preferences = AgentRunPreferenceStore.shared
+        let previousMode = preferences.orchestrationMode
+        defer { preferences.orchestrationMode = previousMode }
+        preferences.orchestrationMode = .ultraCode
+
+        let harness = PresentationStoreHarness()
+        harness.freshRunPhase = .running
+        harness.freshActivityState = .running
+        harness.startErrorAtCallCount = 2
+        let cleanupGate = PresentationStartGate()
+        harness.cleanupGate = cleanupGate
+        let store = AgentSystemPresentationStore(
+            dependencies: harness.dependencies()
+        )
+        try await store.bind(container: makeContainer())
+        let input = makeStartInput(seed: 820, workspaceName: "RejectCleanup")
+        let scope = AgentSystemPresentationScope(
+            project: nil,
+            conversation: input.conversation
+        )
+        let submittedDraft = "Do not lose this visible request."
+
+        let startTask = Task { @MainActor in
+            await store.startConfigured(
+                prompt: submittedDraft,
+                conversation: input.conversation,
+                project: nil,
+                workspace: input.workspace,
+                settings: input.settings
+            )
+        }
+
+        try await eventually {
+            harness.cancelledRunIDs.count == 1 &&
+                harness.cleanupStartedCount == 1
+        }
+        XCTAssertTrue(harness.cleanedWorkspaceNames.isEmpty)
+        XCTAssertEqual(
+            store.orchestrationPresentation(for: scope)?.phase,
+            .stopping
+        )
+        XCTAssertTrue(store.hasBlockingActivity)
+        XCTAssertEqual(
+            harness.orchestrationEvents.filter {
+                $0.hasPrefix("cancel:")
+            }.count,
+            1
+        )
+        XCTAssertFalse(harness.orchestrationEvents.contains("cleanup"))
+
+        await cleanupGate.release()
+        let disposition = await startTask.value
+
+        XCTAssertEqual(disposition, .rejected(.runtimeUnavailable))
+        XCTAssertEqual(harness.startedCommands.count, 2)
+        XCTAssertEqual(harness.cancelledRunIDs.count, 1)
+        XCTAssertEqual(harness.cleanedWorkspaceNames.count, 1)
+        let cancelIndex = try XCTUnwrap(
+            harness.orchestrationEvents.firstIndex(where: {
+                $0.hasPrefix("cancel:")
+            })
+        )
+        let cleanupIndex = try XCTUnwrap(
+            harness.orchestrationEvents.firstIndex(of: "cleanup")
+        )
+        XCTAssertLessThan(cancelIndex, cleanupIndex)
+        XCTAssertEqual(
+            store.orchestrationPresentation(for: scope)?.phase,
+            .failed
+        )
+        XCTAssertFalse(store.hasBlockingActivity)
+
+        let visibleConversationID = ConversationID(
+            rawValue: input.conversation.id
+        )
+        XCTAssertFalse(harness.startedCommands.contains { command in
+            guard case let .send(send) = command.payload else { return false }
+            return send.context.conversationID == visibleConversationID
+        })
+        XCTAssertFalse(disposition.wasAccepted)
+        var visibleComposerDraft = submittedDraft
+        if disposition.wasAccepted { visibleComposerDraft = "" }
+        XCTAssertEqual(visibleComposerDraft, submittedDraft)
+    }
+
+    func testUltraCodeAcceptanceIsDelayedUntilVisibleIntegratorIsDurable()
+        async throws
+    {
+        let preferences = AgentRunPreferenceStore.shared
+        let previousMode = preferences.orchestrationMode
+        defer { preferences.orchestrationMode = previousMode }
+        preferences.orchestrationMode = .ultraCode
+
+        let harness = PresentationStoreHarness()
+        harness.freshRunPhase = .completed
+        harness.freshActivityState = .succeeded
+        let store = AgentSystemPresentationStore(
+            dependencies: harness.dependencies()
+        )
+        try await store.bind(container: makeContainer())
+        let input = makeStartInput(seed: 830, workspaceName: "VisibleAcceptance")
+        let scope = AgentSystemPresentationScope(
+            project: nil,
+            conversation: input.conversation
+        )
+
+        let disposition = await store.startConfigured(
+            prompt: "Visible only after integration.",
+            conversation: input.conversation,
+            project: nil,
+            workspace: input.workspace,
+            settings: input.settings
+        )
+
+        XCTAssertEqual(harness.startedCommands.count, 4)
+        guard case let .accepted(acceptedRunID) = disposition,
+              case let .send(integrator) = harness.startedCommands[3].payload
+        else { return XCTFail("Expected visible integrator acceptance") }
+        XCTAssertEqual(acceptedRunID, integrator.context.lineage.runID)
+        XCTAssertEqual(
+            integrator.context.conversationID,
+            ConversationID(rawValue: input.conversation.id)
+        )
+        for workerCommand in harness.startedCommands.prefix(3) {
+            guard case let .send(worker) = workerCommand.payload else {
+                return XCTFail("Expected worker send command")
+            }
+            XCTAssertNotEqual(
+                worker.context.conversationID,
+                ConversationID(rawValue: input.conversation.id)
+            )
+        }
+        try await eventually {
+            store.orchestrationPresentation(for: scope)?.phase == .completed
+        }
+        XCTAssertFalse(store.hasBlockingActivity)
+    }
+
+    func testProjectionMonitorRecoversAfterMoreThanEightConsecutiveFailures()
+        async throws
+    {
+        let harness = PresentationStoreHarness()
+        let handle = harness.installRun(
+            seed: 840,
+            projectID: nil,
+            conversationID: ConversationID(rawValue: presentationUUID(841)),
+            workspaceID: WorkspaceID(rawValue: presentationUUID(842)),
+            phase: .running,
+            activityState: .running
+        )
+        harness.registered = [handle]
+        harness.remainingLoadFailures = 12
+        let store = AgentSystemPresentationStore(
+            dependencies: harness.dependencies()
+        )
+        try await store.bind(container: makeContainer())
+        let scope = AgentSystemPresentationScope(
+            projectID: nil,
+            conversationID: handle.identity.conversationID
+        )
+
+        try await eventually {
+            harness.remainingLoadFailures == 0 &&
+                !store.presentation(for: scope).isSynchronizing
+        }
+        XCTAssertEqual(harness.projectionLoadFailureCount, 12)
+        XCTAssertGreaterThan(harness.projectionLoadFailureCount, 8)
+        XCTAssertGreaterThan(harness.monitorDelays.count, 8)
+        XCTAssertTrue(harness.monitorDelays.allSatisfy {
+            $0 <= .milliseconds(1_280)
+        })
+        XCTAssertTrue(harness.monitorDelays.contains(.milliseconds(1_280)))
+        XCTAssertEqual(
+            store.presentation(for: scope).activeGroup?.state,
+            .running
+        )
+        XCTAssertNil(store.presentation(for: scope).failure)
+
+        harness.updateRun(
+            handle,
+            phase: .completed,
+            activityState: .succeeded,
+            sequence: 2
+        )
+        try await eventually {
+            store.presentation(for: scope).activeGroup?.state == .succeeded
+        }
+    }
+
     private func makeContainer() throws -> ModelContainer {
         try ModelContainer(
             for: Schema(versionedSchema: NovaForgeSchemaV4.self),
@@ -895,8 +1218,15 @@ private final class PresentationStoreHarness {
     var loadError: PresentationHarnessError?
     var routeError: PresentationHarnessError?
     var startError: PresentationHarnessError?
+    var startErrorAtCallCount: Int?
     var omitFreshProjection = false
     var startGate: PresentationStartGate?
+    var startGateAtCallCount: Int?
+    var cloneGate: PresentationStartGate?
+    var cloneError: PresentationHarnessError?
+    var cleanupGate: PresentationStartGate?
+    var cancelError: PresentationHarnessError?
+    var remainingLoadFailures = 0
 
     var freshRunPhase: AgentRunPhase = .running
     var freshActivityState: AgentActivityState = .running
@@ -909,11 +1239,18 @@ private final class PresentationStoreHarness {
     private(set) var makeBoundCallCount = 0
     private(set) var materializeCallCount = 0
     private(set) var snapshotCallCount = 0
+    private(set) var projectionLoadFailureCount = 0
     private(set) var startedCommands: [AgentCommand] = []
     private(set) var startedPlans: [AgentSystemFreshRunPlan] = []
     private(set) var loadedScopes: [AgentActivityProjectionScope] = []
     private(set) var routedCommands: [AgentActivityCommand] = []
     private(set) var clearedLiveRunIDs: [RunID] = []
+    private(set) var cancelledRunIDs: [RunID] = []
+    private(set) var clonedWorkspaceNames: [[String]] = []
+    private(set) var cleanedWorkspaceNames: [[String]] = []
+    private(set) var cleanupStartedCount = 0
+    private(set) var orchestrationEvents: [String] = []
+    private(set) var monitorDelays: [Duration] = []
 
     func dependencies() -> AgentSystemPresentationStoreDependencies {
         AgentSystemPresentationStoreDependencies(
@@ -944,6 +1281,39 @@ private final class PresentationStoreHarness {
                 }
                 return state
             },
+            cancel: { [weak self] handle in
+                guard let self else {
+                    throw PresentationHarnessError.deallocated
+                }
+                return try self.cancel(handle)
+            },
+            cloneWorkspaces: { [weak self] _, destinations in
+                guard let self else {
+                    throw PresentationHarnessError.deallocated
+                }
+                let names = destinations.map(\.workspaceName)
+                self.clonedWorkspaceNames.append(names)
+                self.orchestrationEvents.append("clone-start")
+                if let cloneGate = self.cloneGate { await cloneGate.wait() }
+                try Task.checkCancellation()
+                if let cloneError = self.cloneError { throw cloneError }
+                self.orchestrationEvents.append("clone-finished")
+            },
+            cleanupWorkspaces: { [weak self] snapshots in
+                guard let self else { return }
+                self.cleanupStartedCount += 1
+                if let cleanupGate = self.cleanupGate {
+                    await cleanupGate.wait()
+                }
+                self.cleanedWorkspaceNames.append(
+                    snapshots.map(\.workspaceName)
+                )
+                self.orchestrationEvents.append("cleanup")
+            },
+            monitorDelay: { [weak self] duration in
+                self?.monitorDelays.append(duration)
+                try await Task.sleep(for: .milliseconds(1))
+            },
             makeBound: { [weak self] _ in
                 guard let self else {
                     return Self.deallocatedBoundDependencies()
@@ -962,6 +1332,11 @@ private final class PresentationStoreHarness {
                             throw PresentationHarnessError.deallocated
                         }
                         self.loadedScopes.append(scope)
+                        if self.remainingLoadFailures > 0 {
+                            self.remainingLoadFailures -= 1
+                            self.projectionLoadFailureCount += 1
+                            throw PresentationHarnessError.materialization
+                        }
                         if let loadError { throw loadError }
                         guard let runID = scope.runID,
                               let group = self.groups[runID]
@@ -1108,6 +1483,14 @@ private final class PresentationStoreHarness {
     ) async throws -> AgentSystemRunHandle {
         startedCommands.append(command)
         startedPlans.append(plan)
+        let callCount = startedCommands.count
+        if startGateAtCallCount == callCount, let startGate {
+            await startGate.wait()
+            try Task.checkCancellation()
+        }
+        if startErrorAtCallCount == callCount {
+            throw PresentationHarnessError.start
+        }
         if let startError { throw startError }
         guard case let .send(send) = command.payload else {
             throw PresentationHarnessError.invalidCommand
@@ -1146,8 +1529,30 @@ private final class PresentationStoreHarness {
                 text: freshLiveText
             )
         }
-        if let startGate { await startGate.wait() }
+        if startGateAtCallCount == nil, let startGate {
+            await startGate.wait()
+        }
         return handle
+    }
+
+    private func cancel(
+        _ handle: AgentSystemRunHandle
+    ) throws -> AgentDomain.AgentRunState {
+        cancelledRunIDs.append(handle.runID)
+        orchestrationEvents.append("cancel:\(handle.runID.rawValue.uuidString)")
+        if let cancelError { throw cancelError }
+        updateRun(
+            handle,
+            phase: .cancelled,
+            activityState: .cancelled,
+            sequence: (
+                snapshots[handle.runID]?.lastSequence?.rawValue ?? 1
+            ) + 1
+        )
+        guard let state = snapshots[handle.runID] else {
+            throw PresentationHarnessError.missingSnapshot
+        }
+        return state
     }
 
     private func makeContext(

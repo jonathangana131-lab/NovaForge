@@ -122,6 +122,177 @@ final class ProviderAdapterContractTests: XCTestCase {
         XCTAssertNil(publicBody["store"])
     }
 
+    func testDeepSeekV4ToolContinuationReplaysReasoningOnAssistantEnvelope() throws {
+        let model = ProviderModelID(rawValue: "deepseek-v4-flash-free")
+        let adapter = OpenCodeZenChatCompletionsAdapter(model: model)
+        func request(replay: ModelReasoningReplay?) -> CanonicalProviderRequest {
+            CanonicalProviderRequest(
+                requestID: "deepseek-v4-continuation",
+                model: model,
+                messages: [
+                    .init(role: .user, content: [.text("Inspect the file.")]),
+                    .init(
+                        role: .assistant,
+                        content: [.toolCall(.init(
+                            callID: "call-1",
+                            name: "read_file",
+                            arguments: .object(["path": .string("notes.md")])
+                        ))],
+                        reasoningReplay: replay
+                    ),
+                    .init(
+                        role: .tool,
+                        content: [.text("hello")],
+                        toolCallID: "call-1",
+                        name: "read_file"
+                    ),
+                ]
+            )
+        }
+
+        let body = try XCTUnwrap(try adapter.encode(request(replay: .chatCompletions(
+            .init(content: "private-reasoning")
+        ))).body.providerTestObject)
+        guard case let .array(messages)? = body["messages"],
+              case let .object(assistant) = messages[1]
+        else {
+            return XCTFail("Expected the historical assistant tool-call message")
+        }
+        XCTAssertEqual(assistant["reasoning_content"], .string("private-reasoning"))
+        XCTAssertNotNil(assistant["tool_calls"])
+        XCTAssertEqual(assistant["role"], .string("assistant"))
+
+        XCTAssertThrowsError(try adapter.encode(request(replay: nil))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_reasoning_replay_missing"
+            )
+        }
+    }
+
+    func testChatGPTCodexToolContinuationReplaysEncryptedReasoningInput() throws {
+        let model = ProviderModelID(rawValue: "gpt-5.5")
+        let adapter = OpenAICodexResponsesAdapter(model: model)
+        func request(replay: ModelReasoningReplay?) -> CanonicalProviderRequest {
+            CanonicalProviderRequest(
+                requestID: "codex-stateless-continuation",
+                model: model,
+                messages: [
+                    .init(role: .user, content: [.text("Inspect the file.")]),
+                    .init(
+                        role: .assistant,
+                        content: [.toolCall(.init(
+                            callID: "call-1",
+                            name: "read_file",
+                            arguments: .object(["path": .string("notes.md")])
+                        ))],
+                        reasoningReplay: replay
+                    ),
+                    .init(
+                        role: .tool,
+                        content: [.text("hello")],
+                        toolCallID: "call-1",
+                        name: "read_file"
+                    ),
+                ]
+            )
+        }
+
+        let body = try XCTUnwrap(try adapter.encode(request(replay: .responses(
+            .init(
+                itemID: "reasoning-1",
+                summary: ["Checked the request."],
+                content: ["private-reasoning"],
+                encryptedContent: "encrypted-reasoning"
+            )
+        ))).body.providerTestObject)
+        XCTAssertEqual(body["store"], .bool(false))
+        XCTAssertEqual(body["include"], .array([
+            .string("reasoning.encrypted_content"),
+        ]))
+        XCTAssertNil(body["previous_response_id"])
+        guard case let .array(input)? = body["input"] else {
+            return XCTFail("Expected Responses input array")
+        }
+        XCTAssertEqual(input.count, 4)
+        XCTAssertEqual(input[1], .object([
+            "id": .string("reasoning-1"),
+            "type": .string("reasoning"),
+            "summary": .array([.object([
+                "type": .string("summary_text"),
+                "text": .string("Checked the request."),
+            ])]),
+            "content": .array([.object([
+                "type": .string("reasoning_text"),
+                "text": .string("private-reasoning"),
+            ])]),
+            "encrypted_content": .string("encrypted-reasoning"),
+        ]))
+        guard case let .object(functionCall) = input[2],
+              case let .object(functionOutput) = input[3]
+        else {
+            return XCTFail("Expected function call followed by its output")
+        }
+        XCTAssertEqual(functionCall["type"], .string("function_call"))
+        XCTAssertEqual(functionCall["call_id"], .string("call-1"))
+        XCTAssertEqual(functionOutput["type"], .string("function_call_output"))
+        XCTAssertEqual(functionOutput["call_id"], .string("call-1"))
+
+        XCTAssertThrowsError(try adapter.encode(request(replay: nil))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_reasoning_replay_missing"
+            )
+        }
+    }
+
+    func testChatGPTCodexSecondNormalTurnReplaysPriorOutputItemsInOrder() throws {
+        let model = ProviderModelID(rawValue: "gpt-5.5")
+        let request = CanonicalProviderRequest(
+            requestID: "codex-second-normal-turn",
+            model: model,
+            messages: [
+                .init(role: .user, content: [.text("First turn")]),
+                .init(
+                    role: .assistant,
+                    content: [],
+                    reasoningReplay: .responses(.init(
+                        itemID: "reasoning-normal-1",
+                        summary: ["Considered the prompt."],
+                        encryptedContent: "encrypted-normal-reasoning"
+                    ))
+                ),
+                .init(role: .assistant, content: [.text("First answer")]),
+                .init(role: .user, content: [.text("Second turn")]),
+            ]
+        )
+
+        let body = try XCTUnwrap(
+            try OpenAICodexResponsesAdapter(model: model)
+                .encode(request).body.providerTestObject
+        )
+        guard case let .array(input)? = body["input"] else {
+            return XCTFail("Expected Responses input array")
+        }
+        XCTAssertEqual(input.count, 4)
+        XCTAssertEqual(input[1], .object([
+            "id": .string("reasoning-normal-1"),
+            "type": .string("reasoning"),
+            "summary": .array([.object([
+                "type": .string("summary_text"),
+                "text": .string("Considered the prompt."),
+            ])]),
+            "encrypted_content": .string("encrypted-normal-reasoning"),
+        ]))
+        guard case let .object(firstAnswer) = input[2],
+              case let .object(secondTurn) = input[3]
+        else {
+            return XCTFail("Expected assistant output followed by next user input")
+        }
+        XCTAssertEqual(firstAnswer["role"], .string("assistant"))
+        XCTAssertEqual(secondTurn["role"], .string("user"))
+    }
+
     func testSingleToolGoldenFixturePreservesTypedArgumentsAndUsage() throws {
         try assertStreamFixture("responses_single_tool")
     }
@@ -868,6 +1039,8 @@ private func eventSignature(_ envelope: ProviderAttemptEvent) throws -> String {
         return "text|\(value.outputIndex)|\(value.text)"
     case let .reasoningDelta(value):
         return "reasoning|\(value.outputIndex)|\(value.text)"
+    case let .reasoningReplay(value):
+        return "reasoningReplay|\(value.outputIndex)|\(value.replay)"
     case let .toolCallStarted(value):
         return "toolStarted|\(value.outputIndex)|\(value.itemID ?? "-")|\(value.callID)|\(value.name)"
     case let .toolCallArgumentsDelta(value):

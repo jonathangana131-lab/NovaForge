@@ -789,9 +789,29 @@ struct SettingsView: View {
     }
 
     private var localModelSection: some View {
-        SettingsSection(title: "On-Device Model", subtitle: "Private local coding, tuned for iPhone memory limits") {
+        SettingsSection(
+            title: "On-Device Models",
+            subtitle: "Fresh coding models, pinned provenance, and fail-closed iPhone memory gates"
+        ) {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(LocalModelCatalog.all) { variant in
+                VStack(alignment: .leading, spacing: 7) {
+                    Label("Built for iPhone 12—not a desktop model list", systemImage: "iphone.gen3.radiowaves.left.and.right")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(AgentPalette.ink)
+
+                    Text("NovaForge loads one model at a time, unloads it in the background or under memory pressure, and refuses first-prompt allocation when iOS headroom is unsafe.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AgentPalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Label("Release date, benchmark source, license, artifact size, context cap, and estimated peak are visible on every card.", systemImage: "checkmark.shield.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AgentPalette.green)
+                }
+                .padding(12)
+                .agentSurface(radius: 16, tint: AgentPalette.cyan.opacity(0.07))
+
+                ForEach(LocalModelCatalog.presentationOrder) { variant in
                     LocalModelVariantRow(
                         variant: variant,
                         selected: settings.modelID == variant.id,

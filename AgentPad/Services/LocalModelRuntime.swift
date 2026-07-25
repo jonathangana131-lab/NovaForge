@@ -1,10 +1,36 @@
 import CryptoKit
 import Foundation
 import Observation
+import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 #if canImport(SwiftLlama)
 import SwiftLlama
 #endif
+
+enum LocalModelDeviceFit: String, Sendable, Hashable {
+    case deviceProven
+    case ultraLight
+    case memorySaver
+
+    var title: String {
+        switch self {
+        case .deviceProven: "Device proven"
+        case .ultraLight: "Ultra light"
+        case .memorySaver: "Memory saver"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .deviceProven: "checkmark.shield.fill"
+        case .ultraLight: "bolt.fill"
+        case .memorySaver: "memorychip.fill"
+        }
+    }
+}
 
 struct LocalModelVariant: Identifiable, Hashable, Sendable {
     let id: String
@@ -26,6 +52,16 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     let generationThreadCount: Int32
     let batchThreadCount: Int32
     let isIPhone12SafeDefault: Bool
+    let releaseDateISO8601: String
+    let releaseDateLabel: String
+    let parameterLabel: String
+    let licenseLabel: String
+    let benchmarkSummary: String
+    let capabilitySummary: String
+    let deviceFit: LocalModelDeviceFit
+    let estimatedPeakMemoryBytes: UInt64
+    let minimumAvailableMemoryBeforeLoadBytes: UInt64
+    let sourceURL: URL
     let details: String
 
     var expectedSizeLabel: String {
@@ -33,7 +69,18 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     }
 
     var executionLabel: String {
-        useGPU ? "Metal GPU" : "CPU"
+        useGPU ? "Metal \(gpuLayerCount)L" : "CPU-only"
+    }
+
+    var estimatedPeakMemoryLabel: String {
+        ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: estimatedPeakMemoryBytes),
+            countStyle: .memory
+        )
+    }
+
+    var isNewRelease: Bool {
+        releaseDateISO8601 >= "2026-07-01"
     }
 }
 
@@ -65,7 +112,17 @@ enum LocalModelCatalog {
             generationThreadCount: 1,
             batchThreadCount: 1,
             isIPhone12SafeDefault: true,
-            details: "Default for iPhone 12. This official instruction-tuned coding checkpoint is smaller than the former 3B Q2 model, includes Qwen's tool-call template, and runs behind NovaForge's constrained action grammar, schema validation, approvals, and sandbox."
+            releaseDateISO8601: "2024-09-18",
+            releaseDateLabel: "Sep 18, 2024",
+            parameterLabel: "1.5B",
+            licenseLabel: "Apache 2.0",
+            benchmarkSummary: "Official Qwen coder baseline · physical-device canary proven",
+            capabilitySummary: "Code generation · editing · explanations",
+            deviceFit: .deviceProven,
+            estimatedPeakMemoryBytes: 1_900_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 2_150_000_000,
+            sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
+            details: "The proven iPhone 12 default. Conservative Metal offload, a 2,048-token context, and a 256-token answer cap protect first-prompt stability."
         ),
         .init(
             id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q3_K_M",
@@ -87,7 +144,17 @@ enum LocalModelCatalog {
             generationThreadCount: 1,
             batchThreadCount: 1,
             isIPhone12SafeDefault: false,
-            details: "A smaller fallback for devices under memory pressure. It keeps the same tool-trained Qwen checkpoint and the same constrained NovaForge agent boundary at a modest quality tradeoff."
+            releaseDateISO8601: "2024-09-18",
+            releaseDateLabel: "Sep 18, 2024",
+            parameterLabel: "1.5B",
+            licenseLabel: "Apache 2.0",
+            benchmarkSummary: "Same Qwen coder checkpoint · lighter quantization",
+            capabilitySummary: "Code generation · editing · explanations",
+            deviceFit: .memorySaver,
+            estimatedPeakMemoryBytes: 1_600_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 1_850_000_000,
+            sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
+            details: "A smaller fallback for devices under memory pressure. It keeps the same constrained NovaForge agent boundary at a modest quality tradeoff."
         ),
         .init(
             id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q2_K",
@@ -109,9 +176,60 @@ enum LocalModelCatalog {
             generationThreadCount: 1,
             batchThreadCount: 1,
             isIPhone12SafeDefault: false,
-            details: "Smallest supported emergency fallback. Tool selection remains grammar constrained, but code quality is lower than the recommended Q4 model."
+            releaseDateISO8601: "2024-09-18",
+            releaseDateLabel: "Sep 18, 2024",
+            parameterLabel: "1.5B",
+            licenseLabel: "Apache 2.0",
+            benchmarkSummary: "Same Qwen coder checkpoint · smallest stable footprint",
+            capabilitySummary: "Code generation · editing · explanations",
+            deviceFit: .memorySaver,
+            estimatedPeakMemoryBytes: 1_400_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 1_650_000_000,
+            sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
+            details: "The smallest emergency fallback. Tool selection stays grammar constrained when first-prompt stability matters more than model quality."
+        ),
+        .init(
+            id: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M",
+            displayName: "Atlas Coder 2 0.5B",
+            shortName: "Atlas 2",
+            quantization: "Q4_K_M",
+            filename: "Atlas-Coder-2-0.5B-Q4_K_M.gguf",
+            downloadURL: URL(string: "https://huggingface.co/Siddh07ETH/Atlas-Coder-2-0.5B-GGUF/resolve/91658df97464469db062115ecd29be281b1c5370/Atlas-Coder-2-0.5B-Q4_K_M.gguf?download=true")!,
+            expectedBytes: 397_808_608,
+            expectedSHA256: "3df10fa96ad19ddcda435506781308c9eeeedaab35f1a0a86ff198ad0e1ce871",
+            minimumPhysicalMemoryBytes: 3_000_000_000,
+            recommendedFreeDiskBytes: 900_000_000,
+            contextTokens: 2_048,
+            batchTokens: 32,
+            maxNewTokens: 256,
+            maxGenerationSeconds: 60,
+            useGPU: true,
+            gpuLayerCount: 4,
+            generationThreadCount: 1,
+            batchThreadCount: 1,
+            isIPhone12SafeDefault: false,
+            releaseDateISO8601: "2026-07-20",
+            releaseDateLabel: "Jul 20, 2026",
+            parameterLabel: "0.5B",
+            licenseLabel: "Apache 2.0",
+            benchmarkSummary: "HumanEval+ 36.6 · MBPP+ 43.9 (publisher-reported)",
+            capabilitySummary: "Python generation · debugging · code completion",
+            deviceFit: .ultraLight,
+            estimatedPeakMemoryBytes: 850_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 1_150_000_000,
+            sourceURL: URL(string: "https://huggingface.co/Siddh07ETH/Atlas-Coder-2-0.5B-GGUF")!,
+            details: "Released this week and built for low-memory coding. NovaForge pins the exact GGUF revision and checksum, then caps context and output for iPhone 12."
         )
     ]
+
+    static var presentationOrder: [LocalModelVariant] {
+        all.sorted {
+            if $0.releaseDateISO8601 == $1.releaseDateISO8601 {
+                return $0.expectedBytes > $1.expectedBytes
+            }
+            return $0.releaseDateISO8601 > $1.releaseDateISO8601
+        }
+    }
 
     static var defaultVariant: LocalModelVariant {
         safestVariant()
@@ -134,7 +252,12 @@ enum LocalModelCatalog {
         if physicalMemory < variant.minimumPhysicalMemoryBytes {
             let needed = ByteCountFormatter.string(fromByteCount: Int64(variant.minimumPhysicalMemoryBytes), countStyle: .memory)
             let current = ByteCountFormatter.string(fromByteCount: Int64(physicalMemory), countStyle: .memory)
-            return "\(variant.shortName) needs about \(needed) RAM. This device reports \(current). Use Qwen Coder Q3 or Q2."
+            return "\(variant.shortName) needs about \(needed) physical RAM. This device reports \(current). Choose an Ultra light or Memory saver model."
+        }
+
+        let safePeakBudget = physicalMemory * 55 / 100
+        if variant.estimatedPeakMemoryBytes > safePeakBudget {
+            return "\(variant.shortName)'s estimated \(variant.estimatedPeakMemoryLabel) peak is too close to this device's memory ceiling. Choose an Ultra light or Memory saver model."
         }
 
         return nil
@@ -150,6 +273,47 @@ enum LocalModelCatalog {
 
     static func fileURL(for variant: LocalModelVariant) throws -> URL {
         try modelDirectory().appendingPathComponent(variant.filename)
+    }
+}
+
+enum LocalModelRuntimeMemoryPolicy {
+    static func availableMemoryBytes() -> UInt64? {
+        #if os(iOS)
+        UInt64(os_proc_available_memory())
+        #else
+        nil
+        #endif
+    }
+
+    static func admissionMessage(
+        for variant: LocalModelVariant,
+        availableMemory: UInt64? = availableMemoryBytes(),
+        thermalState: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState
+    ) -> String? {
+        switch thermalState {
+        case .critical:
+            return "The iPhone is too hot to safely load a local model. Let it cool, then try again."
+        case .serious where variant.deviceFit != .ultraLight:
+            return "The iPhone is running hot. NovaForge held back \(variant.shortName); use Atlas 2 or let the phone cool first."
+        case .nominal, .fair, .serious:
+            break
+        @unknown default:
+            return "NovaForge could not verify the current thermal state, so it did not load a local model."
+        }
+
+        guard let availableMemory else { return nil }
+        guard availableMemory >= variant.minimumAvailableMemoryBeforeLoadBytes else {
+            let needed = ByteCountFormatter.string(
+                fromByteCount: Int64(clamping: variant.minimumAvailableMemoryBeforeLoadBytes),
+                countStyle: .memory
+            )
+            let available = ByteCountFormatter.string(
+                fromByteCount: Int64(clamping: availableMemory),
+                countStyle: .memory
+            )
+            return "NovaForge held back \(variant.shortName) before first-prompt allocation. It needs about \(needed) available; iOS reports \(available). Close memory-heavy apps or choose Atlas 2."
+        }
+        return nil
     }
 }
 
@@ -184,6 +348,18 @@ struct LocalModelDownloadProgress: Sendable {
         return min(1, max(0, Double(receivedBytes) / Double(totalBytes)))
     }
 }
+
+#if canImport(UIKit)
+private final class LocalModelLifecycleObserverBag: @unchecked Sendable {
+    var tokens: [NSObjectProtocol] = []
+
+    deinit {
+        for token in tokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+}
+#endif
 
 struct LocalModelBenchmarkResult: Equatable, Sendable {
     let modelName: String
@@ -236,6 +412,9 @@ final class LocalModelManager {
     private(set) var downloadedBytes: Int64 = 0
     @ObservationIgnored private var downloadTask: Task<Void, Never>?
     @ObservationIgnored private var statusTask: Task<Void, Never>?
+    #if canImport(UIKit)
+    @ObservationIgnored private let lifecycleObserverBag = LocalModelLifecycleObserverBag()
+    #endif
     #if DEBUG || targetEnvironment(simulator)
     @ObservationIgnored private var debugStatusOverride: (variantID: String, status: LocalModelStatus, receivedBytes: Int64?)?
     #endif
@@ -264,6 +443,22 @@ final class LocalModelManager {
     }
 
     init() {
+        #if canImport(UIKit)
+        for name in [
+            UIApplication.didReceiveMemoryWarningNotification,
+            UIApplication.didEnterBackgroundNotification,
+        ] {
+            lifecycleObserverBag.tokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: name,
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    Task { await LocalModelClient.shared.unload() }
+                }
+            )
+        }
+        #endif
         refreshStatus()
     }
 
@@ -411,6 +606,7 @@ final class LocalModelManager {
         #endif
         status = .checking
         Task(priority: .utility) { [weak self, variant] in
+            await LocalModelClient.shared.unload(modelID: variant.id)
             let deleteError = await Task.detached(priority: .utility) { () -> String? in
                 do {
                     let url = try LocalModelCatalog.fileURL(for: variant)
@@ -1089,17 +1285,66 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
     static let shared = LocalModelClient()
 
     #if canImport(SwiftLlama)
-    private var services: [String: LlamaService] = [:]
+    private var loadedService: (variantID: String, service: LlamaService)?
     #endif
 
     func stop(model: String) async {
         #if canImport(SwiftLlama)
         let variant = LocalModelCatalog.variant(for: model) ?? LocalModelCatalog.defaultVariant
-        if let service = services[variant.id] {
+        if loadedService?.variantID == variant.id,
+           let service = loadedService?.service {
             await service.stopCompletion()
         }
         #endif
     }
+
+    func unload(modelID: String? = nil) async {
+        #if canImport(SwiftLlama)
+        guard let loadedService,
+              modelID == nil || loadedService.variantID == modelID else { return }
+        await loadedService.service.stopCompletion()
+        self.loadedService = nil
+        #endif
+    }
+
+    #if canImport(SwiftLlama)
+    private func service(
+        for variant: LocalModelVariant,
+        modelURL: URL
+    ) async throws -> LlamaService {
+        if let loadedService, loadedService.variantID == variant.id {
+            if let message = LocalModelRuntimeMemoryPolicy.admissionMessage(
+                for: variant,
+                availableMemory: nil
+            ) {
+                await unload(modelID: variant.id)
+                throw LocalModelRuntimeError.incompatibleDevice(message)
+            }
+            return loadedService.service
+        }
+
+        await unload()
+        try await Task.sleep(for: .milliseconds(80))
+        if let message = LocalModelRuntimeMemoryPolicy.admissionMessage(for: variant) {
+            throw LocalModelRuntimeError.incompatibleDevice(message)
+        }
+
+        let service = LlamaService(
+            modelUrl: modelURL,
+            config: .init(
+                batchSize: variant.batchTokens,
+                maxTokenCount: variant.contextTokens,
+                useGPU: variant.useGPU,
+                gpuLayerCount: variant.gpuLayerCount,
+                generationThreadCount: variant.generationThreadCount,
+                batchThreadCount: variant.batchThreadCount,
+                yieldEveryTokenCount: 1
+            )
+        )
+        loadedService = (variant.id, service)
+        return service
+    }
+    #endif
 
     func verifyLocalModelArtifact(modelID: String) async throws {
         guard let variant = LocalModelCatalog.variant(for: modelID) else {
@@ -1149,19 +1394,7 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
             .verifiedURL(for: variant)
 
         #if canImport(SwiftLlama)
-        let service = services[variant.id] ?? LlamaService(
-            modelUrl: modelURL,
-            config: .init(
-                batchSize: variant.batchTokens,
-                maxTokenCount: variant.contextTokens,
-                useGPU: variant.useGPU,
-                gpuLayerCount: variant.gpuLayerCount,
-                generationThreadCount: variant.generationThreadCount,
-                batchThreadCount: variant.batchThreadCount,
-                yieldEveryTokenCount: 1
-            )
-        )
-        services[variant.id] = service
+        let service = try await service(for: variant, modelURL: modelURL)
 
         let latestUserIndex = request.messages.lastIndex(where: {
             $0.role == .user
@@ -1318,19 +1551,7 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
             .verifiedURL(for: variant)
 
         #if canImport(SwiftLlama)
-        let service = services[variant.id] ?? LlamaService(
-            modelUrl: modelURL,
-            config: .init(
-                batchSize: variant.batchTokens,
-                maxTokenCount: variant.contextTokens,
-                useGPU: variant.useGPU,
-                gpuLayerCount: variant.gpuLayerCount,
-                generationThreadCount: variant.generationThreadCount,
-                batchThreadCount: variant.batchThreadCount,
-                yieldEveryTokenCount: 1
-            )
-        )
-        services[variant.id] = service
+        let service = try await service(for: variant, modelURL: modelURL)
 
         let llamaMessages = request.messages.map { message in
             let role: LlamaChatMessage.Role = switch message.role {
@@ -1465,19 +1686,7 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
             .verifiedURL(for: variant)
 
         #if canImport(SwiftLlama)
-        let service = services[variant.id] ?? LlamaService(
-            modelUrl: modelURL,
-            config: .init(
-                batchSize: variant.batchTokens,
-                maxTokenCount: variant.contextTokens,
-                useGPU: variant.useGPU,
-                gpuLayerCount: variant.gpuLayerCount,
-                generationThreadCount: variant.generationThreadCount,
-                batchThreadCount: variant.batchThreadCount,
-                yieldEveryTokenCount: 1
-            )
-        )
-        services[variant.id] = service
+        let service = try await service(for: variant, modelURL: modelURL)
 
         let systemPrompt = localSystemPrompt(customSystemPrompt: customSystemPrompt, workspaceSummary: workspaceSummary)
         let sanitizedTranscript = ProviderMessageSanitizer.sanitize(systemPrompt: systemPrompt, history: messages)

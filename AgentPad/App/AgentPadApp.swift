@@ -1449,7 +1449,8 @@ struct NovaForgeMainApp: App {
         let context = container.mainContext
         do {
             var settingsFetch = FetchDescriptor<AgentSettings>()
-            settingsFetch.fetchLimit = 1
+            settingsFetch.fetchLimit =
+                AgentSettingsRecordSelection.boundedFetchLimit
             let existingSettings = try context.fetch(settingsFetch)
             let existingConversations = try context.fetch(FetchDescriptor<Conversation>())
             let projectRecords = try ProjectBootstrap.prefetchRecords(in: context)
@@ -1457,8 +1458,14 @@ struct NovaForgeMainApp: App {
             // Launch mutation begins only after all required store reads have
             // succeeded, so a fetch error can never manufacture empty defaults.
             let settings: AgentSettings
-            if let existing = existingSettings.first {
+            if let existing = try AgentSettingsRecordSelection
+                .canonicalAndDeleteDuplicates(
+                    from: existingSettings,
+                    in: context
+                )
+            {
                 settings = existing
+                _ = settings.repairStaleModelSelection()
                 if settings.provider == .local,
                    let selectedVariant = LocalModelCatalog.variant(for: settings.modelID),
                    LocalModelCatalog.compatibilityMessage(for: selectedVariant) != nil {

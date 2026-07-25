@@ -73,6 +73,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
     }
 
     private let credential: String
+    private let chatGPTAccountID: String?
     private enum Authority: Sendable {
         case textOnly(HostedTextOnlyProviderCapability)
         case readOnlyTools(HostedReadOnlyToolsProviderCapability)
@@ -84,6 +85,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
     private let limits: Limits
     private let producerDidTerminate: (@Sendable () -> Void)?
     private let httpErrorBodyDidConsume: (@Sendable (Int) -> Void)?
+    private let authenticationDidFail: (@Sendable (String) async -> Void)?
     private let attempts = HostedProviderAttemptRegistry()
 
     init(
@@ -95,11 +97,13 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         httpErrorBodyDidConsume: (@Sendable (Int) -> Void)? = nil
     ) {
         self.credential = credential
+        chatGPTAccountID = nil
         authority = .textOnly(capability)
         self.session = session ?? Self.makeSession()
         self.limits = limits
         self.producerDidTerminate = producerDidTerminate
         self.httpErrorBodyDidConsume = httpErrorBodyDidConsume
+        authenticationDidFail = nil
     }
 
     /// A distinct initializer prevents text-only authority from being widened
@@ -113,11 +117,13 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         httpErrorBodyDidConsume: (@Sendable (Int) -> Void)? = nil
     ) {
         self.credential = credential
+        chatGPTAccountID = nil
         authority = .readOnlyTools(readOnlyToolsCapability)
         self.session = session ?? Self.makeSession()
         self.limits = limits
         self.producerDidTerminate = producerDidTerminate
         self.httpErrorBodyDidConsume = httpErrorBodyDidConsume
+        authenticationDidFail = nil
     }
 
     /// Production hosted authority for the exact 20-tool canonical registry.
@@ -126,18 +132,22 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
     /// mutation through its policy executor.
     init(
         credential: String,
+        chatGPTAccountID: String? = nil,
         singleCallToolsCapability: HostedSingleCallToolsProviderCapability,
         session: URLSession? = nil,
         limits: Limits = .production,
         producerDidTerminate: (@Sendable () -> Void)? = nil,
-        httpErrorBodyDidConsume: (@Sendable (Int) -> Void)? = nil
+        httpErrorBodyDidConsume: (@Sendable (Int) -> Void)? = nil,
+        authenticationDidFail: (@Sendable (String) async -> Void)? = nil
     ) {
         self.credential = credential
+        self.chatGPTAccountID = chatGPTAccountID
         authority = .singleCallTools(singleCallToolsCapability)
         self.session = session ?? Self.makeSession()
         self.limits = limits
         self.producerDidTerminate = producerDidTerminate
         self.httpErrorBodyDidConsume = httpErrorBodyDidConsume
+        self.authenticationDidFail = authenticationDidFail
     }
 
     func stream(
@@ -151,6 +161,10 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         do {
             try Task.checkCancellation()
             try Self.validateCredential(credential, descriptor: descriptor)
+            try Self.validateChatGPTAccountID(
+                chatGPTAccountID,
+                descriptor: descriptor
+            )
             #if DEBUG
             Self.debugDiagnostic("credential-valid")
             #endif
@@ -202,6 +216,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
             path: request.relativePath,
             body: body,
             credential: credential,
+            chatGPTAccountID: chatGPTAccountID,
             authority: authority
         )
         #if DEBUG
@@ -225,6 +240,9 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let responseCredential = credential
         let producerDidTerminate = producerDidTerminate
         let httpErrorBodyDidConsume = httpErrorBodyDidConsume
+        let codexAuthenticationDidFail =
+            descriptor.route.provenance == .builtInOpenAICodexResponses
+                ? authenticationDidFail : nil
 
         return AsyncThrowingStream(
             bufferingPolicy: .bufferingOldest(limits.maximumBufferedWireFrames)
@@ -263,6 +281,15 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                         #if DEBUG
                         Self.debugDiagnostic("http-status-\(http.statusCode)")
                         #endif
+                        if http.statusCode == 401 {
+                            // Only the exact package-owned ChatGPT Codex route
+                            // receives this closure. One received HTTP response
+                            // produces one invalidation; the transport still
+                            // returns the original failure and never replays.
+                            await codexAuthenticationDidFail?(
+                                responseCredential
+                            )
+                        }
                         var consumed = 0
                         for try await _ in bytes {
                             try Task.checkCancellation()
@@ -568,10 +595,40 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
            ) {
             return
         }
-        guard (1 ... 4_096).contains(credential.utf8.count),
+        let maximumBytes = isOpenAICodexResponsesRoute(descriptor)
+            ? KeychainStore.maximumSecretBytes
+            : 4_096
+        guard (1 ... maximumBytes).contains(credential.utf8.count),
               credential.unicodeScalars.allSatisfy({ (0x21 ... 0x7e).contains($0.value) })
         else {
             throw AgentHostedProviderTransportError.invalidCredential
+        }
+    }
+
+    private static func isOpenAICodexResponsesRoute(
+        _ descriptor: ProviderAdapterDescriptor
+    ) -> Bool {
+        let route = descriptor.route
+        return route.providerID.rawValue == "openai-codex" &&
+            route.adapterID.rawValue == "openai-codex-responses" &&
+            route.provenance == .builtInOpenAICodexResponses &&
+            route.deployment == .hostedService &&
+            descriptor.dialect == .openAIResponses &&
+            descriptor.requestPath == "/codex/responses"
+    }
+
+    private static func validateChatGPTAccountID(
+        _ accountID: String?,
+        descriptor: ProviderAdapterDescriptor
+    ) throws {
+        guard let accountID else { return }
+        guard isOpenAICodexResponsesRoute(descriptor),
+              (1 ... 512).contains(accountID.utf8.count),
+              accountID.unicodeScalars.allSatisfy({
+                  (0x21 ... 0x7e).contains($0.value)
+              })
+        else {
+            throw AgentHostedProviderTransportError.invalidChatGPTAccountID
         }
     }
 
@@ -1030,9 +1087,25 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
             }
             switch role {
             case "assistant" where message["tool_calls"] != nil:
+                let requiresReasoning = requiresDeepSeekReasoningReplay(
+                    descriptor
+                )
+                let expectedKeys: Set<String> = requiresReasoning
+                    ? [
+                        "content", "reasoning_content", "role",
+                        "tool_calls",
+                    ]
+                    : ["content", "role", "tool_calls"]
                 guard pendingProviderCallID == nil,
-                      Set(message.keys) == Set(["content", "role", "tool_calls"]),
-                      message["content"] == .null,
+                      Set(message.keys) == expectedKeys,
+                      message["content"] == .null ||
+                        (requiresReasoning &&
+                            validHistoricalAssistantToolText(
+                                message["content"]
+                            )),
+                      !requiresReasoning || validReasoningReplayText(
+                          message["reasoning_content"]
+                      ),
                       case let .array(calls)? = message["tool_calls"],
                       calls.count == 1,
                       case let .object(call) = calls[0],
@@ -1083,7 +1156,8 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let isChatGPTCodex = descriptor.route.provenance ==
             .builtInOpenAICodexResponses
         let allowedKeys: Set<String> = [
-            "input", "instructions", "max_output_tokens", "metadata", "model",
+            "include", "input", "instructions", "max_output_tokens",
+            "metadata", "model",
             "parallel_tool_calls", "previous_response_id", "prompt_cache_key",
             "reasoning", "store", "stream", "temperature", "tool_choice",
             "tools",
@@ -1101,6 +1175,11 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let instructionsAreValid = isChatGPTCodex
             ? validCodexInstructions(body["instructions"])
             : body["instructions"] == nil
+        let includeIsValid = isChatGPTCodex
+            ? body["include"] == .array([
+                .string("reasoning.encrypted_content"),
+            ])
+            : body["include"] == nil
         guard body.keys.allSatisfy(allowedKeys.contains) else {
             #if DEBUG
             debugDiagnostic("responses-envelope-invalid-keys")
@@ -1140,6 +1219,12 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         guard instructionsAreValid else {
             #if DEBUG
             debugDiagnostic("responses-envelope-invalid-instructions")
+            #endif
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        guard includeIsValid else {
+            #if DEBUG
+            debugDiagnostic("responses-envelope-invalid-include")
             #endif
             throw AgentHostedProviderTransportError.invalidRequestEnvelope
         }
@@ -1187,6 +1272,8 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
 
         var pendingCallID: String?
         var completedCallIDs: Set<String> = []
+        var reasoningAvailableForCall = false
+        var reasoningItemIDs: Set<String> = []
         for value in input {
             guard case let .object(item) = value,
                   case let .string(type)? = item["type"]
@@ -1220,8 +1307,26 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                             .invalidRequestEnvelope
                     }
                 }
+                if isChatGPTCodex {
+                    if role != "assistant" {
+                        reasoningAvailableForCall = false
+                    }
+                }
+            case "reasoning":
+                guard isChatGPTCodex,
+                      pendingCallID == nil,
+                      let itemID = try validatedResponsesReasoningInputItem(
+                          item
+                      ),
+                      reasoningItemIDs.insert(itemID).inserted
+                else {
+                    throw AgentHostedProviderTransportError
+                        .invalidRequestEnvelope
+                }
+                reasoningAvailableForCall = true
             case "function_call":
                 guard pendingCallID == nil,
+                      !isChatGPTCodex || reasoningAvailableForCall,
                       Set(item.keys) == Set([
                           "arguments", "call_id", "name", "type",
                       ]),
@@ -1236,6 +1341,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
                     throw AgentHostedProviderTransportError
                         .invalidRequestEnvelope
                 }
+                reasoningAvailableForCall = false
                 pendingCallID = callID
             case "function_call_output":
                 guard let expectedCallID = pendingCallID,
@@ -1347,7 +1453,8 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let isChatGPTCodex = descriptor.route.provenance ==
             .builtInOpenAICodexResponses
         let allowedKeys: Set<String> = [
-            "input", "instructions", "max_output_tokens", "metadata", "model",
+            "include", "input", "instructions", "max_output_tokens",
+            "metadata", "model",
             "prompt_cache_key", "reasoning", "store", "stream", "temperature",
         ]
         let metadataIsValid = isChatGPTCodex
@@ -1363,12 +1470,18 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let instructionsAreValid = isChatGPTCodex
             ? validCodexInstructions(body["instructions"])
             : body["instructions"] == nil
+        let includeIsValid = isChatGPTCodex
+            ? body["include"] == .array([
+                .string("reasoning.encrypted_content"),
+            ])
+            : body["include"] == nil
         guard body["previous_response_id"] == nil,
               body.keys.allSatisfy(allowedKeys.contains),
               metadataIsValid,
               storeIsValid,
               outputLimitIsValid,
               instructionsAreValid,
+              includeIsValid,
               case let .array(items)? = body["input"],
               !items.isEmpty
         else {
@@ -1383,35 +1496,127 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         let allowedRoles: Set<String> = isChatGPTCodex
             ? ["assistant", "user"]
             : ["assistant", "developer", "system", "user"]
+        var reasoningItemIDs: Set<String> = []
         for value in items {
             guard case let .object(item) = value,
-                  let roleValue = item["role"],
-                  let contentValue = item["content"]
+                  case let .string(type)? = item["type"]
             else {
                 throw AgentHostedProviderTransportError.invalidRequestEnvelope
             }
-            guard Set(item.keys) == Set(["content", "role", "type"]),
-                  item["type"] == .string("message"),
-                  case let .string(role) = roleValue,
-                  allowedRoles.contains(role),
-                  case let .array(parts) = contentValue,
-                  !parts.isEmpty
-            else {
+            switch type {
+            case "reasoning":
+                guard isChatGPTCodex,
+                      let itemID = try validatedResponsesReasoningInputItem(
+                          item
+                      ),
+                      reasoningItemIDs.insert(itemID).inserted
+                else {
+                    throw AgentHostedProviderTransportError.invalidRequestEnvelope
+                }
+            case "message":
+                guard Set(item.keys) == Set(["content", "role", "type"]),
+                      case let .string(role)? = item["role"],
+                      allowedRoles.contains(role),
+                      case let .array(parts)? = item["content"],
+                      !parts.isEmpty
+                else {
+                    throw AgentHostedProviderTransportError.invalidRequestEnvelope
+                }
+                let expectedPartType = role == "assistant"
+                    ? "output_text" : "input_text"
+                for value in parts {
+                    guard case let .object(part) = value,
+                          let textValue = part["text"]
+                    else {
+                        throw AgentHostedProviderTransportError
+                            .invalidRequestEnvelope
+                    }
+                    guard Set(part.keys) == Set(["text", "type"]),
+                          part["type"] == .string(expectedPartType),
+                          case .string = textValue
+                    else {
+                        throw AgentHostedProviderTransportError
+                            .invalidRequestEnvelope
+                    }
+                }
+            default:
                 throw AgentHostedProviderTransportError.invalidRequestEnvelope
             }
-            let expectedPartType = role == "assistant" ? "output_text" : "input_text"
-            for value in parts {
-                guard case let .object(part) = value,
-                      let textValue = part["text"]
-                else {
-                    throw AgentHostedProviderTransportError.invalidRequestEnvelope
-                }
-                guard Set(part.keys) == Set(["text", "type"]),
-                      part["type"] == .string(expectedPartType),
-                      case .string = textValue
-                else {
-                    throw AgentHostedProviderTransportError.invalidRequestEnvelope
-                }
+        }
+    }
+
+    private static func requiresDeepSeekReasoningReplay(
+        _ descriptor: ProviderAdapterDescriptor
+    ) -> Bool {
+        descriptor.route.provenance ==
+            .builtInOpenCodeZenChatCompletions &&
+            descriptor.route.modelID.rawValue.lowercased()
+                .hasPrefix("deepseek-v4-")
+    }
+
+    private static func validReasoningReplayText(
+        _ value: JSONValue?
+    ) -> Bool {
+        guard case let .string(text)? = value else { return false }
+        return !text.isEmpty && text.utf8.count <= 1 * 1_024 * 1_024
+    }
+
+    private static func validHistoricalAssistantToolText(
+        _ value: JSONValue?
+    ) -> Bool {
+        guard case let .string(text)? = value else { return false }
+        return !text.isEmpty &&
+            text.utf8.count <= 1 * 1_024 * 1_024 &&
+            !text.unicodeScalars.contains(where: { $0.value == 0 })
+    }
+
+    private static func validatedResponsesReasoningInputItem(
+        _ item: [String: JSONValue]
+    ) throws -> String? {
+        let allowedKeys: Set<String> = [
+            "content", "encrypted_content", "id", "summary", "type",
+        ]
+        guard item.keys.allSatisfy(allowedKeys.contains),
+              item["type"] == .string("reasoning"),
+              case let .string(itemID)? = item["id"],
+              isSafeIdentity(itemID, maximumUTF8Count: 512),
+              case let .string(encryptedContent)? = item["encrypted_content"],
+              !encryptedContent.isEmpty,
+              encryptedContent.utf8.count <= 1 * 1_024 * 1_024,
+              encryptedContent.unicodeScalars.allSatisfy({
+                  (0x21 ... 0x7e).contains($0.value)
+              }),
+              case let .array(summary)? = item["summary"]
+        else { return nil }
+        try validateResponsesReasoningTextParts(
+            summary,
+            expectedType: "summary_text"
+        )
+        if let contentValue = item["content"] {
+            guard case let .array(content) = contentValue else { return nil }
+            try validateResponsesReasoningTextParts(
+                content,
+                expectedType: "reasoning_text"
+            )
+        }
+        return itemID
+    }
+
+    private static func validateResponsesReasoningTextParts(
+        _ parts: [JSONValue],
+        expectedType: String
+    ) throws {
+        guard parts.count <= 4_096 else {
+            throw AgentHostedProviderTransportError.invalidRequestEnvelope
+        }
+        for value in parts {
+            guard case let .object(part) = value,
+                  Set(part.keys) == Set(["text", "type"]),
+                  part["type"] == .string(expectedType),
+                  case let .string(text)? = part["text"],
+                  text.utf8.count <= 1 * 1_024 * 1_024
+            else {
+                throw AgentHostedProviderTransportError.invalidRequestEnvelope
             }
         }
     }
@@ -1512,6 +1717,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         path: String,
         body: Data,
         credential: String,
+        chatGPTAccountID explicitChatGPTAccountID: String?,
         authority: Authority
     ) throws -> URLRequest {
         let provenance: ProviderRouteProvenance = switch authority {
@@ -1562,7 +1768,8 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
         if provenance == .builtInOpenAICodexResponses {
             result.setValue("novaforge_ios", forHTTPHeaderField: "originator")
             result.setValue("NovaForge/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
-            if let accountID = chatGPTAccountID(fromJWT: credential) {
+            if let accountID = explicitChatGPTAccountID ??
+                chatGPTAccountID(fromJWT: credential) {
                 result.setValue(
                     accountID,
                     forHTTPHeaderField: "ChatGPT-Account-ID"
@@ -1620,6 +1827,7 @@ final class AgentHostedProviderTransport: ProviderTransport, @unchecked Sendable
 
 enum AgentHostedProviderTransportError: Error, Equatable, LocalizedError, Sendable {
     case invalidCredential
+    case invalidChatGPTAccountID
     case untrustedDescriptor
     case invalidAttemptScope
     case duplicateAttemptScope
@@ -1647,6 +1855,8 @@ enum AgentHostedProviderTransportError: Error, Equatable, LocalizedError, Sendab
         switch self {
         case .invalidCredential:
             "The hosted provider credential is invalid."
+        case .invalidChatGPTAccountID:
+            "The ChatGPT account identity is invalid."
         case .untrustedDescriptor:
             "The hosted provider route is not trusted."
         case .invalidAttemptScope, .duplicateAttemptScope:

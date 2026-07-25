@@ -4540,6 +4540,79 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: finalURL.path))
     }
 
+    func testLocalCatalogPresentsNewestModelFirstButKeepsDeviceProvenDefault() throws {
+        let atlas = try XCTUnwrap(
+            LocalModelCatalog.variant(
+                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
+            )
+        )
+
+        XCTAssertEqual(LocalModelCatalog.presentationOrder.first?.id, atlas.id)
+        XCTAssertEqual(atlas.releaseDateISO8601, "2026-07-20")
+        XCTAssertEqual(atlas.expectedBytes, 397_808_608)
+        XCTAssertEqual(
+            atlas.expectedSHA256,
+            "3df10fa96ad19ddcda435506781308c9eeeedaab35f1a0a86ff198ad0e1ce871"
+        )
+        XCTAssertEqual(atlas.deviceFit, .ultraLight)
+        XCTAssertTrue(LocalModelCatalog.defaultVariant.isIPhone12SafeDefault)
+        XCTAssertEqual(LocalModelCatalog.defaultVariant.deviceFit, .deviceProven)
+    }
+
+    func testRuntimeMemoryAdmissionFailsClosedBeforeFirstAllocation() throws {
+        let atlas = try XCTUnwrap(
+            LocalModelCatalog.variant(
+                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
+            )
+        )
+
+        XCTAssertNil(
+            LocalModelRuntimeMemoryPolicy.admissionMessage(
+                for: atlas,
+                availableMemory: atlas.minimumAvailableMemoryBeforeLoadBytes,
+                thermalState: .nominal
+            )
+        )
+        let blocked = LocalModelRuntimeMemoryPolicy.admissionMessage(
+            for: atlas,
+            availableMemory: atlas.minimumAvailableMemoryBeforeLoadBytes - 1,
+            thermalState: .nominal
+        )
+        XCTAssertNotNil(blocked)
+        XCTAssertTrue(blocked?.contains("before first-prompt allocation") == true)
+    }
+
+    func testRuntimeMemoryAdmissionBlocksHotLargeModelButAllowsUltraLight() throws {
+        let qwen = LocalModelCatalog.defaultVariant
+        let atlas = try XCTUnwrap(
+            LocalModelCatalog.variant(
+                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
+            )
+        )
+
+        XCTAssertNotNil(
+            LocalModelRuntimeMemoryPolicy.admissionMessage(
+                for: qwen,
+                availableMemory: nil,
+                thermalState: .serious
+            )
+        )
+        XCTAssertNil(
+            LocalModelRuntimeMemoryPolicy.admissionMessage(
+                for: atlas,
+                availableMemory: nil,
+                thermalState: .serious
+            )
+        )
+        XCTAssertNotNil(
+            LocalModelRuntimeMemoryPolicy.admissionMessage(
+                for: atlas,
+                availableMemory: nil,
+                thermalState: .critical
+            )
+        )
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("LocalModelDownloadPreservationTests-\(UUID().uuidString)", isDirectory: true)
@@ -4579,6 +4652,16 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
             generationThreadCount: 1,
             batchThreadCount: 1,
             isIPhone12SafeDefault: false,
+            releaseDateISO8601: "2026-01-01",
+            releaseDateLabel: "Jan 1, 2026",
+            parameterLabel: "test",
+            licenseLabel: "test",
+            benchmarkSummary: "Unit test",
+            capabilitySummary: "Unit test",
+            deviceFit: .ultraLight,
+            estimatedPeakMemoryBytes: 1,
+            minimumAvailableMemoryBeforeLoadBytes: 1,
+            sourceURL: URL(string: "https://example.com/tiny-test")!,
             details: "Unit-test-only local model variant."
         )
     }

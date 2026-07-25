@@ -457,8 +457,20 @@ private extension AgentSystemFreshRunRequestFactory {
         default:
             throw AgentSystemFreshRunRequestFactoryError.unsupportedProvider
         }
-        let resolvedTemperature: Double? = provider == .openAICodex
-            ? nil : temperature
+        let resolvedTemperature: Double?
+        switch provider {
+        case .openAICodex:
+            resolvedTemperature = nil
+        case .openAI:
+            resolvedTemperature = AIProviderClient.supportsTemperature(
+                provider: provider,
+                model: route.modelID.rawValue
+            ) ? temperature : nil
+        case .openCodeZen, .local:
+            resolvedTemperature = temperature
+        default:
+            throw AgentSystemFreshRunRequestFactoryError.unsupportedProvider
+        }
         guard maximumOutputTokens > 0,
               route.capabilities.contextWindowTokens >= maximumOutputTokens,
               resolvedTemperature == nil ||

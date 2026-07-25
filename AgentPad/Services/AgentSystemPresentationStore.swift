@@ -240,6 +240,7 @@ enum AgentOrchestrationPhase: String, Equatable, Sendable {
     case preparing
     case delegating
     case integrating
+    case stopping
     case completed
     case failed
     case cancelled
@@ -247,7 +248,7 @@ enum AgentOrchestrationPhase: String, Equatable, Sendable {
     var isTerminal: Bool {
         switch self {
         case .completed, .failed, .cancelled: true
-        case .preparing, .delegating, .integrating: false
+        case .preparing, .delegating, .integrating, .stopping: false
         }
     }
 }
@@ -284,6 +285,36 @@ private enum AgentOrchestrationError: Error, Sendable {
     case workerRejected
     case workerTimedOut
     case integrationRejected
+}
+
+@MainActor
+private final class AgentOrchestrationStartSignal {
+    private var result: AgentSystemPresentationStartDisposition?
+    private var waiters: [CheckedContinuation<
+        AgentSystemPresentationStartDisposition,
+        Never
+    >] = []
+
+    func wait() async -> AgentSystemPresentationStartDisposition {
+        if let result { return result }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func resolve(_ result: AgentSystemPresentationStartDisposition) {
+        guard self.result == nil else { return }
+        self.result = result
+        let pending = waiters
+        waiters.removeAll()
+        for continuation in pending { continuation.resume(returning: result) }
+    }
+}
+
+private enum AgentOrchestrationTerminalOutcome: Equatable, Sendable {
+    case completed
+    case failed
+    case cancelled
 }
 
 enum AgentOrchestrationWorkspaceSnapshots {
@@ -433,6 +464,14 @@ struct AgentSystemPresentationStoreDependencies {
         -> AgentSystemRunHandle
     let snapshot: @MainActor (AgentSystemRunHandle) async throws
         -> AgentDomain.AgentRunState
+    let cancel: @MainActor (AgentSystemRunHandle) async throws
+        -> AgentDomain.AgentRunState
+    let cloneWorkspaces: @MainActor (
+        SandboxWorkspace,
+        [SandboxWorkspace]
+    ) async throws -> Void
+    let cleanupWorkspaces: @MainActor ([SandboxWorkspace]) async -> Void
+    let monitorDelay: @MainActor (Duration) async throws -> Void
     let makeBound: @MainActor (ModelContainer)
         -> AgentSystemPresentationBoundDependencies
 
@@ -448,6 +487,36 @@ struct AgentSystemPresentationStoreDependencies {
         },
         snapshot: { handle in
             try await AgentSystem.shared.snapshot(for: handle)
+        },
+        cancel: { handle in
+            let command = AgentSystemCommandFactory.cancel(
+                commandID: CommandID(rawValue: UUID()),
+                runID: handle.runID,
+                issuedAt: AgentInstant(Date()),
+                correlationID: CorrelationID(rawValue: UUID())
+            )
+            return try await AgentSystem.shared.cancel(command, for: handle)
+        },
+        cloneWorkspaces: { source, destinations in
+            let cloneTask = Task.detached(priority: .userInitiated) {
+                try AgentOrchestrationWorkspaceSnapshots.clone(
+                    from: source,
+                    to: destinations
+                )
+            }
+            try await withTaskCancellationHandler {
+                try await cloneTask.value
+            } onCancel: {
+                cloneTask.cancel()
+            }
+        },
+        cleanupWorkspaces: { snapshots in
+            await Task.detached(priority: .utility) {
+                AgentOrchestrationWorkspaceSnapshots.remove(snapshots)
+            }.value
+        },
+        monitorDelay: { duration in
+            try await Task.sleep(for: duration)
         },
         makeBound: { container in
             let store = SwiftDataAgentStore(container: container)
@@ -793,10 +862,18 @@ final class AgentSystemPresentationStore {
         }
 
         do {
-            let handle = try await dependencies.start(
-                request.command,
-                request.plan
-            )
+            // Durable acceptance is an atomic boundary. Keep the engine call
+            // alive if the presentation owner is cancelled while that call is
+            // in flight; once it returns, the handle is always attached or
+            // retained for synchronization before cancellation is observed by
+            // the orchestration lifecycle.
+            let acceptanceTask = Task { @MainActor in
+                try await dependencies.start(
+                    request.command,
+                    request.plan
+                )
+            }
+            let handle = try await acceptanceTask.value
             do {
                 try await attach(handle)
             } catch {
@@ -880,23 +957,62 @@ final class AgentSystemPresentationStore {
         )
         publishRevision()
 
-        var scratchWorkspaces: [SandboxWorkspace] = []
-        do {
-            let scratchNames = specs.map {
-                Self.scratchWorkspaceName(
-                    orchestrationID: orchestrationID,
-                    workerID: $0.id
-                )
+        let startSignal = AgentOrchestrationStartSignal()
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                startSignal.resolve(.rejected(.runtimeUnavailable))
+                return
             }
-            scratchWorkspaces = scratchNames.map { SandboxWorkspace(name: $0) }
-            try await Self.cloneWorkspaces(
-                from: workspace,
-                destinations: scratchWorkspaces
+            await self.runOrchestration(
+                scope: scope,
+                orchestrationID: orchestrationID,
+                mode: mode,
+                originalPrompt: prompt,
+                visibleSummary: publicRequestSummary,
+                conversation: conversation,
+                project: project,
+                workspace: workspace,
+                settings: settings,
+                specs: specs,
+                startSignal: startSignal
             )
+        }
+        // The entire lifecycle is owned before its first suspension. Stop can
+        // therefore cancel cloning, root acceptance, delegation, or integration
+        // through this one task instead of racing a later continuation task.
+        orchestrationTasks[scope] = task
+        return await startSignal.wait()
+    }
+
+    private func runOrchestration(
+        scope: AgentSystemPresentationScope,
+        orchestrationID: UUID,
+        mode: AgentOrchestrationMode,
+        originalPrompt: String,
+        visibleSummary: String?,
+        conversation: Conversation,
+        project: Project?,
+        workspace: SandboxWorkspace,
+        settings: AgentSettings,
+        specs: [AgentOrchestrationWorkerSpec],
+        startSignal: AgentOrchestrationStartSignal
+    ) async {
+        let scratchWorkspaces = specs.map {
+            SandboxWorkspace(name: Self.scratchWorkspaceName(
+                orchestrationID: orchestrationID,
+                workerID: $0.id
+            ))
+        }
+        do {
+            try requireCurrentOrchestration(scope, id: orchestrationID)
+            try await dependencies.cloneWorkspaces(workspace, scratchWorkspaces)
+            try requireCurrentOrchestration(scope, id: orchestrationID)
             let workerConversations = try makeWorkerConversations(
                 specs: specs,
                 orchestrationID: orchestrationID
             )
+
+            try requireCurrentOrchestration(scope, id: orchestrationID)
             let rootIdentity = AgentFreshSendCommandIdentity.fresh()
             let rootLineage = AgentRunLineage.root(rootIdentity.runID)
             let rootSettings = Self.workerSettings(
@@ -906,7 +1022,7 @@ final class AgentSystemPresentationStore {
             let rootDisposition = await startExplicit(
                 prompt: Self.workerPrompt(
                     spec: specs[0],
-                    originalPrompt: prompt,
+                    originalPrompt: originalPrompt,
                     mode: mode
                 ),
                 conversation: workerConversations[0],
@@ -919,12 +1035,14 @@ final class AgentSystemPresentationStore {
                 origin: .system
             )
             guard case let .accepted(rootRunID) = rootDisposition else {
+                try requireCurrentOrchestration(scope, id: orchestrationID)
                 throw AgentOrchestrationError.workerRejected
             }
-            updateOrchestration(scope) { state in
+            appendOrchestrationRun(rootRunID, scope: scope, id: orchestrationID)
+            try requireCurrentOrchestration(scope, id: orchestrationID)
+            updateOrchestration(scope, id: orchestrationID) { state in
                 state.phase = .delegating
                 state.headline = "Independent agents are investigating"
-                state.runIDs.append(rootRunID)
                 Self.updateWorker(
                     specs[0].id,
                     status: "Working",
@@ -933,61 +1051,11 @@ final class AgentSystemPresentationStore {
                 )
             }
 
-            orchestrationTasks[scope]?.cancel()
-            orchestrationTasks[scope] = Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.continueOrchestration(
-                    scope: scope,
-                    orchestrationID: orchestrationID,
-                    mode: mode,
-                    originalPrompt: prompt,
-                    visibleSummary: publicRequestSummary,
-                    conversation: conversation,
-                    project: project,
-                    workspace: workspace,
-                    settings: settings,
-                    specs: specs,
-                    workerConversations: workerConversations,
-                    scratchWorkspaces: scratchWorkspaces,
-                    rootLineage: rootLineage,
-                    rootRunID: rootRunID
-                )
-            }
-            return .accepted(rootRunID)
-        } catch {
-            await Self.cleanupWorkspaces(scratchWorkspaces)
-            updateOrchestration(scope) { state in
-                state.phase = .failed
-                state.headline = "Could not prepare isolated agents"
-            }
-            failures[scope] = .runtimeUnavailable
-            publishRevision()
-            return .rejected(.runtimeUnavailable)
-        }
-    }
-
-    private func continueOrchestration(
-        scope: AgentSystemPresentationScope,
-        orchestrationID: UUID,
-        mode: AgentOrchestrationMode,
-        originalPrompt: String,
-        visibleSummary: String?,
-        conversation: Conversation,
-        project: Project?,
-        workspace: SandboxWorkspace,
-        settings: AgentSettings,
-        specs: [AgentOrchestrationWorkerSpec],
-        workerConversations: [Conversation],
-        scratchWorkspaces: [SandboxWorkspace],
-        rootLineage: AgentRunLineage,
-        rootRunID: RunID
-    ) async {
-        do {
             var workerRuns: [(AgentOrchestrationWorkerSpec, RunID)] = [
                 (specs[0], rootRunID),
             ]
             for index in specs.indices.dropFirst() {
-                try Task.checkCancellation()
+                try requireCurrentOrchestration(scope, id: orchestrationID)
                 let identity = AgentFreshSendCommandIdentity.fresh()
                 let childSettings = Self.workerSettings(
                     from: settings,
@@ -1009,11 +1077,16 @@ final class AgentSystemPresentationStore {
                     origin: .system
                 )
                 guard case let .accepted(runID) = disposition else {
+                    try requireCurrentOrchestration(
+                        scope,
+                        id: orchestrationID
+                    )
                     throw AgentOrchestrationError.workerRejected
                 }
                 workerRuns.append((specs[index], runID))
-                updateOrchestration(scope) { state in
-                    state.runIDs.append(runID)
+                appendOrchestrationRun(runID, scope: scope, id: orchestrationID)
+                try requireCurrentOrchestration(scope, id: orchestrationID)
+                updateOrchestration(scope, id: orchestrationID) { state in
                     Self.updateWorker(
                         specs[index].id,
                         status: "Working",
@@ -1025,14 +1098,16 @@ final class AgentSystemPresentationStore {
 
             let reports = try await waitForWorkerReports(
                 workerRuns,
-                scope: scope
+                scope: scope,
+                orchestrationID: orchestrationID
             )
-            try Task.checkCancellation()
-            updateOrchestration(scope) { state in
+            try requireCurrentOrchestration(scope, id: orchestrationID)
+            updateOrchestration(scope, id: orchestrationID) { state in
                 state.phase = .integrating
                 state.headline = "Lead agent is integrating and verifying"
             }
 
+            try requireCurrentOrchestration(scope, id: orchestrationID)
             let integratorIdentity = AgentFreshSendCommandIdentity.fresh()
             let integratorPrompt = Self.integratorPrompt(
                 originalPrompt: originalPrompt,
@@ -1055,77 +1130,91 @@ final class AgentSystemPresentationStore {
                 origin: .system
             )
             guard case let .accepted(integratorRunID) = disposition else {
+                try requireCurrentOrchestration(scope, id: orchestrationID)
                 throw AgentOrchestrationError.integrationRejected
             }
-            updateOrchestration(scope) { state in
-                state.runIDs.append(integratorRunID)
-            }
+            appendOrchestrationRun(
+                integratorRunID,
+                scope: scope,
+                id: orchestrationID
+            )
+            try requireCurrentOrchestration(scope, id: orchestrationID)
+            // Only the integrator is accepted in the visible conversation. The
+            // composer may clear its exact submitted draft after this durable
+            // boundary, never after a hidden worker acceptance.
+            startSignal.resolve(.accepted(integratorRunID))
             let final = try await waitForTerminalState(
                 runID: integratorRunID,
                 timeout: .seconds(900),
                 workerID: nil,
-                scope: scope
+                scope: scope,
+                orchestrationID: orchestrationID
             )
-            updateOrchestration(scope) { state in
-                if final.phase == .completed {
-                    state.phase = .completed
-                    state.headline = "\(mode.title) completed with integrated proof"
-                } else {
-                    state.phase = .failed
-                    state.headline = "Lead integration did not complete"
-                }
-            }
+            let outcome: AgentOrchestrationTerminalOutcome =
+                final.phase == .completed ? .completed : .failed
+            await finishOrchestration(
+                scope: scope,
+                id: orchestrationID,
+                snapshots: scratchWorkspaces,
+                outcome: outcome,
+                mode: mode,
+                startSignal: startSignal
+            )
         } catch is CancellationError {
-            await cancelOrchestration(scope: scope, markCancelled: true)
+            await finishOrchestration(
+                scope: scope,
+                id: orchestrationID,
+                snapshots: scratchWorkspaces,
+                outcome: .cancelled,
+                mode: mode,
+                startSignal: startSignal
+            )
         } catch {
-            updateOrchestration(scope) { state in
-                state.phase = .failed
-                state.headline = "One or more delegated agents could not finish"
-            }
-            failures[scope] = .runtimeUnavailable
-            publishRevision()
+            await finishOrchestration(
+                scope: scope,
+                id: orchestrationID,
+                snapshots: scratchWorkspaces,
+                outcome: .failed,
+                mode: mode,
+                startSignal: startSignal
+            )
         }
-        await Self.cleanupWorkspaces(scratchWorkspaces)
-        orchestrationTasks.removeValue(forKey: scope)
     }
 
     func cancelOrchestration(
         scope: AgentSystemPresentationScope,
         markCancelled: Bool = true
     ) async {
+        guard let presentation = orchestrations[scope],
+              presentation.isActive else { return }
+        guard presentation.phase != .stopping else { return }
+        updateOrchestration(scope, id: presentation.id) { state in
+            state.phase = .stopping
+            state.headline = markCancelled
+                ? "Stopping delegated agents safely"
+                : "Settling delegated agents"
+        }
         orchestrationTasks[scope]?.cancel()
-        orchestrationTasks.removeValue(forKey: scope)
-        let runIDs = orchestrations[scope]?.runIDs ?? []
-        for runID in runIDs {
-            guard let entry = entries[runID],
-                  !entry.state.phase.isTerminal,
-                  entry.group.accepts(entry.group.cancelCommand)
-            else { continue }
-            _ = try? await route(entry.group.cancelCommand)
-        }
-        if markCancelled {
-            updateOrchestration(scope) { state in
-                state.phase = .cancelled
-                state.headline = "Delegated agents stopped safely"
-            }
-        }
     }
 
     private func waitForWorkerReports(
         _ workerRuns: [(AgentOrchestrationWorkerSpec, RunID)],
-        scope: AgentSystemPresentationScope
+        scope: AgentSystemPresentationScope,
+        orchestrationID: UUID
     ) async throws -> [(String, String)] {
         var reports: [(String, String)] = []
         for (spec, runID) in workerRuns {
+            try requireCurrentOrchestration(scope, id: orchestrationID)
             let state = try await waitForTerminalState(
                 runID: runID,
                 timeout: .seconds(720),
                 workerID: spec.id,
-                scope: scope
+                scope: scope,
+                orchestrationID: orchestrationID
             )
             let output = Self.assistantReport(from: state)
             reports.append((spec.title, output))
-            updateOrchestration(scope) { presentation in
+            updateOrchestration(scope, id: orchestrationID) { presentation in
                 Self.updateWorker(
                     spec.id,
                     status: state.phase == .completed ? "Complete" : "Reviewed",
@@ -1137,19 +1226,229 @@ final class AgentSystemPresentationStore {
         return reports
     }
 
+    private func requireCurrentOrchestration(
+        _ scope: AgentSystemPresentationScope,
+        id: UUID
+    ) throws {
+        try Task.checkCancellation()
+        guard let presentation = orchestrations[scope],
+              presentation.id == id,
+              presentation.isActive,
+              presentation.phase != .stopping
+        else { throw CancellationError() }
+    }
+
+    private func appendOrchestrationRun(
+        _ runID: RunID,
+        scope: AgentSystemPresentationScope,
+        id: UUID
+    ) {
+        guard var value = orchestrations[scope], value.id == id else { return }
+        if !value.runIDs.contains(runID) { value.runIDs.append(runID) }
+        orchestrations[scope] = value
+        publishRevision()
+    }
+
+    private func finishOrchestration(
+        scope: AgentSystemPresentationScope,
+        id: UUID,
+        snapshots: [SandboxWorkspace],
+        outcome: AgentOrchestrationTerminalOutcome,
+        mode: AgentOrchestrationMode,
+        startSignal: AgentOrchestrationStartSignal
+    ) async {
+        guard orchestrations[scope]?.id == id else {
+            startSignal.resolve(.rejected(.runtimeUnavailable))
+            return
+        }
+        updateOrchestration(scope, id: id) { state in
+            state.phase = .stopping
+            state.headline = outcome == .completed
+                ? "Cleaning isolated agent workspaces"
+                : "Stopping delegated agents safely"
+        }
+
+        guard await settleOrchestrationRuns(scope: scope, id: id) else {
+            failures[scope] = .runtimeUnavailable
+            updateOrchestration(scope, id: id) { state in
+                state.phase = .stopping
+                state.headline = "Waiting for delegated agents to stop safely"
+            }
+            startSignal.resolve(.rejected(.runtimeUnavailable))
+            scheduleOrchestrationSettlementRecovery(
+                scope: scope,
+                id: id,
+                snapshots: snapshots,
+                outcome: outcome,
+                mode: mode
+            )
+            return
+        }
+
+        await dependencies.cleanupWorkspaces(snapshots)
+        completeOrchestration(
+            scope: scope,
+            id: id,
+            outcome: outcome,
+            mode: mode
+        )
+        switch outcome {
+        case .completed:
+            startSignal.resolve(.rejected(.runtimeUnavailable))
+        case .failed:
+            startSignal.resolve(.rejected(.runtimeUnavailable))
+        case .cancelled:
+            startSignal.resolve(.rejected(.requestInvalid))
+        }
+    }
+
+    private func scheduleOrchestrationSettlementRecovery(
+        scope: AgentSystemPresentationScope,
+        id: UUID,
+        snapshots: [SandboxWorkspace],
+        outcome: AgentOrchestrationTerminalOutcome,
+        mode: AgentOrchestrationMode
+    ) {
+        let recovery = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var failureCount = 0
+            while self.orchestrations[scope]?.id == id,
+                  self.orchestrations[scope]?.phase == .stopping {
+                let delay = Self.orchestrationSettlementDelay(
+                    failureCount: failureCount
+                )
+                do {
+                    try await self.dependencies.monitorDelay(delay)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // The recovery owner remains live after a transient clock or
+                    // scheduler failure and retries through the same bounded cap.
+                }
+                if await self.settleOrchestrationRuns(scope: scope, id: id) {
+                    await self.dependencies.cleanupWorkspaces(snapshots)
+                    self.completeOrchestration(
+                        scope: scope,
+                        id: id,
+                        outcome: outcome,
+                        mode: mode
+                    )
+                    return
+                }
+                failureCount = min(failureCount + 1, 8)
+            }
+        }
+        orchestrationTasks[scope] = recovery
+    }
+
+    private func settleOrchestrationRuns(
+        scope: AgentSystemPresentationScope,
+        id: UUID
+    ) async -> Bool {
+        guard let presentation = orchestrations[scope], presentation.id == id else {
+            return false
+        }
+        let registered = (try? await dependencies.registeredHandles()) ?? []
+        var allSettled = true
+        for runID in presentation.runIDs {
+            guard let handle = entries[runID]?.handle
+                ?? synchronizingHandles[runID]
+                ?? registered.first(where: { $0.runID == runID })
+            else {
+                allSettled = false
+                continue
+            }
+            do {
+                var state = try await dependencies.snapshot(handle)
+                if !state.phase.isTerminal {
+                    state = try await dependencies.cancel(handle)
+                }
+                guard state.phase.isTerminal else {
+                    allSettled = false
+                    continue
+                }
+                do {
+                    try await refresh(handle, forceMaterialization: true)
+                } catch {
+                    await retainTerminalStateForCleanup(state, handle: handle)
+                }
+            } catch {
+                allSettled = false
+            }
+        }
+        return allSettled
+    }
+
+    private func retainTerminalStateForCleanup(
+        _ state: AgentDomain.AgentRunState,
+        handle: AgentSystemRunHandle,
+        cancelMonitor: Bool = true
+    ) async {
+        guard state.phase.isTerminal else { return }
+        if var entry = entries[handle.runID] {
+            entry.state = state
+            entry.liveText = nil
+            entries[handle.runID] = entry
+        }
+        synchronizingHandles.removeValue(forKey: handle.runID)
+        if cancelMonitor {
+            monitorTasks[handle.runID]?.cancel()
+            monitorTasks.removeValue(forKey: handle.runID)
+        }
+        if let bound { await bound.clearLive(handle.runID) }
+        publishRevision()
+    }
+
+    private func completeOrchestration(
+        scope: AgentSystemPresentationScope,
+        id: UUID,
+        outcome: AgentOrchestrationTerminalOutcome,
+        mode: AgentOrchestrationMode
+    ) {
+        guard orchestrations[scope]?.id == id else { return }
+        updateOrchestration(scope, id: id) { state in
+            switch outcome {
+            case .completed:
+                state.phase = .completed
+                state.headline = "\(mode.title) completed with integrated proof"
+            case .failed:
+                state.phase = .failed
+                state.headline = "One or more delegated agents could not finish"
+            case .cancelled:
+                state.phase = .cancelled
+                state.headline = "Delegated agents stopped safely"
+            }
+        }
+        if outcome == .failed {
+            failures[scope] = .runtimeUnavailable
+        } else {
+            failures.removeValue(forKey: scope)
+        }
+        orchestrationTasks.removeValue(forKey: scope)
+        publishRevision()
+    }
+
+    private static func orchestrationSettlementDelay(
+        failureCount: Int
+    ) -> Duration {
+        let exponent = min(max(0, failureCount), 4)
+        return .milliseconds(100 * (1 << exponent))
+    }
+
     private func waitForTerminalState(
         runID: RunID,
         timeout: Duration,
         workerID: String?,
-        scope: AgentSystemPresentationScope
+        scope: AgentSystemPresentationScope,
+        orchestrationID: UUID
     ) async throws -> AgentDomain.AgentRunState {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {
-            try Task.checkCancellation()
+            try requireCurrentOrchestration(scope, id: orchestrationID)
             if let entry = entries[runID] {
                 if let workerID {
-                    updateOrchestration(scope) { state in
+                    updateOrchestration(scope, id: orchestrationID) { state in
                         Self.updateWorker(
                             workerID,
                             status: Self.workerStatus(entry.state.phase),
@@ -1191,9 +1490,10 @@ final class AgentSystemPresentationStore {
 
     private func updateOrchestration(
         _ scope: AgentSystemPresentationScope,
+        id: UUID,
         mutate: (inout AgentOrchestrationPresentation) -> Void
     ) {
-        guard var value = orchestrations[scope] else { return }
+        guard var value = orchestrations[scope], value.id == id else { return }
         mutate(&value)
         orchestrations[scope] = value
         publishRevision()
@@ -1356,26 +1656,6 @@ final class AgentSystemPresentationStore {
         SandboxWorkspace.sanitizedWorkspaceName(
             "UltraCode-\(orchestrationID.uuidString.prefix(8))-\(workerID)"
         )
-    }
-
-    private static func cloneWorkspaces(
-        from source: SandboxWorkspace,
-        destinations: [SandboxWorkspace]
-    ) async throws {
-        try await Task.detached(priority: .userInitiated) {
-            try AgentOrchestrationWorkspaceSnapshots.clone(
-                from: source,
-                to: destinations
-            )
-        }.value
-    }
-
-    private static func cleanupWorkspaces(
-        _ snapshots: [SandboxWorkspace]
-    ) async {
-        await Task.detached(priority: .utility) {
-            AgentOrchestrationWorkspaceSnapshots.remove(snapshots)
-        }.value
     }
 
     func retry(
@@ -1578,34 +1858,57 @@ final class AgentSystemPresentationStore {
 
     private func startMonitorIfNeeded(_ handle: AgentSystemRunHandle) {
         guard monitorTasks[handle.runID] == nil else { return }
+        let monitorDelay = dependencies.monitorDelay
         monitorTasks[handle.runID] = Task { @MainActor [weak self] in
-            guard let self else { return }
             var consecutiveFailures = 0
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .milliseconds(80))
+                    try await monitorDelay(Self.projectionMonitorDelay(
+                        consecutiveFailures: consecutiveFailures
+                    ))
                     try Task.checkCancellation()
-                    try await self.refresh(
+                    guard let store = self else { return }
+                    try await store.refresh(
                         handle,
                         forceMaterialization: false
                     )
                     consecutiveFailures = 0
-                    if self.entries[handle.runID]?.state.phase.isTerminal ==
+                    if store.entries[handle.runID]?.state.phase.isTerminal ==
                         true {
                         break
                     }
-                } catch is CancellationError {
-                    break
                 } catch {
-                    self.failures[Self.scope(for: handle)] =
+                    guard !Task.isCancelled else { break }
+                    guard let store = self else { return }
+                    store.failures[Self.scope(for: handle)] =
                         .projectionUnavailable
-                    self.publishRevision()
-                    consecutiveFailures += 1
-                    if consecutiveFailures >= 8 { break }
+                    store.publishRevision()
+                    consecutiveFailures = min(consecutiveFailures + 1, 16)
+
+                    // A terminal engine no longer owns the workspace even if
+                    // legacy materialization remains unavailable. Preserve the
+                    // finite recovery notice, release the synchronization lock,
+                    // and let History retain the durable receipt.
+                    if let state = try? await store.dependencies.snapshot(handle),
+                       state.phase.isTerminal {
+                        await store.retainTerminalStateForCleanup(
+                            state,
+                            handle: handle,
+                            cancelMonitor: false
+                        )
+                        break
+                    }
                 }
             }
-            self.monitorTasks.removeValue(forKey: handle.runID)
+            self?.monitorTasks.removeValue(forKey: handle.runID)
         }
+    }
+
+    private static func projectionMonitorDelay(
+        consecutiveFailures: Int
+    ) -> Duration {
+        let exponent = min(max(0, consecutiveFailures), 4)
+        return .milliseconds(80 * (1 << exponent))
     }
 
     private func retainForSynchronization(_ handle: AgentSystemRunHandle) {

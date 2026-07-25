@@ -490,7 +490,9 @@ private enum ProviderRequestEncoder {
 
         var body: [String: JSONValue] = [
             "model": .string(request.model.rawValue),
-            "messages": .array(try request.messages.map(chatMessage)),
+            "messages": .array(try request.messages.map {
+                try chatMessage($0, descriptor: descriptor)
+            }),
             "stream": .bool(true),
             "stream_options": .object(["include_usage": .bool(true)]),
             "metadata": request.metadata,
@@ -548,6 +550,9 @@ private enum ProviderRequestEncoder {
         ]
         if isChatGPTCodex {
             body["store"] = .bool(false)
+            body["include"] = .array([
+                .string("reasoning.encrypted_content"),
+            ])
             if let instructions = try responsesInstructions(request.messages) {
                 body["instructions"] = .string(instructions)
             }
@@ -769,7 +774,62 @@ private enum ProviderRequestEncoder {
                 )
             }
         }
+        let isChatGPTCodex = descriptor.route.provenance ==
+            .builtInOpenAICodexResponses
+        var codexReplayAvailableForTool = false
         for message in request.messages {
+            let hasToolCall = message.content.contains {
+                if case .toolCall = $0 { true } else { false }
+            }
+            if let replay = message.reasoningReplay {
+                guard message.role == .assistant else {
+                    throw ProviderFailureMapper.invalidRequest(
+                        "provider_reasoning_replay_envelope_invalid",
+                        descriptor: descriptor,
+                        message: "Reasoning replay must be emitted as assistant output."
+                    )
+                }
+                switch replay {
+                case .chatCompletions:
+                    guard hasToolCall else {
+                        throw ProviderFailureMapper.invalidRequest(
+                            "provider_reasoning_replay_envelope_invalid",
+                            descriptor: descriptor,
+                            message: "Chat reasoning replay must share its assistant tool-call envelope."
+                        )
+                    }
+                case .responses:
+                    guard isChatGPTCodex else {
+                        throw ProviderFailureMapper.invalidRequest(
+                            "provider_reasoning_replay_envelope_invalid",
+                            descriptor: descriptor,
+                            message: "Responses reasoning replay is restricted to the Codex route."
+                        )
+                    }
+                    codexReplayAvailableForTool = true
+                }
+                try validateReasoningReplay(replay, descriptor: descriptor)
+            }
+            if requiresDeepSeekReasoningReplay(descriptor),
+               message.role == .assistant,
+               hasToolCall,
+               message.reasoningReplay == nil {
+                throw ProviderFailureMapper.invalidRequest(
+                    "provider_reasoning_replay_missing",
+                    descriptor: descriptor,
+                    message: "This provider requires reasoning metadata for tool continuation."
+                )
+            }
+            if isChatGPTCodex,
+               message.role == .assistant,
+               hasToolCall,
+               !codexReplayAvailableForTool {
+                throw ProviderFailureMapper.invalidRequest(
+                    "provider_reasoning_replay_missing",
+                    descriptor: descriptor,
+                    message: "Stateless Responses continuation requires its prior reasoning item."
+                )
+            }
             for part in message.content {
                 guard case let .toolCall(call) = part else { continue }
                 guard message.role == .assistant,
@@ -784,10 +844,24 @@ private enum ProviderRequestEncoder {
                     )
                 }
             }
+            if isChatGPTCodex {
+                if hasToolCall {
+                    codexReplayAvailableForTool = false
+                }
+                switch message.role {
+                case .system, .developer, .user, .tool:
+                    codexReplayAvailableForTool = false
+                case .assistant:
+                    break
+                }
+            }
         }
     }
 
-    private static func chatMessage(_ message: ProviderMessage) throws -> JSONValue {
+    private static func chatMessage(
+        _ message: ProviderMessage,
+        descriptor: ProviderAdapterDescriptor
+    ) throws -> JSONValue {
         let ordinaryParts = message.content.filter {
             if case .toolCall = $0 { false } else { true }
         }
@@ -809,6 +883,18 @@ private enum ProviderRequestEncoder {
                     ]),
                 ])
             })
+        }
+        if let replay = message.reasoningReplay {
+            guard case let .chatCompletions(value) = replay,
+                  requiresDeepSeekReasoningReplay(descriptor)
+            else {
+                throw ProviderFailureMapper.invalidRequest(
+                    "provider_reasoning_replay_dialect_mismatch",
+                    descriptor: descriptor,
+                    message: "The reasoning replay does not match the selected provider dialect."
+                )
+            }
+            object["reasoning_content"] = .string(value.content)
         }
         if let callID = message.toolCallID { object["tool_call_id"] = .string(callID) }
         if let name = message.name { object["name"] = .string(name) }
@@ -853,6 +939,37 @@ private enum ProviderRequestEncoder {
             if case .toolCall = $0 { false } else { true }
         }
         var result: [JSONValue] = []
+        if let replay = message.reasoningReplay {
+            guard case let .responses(value) = replay else {
+                throw EncodingError.invalidValue(
+                    replay,
+                    .init(
+                        codingPath: [],
+                        debugDescription: "Responses input requires a Responses reasoning replay."
+                    )
+                )
+            }
+            var item: [String: JSONValue] = [
+                "id": .string(value.itemID),
+                "type": .string("reasoning"),
+                "summary": .array(value.summary.map { text in
+                    .object([
+                        "type": .string("summary_text"),
+                        "text": .string(text),
+                    ])
+                }),
+                "encrypted_content": .string(value.encryptedContent),
+            ]
+            if !value.content.isEmpty {
+                item["content"] = .array(value.content.map { text in
+                    .object([
+                        "type": .string("reasoning_text"),
+                        "text": .string(text),
+                    ])
+                })
+            }
+            result.append(.object(item))
+        }
         if !ordinaryParts.isEmpty {
             result.append(.object([
                 "type": .string("message"),
@@ -891,6 +1008,68 @@ private enum ProviderRequestEncoder {
             ]))
         }
         return result
+    }
+
+    private static func validateReasoningReplay(
+        _ replay: ModelReasoningReplay,
+        descriptor: ProviderAdapterDescriptor
+    ) throws {
+        switch replay {
+        case let .chatCompletions(value):
+            guard requiresDeepSeekReasoningReplay(descriptor),
+                  !value.content.isEmpty,
+                  value.content.utf8.count <= 1 * 1_024 * 1_024
+            else {
+                throw ProviderFailureMapper.invalidRequest(
+                    "provider_reasoning_replay_invalid",
+                    descriptor: descriptor,
+                    message: "The chat reasoning replay is invalid for this route."
+                )
+            }
+        case let .responses(value):
+            guard descriptor.route.provenance == .builtInOpenAICodexResponses,
+                  isSafeWireIdentity(value.itemID, maximumUTF8Count: 512),
+                  !value.encryptedContent.isEmpty,
+                  value.encryptedContent.utf8.count <= 1 * 1_024 * 1_024,
+                  value.encryptedContent.unicodeScalars.allSatisfy({
+                      (0x21 ... 0x7e).contains($0.value)
+                  }),
+                  value.summary.allSatisfy({
+                      $0.utf8.count <= 1 * 1_024 * 1_024
+                  }),
+                  value.content.allSatisfy({
+                      $0.utf8.count <= 1 * 1_024 * 1_024
+                  })
+            else {
+                throw ProviderFailureMapper.invalidRequest(
+                    "provider_reasoning_replay_invalid",
+                    descriptor: descriptor,
+                    message: "The Responses reasoning replay is invalid for this route."
+                )
+            }
+        }
+    }
+
+    private static func requiresDeepSeekReasoningReplay(
+        _ descriptor: ProviderAdapterDescriptor
+    ) -> Bool {
+        descriptor.route.provenance == .builtInOpenCodeZenChatCompletions &&
+            descriptor.route.modelID.rawValue.lowercased()
+                .hasPrefix("deepseek-v4-")
+    }
+
+    private static func isSafeWireIdentity(
+        _ value: String,
+        maximumUTF8Count: Int
+    ) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= maximumUTF8Count else {
+            return false
+        }
+        return value.unicodeScalars.allSatisfy { scalar in
+            !CharacterSet.whitespacesAndNewlines.contains(scalar) &&
+                !CharacterSet.controlCharacters.contains(scalar) &&
+                scalar.properties.generalCategory != .format
+        }
     }
 
     private static func responsesToolOutput(_ parts: [ProviderContentPart]) -> JSONValue {

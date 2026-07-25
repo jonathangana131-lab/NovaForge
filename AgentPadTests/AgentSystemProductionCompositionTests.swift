@@ -51,6 +51,58 @@ final class AgentSystemProductionCompositionTests: XCTestCase {
         XCTAssertNil(resolved.hostedCredential)
     }
 
+    func testFreshEnvironmentUsesNewestDuplicateSettingsBeforeLaunchCleanup()
+        async throws
+    {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let workspaceName = "Resolver-Duplicate-\(UUID().uuidString)"
+        let workspace = SandboxWorkspace(name: workspaceName)
+        try FileManager.default.createDirectory(
+            at: workspace.rootURL,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: workspace.rootURL) }
+        let project = Project(
+            name: "Duplicate Settings Resolver",
+            workspaceName: workspaceName
+        )
+        let older = AgentSettings(
+            provider: .local,
+            customSystemPrompt: "stale instruction"
+        )
+        older.updatedAt = Date(timeIntervalSince1970: 100)
+        let newest = AgentSettings(
+            provider: .local,
+            customSystemPrompt: "newest instruction"
+        )
+        newest.updatedAt = Date(timeIntervalSince1970: 200)
+        context.insert(project)
+        context.insert(older)
+        context.insert(newest)
+        try context.save()
+
+        let resolver = SwiftDataAgentSystemRunEnvironmentResolver(
+            container: container
+        )
+        let resolved = try await resolver.resolveFreshEnvironment(
+            context: makeRunContext(
+                projectID: ProjectID(rawValue: project.id),
+                workspace: workspace
+            ),
+            providerRoute: localRoute()
+        )
+
+        XCTAssertEqual(resolved.systemInstruction, "newest instruction")
+        XCTAssertNil(resolved.hostedCredential)
+        XCTAssertNil(resolved.hostedAccountID)
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<AgentSettings>()).count,
+            2,
+            "Resolver selection must not depend on launch cleanup running first."
+        )
+    }
+
     func testFreshEnvironmentRejectsWorkspaceIdentitySubstitution()
         async throws
     {
@@ -316,7 +368,8 @@ final class AgentSystemProductionCompositionTests: XCTestCase {
             workspace: workspace,
             systemInstruction: nil,
             developerInstruction: nil,
-            hostedCredential: nil
+            hostedCredential: nil,
+            hostedAccountID: nil
         )
         let route = try localRoute()
 

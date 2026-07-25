@@ -248,13 +248,83 @@ struct AgentCanonicalContextPreparer: AgentContextPreparing, Sendable {
         }
 
         var contentPartCount = messages.reduce(0) { $0 + $1.content.count }
-        for item in state.modelItems {
+        var itemIndex = 0
+        while itemIndex < state.modelItems.count {
             try Task.checkCancellation()
-            let message = try providerMessage(
-                for: item,
-                transcript: transcript,
-                jsonNodeCount: &jsonNodeCount
-            )
+            let item = state.modelItems[itemIndex]
+            let message: ProviderMessage
+            if case let .message(modelMessage) = item.payload,
+               modelMessage.role == .assistant,
+               itemIndex + 2 < state.modelItems.count,
+               case let .reasoningSummary(reasoning) =
+                state.modelItems[itemIndex + 1].payload,
+               let reasoningReplay = reasoning.replay,
+               case let .chatCompletions(replay) = reasoningReplay,
+               let reasoningAttemptID = reasoning.modelAttemptID,
+               case let .toolInvocation(invocation) =
+                state.modelItems[itemIndex + 2].payload,
+               invocation.modelAttemptID == reasoningAttemptID {
+                let textMessage = try providerMessage(
+                    for: item,
+                    transcript: transcript,
+                    jsonNodeCount: &jsonNodeCount
+                )
+                let toolMessage = try providerMessage(
+                    for: state.modelItems[itemIndex + 2],
+                    transcript: transcript,
+                    jsonNodeCount: &jsonNodeCount
+                )
+                message = ProviderMessage(
+                    role: .assistant,
+                    content: textMessage.content + toolMessage.content,
+                    reasoningReplay: .chatCompletions(replay)
+                )
+                itemIndex += 3
+            } else if case let .reasoningSummary(reasoning) = item.payload,
+               let replay = reasoning.replay {
+                switch replay {
+                case .responses:
+                    message = ProviderMessage(
+                        role: .assistant,
+                        content: [],
+                        reasoningReplay: replay
+                    )
+                    itemIndex += 1
+                case .chatCompletions:
+                    let nextIndex = itemIndex + 1
+                    guard nextIndex < state.modelItems.count,
+                          let reasoningAttemptID = reasoning.modelAttemptID,
+                          case let .toolInvocation(invocation) =
+                            state.modelItems[nextIndex].payload,
+                          invocation.modelAttemptID == reasoningAttemptID
+                    else {
+                        throw AgentCanonicalContextPreparerError.invalidModelItem(
+                            item.id,
+                            "chat_reasoning_replay_not_bound_to_next_tool_call"
+                        )
+                    }
+                    let toolMessage = try providerMessage(
+                        for: state.modelItems[nextIndex],
+                        transcript: transcript,
+                        jsonNodeCount: &jsonNodeCount
+                    )
+                    message = ProviderMessage(
+                        role: toolMessage.role,
+                        content: toolMessage.content,
+                        toolCallID: toolMessage.toolCallID,
+                        name: toolMessage.name,
+                        reasoningReplay: replay
+                    )
+                    itemIndex += 2
+                }
+            } else {
+                message = try providerMessage(
+                    for: item,
+                    transcript: transcript,
+                    jsonNodeCount: &jsonNodeCount
+                )
+                itemIndex += 1
+            }
             let addition = contentPartCount.addingReportingOverflow(message.content.count)
             guard !addition.overflow else {
                 throw AgentCanonicalContextPreparerError.arithmeticOverflow
@@ -678,6 +748,9 @@ private extension AgentCanonicalContextPreparer {
         var idempotencyKeys: Set<String> = []
         var attemptOrder: [AttemptID] = []
         var invocationCountByAttempt: [AttemptID: Int] = [:]
+        var reasoningReplayAttempts: Set<AttemptID> = []
+        var chatReasoningReplayAttempts: Set<AttemptID> = []
+        var responsesReasoningItemIDs: Set<String> = []
         var priorItemIDs: Set<ModelItemID> = []
 
         for (index, item) in state.modelItems.enumerated() {
@@ -790,7 +863,60 @@ private extension AgentCanonicalContextPreparer {
                     checkpoint: checkpoint,
                     knownItemIDs: priorItemIDs
                 )
-            case .message, .reasoningSummary:
+            case let .reasoningSummary(reasoning):
+                guard (!reasoning.text.isEmpty || reasoning.replay != nil),
+                      reasoning.text.utf8.count <=
+                        configuration.limits.maximumTextPartUTF8Bytes,
+                      reasoning.providerReference.map({
+                          Self.safeIdentity($0, maximumUTF8Count: 512)
+                      }) != false
+                else {
+                    throw AgentCanonicalContextPreparerError.invalidModelItem(
+                        item.id,
+                        "invalid_reasoning_summary"
+                    )
+                }
+                if let replay = reasoning.replay {
+                    guard let attemptID = reasoning.modelAttemptID,
+                          let attempt = attemptsByID[attemptID],
+                          attempt.status == .responseCommitted,
+                          reasoning.providerReference != nil
+                    else {
+                        throw AgentCanonicalContextPreparerError.invalidModelItem(
+                            item.id,
+                            "invalid_reasoning_replay_attempt"
+                        )
+                    }
+                    try validateReasoningReplay(replay, itemID: item.id)
+                    switch replay {
+                    case .chatCompletions:
+                        guard attempt.finishReason == .toolCalls,
+                              chatReasoningReplayAttempts.insert(attemptID)
+                                .inserted
+                        else {
+                            throw AgentCanonicalContextPreparerError.invalidModelItem(
+                                item.id,
+                                "invalid_chat_reasoning_replay_attempt"
+                            )
+                        }
+                    case let .responses(value):
+                        guard responsesReasoningItemIDs.insert(value.itemID)
+                            .inserted
+                        else {
+                            throw AgentCanonicalContextPreparerError.invalidModelItem(
+                                item.id,
+                                "duplicate_responses_reasoning_item"
+                            )
+                        }
+                    }
+                    reasoningReplayAttempts.insert(attemptID)
+                } else if reasoning.modelAttemptID != nil {
+                    throw AgentCanonicalContextPreparerError.invalidModelItem(
+                        item.id,
+                        "reasoning_attempt_without_replay"
+                    )
+                }
+            case .message:
                 break
             }
             priorItemIDs.insert(item.id)
@@ -803,6 +929,16 @@ private extension AgentCanonicalContextPreparer {
             // therefore require an ordering/grouping guess, which production blocks.
             throw AgentCanonicalContextPreparerError
                 .multiToolAssistantEnvelopeProvenanceUnavailable(attemptID)
+        }
+        if requiresProviderReasoningReplay {
+            for attemptID in attemptOrder
+            where attemptsByID[attemptID]?.finishReason == .toolCalls &&
+                !reasoningReplayAttempts.contains(attemptID) {
+                throw AgentCanonicalContextPreparerError.invalidAttempt(
+                    attemptID,
+                    "provider_reasoning_replay_missing"
+                )
+            }
         }
         try enforceLimit(
             .toolCalls,
@@ -878,6 +1014,73 @@ private extension AgentCanonicalContextPreparer {
 // MARK: - Tool validation and digest contracts
 
 private extension AgentCanonicalContextPreparer {
+    var requiresProviderReasoningReplay: Bool {
+        if configuration.providerID == ProviderID(rawValue: "openai-codex") {
+            return true
+        }
+        return configuration.providerID == ProviderID(
+            rawValue: "opencode-zen"
+        ) && configuration.model.rawValue.lowercased()
+            .hasPrefix("deepseek-v4-")
+    }
+
+    func validateReasoningReplay(
+        _ replay: ModelReasoningReplay,
+        itemID: ModelItemID
+    ) throws {
+        switch replay {
+        case let .chatCompletions(value):
+            guard configuration.providerID == ProviderID(
+                    rawValue: "opencode-zen"
+                  ),
+                  configuration.model.rawValue.lowercased()
+                    .hasPrefix("deepseek-v4-"),
+                  !value.content.isEmpty,
+                  value.content.utf8.count <=
+                    configuration.limits.maximumTextPartUTF8Bytes
+            else {
+                throw AgentCanonicalContextPreparerError.invalidModelItem(
+                    itemID,
+                    "invalid_chat_reasoning_replay"
+                )
+            }
+        case let .responses(value):
+            let partCount = value.summary.count.addingReportingOverflow(
+                value.content.count
+            )
+            guard configuration.providerID == ProviderID(
+                    rawValue: "openai-codex"
+                  ),
+                  Self.safeIdentity(
+                      value.itemID,
+                      maximumUTF8Count: 512
+                  ),
+                  !value.encryptedContent.isEmpty,
+                  value.encryptedContent.utf8.count <=
+                    configuration.limits.maximumStructuredPartUTF8Bytes,
+                  value.encryptedContent.unicodeScalars.allSatisfy({
+                      (0x21 ... 0x7e).contains($0.value)
+                  }),
+                  !partCount.overflow,
+                  partCount.partialValue <=
+                    configuration.limits.maximumContentParts,
+                  value.summary.allSatisfy({
+                      $0.utf8.count <=
+                        configuration.limits.maximumTextPartUTF8Bytes
+                  }),
+                  value.content.allSatisfy({
+                      $0.utf8.count <=
+                        configuration.limits.maximumTextPartUTF8Bytes
+                  })
+            else {
+                throw AgentCanonicalContextPreparerError.invalidModelItem(
+                    itemID,
+                    "invalid_responses_reasoning_replay"
+                )
+            }
+        }
+    }
+
     func validateAndBindTools(
         _ tools: [ToolDescriptor],
         jsonNodeCount: inout Int
@@ -1205,7 +1408,9 @@ private extension AgentCanonicalContextPreparer {
             return ProviderMessage(role: role, content: parts)
 
         case let .reasoningSummary(reasoning):
-            guard !reasoning.text.isEmpty,
+            guard reasoning.replay == nil,
+                  reasoning.modelAttemptID == nil,
+                  !reasoning.text.isEmpty,
                   reasoning.text.utf8.count <= configuration.limits.maximumTextPartUTF8Bytes,
                   reasoning.providerReference.map({
                       Self.safeIdentity($0, maximumUTF8Count: 512)

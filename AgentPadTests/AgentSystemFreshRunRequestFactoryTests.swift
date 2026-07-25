@@ -279,6 +279,79 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         XCTAssertEqual(request.plan.origin, .autoContinue)
     }
 
+    func testOpenAIReasoningFamiliesOmitTemperatureFromPlanAndChatRequestBody()
+        throws
+    {
+        let fixture = makeFixture()
+        fixture.settings.provider = .openAI
+        fixture.settings.temperature = 0.73
+
+        for modelID in [
+            "o3",
+            "o3-mini",
+            "o4-mini",
+            "gpt-5.5",
+            AIProvider.exactGPT56SolModelID,
+        ] {
+            fixture.settings.modelID = modelID
+            let request = try fixture.make(
+                prompt: "Do not send an unsupported temperature."
+            )
+
+            XCTAssertNil(request.plan.providerOptions.temperature, modelID)
+            let body = try encodedHostedBody(
+                for: request,
+                provider: .openAI
+            )
+            XCTAssertNil(body["temperature"], modelID)
+        }
+    }
+
+    func testTemperatureRemainsBoundForNormalZenAndLocalButNotChatGPT()
+        throws
+    {
+        let fixture = makeFixture()
+        let temperature = 0.73
+        fixture.settings.temperature = temperature
+
+        fixture.settings.provider = .openAI
+        fixture.settings.modelID = "gpt-4.1"
+        let openAI = try fixture.make(prompt: "Keep normal temperature.")
+        XCTAssertEqual(openAI.plan.providerOptions.temperature, temperature)
+        XCTAssertEqual(
+            try encodedHostedBody(for: openAI, provider: .openAI)["temperature"],
+            .number(.floatingPoint(temperature))
+        )
+
+        fixture.settings.provider = .openCodeZen
+        fixture.settings.modelID = "mimo-v2.5-free"
+        let zen = try fixture.make(prompt: "Keep Zen temperature.")
+        XCTAssertEqual(zen.plan.providerOptions.temperature, temperature)
+        XCTAssertEqual(
+            try encodedHostedBody(
+                for: zen,
+                provider: .openCodeZen
+            )["temperature"],
+            .number(.floatingPoint(temperature))
+        )
+
+        fixture.settings.provider = .local
+        fixture.settings.modelID = LocalModelCatalog.defaultVariant.id
+        let local = try fixture.make(prompt: "Keep local temperature.")
+        XCTAssertEqual(local.plan.providerOptions.temperature, temperature)
+
+        fixture.settings.provider = .openAICodex
+        fixture.settings.modelID = "gpt-5.5"
+        let chatGPT = try fixture.make(prompt: "Omit Responses temperature.")
+        XCTAssertNil(chatGPT.plan.providerOptions.temperature)
+        XCTAssertNil(
+            try encodedHostedBody(
+                for: chatGPT,
+                provider: .openAICodex
+            )["temperature"]
+        )
+    }
+
     func testLocalRequestHasBuiltInTextOnlyRouteAndZeroTools() throws {
         let conversation = Conversation(title: "Local")
         conversation.id = uuid(30)
@@ -657,6 +730,52 @@ private func makeFixture() -> FreshRunFixture {
         settings: settings,
         workspace: SandboxWorkspace(name: project.workspaceName)
     )
+}
+
+private enum FactoryRequestEncodingTestError: Error {
+    case unsupportedProvider
+    case expectedObjectBody
+}
+
+private func encodedHostedBody(
+    for request: AgentSystemFreshRunRequest,
+    provider: AIProvider
+) throws -> [String: JSONValue] {
+    let modelID = request.plan.providerRoute.modelID
+    let trusted: TrustedHostedProviderCatalog
+    switch provider {
+    case .openAI:
+        trusted = .openAIChatCompletions(
+            model: modelID,
+            capabilities: .hostedChatSingleCallToolsBaseline
+        )
+    case .openCodeZen:
+        trusted = .openCodeZenChatCompletions(
+            model: modelID,
+            capabilities: .hostedOpenCodeZenChatSingleCallToolsBaseline
+        )
+    case .openAICodex:
+        trusted = .openAICodexResponses(
+            model: modelID,
+            capabilities: .hostedResponsesSingleCallToolsBaseline
+        )
+    default:
+        throw FactoryRequestEncodingTestError.unsupportedProvider
+    }
+    let catalog = try trusted.providerCatalog()
+    let adapter = try catalog.adapter(id: trusted.adapterID)
+    let encoded = try adapter.encode(CanonicalProviderRequest(
+        requestID: "factory-temperature-body",
+        model: modelID,
+        messages: [
+            .init(role: .user, content: [.text("Check temperature encoding.")]),
+        ],
+        options: request.plan.providerOptions
+    ))
+    guard case let .object(body) = encoded.body else {
+        throw FactoryRequestEncodingTestError.expectedObjectBody
+    }
+    return body
 }
 
 @MainActor

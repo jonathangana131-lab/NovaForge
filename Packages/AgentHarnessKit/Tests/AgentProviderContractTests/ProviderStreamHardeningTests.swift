@@ -171,6 +171,72 @@ final class ProviderStreamHardeningTests: XCTestCase {
         ])
     }
 
+    func testDeepSeekV4ToolTurnEmitsRequiredReasoningReplay() throws {
+        let responseID = "deepseek-response"
+        let model = "deepseek-v4-flash-free"
+        func frame(
+            delta: [String: JSONValue],
+            finishReason: String? = nil
+        ) -> ProviderWireFrame {
+            .json(.object([
+                "id": .string(responseID),
+                "model": .string(model),
+                "choices": .array([.object([
+                    "index": .number(.integer(0)),
+                    "delta": .object(delta),
+                    "finish_reason": finishReason.map(JSONValue.string)
+                        ?? .null,
+                ])]),
+            ]))
+        }
+        let toolDelta = frame(delta: [
+            "tool_calls": .array([.object([
+                "index": .number(.integer(0)),
+                "id": .string("call-1"),
+                "function": .object([
+                    "name": .string("read_file"),
+                    "arguments": .string("{\"path\":\"notes.md\"}"),
+                ]),
+            ])]),
+        ])
+        let usage: ProviderWireFrame = .json(.object([
+            "id": .string(responseID),
+            "model": .string(model),
+            "choices": .array([]),
+            "usage": .object([
+                "prompt_tokens": .number(.integer(4)),
+                "completion_tokens": .number(.integer(2)),
+            ]),
+        ]))
+
+        var session = zenReasoningToolChatSession()
+        var events: [ProviderStreamEvent] = []
+        for wireFrame in [
+            frame(delta: ["reasoning_content": .string("private-reasoning")]),
+            toolDelta,
+            frame(delta: [:], finishReason: "tool_calls"),
+            usage,
+            .done,
+        ] {
+            events.append(contentsOf: try session.receive(wireFrame).map(\.event))
+        }
+        XCTAssertTrue(events.contains(.reasoningReplay(.init(
+            outputIndex: 0,
+            replay: .chatCompletions(.init(content: "private-reasoning"))
+        ))))
+
+        var missing = zenReasoningToolChatSession()
+        _ = try missing.receive(toolDelta)
+        _ = try missing.receive(frame(delta: [:], finishReason: "tool_calls"))
+        _ = try missing.receive(usage)
+        XCTAssertThrowsError(try missing.receive(.done)) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_reasoning_replay_missing"
+            )
+        }
+    }
+
     func testGenericChatDoesNotGainZenReasoningAuthority() throws {
         var session = chatSession()
         XCTAssertThrowsError(try session.receive(chatFrame(
@@ -361,6 +427,7 @@ final class ProviderStreamHardeningTests: XCTestCase {
         let reasoningItem: JSONValue = .object([
             "id": .string("reasoning-1"),
             "type": .string("reasoning"),
+            "encrypted_content": .string("encrypted-reasoning-fixture"),
             "summary": .array([.object([
                 "type": .string("summary_text"),
                 "text": .string("R"),
@@ -477,17 +544,25 @@ final class ProviderStreamHardeningTests: XCTestCase {
                 "output_index": .number(.integer(1)),
                 "item": messageItem,
             ])),
-            responsesCompletion(
-                output: [reasoningItem, messageItem],
+            responsesCompletionWithNullOutput(
                 inputTokens: 2,
                 outputTokens: 3
             ),
         ]
 
         var canonical: [ProviderStreamEvent] = []
-        for frame in frames {
-            canonical.append(contentsOf: try session.receive(frame).map(\.event))
+        var replayEmissionFrameIndices: [Int] = []
+        for (frameIndex, frame) in frames.enumerated() {
+            let events = try session.receive(frame).map(\.event)
+            if events.contains(where: { event in
+                guard case .reasoningReplay = event else { return false }
+                return true
+            }) {
+                replayEmissionFrameIndices.append(frameIndex)
+            }
+            canonical.append(contentsOf: events)
         }
+        XCTAssertEqual(replayEmissionFrameIndices, [7])
         XCTAssertEqual(canonical.compactMap { event -> String? in
             guard case let .reasoningDelta(delta) = event else { return nil }
             return delta.text
@@ -496,6 +571,17 @@ final class ProviderStreamHardeningTests: XCTestCase {
             guard case let .textDelta(delta) = event else { return nil }
             return delta.text
         }.joined(), "OK")
+        XCTAssertEqual(canonical.compactMap { event -> ModelReasoningReplay? in
+            guard case let .reasoningReplay(replay) = event else { return nil }
+            return replay.replay
+        }, [
+            .responses(.init(
+                itemID: "reasoning-1",
+                summary: ["R"],
+                content: [],
+                encryptedContent: "encrypted-reasoning-fixture"
+            )),
+        ])
         XCTAssertTrue(canonical.contains { event in
             guard case let .responseCompleted(completion) = event else {
                 return false
@@ -503,6 +589,233 @@ final class ProviderStreamHardeningTests: XCTestCase {
             return completion.responseID == "response-1" &&
                 completion.finishReason == .completed
         })
+    }
+
+    func testChatGPTToolTurnCapturesMultipleDoneReasoningItemsBeforeNullCompletionOutput() throws {
+        var session = codexToolResponsesSession()
+        var canonical = try session.receive(responseCreated()).map(\.event)
+
+        for index in 0 ... 1 {
+            let itemID = "reasoning-\(index)"
+            let summary = "R\(index)"
+            let addedEvents = try session.receive(.json(.object([
+                "type": .string("response.output_item.added"),
+                "output_index": .number(.integer(Int64(index))),
+                "item": .object([
+                    "id": .string(itemID),
+                    "type": .string("reasoning"),
+                    "status": .string("in_progress"),
+                    "summary": .array([]),
+                ]),
+            ]))).map(\.event)
+            XCTAssertFalse(addedEvents.contains(where: { event in
+                guard case .reasoningReplay = event else { return false }
+                return true
+            }))
+            canonical.append(contentsOf: addedEvents)
+
+            let reasoningFrames: [ProviderWireFrame] = [
+                .json(.object([
+                    "type": .string("response.reasoning_summary_part.added"),
+                    "output_index": .number(.integer(Int64(index))),
+                    "summary_index": .number(.integer(0)),
+                    "part": .object([
+                        "type": .string("summary_text"),
+                        "text": .string(""),
+                    ]),
+                ])),
+                .json(.object([
+                    "type": .string("response.reasoning_summary_text.delta"),
+                    "output_index": .number(.integer(Int64(index))),
+                    "summary_index": .number(.integer(0)),
+                    "delta": .string(summary),
+                ])),
+                .json(.object([
+                    "type": .string("response.reasoning_summary_text.done"),
+                    "output_index": .number(.integer(Int64(index))),
+                    "summary_index": .number(.integer(0)),
+                    "text": .string(summary),
+                ])),
+                .json(.object([
+                    "type": .string("response.reasoning_summary_part.done"),
+                    "output_index": .number(.integer(Int64(index))),
+                    "summary_index": .number(.integer(0)),
+                    "part": .object([
+                        "type": .string("summary_text"),
+                        "text": .string(summary),
+                    ]),
+                ])),
+                .json(.object([
+                    "type": .string("response.output_item.done"),
+                    "output_index": .number(.integer(Int64(index))),
+                    "item": .object([
+                        "id": .string(itemID),
+                        "type": .string("reasoning"),
+                        "status": .string("completed"),
+                        "encrypted_content": .string("encrypted-\(index)"),
+                        "summary": .array([.object([
+                            "type": .string("summary_text"),
+                            "text": .string(summary),
+                        ])]),
+                    ]),
+                ])),
+            ]
+            for frame in reasoningFrames {
+                canonical.append(contentsOf: try session.receive(frame).map(\.event))
+            }
+        }
+
+        let toolIndex = 2
+        let arguments = "{\"path\":\"notes.md\"}"
+        let toolFrames: [ProviderWireFrame] = [
+            .json(.object([
+                "type": .string("response.output_item.added"),
+                "output_index": .number(.integer(Int64(toolIndex))),
+                "item": .object([
+                    "id": .string("tool-item-1"),
+                    "type": .string("function_call"),
+                    "call_id": .string("call-1"),
+                    "name": .string("read_file"),
+                    "arguments": .string(""),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.function_call_arguments.delta"),
+                "output_index": .number(.integer(Int64(toolIndex))),
+                "item_id": .string("tool-item-1"),
+                "call_id": .string("call-1"),
+                "delta": .string(arguments),
+            ])),
+            .json(.object([
+                "type": .string("response.function_call_arguments.done"),
+                "output_index": .number(.integer(Int64(toolIndex))),
+                "item_id": .string("tool-item-1"),
+                "call_id": .string("call-1"),
+                "name": .string("read_file"),
+                "arguments": .string(arguments),
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.done"),
+                "output_index": .number(.integer(Int64(toolIndex))),
+                "item": .object([
+                    "id": .string("tool-item-1"),
+                    "type": .string("function_call"),
+                    "call_id": .string("call-1"),
+                    "name": .string("read_file"),
+                    "arguments": .string(arguments),
+                ]),
+            ])),
+            responsesCompletionWithNullOutput(
+                inputTokens: 4,
+                outputTokens: 3
+            ),
+        ]
+        for frame in toolFrames {
+            canonical.append(contentsOf: try session.receive(frame).map(\.event))
+        }
+
+        XCTAssertEqual(canonical.compactMap { event -> String? in
+            guard case let .reasoningReplay(replayEvent) = event,
+                  case let .responses(replay) = replayEvent.replay
+            else { return nil }
+            return replay.itemID
+        }, ["reasoning-0", "reasoning-1"])
+        XCTAssertTrue(canonical.contains { event in
+            guard case let .toolCallCompleted(tool) = event else {
+                return false
+            }
+            return tool.outputIndex == toolIndex && tool.callID == "call-1"
+        })
+        XCTAssertTrue(canonical.contains { event in
+            guard case let .responseCompleted(completion) = event else {
+                return false
+            }
+            return completion.finishReason == .toolCalls
+        })
+
+        var outOfOrder = codexToolResponsesSession()
+        _ = try outOfOrder.receive(responseCreated())
+        XCTAssertThrowsError(try outOfOrder.receive(responsesCompletion(output: [
+            .object([
+                "id": .string("reasoning-after-tool"),
+                "type": .string("reasoning"),
+                "output_index": .number(.integer(1)),
+                "encrypted_content": .string("encrypted-after-tool"),
+                "summary": .array([]),
+            ]),
+            .object([
+                "id": .string("tool-before-reasoning"),
+                "type": .string("function_call"),
+                "output_index": .number(.integer(0)),
+                "call_id": .string("call-before-reasoning"),
+                "name": .string("read_file"),
+                "arguments": .string(arguments),
+            ]),
+        ]))) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_reasoning_replay_order_invalid"
+            )
+        }
+    }
+
+    func testChatGPTReasoningReplayRequiresBoundedEncryptedContent() throws {
+        func reasoningDone(encryptedContent: String?) -> ProviderWireFrame {
+            var item: [String: JSONValue] = [
+                "id": .string("reasoning-boundary"),
+                "type": .string("reasoning"),
+                "summary": .array([]),
+            ]
+            if let encryptedContent {
+                item["encrypted_content"] = .string(encryptedContent)
+            }
+            return .json(.object([
+                "type": .string("response.output_item.done"),
+                "output_index": .number(.integer(0)),
+                "item": .object(item),
+            ]))
+        }
+
+        for encryptedContent in [
+            nil,
+            String(repeating: "e", count: 1 * 1_024 * 1_024 + 1),
+        ] {
+            var session = codexResponsesSession()
+            _ = try session.receive(responseCreated())
+            XCTAssertThrowsError(
+                try session.receive(reasoningDone(
+                    encryptedContent: encryptedContent
+                ))
+            ) { error in
+                XCTAssertEqual(
+                    (error as? ProviderFailure)?.code,
+                    "provider_responses_reasoning_replay_invalid"
+                )
+            }
+        }
+
+        var missingFinalReplay = codexResponsesSession()
+        _ = try missingFinalReplay.receive(responseCreated())
+        _ = try missingFinalReplay.receive(.json(.object([
+            "type": .string("response.output_item.added"),
+            "output_index": .number(.integer(0)),
+            "item": .object([
+                "id": .string("reasoning-provisional-only"),
+                "type": .string("reasoning"),
+                "summary": .array([]),
+            ]),
+        ])))
+        XCTAssertThrowsError(try missingFinalReplay.receive(
+            responsesCompletionWithNullOutput(
+                inputTokens: 1,
+                outputTokens: 1
+            )
+        )) { error in
+            XCTAssertEqual(
+                (error as? ProviderFailure)?.code,
+                "provider_reasoning_replay_missing"
+            )
+        }
     }
 
     func testChatGPTMetadataRejectsMismatchedResponseIdentity() throws {
@@ -1013,6 +1326,21 @@ final class ProviderStreamHardeningTests: XCTestCase {
         )
     }
 
+    private func codexToolResponsesSession() -> ProviderStreamSession {
+        let adapter = OpenAICodexResponsesAdapter(
+            model: .init(rawValue: "fixture-model")
+        )
+        let request = toolRequest(model: "fixture-model")
+        return ProviderStreamSession(
+            descriptor: adapter.descriptor,
+            scope: .init(
+                requestID: request.requestID,
+                attemptID: .init(rawValue: "attempt-1")
+            ),
+            request: request
+        )
+    }
+
     private func reasoningResponsesSession() -> ProviderStreamSession {
         let adapter = OpenAIResponsesAdapter(model: .init(rawValue: "fixture-model"))
         let request = CanonicalProviderRequest(
@@ -1082,6 +1410,23 @@ final class ProviderStreamHardeningTests: XCTestCase {
             capabilities: .hostedOpenCodeZenChatSingleCallToolsBaseline
         )
         let request = textRequest(model: model)
+        return ProviderStreamSession(
+            descriptor: adapter.descriptor,
+            scope: .init(
+                requestID: request.requestID,
+                attemptID: .init(rawValue: "attempt-1")
+            ),
+            request: request
+        )
+    }
+
+    private func zenReasoningToolChatSession() -> ProviderStreamSession {
+        let model = "deepseek-v4-flash-free"
+        let adapter = OpenCodeZenChatCompletionsAdapter(
+            model: .init(rawValue: model),
+            capabilities: .hostedOpenCodeZenChatSingleCallToolsBaseline
+        )
+        let request = toolRequest(model: model, parallelToolCalls: false)
         return ProviderStreamSession(
             descriptor: adapter.descriptor,
             scope: .init(
@@ -1205,6 +1550,25 @@ final class ProviderStreamHardeningTests: XCTestCase {
         return .json(.object([
             "type": .string("response.completed"),
             "response": .object(response),
+        ]))
+    }
+
+    private func responsesCompletionWithNullOutput(
+        inputTokens: UInt64,
+        outputTokens: UInt64
+    ) -> ProviderWireFrame {
+        .json(.object([
+            "type": .string("response.completed"),
+            "response": .object([
+                "id": .string("response-1"),
+                "model": .string("fixture-model"),
+                "status": .string("completed"),
+                "output": .null,
+                "usage": .object([
+                    "input_tokens": .number(.unsignedInteger(inputTokens)),
+                    "output_tokens": .number(.unsignedInteger(outputTokens)),
+                ]),
+            ]),
         ]))
     }
 

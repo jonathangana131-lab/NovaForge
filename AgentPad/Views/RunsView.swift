@@ -1290,10 +1290,10 @@ struct RunsView: View {
 
     private var runsChangeSurface: some View {
         runsTaskSurface
-        .onChange(of: runs, initial: true) {
+        .onChange(of: toolRunCacheKey, initial: true) {
             updateCachedData()
         }
-        .onChange(of: terminalRecords.count) {
+        .onChange(of: terminalRecordCacheKey) {
             updateCachedData()
         }
         .onChange(of: missionReceiptCacheKey) {
@@ -1333,6 +1333,14 @@ struct RunsView: View {
             "\(record.id.uuidString):\(record.statusRawValue):\(record.updatedAt.timeIntervalSinceReferenceDate)"
         }
         .joined(separator: "|")
+    }
+
+    var toolRunCacheKey: [HistoryToolRunCacheSignature] {
+        runs.map(HistoryToolRunCacheSignature.init)
+    }
+
+    var terminalRecordCacheKey: [HistoryTerminalRecordCacheSignature] {
+        terminalRecords.map(HistoryTerminalRecordCacheSignature.init)
     }
 
     var conversationReceiptCacheKey: String {

@@ -447,6 +447,7 @@ struct AgentHostedTextCanaryCoordinator: Sendable {
                 }
                 finishReason = completion.finishReason
             case .reasoningDelta,
+                 .reasoningReplay,
                  .toolCallStarted,
                  .toolCallArgumentsDelta,
                  .toolCallCompleted,

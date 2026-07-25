@@ -372,9 +372,8 @@ struct ArtifactGameFullScreenCover: View {
     @State private var errorMessage: String?
     @State private var gameManifest: SwiftGameManifest?
     @State private var reloadToken = UUID()
-    @State private var hasReachedLandscapeSize = false
-    @State private var lastReloadSize: CGSize = .zero
     @State private var isDismissing = false
+    @State private var previewLoadState: ArtifactPreviewLoadState = .loading
 
     var body: some View {
         GeometryReader { proxy in
@@ -414,6 +413,53 @@ struct ArtifactGameFullScreenCover: View {
                 .padding(.top, max(8, proxy.safeAreaInsets.top + 6))
                 .padding(.leading, max(8, proxy.safeAreaInsets.leading + 8))
                 .zIndex(5)
+
+                if showsFullScreenReload {
+                    Button {
+                        reloadFullScreenArtifact()
+                    } label: {
+                        ZStack {
+                            Color.clear
+                            Circle()
+                                .fill(Color.black.opacity(0.24))
+                                .frame(width: 30, height: 30)
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundStyle(.white.opacity(0.92))
+                        }
+                        .frame(
+                            width: AgentDesign.minimumTouchTarget,
+                            height: AgentDesign.minimumTouchTarget
+                        )
+                        .overlay(
+                            Circle()
+                                .strokeBorder(
+                                    Color.white.opacity(0.12),
+                                    lineWidth: 1
+                                )
+                                .frame(width: 30, height: 30)
+                        )
+                        .shadow(
+                            color: .black.opacity(0.18),
+                            radius: 6,
+                            x: 0,
+                            y: 3
+                        )
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Reload Artifact")
+                    .accessibilityIdentifier(
+                        "artifactFullScreenReloadButton"
+                    )
+                    .frame(maxWidth: .infinity, alignment: .topTrailing)
+                    .padding(.top, max(8, proxy.safeAreaInsets.top + 6))
+                    .padding(
+                        .trailing,
+                        max(8, proxy.safeAreaInsets.trailing + 8)
+                    )
+                    .zIndex(5)
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .background(ArtifactSizeReporter(label: "root-fullscreen", size: proxy.size))
@@ -433,6 +479,7 @@ struct ArtifactGameFullScreenCover: View {
         .persistentSystemOverlays(.hidden)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("artifactGameFullScreen")
+        .accessibilityValue(fullScreenAccessibilityValue)
     }
 
     private func dismissAndRestorePortrait() {
@@ -443,6 +490,24 @@ struct ArtifactGameFullScreenCover: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             close()
         }
+    }
+
+    private var showsFullScreenReload: Bool {
+        guard !isDismissing else { return false }
+        if errorMessage != nil { return true }
+        if case .failed = previewLoadState { return true }
+        return false
+    }
+
+    private func reloadFullScreenArtifact() {
+        guard !isDismissing else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        errorMessage = nil
+        if artifact.isWebPage {
+            previewLoadState = .loading
+        }
+        loadArtifact()
+        reloadToken = UUID()
     }
 
     @ViewBuilder
@@ -459,16 +524,33 @@ struct ArtifactGameFullScreenCover: View {
                 .frame(width: max(1, size.width), height: max(1, size.height))
                 .background(Color.black)
         } else if artifact.isWebPage, let fileURL {
-            WebArtifactView(
-                fileURL: fileURL,
-                readAccessURL: workspace.rootURL,
-                reloadToken: reloadToken,
-                viewportSize: size,
-                fullBleedGameMode: true
-            )
-            .id(reloadToken)
-            .frame(width: max(1, size.width), height: max(1, size.height))
-            .background(Color.black)
+            ZStack {
+                WebArtifactView(
+                    fileURL: fileURL,
+                    readAccessURL: workspace.rootURL,
+                    reloadToken: reloadToken,
+                    viewportSize: size,
+                    fullBleedGameMode: true,
+                    onLoadStateChange: updatePreviewLoadState
+                )
+                .id(reloadToken)
+                .frame(width: max(1, size.width), height: max(1, size.height))
+                .background(Color.black)
+
+                switch previewLoadState {
+                case .loading:
+                    ProgressView("Loading artifact…")
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black)
+                case let .failed(message):
+                    ArtifactErrorCard(message: message, isFullScreen: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black)
+                case .ready:
+                    EmptyView()
+                }
+            }
         } else if artifact.isSwiftGameArtifact {
             ArtifactErrorCard(message: "NovaForge could not decode this Swift game manifest.", isFullScreen: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -482,6 +564,9 @@ struct ArtifactGameFullScreenCover: View {
     }
 
     private func loadArtifact() {
+        if artifact.isWebPage {
+            previewLoadState = .loading
+        }
         do {
             let resolved = try workspace.resolve(artifact.path)
             fileURL = resolved
@@ -496,6 +581,23 @@ struct ArtifactGameFullScreenCover: View {
             fileURL = nil
             gameManifest = nil
             errorMessage = error.localizedDescription
+            if artifact.isWebPage {
+                previewLoadState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func updatePreviewLoadState(_ state: ArtifactPreviewLoadState) {
+        guard previewLoadState != state else { return }
+        previewLoadState = state
+    }
+
+    private var fullScreenAccessibilityValue: String {
+        guard artifact.isWebPage else { return "ready" }
+        switch previewLoadState {
+        case .loading: return "loading"
+        case .ready: return "ready"
+        case .failed: return "failed"
         }
     }
 
@@ -503,17 +605,6 @@ struct ArtifactGameFullScreenCover: View {
         #if DEBUG
         print("NF_ARTIFACT_ROOT_FULLSCREEN_SIZE view=\(Int(size.width))x\(Int(size.height))")
         #endif
-        guard size.width > 10, size.height > 10 else { return }
-        if size.width > size.height * 1.05 {
-            // Record that we have settled into a landscape frame so the close button
-            // insets and proof state are correct, but do NOT bump reloadToken here.
-            // The onAppear reload + the WebArtifactView's autoresize + JS viewport
-            // dispatch already reflow the game to the landscape bounds; bumping the
-            // token reset the whole webview identity mid-rotation and left a black
-            // right third (BUG-001).
-            hasReachedLandscapeSize = true
-            lastReloadSize = size
-        }
     }
 }
 
@@ -622,6 +713,12 @@ private enum ArtifactViewportMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ArtifactPreviewLoadState: Equatable {
+    case loading
+    case ready
+    case failed(String)
+}
+
 private struct ArtifactPreviewStudio: View {
     let artifact: WorkspaceArtifact
     let workspace: SandboxWorkspace
@@ -641,6 +738,14 @@ private struct ArtifactPreviewStudio: View {
     let openChat: (() -> Void)?
     let close: () -> Void
     @State private var deviceIsLandscape = false
+    @State private var webPreviewLoadState: ArtifactPreviewLoadState = .loading
+
+    private var previewLoadState: ArtifactPreviewLoadState {
+        guard artifact.isWebPage else { return .ready }
+        if let errorMessage { return .failed(errorMessage) }
+        guard fileURL != nil else { return .loading }
+        return webPreviewLoadState
+    }
 
     private var statusText: String {
         if artifact.isSwiftGameArtifact { return "Native Game" }
@@ -659,6 +764,13 @@ private struct ArtifactPreviewStudio: View {
     }
 
     private var previewHintTitle: String {
+        if artifact.isWebPage {
+            switch previewLoadState {
+            case .loading: return "Loading preview"
+            case .failed: return "Preview unavailable"
+            case .ready: break
+            }
+        }
         if artifact.isSwiftGameArtifact { return "Native game ready" }
         if artifact.isWebPage { return "Normal preview" }
         if artifact.isImageArtifact { return artifact.path.lowercased().contains("screenshot") ? "Screenshot evidence" : "Image artifact" }
@@ -669,6 +781,13 @@ private struct ArtifactPreviewStudio: View {
     }
 
     private var previewHintDetail: String {
+        if artifact.isWebPage {
+            switch previewLoadState {
+            case .loading: return "Resolving the workspace file and preparing the preview surface."
+            case let .failed(message): return message
+            case .ready: break
+            }
+        }
         let prompt = iterationPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !prompt.isEmpty { return prompt }
         if artifact.isSwiftGameArtifact { return "Play here, rotate sideways, or return to Chat for the next change." }
@@ -875,6 +994,7 @@ private struct ArtifactPreviewStudio: View {
                 Text(previewHintTitle)
                     .font(NovaType.headline)
                     .foregroundStyle(AgentPalette.ink)
+                    .accessibilityIdentifier("artifactPreviewStatusTitle")
                 Text(previewHintDetail)
                     .font(NovaType.caption)
                     .foregroundStyle(AgentPalette.secondaryText)
@@ -987,14 +1107,7 @@ private struct ArtifactPreviewStudio: View {
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         } else if artifact.isWebPage, let fileURL {
             GeometryReader { proxy in
-                WebArtifactView(
-                    fileURL: fileURL,
-                    readAccessURL: workspace.rootURL,
-                    reloadToken: reloadToken,
-                    viewportSize: proxy.size
-                )
-                .frame(width: max(1, proxy.size.width), height: max(1, proxy.size.height))
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                webPreview(fileURL: fileURL, viewportSize: proxy.size)
             }
         } else if artifact.isImageArtifact, let fileURL {
             ArtifactImagePreview(fileURL: fileURL, isFullScreen: isFullScreen)
@@ -1014,6 +1127,42 @@ private struct ArtifactPreviewStudio: View {
         } else {
             ArtifactLoadingCard(isFullScreen: isFullScreen)
         }
+    }
+
+    private func webPreview(fileURL: URL, viewportSize: CGSize) -> some View {
+        ZStack {
+            WebArtifactView(
+                fileURL: fileURL,
+                readAccessURL: workspace.rootURL,
+                reloadToken: reloadToken,
+                viewportSize: viewportSize,
+                onLoadStateChange: updateWebPreviewLoadState
+            )
+            .frame(width: max(1, viewportSize.width), height: max(1, viewportSize.height))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+
+            if webPreviewLoadState == .loading {
+                artifactLoadingOverlay
+            } else if case let .failed(message) = webPreviewLoadState {
+                ArtifactErrorCard(message: message, isFullScreen: isFullScreen)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AgentPalette.opaqueSurfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+        }
+    }
+
+    private var artifactLoadingOverlay: some View {
+        ArtifactLoadingCard(isFullScreen: isFullScreen)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AgentPalette.opaqueSurfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .accessibilityIdentifier("artifactPreviewLoadingState")
+    }
+
+    private func updateWebPreviewLoadState(_ state: ArtifactPreviewLoadState) {
+        guard webPreviewLoadState != state else { return }
+        webPreviewLoadState = state
     }
 
     @ViewBuilder
@@ -1067,6 +1216,7 @@ private struct ArtifactPreviewStudio: View {
             Text(footerText)
                 .font(.system(size: 11, weight: .bold, design: AgentPalette.interfaceFontDesign))
                 .lineLimit(2)
+                .accessibilityIdentifier("artifactPreviewFooterStatus")
             Spacer(minLength: 0)
         }
         .foregroundStyle(isFullScreen ? .white.opacity(0.82) : AgentPalette.ink)
@@ -1083,6 +1233,13 @@ private struct ArtifactPreviewStudio: View {
     }
 
     private var footerText: String {
+        if artifact.isWebPage {
+            switch previewLoadState {
+            case .loading: return "Loading preview…"
+            case .failed: return "Preview unavailable · Reload to try again."
+            case .ready: break
+            }
+        }
         if artifact.isSwiftGameArtifact { return "Native game ready · rotate for handheld landscape mode." }
         return artifact.isWebPage ? "Preview ready · rotate the phone for fullscreen landscape." : "Source preview ready."
     }
@@ -2054,23 +2211,491 @@ private struct WebArtifactView: UIViewRepresentable {
     let reloadToken: UUID
     var viewportSize: CGSize = .zero
     var fullBleedGameMode = false
+    var onLoadStateChange: ((ArtifactPreviewLoadState) -> Void)? = nil
 
     final class Coordinator: NSObject, WKNavigationDelegate {
+        private final class NavigationRecord {
+            weak var navigation: WKNavigation?
+            let reloadToken: UUID
+            var isSuperseded: Bool
+
+            init(navigation: WKNavigation, reloadToken: UUID, isSuperseded: Bool) {
+                self.navigation = navigation
+                self.reloadToken = reloadToken
+                self.isSuperseded = isSuperseded
+            }
+        }
+
         var loadedFileURL: URL?
         var loadedReadAccessURL: URL?
         var loadedReloadToken: UUID?
-        var lastViewportSize: CGSize = .zero
         var fullBleedGameMode = false
         /// The most recent authoritative viewport size reported by SwiftUI. Used to
         /// pin the DOM dimensions during the portrait -> landscape rotation window
         /// so the canvas never commits a portrait-width backing store (BUG-001).
         var currentViewportSize: CGSize = .zero
+        var onLoadStateChange: ((ArtifactPreviewLoadState) -> Void)?
+        private var activeNavigation: WKNavigation?
+        private var activeReloadToken: UUID?
+        private var navigationFinished = false
+        private var navigationFailurePublished = false
+        private var navigationWatchdog: UUID?
+        private var renderAttempt: UUID?
+        private var readyViewportSize: CGSize?
+        private var failedViewportSize: CGSize?
+        private var loadingPublication: UUID?
+        private var navigationRecords: [NavigationRecord] = []
 
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            dispatchViewportResize(in: webView, explicitSize: currentViewportSize.width > 1 ? currentViewportSize : nil)
+        init(onLoadStateChange: ((ArtifactPreviewLoadState) -> Void)?) {
+            self.onLoadStateChange = onLoadStateChange
         }
 
-        func dispatchViewportResize(in webView: WKWebView, explicitSize: CGSize? = nil) {
+        func beginLoading(reloadToken: UUID) {
+            // Establish the reload identity before asking WebKit to navigate. That
+            // makes a missing didStart/didFinish pair observable instead of leaving
+            // the preview behind a permanent loading cover.
+            if let activeNavigation {
+                supersede(activeNavigation)
+            }
+            activeReloadToken = reloadToken
+            activeNavigation = nil
+            navigationFinished = false
+            navigationFailurePublished = false
+            navigationWatchdog = nil
+            renderAttempt = nil
+            readyViewportSize = nil
+            failedViewportSize = nil
+            loadingPublication = nil
+            startNavigationWatchdog(for: reloadToken)
+            publishLoading(for: reloadToken)
+        }
+
+        func associate(navigation: WKNavigation?, with reloadToken: UUID) {
+            guard activeReloadToken == reloadToken, let navigation else { return }
+            if let record = navigationRecord(for: navigation),
+               record.reloadToken != reloadToken || record.isSuperseded {
+                return
+            }
+            if let activeNavigation, activeNavigation !== navigation {
+                supersede(activeNavigation)
+            }
+            remember(navigation, for: reloadToken)
+            activeNavigation = navigation
+        }
+
+        private func publishLoading(for reloadToken: UUID) {
+            guard onLoadStateChange != nil else { return }
+            let publication = UUID()
+            loadingPublication = publication
+            // beginLoading and viewport updates can originate inside updateUIView or
+            // layoutSubviews. Deferring avoids mutating SwiftUI state during a render
+            // pass while retaining reload/viewport guards against stale callbacks.
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.loadingPublication == publication,
+                      self.activeReloadToken == reloadToken,
+                      self.readyViewportSize == nil else { return }
+                self.onLoadStateChange?(.loading)
+            }
+        }
+
+        private func isActive(_ navigation: WKNavigation?) -> Bool {
+            guard let navigation, let activeNavigation else { return false }
+            return navigation === activeNavigation
+        }
+
+        private func navigationRecord(for navigation: WKNavigation) -> NavigationRecord? {
+            navigationRecords.last(where: { $0.navigation === navigation })
+        }
+
+        private func remember(_ navigation: WKNavigation, for reloadToken: UUID) {
+            if let index = navigationRecords.lastIndex(where: { $0.navigation === navigation }) {
+                navigationRecords[index].isSuperseded = false
+            } else {
+                navigationRecords.append(
+                    NavigationRecord(
+                        navigation: navigation,
+                        reloadToken: reloadToken,
+                        isSuperseded: false
+                    )
+                )
+            }
+            navigationRecords.removeAll(where: { $0.navigation == nil })
+        }
+
+        private func supersede(_ navigation: WKNavigation) {
+            if let index = navigationRecords.lastIndex(where: { $0.navigation === navigation }) {
+                navigationRecords[index].isSuperseded = true
+            } else if let activeReloadToken {
+                navigationRecords.append(
+                    NavigationRecord(
+                        navigation: navigation,
+                        reloadToken: activeReloadToken,
+                        isSuperseded: true
+                    )
+                )
+            }
+            navigationRecords.removeAll(where: { $0.navigation == nil })
+        }
+
+        private func viewportMatches(_ lhs: CGSize, _ rhs: CGSize, tolerance: CGFloat = 0.5) -> Bool {
+            abs(lhs.width - rhs.width) <= tolerance && abs(lhs.height - rhs.height) <= tolerance
+        }
+
+        private func startNavigationWatchdog(for reloadToken: UUID) {
+            guard onLoadStateChange != nil else { return }
+            let watchdog = UUID()
+            navigationWatchdog = watchdog
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+                guard let self,
+                      self.navigationWatchdog == watchdog,
+                      self.activeReloadToken == reloadToken,
+                      !self.navigationFinished else { return }
+                self.navigationWatchdog = nil
+                self.navigationFailurePublished = true
+                self.renderAttempt = nil
+                self.readyViewportSize = nil
+                self.loadingPublication = nil
+                self.onLoadStateChange?(.failed("The preview navigation timed out. Reload to try again."))
+            }
+        }
+
+        func authoritativeViewportDidChange(in webView: WKWebView, size: CGSize) {
+            guard size.width > 1, size.height > 1 else { return }
+            let sizeChanged = !viewportMatches(currentViewportSize, size)
+            currentViewportSize = size
+
+            guard sizeChanged else {
+                if navigationFinished,
+                   renderAttempt == nil,
+                   readyViewportSize.map({ !viewportMatches($0, size) }) ?? true,
+                   failedViewportSize.map({ !viewportMatches($0, size) }) ?? true,
+                   let navigation = activeNavigation,
+                   let reloadToken = activeReloadToken {
+                    startRenderHandshake(
+                        in: webView,
+                        navigation: navigation,
+                        reloadToken: reloadToken,
+                        viewportSize: size
+                    )
+                }
+                return
+            }
+
+            // A portrait proof is never allowed to satisfy a later landscape frame.
+            // Keep the same WKWebView alive, invalidate only its render proof, and
+            // drive a fresh resize handshake for the authoritative container bounds.
+            renderAttempt = nil
+            readyViewportSize = nil
+            failedViewportSize = nil
+            if let reloadToken = activeReloadToken,
+               navigationFinished || !navigationFailurePublished {
+                publishLoading(for: reloadToken)
+            }
+
+            if navigationFinished,
+               let navigation = activeNavigation,
+               let reloadToken = activeReloadToken,
+               onLoadStateChange != nil {
+                startRenderHandshake(
+                    in: webView,
+                    navigation: navigation,
+                    reloadToken: reloadToken,
+                    viewportSize: size
+                )
+            } else {
+                dispatchViewportResize(in: webView, explicitSize: size)
+            }
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard let navigation, let reloadToken = activeReloadToken else { return }
+            if let record = navigationRecord(for: navigation),
+               record.reloadToken != reloadToken || record.isSuperseded {
+                return
+            }
+            // A new main-frame navigation can legitimately follow a completed page
+            // within the same artifact reload (for example location replacement).
+            // Superseding the previous identity lets that navigation become the new
+            // generation while late callbacks from every older generation no-op.
+            if let activeNavigation, activeNavigation !== navigation {
+                supersede(activeNavigation)
+            }
+            remember(navigation, for: reloadToken)
+            activeNavigation = navigation
+            navigationFinished = false
+            navigationFailurePublished = false
+            navigationWatchdog = nil
+            renderAttempt = nil
+            readyViewportSize = nil
+            failedViewportSize = nil
+            loadingPublication = nil
+            startNavigationWatchdog(for: reloadToken)
+            if onLoadStateChange != nil {
+                onLoadStateChange?(.loading)
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            let viewportSize = currentViewportSize.width > 1 ? currentViewportSize : nil
+            guard isActive(navigation) else {
+                // Never let an unassociated or superseded navigation mutate the
+                // current page. Identity is established only by loadFileURL's
+                // returned navigation or didStartProvisionalNavigation.
+                return
+            }
+            navigationWatchdog = nil
+            navigationFinished = true
+            navigationFailurePublished = false
+            renderAttempt = nil
+            readyViewportSize = nil
+            failedViewportSize = nil
+            loadingPublication = nil
+
+            guard let reloadToken = activeReloadToken,
+                  let viewportSize,
+                  viewportSize.width > 1,
+                  viewportSize.height > 1,
+                  onLoadStateChange != nil else {
+                dispatchViewportResize(in: webView, explicitSize: viewportSize)
+                return
+            }
+            startRenderHandshake(
+                in: webView,
+                navigation: navigation,
+                reloadToken: reloadToken,
+                viewportSize: viewportSize
+            )
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFailProvisionalNavigation navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            guard isActive(navigation) else { return }
+            navigationWatchdog = nil
+            navigationFinished = false
+            navigationFailurePublished = true
+            renderAttempt = nil
+            readyViewportSize = nil
+            failedViewportSize = nil
+            loadingPublication = nil
+            onLoadStateChange?(.failed(error.localizedDescription))
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            guard isActive(navigation) else { return }
+            navigationWatchdog = nil
+            navigationFinished = false
+            navigationFailurePublished = true
+            renderAttempt = nil
+            readyViewportSize = nil
+            failedViewportSize = nil
+            loadingPublication = nil
+            onLoadStateChange?(.failed(error.localizedDescription))
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            guard activeReloadToken != nil else { return }
+            navigationWatchdog = nil
+            navigationFinished = false
+            navigationFailurePublished = true
+            renderAttempt = nil
+            readyViewportSize = nil
+            failedViewportSize = nil
+            loadingPublication = nil
+            onLoadStateChange?(.failed("The preview renderer stopped unexpectedly. Reload to try again."))
+        }
+
+        private func startRenderHandshake(
+            in webView: WKWebView,
+            navigation: WKNavigation,
+            reloadToken: UUID,
+            viewportSize: CGSize
+        ) {
+            guard navigationFinished,
+                  activeReloadToken == reloadToken,
+                  isActive(navigation),
+                  viewportMatches(currentViewportSize, viewportSize),
+                  onLoadStateChange != nil else { return }
+
+            let attempt = UUID()
+            renderAttempt = attempt
+            readyViewportSize = nil
+            failedViewportSize = nil
+            publishLoading(for: reloadToken)
+
+            // Dispatching resize runs canvas listeners synchronously. The page then
+            // writes our token only after two compositor turns, which is a cheap,
+            // deterministic proof that the exact authoritative viewport settled.
+            installRenderMarker(
+                in: webView,
+                attempt: attempt,
+                navigation: navigation,
+                reloadToken: reloadToken,
+                viewportSize: viewportSize,
+                remainingAttempts: 3
+            )
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                guard let self,
+                      self.isActiveRender(
+                        attempt: attempt,
+                        navigation: navigation,
+                        reloadToken: reloadToken,
+                        viewportSize: viewportSize
+                      ) else { return }
+                self.renderAttempt = nil
+                self.readyViewportSize = nil
+                self.failedViewportSize = viewportSize
+                self.loadingPublication = nil
+                self.onLoadStateChange?(.failed("The preview renderer timed out. Reload to try again."))
+            }
+        }
+
+        private func installRenderMarker(
+            in webView: WKWebView,
+            attempt: UUID,
+            navigation: WKNavigation,
+            reloadToken: UUID,
+            viewportSize: CGSize,
+            remainingAttempts: Int
+        ) {
+            guard isActiveRender(
+                attempt: attempt,
+                navigation: navigation,
+                reloadToken: reloadToken,
+                viewportSize: viewportSize
+            ) else { return }
+
+            dispatchViewportResize(
+                in: webView,
+                explicitSize: viewportSize,
+                renderToken: attempt.uuidString
+            ) { [weak self, weak webView] error in
+                guard let self, let webView,
+                      self.isActiveRender(
+                        attempt: attempt,
+                        navigation: navigation,
+                        reloadToken: reloadToken,
+                        viewportSize: viewportSize
+                      ) else { return }
+
+                if let error {
+                    if remainingAttempts > 1 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak webView] in
+                            guard let self, let webView else { return }
+                            self.installRenderMarker(
+                                in: webView,
+                                attempt: attempt,
+                                navigation: navigation,
+                                reloadToken: reloadToken,
+                                viewportSize: viewportSize,
+                                remainingAttempts: remainingAttempts - 1
+                            )
+                        }
+                        return
+                    }
+                    self.renderAttempt = nil
+                    self.readyViewportSize = nil
+                    self.failedViewportSize = viewportSize
+                    self.loadingPublication = nil
+                    self.onLoadStateChange?(.failed("The preview renderer could not prepare this frame. \(error.localizedDescription)"))
+                    return
+                }
+
+                self.pollRenderHandshake(
+                    in: webView,
+                    attempt: attempt,
+                    navigation: navigation,
+                    reloadToken: reloadToken,
+                    viewportSize: viewportSize
+                )
+            }
+        }
+
+        private func isActiveRender(
+            attempt: UUID,
+            navigation: WKNavigation,
+            reloadToken: UUID,
+            viewportSize: CGSize
+        ) -> Bool {
+            renderAttempt == attempt &&
+            navigationFinished &&
+            activeReloadToken == reloadToken &&
+            isActive(navigation) &&
+            viewportMatches(currentViewportSize, viewportSize)
+        }
+
+        private func pollRenderHandshake(
+            in webView: WKWebView,
+            attempt: UUID,
+            navigation: WKNavigation,
+            reloadToken: UUID,
+            viewportSize: CGSize
+        ) {
+            guard isActiveRender(
+                attempt: attempt,
+                navigation: navigation,
+                reloadToken: reloadToken,
+                viewportSize: viewportSize
+            ) else { return }
+
+            let script = """
+            (() => [
+              String(window.__novaForgeRenderToken || ''),
+              String(document.documentElement ? document.documentElement.clientWidth : 0),
+              String(document.documentElement ? document.documentElement.clientHeight : 0),
+              String(document.readyState || '')
+            ].join('|'))();
+            """
+            webView.evaluateJavaScript(script) { [weak self, weak webView] result, _ in
+                guard let self, let webView,
+                      self.isActiveRender(
+                        attempt: attempt,
+                        navigation: navigation,
+                        reloadToken: reloadToken,
+                        viewportSize: viewportSize
+                      ) else { return }
+
+                if let status = result as? String {
+                    let fields = status.split(separator: "|", maxSplits: 3, omittingEmptySubsequences: false)
+                    if fields.count == 4,
+                       fields[0] == Substring(attempt.uuidString),
+                       let width = Double(fields[1]),
+                       let height = Double(fields[2]),
+                       abs(width - Double(viewportSize.width)) <= 2,
+                       abs(height - Double(viewportSize.height)) <= 2,
+                       fields[3] == "complete" {
+                        self.renderAttempt = nil
+                        self.readyViewportSize = viewportSize
+                        self.failedViewportSize = nil
+                        self.loadingPublication = nil
+                        self.onLoadStateChange?(.ready)
+                        return
+                    }
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak webView] in
+                    guard let self, let webView else { return }
+                    self.pollRenderHandshake(
+                        in: webView,
+                        attempt: attempt,
+                        navigation: navigation,
+                        reloadToken: reloadToken,
+                        viewportSize: viewportSize
+                    )
+                }
+            }
+        }
+
+        func dispatchViewportResize(
+            in webView: WKWebView,
+            explicitSize: CGSize? = nil,
+            renderToken: String? = nil,
+            completion: ((Error?) -> Void)? = nil
+        ) {
             // Use the authoritative Swift-provided pixel size when available so the
             // DOM sizing never depends on a stale webview viewport (e.g. during the
             // portrait -> landscape rotation window, where 100vw could still report
@@ -2107,20 +2732,38 @@ private struct WebArtifactView: UIViewRepresentable {
               const existingFullscreenStyle = document.getElementById('novaforge-fullscreen-viewport-style');
               if (existingFullscreenStyle) existingFullscreenStyle.remove();
             """
+            let renderProofScript = renderToken.map { token in
+                """
+                  window.__novaForgeRenderToken = '';
+                  const novaForgeRenderToken = '\(token)';
+                  window.requestAnimationFrame(() => {
+                    window.requestAnimationFrame(() => {
+                      window.__novaForgeRenderToken = novaForgeRenderToken;
+                    });
+                  });
+                """
+            } ?? ""
             let script = """
             (() => {
-              document.documentElement.style.width = '\(cssWidth)';
-              document.documentElement.style.height = '\(cssHeight)';
-              document.body.style.width = '\(cssWidth)';
-              document.body.style.height = '\(cssHeight)';
-              document.documentElement.style.setProperty('--novaforge-viewport-width', '\(cssWidth)');
-              document.documentElement.style.setProperty('--novaforge-viewport-height', '\(cssHeight)');
+              const root = document.documentElement;
+              const body = document.body;
+              if (!root || !body) return false;
+              root.style.width = '\(cssWidth)';
+              root.style.height = '\(cssHeight)';
+              body.style.width = '\(cssWidth)';
+              body.style.height = '\(cssHeight)';
+              root.style.setProperty('--novaforge-viewport-width', '\(cssWidth)');
+              root.style.setProperty('--novaforge-viewport-height', '\(cssHeight)');
             \(fullBleedScript)
               window.dispatchEvent(new Event('resize'));
+            \(renderProofScript)
               console.log('NF_ARTIFACT_DOM_SIZE', window.innerWidth, window.innerHeight, document.documentElement.clientWidth, document.documentElement.clientHeight, document.body.clientWidth, document.body.clientHeight);
+              return true;
             })();
             """
-            webView.evaluateJavaScript(script)
+            webView.evaluateJavaScript(script) { _, error in
+                completion?(error)
+            }
             #if DEBUG
             let frame = webView.frame
             let bounds = webView.bounds
@@ -2174,36 +2817,23 @@ private struct WebArtifactView: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            // Sync the webview frame synchronously so the first landscape frame is
-            // correct (no black strip), then reflow the DOM shortly after.
+            // Sync the webview frame synchronously, then hand the exact bounds to the
+            // viewport-keyed render handshake before readiness can be published.
             webView.frame = bounds
             webView.scrollView.frame = bounds
             webView.scrollView.contentInset = .zero
             webView.scrollView.scrollIndicatorInsets = .zero
             let size = bounds.size
             guard size.width > 1, size.height > 1 else { return }
-            if abs(size.width - lastLaidOutSize.width) > 1 || abs(size.height - lastLaidOutSize.height) > 1 {
-                let previousSize = lastLaidOutSize
+            if abs(size.width - lastLaidOutSize.width) > 0.5 || abs(size.height - lastLaidOutSize.height) > 0.5 {
                 lastLaidOutSize = size
-                // Keep the coordinator's authoritative size in sync with the real
-                // container bounds so dispatches pin the DOM to the landscape frame.
-                coordinator?.currentViewportSize = size
-                // Force an immediate reflow so the canvas resizes before any proof
-                // capture, then re-dispatch once the layout settles for HTML that
-                // listens to window resize events.
-                coordinator?.dispatchViewportResize(in: webView, explicitSize: size)
-                if previousSize.width > 1 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                        guard let self else { return }
-                        self.coordinator?.dispatchViewportResize(in: self.webView, explicitSize: self.bounds.size)
-                    }
-                }
+                coordinator?.authoritativeViewportDidChange(in: webView, size: size)
             }
         }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onLoadStateChange: onLoadStateChange)
     }
 
     func makeUIView(context: Context) -> WebContainerView {
@@ -2212,54 +2842,35 @@ private struct WebArtifactView: UIViewRepresentable {
 
     func updateUIView(_ container: WebContainerView, context: Context) {
         context.coordinator.fullBleedGameMode = fullBleedGameMode
+        context.coordinator.onLoadStateChange = onLoadStateChange
         let webView = container.webView
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
         webView.scrollView.isScrollEnabled = !fullBleedGameMode
         webView.scrollView.bounces = !fullBleedGameMode
-        if viewportSize.width > 1, viewportSize.height > 1 {
-            let viewportFrame = CGRect(origin: .zero, size: viewportSize)
-            container.frame = viewportFrame
-            container.bounds = viewportFrame
-            // Record the authoritative size so every viewport-resize dispatch can pin
-            // the DOM to it instead of trusting a stale webview viewport during the
-            // portrait -> landscape rotation window (BUG-001).
-            context.coordinator.currentViewportSize = viewportSize
-            container.setNeedsLayout()
-            container.layoutIfNeeded()
-        }
 
         let shouldReload = context.coordinator.loadedFileURL != fileURL ||
             context.coordinator.loadedReadAccessURL != readAccessURL ||
             context.coordinator.loadedReloadToken != reloadToken
-        let sizeChanged = abs(context.coordinator.lastViewportSize.width - viewportSize.width) > 1 ||
-            abs(context.coordinator.lastViewportSize.height - viewportSize.height) > 1
-
-        context.coordinator.lastViewportSize = viewportSize
-        let explicitSize = viewportSize.width > 1 ? viewportSize : nil
-
         if shouldReload {
             context.coordinator.loadedFileURL = fileURL
             context.coordinator.loadedReadAccessURL = readAccessURL
             context.coordinator.loadedReloadToken = reloadToken
-            webView.loadFileURL(fileURL, allowingReadAccessTo: readAccessURL)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                context.coordinator.dispatchViewportResize(in: webView, explicitSize: explicitSize)
-            }
-        } else if sizeChanged {
-            // The webview already resizes via autoresizingMask in layoutSubviews; only
-            // re-dispatch the viewport-resize JS so the canvas/game reflows to the new
-            // landscape frame. Reloading the whole file here left a black right third
-            // mid-reload (BUG-001). Keep the layer live and just reflow the DOM, pinned
-            // to the authoritative Swift viewport size.
-            DispatchQueue.main.async {
-                context.coordinator.dispatchViewportResize(in: webView, explicitSize: explicitSize)
-            }
-            // The WKWebView layout viewport can lag the rotation; re-pin once more after
-            // the layout settles so the canvas backing store matches the landscape frame.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                context.coordinator.dispatchViewportResize(in: webView, explicitSize: explicitSize)
-            }
+            context.coordinator.beginLoading(reloadToken: reloadToken)
+        }
+
+        if viewportSize.width > 1, viewportSize.height > 1 {
+            let viewportFrame = CGRect(origin: .zero, size: viewportSize)
+            container.frame = viewportFrame
+            container.bounds = viewportFrame
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            context.coordinator.authoritativeViewportDidChange(in: webView, size: viewportSize)
+        }
+
+        if shouldReload {
+            let navigation = webView.loadFileURL(fileURL, allowingReadAccessTo: readAccessURL)
+            context.coordinator.associate(navigation: navigation, with: reloadToken)
         }
     }
 }

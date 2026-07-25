@@ -36,6 +36,7 @@ struct AgentSystemResolvedRunEnvironment: Sendable {
     let systemInstruction: String?
     let developerInstruction: String?
     let hostedCredential: String?
+    let hostedAccountID: String?
 }
 
 protocol AgentSystemRunEnvironmentResolving: Sendable {
@@ -206,12 +207,21 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
         in context: ModelContext
     ) throws -> AgentSettings {
         var descriptor = FetchDescriptor<AgentSettings>()
-        descriptor.fetchLimit = 2
+        descriptor.fetchLimit =
+            AgentSettingsRecordSelection.boundedFetchLimit
         let settings = try context.fetch(descriptor)
-        guard settings.count == 1 else {
+        let canonical: AgentSettings?
+        do {
+            canonical = try AgentSettingsRecordSelection.canonical(
+                from: settings
+            )
+        } catch {
             throw AgentSystemProductionCompositionError.settingsUnavailable
         }
-        return settings[0]
+        guard let canonical else {
+            throw AgentSystemProductionCompositionError.settingsUnavailable
+        }
+        return canonical
     }
 
     private func makeEnvironment(
@@ -235,8 +245,10 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
         }
 
         let credential: String?
+        let hostedAccountID: String?
         switch providerRoute.provenance {
         case .builtInOpenAIChatCompletions:
+            hostedAccountID = nil
             #if DEBUG
             let launchArguments = ProcessInfo.processInfo.arguments
             if launchArguments.contains("--debug-provider-send-ready") ||
@@ -260,6 +272,7 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
                     .credentialUnavailable
             }
         case .builtInOpenCodeZenChatCompletions:
+            hostedAccountID = nil
             if AIProvider.openCodeZen.requiresCredential(
                 for: providerRoute.modelID.rawValue
             ) {
@@ -286,8 +299,17 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
                 throw AgentSystemProductionCompositionError
                     .credentialUnavailable
             }
+            // The OAuth account identity can live only in the ID token. Keep
+            // it as an ephemeral runtime value so a valid access token that
+            // lacks the claim can still target the account approved during
+            // sign-in. The sealed transport validates it before using it as a
+            // header; it is never written into the accepted run plan.
+            hostedAccountID = try? KeychainStore().read(
+                OpenAICodexAuthManager.accountIDAccount
+            )
         case .builtInLocalModel:
             credential = nil
+            hostedAccountID = nil
         default:
             throw AgentSystemProductionCompositionError
                 .unsupportedProviderRoute
@@ -297,7 +319,8 @@ actor SwiftDataAgentSystemRunEnvironmentResolver:
             workspace: workspace,
             systemInstruction: settings.customSystemPrompt,
             developerInstruction: nil,
-            hostedCredential: credential
+            hostedCredential: credential,
+            hostedAccountID: hostedAccountID
         )
     }
 }
@@ -479,6 +502,7 @@ struct AgentSystemProductionEngineBuilder: Sendable {
         let provider = try Self.providerGateway(
             route: providerRoute,
             hostedCredential: environment.hostedCredential,
+            hostedAccountID: environment.hostedAccountID,
             workspace: environment.workspace
         )
         let toolRegistry: ToolRegistry
@@ -584,6 +608,7 @@ struct AgentSystemProductionEngineBuilder: Sendable {
     private static func providerGateway(
         route: ProviderRoute,
         hostedCredential: String?,
+        hostedAccountID: String?,
         workspace: SandboxWorkspace
     ) throws -> AgentProductionProviderGatewayBundle {
         #if DEBUG
@@ -657,7 +682,14 @@ struct AgentSystemProductionEngineBuilder: Sendable {
             return try AgentProductionProviderGatewayFactory
                 .hostedOpenAICodexResponses(
                     selection: selection,
-                    credential: hostedCredential
+                    credential: hostedCredential,
+                    accountID: hostedAccountID,
+                    authenticationDidFail: { rejectedAccessToken in
+                        await OpenAICodexAuthManager.shared
+                            .invalidateAfterAuthenticationFailure(
+                                rejectedAccessToken: rejectedAccessToken
+                            )
+                    }
                 )
         case .builtInLocalModel:
             let selection = try AgentProductionProviderRouteSelection

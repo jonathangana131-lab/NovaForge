@@ -229,6 +229,172 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertEqual(reasoning["summary"] as? String, "auto")
     }
 
+    func testChatGPTCodexTransportUsesOAuthBoundaryWhileAPIKeyRoutesStayBounded()
+        async throws
+    {
+        let model = "gpt-5.5"
+        for (index, byteCount) in [
+            4_097,
+            KeychainStore.maximumSecretBytes,
+        ].enumerated() {
+            let credential = String(repeating: "c", count: byteCount)
+            let responseID = "resp-codex-credential-boundary-\(index)"
+            let completion = responsesCompletionJSON(
+                responseID: responseID,
+                model: model
+            )
+            installSSE("data: \(completion)\n\n")
+            let fixture = try makeCodexTransportFixture(
+                requestID: "codex-credential-boundary-\(index)",
+                model: model,
+                credential: credential
+            )
+
+            let frames = try await collect(try await fixture.openStream())
+
+            XCTAssertFalse(frames.isEmpty)
+            let request = try XCTUnwrap(
+                HostedTransportURLProtocolRegistry.shared.requests.last
+            )
+            let authorization = try XCTUnwrap(
+                request.value(forHTTPHeaderField: "Authorization")
+            )
+            XCTAssertEqual(authorization.prefix(7), "Bearer ")
+            XCTAssertEqual(authorization.utf8.count, 7 + byteCount)
+            XCTAssertNil(
+                request.httpBody?.range(of: Data(credential.utf8))
+            )
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 2)
+
+        let oversized = try makeCodexTransportFixture(
+            requestID: "codex-credential-over-boundary",
+            model: model,
+            credential: String(
+                repeating: "c",
+                count: KeychainStore.maximumSecretBytes + 1
+            )
+        )
+        await assertTransportError(.invalidCredential) {
+            _ = try await oversized.openStream()
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 2)
+
+        let openAI = try makeFixture(
+            dialect: .openAIChatCompletions,
+            requestID: "openai-api-key-over-boundary",
+            credential: String(repeating: "a", count: 4_097)
+        )
+        await assertTransportError(.invalidCredential) {
+            _ = try await openAI.openStream()
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 2)
+
+        let zen = try makeZenSingleCallToolsGatewayFixture(
+            requestID: "zen-api-key-over-boundary",
+            model: "big-pickle",
+            credential: String(repeating: "z", count: 4_097)
+        )
+        do {
+            _ = try await collectAttemptEvents(
+                await zen.gateway.streamAttempt(zen.invocation)
+            )
+            XCTFail("An oversized Zen API key reached HTTP")
+        } catch {
+            // The gateway intentionally sanitizes the transport rejection.
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 2)
+    }
+
+    func testChatGPTCodexTransportUsesSeparatelyPersistedAccountIdentity()
+        async throws
+    {
+        let model = "gpt-5.5"
+        let accountID = "acct-approved-by-device-login"
+        let completion = responsesCompletionJSON(
+            responseID: "resp-account-header",
+            model: model
+        )
+        installSSE("data: \(completion)\n\n")
+        let fixture = try makeCodexTransportFixture(
+            requestID: "codex-account-header",
+            model: model,
+            credential: "opaque-access-token-without-jwt-claims",
+            chatGPTAccountID: accountID
+        )
+
+        _ = try await collect(try await fixture.openStream())
+
+        let request = try XCTUnwrap(
+            HostedTransportURLProtocolRegistry.shared.requests.last
+        )
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "ChatGPT-Account-ID"),
+            accountID
+        )
+        XCTAssertNil(request.httpBody?.range(of: Data(accountID.utf8)))
+
+        let invalid = try makeCodexTransportFixture(
+            requestID: "codex-invalid-account-header",
+            model: model,
+            chatGPTAccountID: "account\nheader"
+        )
+        await assertTransportError(.invalidChatGPTAccountID) {
+            _ = try await invalid.openStream()
+        }
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+    }
+
+    func testChatGPTCodexSecondNormalTurnDispatchesEncryptedReasoningHistory()
+        async throws
+    {
+        let model = "gpt-5.5"
+        let completion = responsesCompletionJSON(
+            responseID: "resp-codex-second-normal",
+            model: model
+        )
+        installSSE("data: \(completion)\n\n")
+        let fixture = try makeCodexTransportFixture(
+            requestID: "codex-second-normal-turn",
+            model: model,
+            messages: [
+                .init(role: .user, content: [.text("First turn")]),
+                .init(
+                    role: .assistant,
+                    content: [],
+                    reasoningReplay: .responses(.init(
+                        itemID: "reasoning-normal-1",
+                        summary: ["Considered."],
+                        encryptedContent: "encrypted-normal-reasoning"
+                    ))
+                ),
+                .init(role: .assistant, content: [.text("First answer")]),
+                .init(role: .user, content: [.text("Second turn")]),
+            ]
+        )
+
+        _ = try await collect(try await fixture.openStream())
+
+        let request = try XCTUnwrap(
+            HostedTransportURLProtocolRegistry.shared.requests.last
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        let input = try XCTUnwrap(object["input"] as? [[String: Any]])
+        XCTAssertEqual(input.count, 4)
+        XCTAssertEqual(input[1]["type"] as? String, "reasoning")
+        XCTAssertEqual(input[1]["id"] as? String, "reasoning-normal-1")
+        XCTAssertEqual(
+            input[1]["encrypted_content"] as? String,
+            "encrypted-normal-reasoning"
+        )
+        XCTAssertEqual(input[2]["role"] as? String, "assistant")
+        XCTAssertEqual(input[3]["role"] as? String, "user")
+        XCTAssertNil(object["previous_response_id"])
+    }
+
     func testOpenCodeZenFreeModelDispatchesThroughItsPinnedCanonicalRoute()
         async throws
     {
@@ -264,6 +430,67 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertNil(object["max_completion_tokens"])
         XCTAssertEqual(object["parallel_tool_calls"] as? Bool, false)
         XCTAssertEqual(object["tool_choice"] as? String, "auto")
+    }
+
+    func testDeepSeekMixedTextToolHistoryDispatchesAsOneAssistantEnvelope()
+        async throws
+    {
+        let model = "deepseek-v4-flash-free"
+        installSSE(openCodeZenIntegrationSSE(
+            responseID: "chatcmpl-deepseek-mixed-history",
+            model: model
+        ))
+        let fixture = try makeZenSingleCallToolsGatewayFixture(
+            requestID: "deepseek-mixed-text-tool-history",
+            model: model,
+            messages: [
+                .init(role: .user, content: [.text("Inspect the file")]),
+                .init(
+                    role: .assistant,
+                    content: [
+                        .text("I will inspect it."),
+                        .toolCall(.init(
+                            callID: "call-mixed-1",
+                            name: "read_file",
+                            arguments: .object([
+                                "path": .string("notes.md"),
+                            ])
+                        )),
+                    ],
+                    reasoningReplay: .chatCompletions(.init(
+                        content: "private-reasoning"
+                    ))
+                ),
+                .init(
+                    role: .tool,
+                    content: [.text("hello")],
+                    toolCallID: "call-mixed-1"
+                ),
+                .init(role: .user, content: [.text("Continue")]),
+            ]
+        )
+
+        _ = try await collectAttemptEvents(
+            await fixture.gateway.streamAttempt(fixture.invocation)
+        )
+
+        let request = try XCTUnwrap(
+            HostedTransportURLProtocolRegistry.shared.requests.last
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        let messages = try XCTUnwrap(object["messages"] as? [[String: Any]])
+        let assistant = try XCTUnwrap(messages.first { message in
+            message["tool_calls"] != nil
+        })
+        XCTAssertEqual(assistant["content"] as? String, "I will inspect it.")
+        XCTAssertEqual(
+            assistant["reasoning_content"] as? String,
+            "private-reasoning"
+        )
+        XCTAssertEqual((assistant["tool_calls"] as? [Any])?.count, 1)
     }
 
     func testOpenCodeZenRejectsUnknownPostDoneSidebandFrame() async throws {
@@ -1383,6 +1610,46 @@ final class AgentHostedProviderTransportTests: XCTestCase {
         XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
     }
 
+    func testChatGPTCodex401InvalidatesExactCredentialOnceWithoutReplay()
+        async throws
+    {
+        let rejectedCredential = "codex-rejected-access-token"
+        let callbacks = LockedIntRecorder()
+        let matchingCredentials = LockedIntRecorder()
+        HostedTransportURLProtocolRegistry.shared.install(.init(
+            statusCode: 401,
+            headers: ["Content-Type": "application/json"],
+            chunks: [Data(#"{"error":"unauthorized"}"#.utf8)]
+        ))
+        let fixture = try makeCodexTransportFixture(
+            requestID: "codex-auth-invalidation",
+            model: "gpt-5.5",
+            credential: rejectedCredential,
+            authenticationDidFail: { credential in
+                callbacks.increment()
+                if credential == rejectedCredential {
+                    matchingCredentials.increment()
+                }
+            }
+        )
+
+        do {
+            _ = try await collect(try await fixture.openStream())
+            XCTFail("Expected an authentication failure")
+        } catch let failure as ProviderFailure {
+            XCTAssertEqual(failure.category, .authentication)
+            XCTAssertEqual(failure.statusCode, 401)
+            XCTAssertFalse(failure.publicMessage.contains(rejectedCredential))
+            XCTAssertFalse(failure.code.contains(rejectedCredential))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(HostedTransportURLProtocolRegistry.shared.requestCount, 1)
+        XCTAssertEqual(callbacks.value, 1)
+        XCTAssertEqual(matchingCredentials.value, 1)
+    }
+
     func testInjectedProviderFailureCodeAndMessageAreRemappedToFixedTransportFailure() async throws {
         let fixture = try makeFixture(
             dialect: .openAIResponses,
@@ -1875,12 +2142,12 @@ private func makeFixture(
     dialect: ProviderAdapterDialect,
     requestID: String = UUID().uuidString.lowercased(),
     model: String = baseModel,
+    credential: String = "sk-test-only-hosted-credential",
     limits: AgentHostedProviderTransport.Limits = testLimits(),
     producerDidTerminate: (@Sendable () -> Void)? = nil,
     httpErrorBodyDidConsume: (@Sendable (Int) -> Void)? = nil
 ) throws -> HostedTransportFixture {
     let material = try makeTrustedMaterial(dialect: dialect, model: model)
-    let credential = "sk-test-only-hosted-credential"
     let body: JSONValue
     switch dialect {
     case .openAIChatCompletions:
@@ -2108,7 +2375,8 @@ private func makeSingleCallToolsGatewayFixture(
 private func makeZenSingleCallToolsGatewayFixture(
     requestID: String,
     model: String,
-    credential: String = ""
+    credential: String = "",
+    messages: [ProviderMessage]? = nil
 ) throws -> HostedGatewayFixture {
     let modelID = ProviderModelID(rawValue: model)
     let catalog = TrustedHostedProviderCatalog.openCodeZenChatCompletions(
@@ -2142,7 +2410,7 @@ private func makeZenSingleCallToolsGatewayFixture(
     let request = CanonicalProviderRequest(
         requestID: requestID,
         model: modelID,
-        messages: [
+        messages: messages ?? [
             .init(role: .system, content: [.text("Use canonical tools.")]),
             .init(role: .user, content: [.text("Complete the task.")]),
         ],
@@ -2233,7 +2501,11 @@ private func makeCodexSingleCallToolsGatewayFixture(
 
 private func makeCodexTransportFixture(
     requestID: String,
-    model: String
+    model: String,
+    credential: String = "codex-test-access-token",
+    chatGPTAccountID: String? = nil,
+    messages: [ProviderMessage]? = nil,
+    authenticationDidFail: (@Sendable (String) async -> Void)? = nil
 ) throws -> HostedTransportFixture {
     let modelID = ProviderModelID(rawValue: model)
     let catalog = TrustedHostedProviderCatalog.openAICodexResponses(
@@ -2244,11 +2516,10 @@ private func makeCodexTransportFixture(
         adapterID: catalog.adapterID
     )
     let adapter = try catalog.providerCatalog().adapter(id: catalog.adapterID)
-    let credential = "codex-test-access-token"
     let canonicalRequest = CanonicalProviderRequest(
         requestID: requestID,
         model: modelID,
-        messages: [
+        messages: messages ?? [
             .init(role: .system, content: [.text("Use canonical tools.")]),
             .init(role: .user, content: [.text("Say hello.")]),
         ],
@@ -2265,9 +2536,11 @@ private func makeCodexTransportFixture(
     return HostedTransportFixture(
         transport: AgentHostedProviderTransport(
             credential: credential,
+            chatGPTAccountID: chatGPTAccountID,
             singleCallToolsCapability: capability,
             session: makeHostedTransportTestSession(),
-            limits: testLimits()
+            limits: testLimits(),
+            authenticationDidFail: authenticationDidFail
         ),
         request: try adapter.encode(canonicalRequest),
         descriptor: adapter.descriptor,
@@ -2687,6 +2960,12 @@ private final class LockedIntRecorder: @unchecked Sendable {
     func record(_ value: Int) {
         lock.lock()
         storedValue = value
+        lock.unlock()
+    }
+
+    func increment() {
+        lock.lock()
+        storedValue += 1
         lock.unlock()
     }
 }

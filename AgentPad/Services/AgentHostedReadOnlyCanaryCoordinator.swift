@@ -1440,7 +1440,7 @@ struct AgentHostedReadOnlyCanaryCoordinator: Sendable {
                         .unexpectedProviderEvent
                 }
                 finishReason = value.finishReason
-            case .reasoningDelta:
+            case .reasoningDelta, .reasoningReplay:
                 throw AgentHostedReadOnlyCanaryCoordinatorError
                     .unexpectedProviderEvent
             case .cancelled:

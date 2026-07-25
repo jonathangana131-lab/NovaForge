@@ -2102,9 +2102,13 @@ final class AgentSettings {
     var updatedAt: Date
 
     var provider: AIProvider {
-        get { AIProvider(rawValue: providerRawValue ?? "") ?? .openAI }
+        // Unknown and pre-provider settings have never authorized a hosted
+        // route. Keep the UI on the same fail-safe local default that launch
+        // repair persists instead of rendering OpenAI while AgentSystem
+        // correctly rejects the raw value.
+        get { AIProvider(rawValue: providerRawValue ?? "") ?? .local }
         set {
-            let oldProvider = AIProvider(rawValue: providerRawValue ?? "") ?? .openAI
+            let oldProvider = AIProvider(rawValue: providerRawValue ?? "") ?? .local
             providerRawValue = newValue.rawValue
             if oldProvider != newValue, !newValue.modelOptions.contains(modelID) {
                 modelID = newValue.defaultModel
@@ -2114,6 +2118,7 @@ final class AgentSettings {
 
     @discardableResult
     func switchProvider(to newProvider: AIProvider) -> Bool {
+        let oldProviderRawValue = providerRawValue
         let oldProvider = provider
         let oldModelID = modelID
         providerRawValue = newProvider.rawValue
@@ -2129,7 +2134,8 @@ final class AgentSettings {
             repairStaleModelSelection()
         }
 
-        let changed = oldProvider != newProvider || oldModelID != modelID
+        let changed = oldProviderRawValue != providerRawValue ||
+            oldProvider != newProvider || oldModelID != modelID
         if changed {
             updatedAt = Date()
         }
@@ -2150,61 +2156,50 @@ final class AgentSettings {
     }
 
     @discardableResult
-    func repairStaleModelSelection() -> Bool {
-        let selectedProvider = provider
+    func repairStaleModelSelection(now: Date = Date()) -> Bool {
+        let selectedProvider = AIProvider(rawValue: providerRawValue ?? "")
+            ?? .local
+        var changed = false
+        if providerRawValue != selectedProvider.rawValue {
+            providerRawValue = selectedProvider.rawValue
+            changed = true
+        }
         let trimmedModel = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !trimmedModel.isEmpty else {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
-        }
-
-        if selectedProvider.modelOptions.contains(trimmedModel) {
-            if trimmedModel != modelID { modelID = trimmedModel }
-            return false
-        }
-
-        // GPT-5.6-sol is an exact provenance boundary, not a model family.
-        // Keep unsupported aliases visible and blocked so launch/runtime repair
-        // cannot silently convert them into the exact selection.
-        if selectedProvider.requiresExplicitGPT56ModelSelection(trimmedModel) {
+        if trimmedModel.isEmpty {
+            if modelID != selectedProvider.defaultModel {
+                modelID = selectedProvider.defaultModel
+                changed = true
+            }
+        } else if selectedProvider.modelOptions.contains(trimmedModel) {
             if trimmedModel != modelID {
                 modelID = trimmedModel
-                updatedAt = Date()
-                return true
+                changed = true
             }
-            return false
+        } else if selectedProvider.requiresExplicitGPT56ModelSelection(
+            trimmedModel
+        ) {
+            // GPT-5.6-sol is an exact provenance boundary, not a model family.
+            // Keep unsupported aliases visible and blocked so launch/runtime
+            // repair cannot silently convert them into the exact selection.
+            if trimmedModel != modelID {
+                modelID = trimmedModel
+                changed = true
+            }
+        } else {
+            // AgentSystem mints route authority from a closed provider/model
+            // catalog. An empty, local, cross-provider, or arbitrary stale ID
+            // must be repaired at the persistence boundary.
+            if modelID != selectedProvider.defaultModel {
+                modelID = selectedProvider.defaultModel
+                changed = true
+            }
         }
 
-        if selectedProvider == .local {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
+        if changed {
+            updatedAt = now
         }
-
-        if LocalModelCatalog.variant(for: trimmedModel) != nil {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
-        }
-
-        let belongsToAnotherBuiltInProvider = AIProvider.allCases.contains { candidate in
-            candidate != selectedProvider && candidate.modelOptions.contains(trimmedModel)
-        }
-        if belongsToAnotherBuiltInProvider {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
-        }
-
-        // AgentSystem mints route authority from a closed provider/model
-        // catalog. Keeping an arbitrary ID here creates a chooser option that
-        // can only fail later as `providerUnsupported`, so repair it at the
-        // persistence boundary instead.
-        modelID = selectedProvider.defaultModel
-        updatedAt = Date()
-        return true
+        return changed
     }
 
     init(

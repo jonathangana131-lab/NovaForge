@@ -53,6 +53,49 @@ final class AgentHostedEngineTests: XCTestCase {
         XCTAssertEqual(answer, "Hermes-ready")
     }
 
+    func testCodexNormalCompletionPersistsEncryptedReasoningBeforeText() async throws {
+        let model = ProviderModelID(rawValue: "gpt-5.5")
+        let adapter = OpenAICodexResponsesAdapter(model: model)
+        let transport = EngineFixtureTransport(outcomes: [
+            .frames(Self.codexNormalFrames(model: model.rawValue)),
+        ])
+        let preparer = FixtureContextPreparer(
+            preferredAdapterIDs: [adapter.descriptor.route.adapterID],
+            model: model,
+            options: .init(
+                parallelToolCalls: false,
+                toolChoice: .auto,
+                reasoningSummary: true
+            )
+        )
+        let fixture = try EngineFixture(
+            transport: transport,
+            adapters: [adapter],
+            contextPreparer: preparer
+        )
+
+        let state = try await fixture.engine.execute(fixture.command)
+
+        XCTAssertEqual(state.phase, .completed)
+        XCTAssertEqual(state.modelItems.count, 3)
+        guard case let .reasoningSummary(reasoning) =
+                state.modelItems[1].payload,
+              case let .message(answer) = state.modelItems[2].payload
+        else {
+            return XCTFail("Expected reasoning replay before assistant text")
+        }
+        XCTAssertEqual(reasoning.modelAttemptID, state.modelAttempts.first?.attemptID)
+        XCTAssertEqual(reasoning.replay, .responses(.init(
+            itemID: "reasoning-normal-1",
+            summary: ["Considered."],
+            encryptedContent: "encrypted-normal-reasoning"
+        )))
+        XCTAssertEqual(answer, .init(
+            role: .assistant,
+            content: [.text("First answer")]
+        ))
+    }
+
     func testLiveOutputSinkReceivesOnlyOrderedClassifiedTextDeltas() async throws {
         let transport = EngineFixtureTransport(outcomes: [
             .frames([
@@ -837,6 +880,73 @@ final class AgentHostedEngineTests: XCTestCase {
         ]
     }
 
+    private static func codexNormalFrames(model: String) -> [ProviderWireFrame] {
+        let reasoning: JSONValue = .object([
+            "id": .string("reasoning-normal-1"),
+            "type": .string("reasoning"),
+            "summary": .array([.object([
+                "type": .string("summary_text"),
+                "text": .string("Considered."),
+            ])]),
+            "encrypted_content": .string("encrypted-normal-reasoning"),
+        ])
+        let message: JSONValue = .object([
+            "id": .string("message-normal-1"),
+            "type": .string("message"),
+            "role": .string("assistant"),
+            "status": .string("completed"),
+            "content": .array([.object([
+                "type": .string("output_text"),
+                "text": .string("First answer"),
+            ])]),
+        ])
+        return [
+            .json(.object([
+                "type": .string("response.created"),
+                "response": .object([
+                    "id": .string("codex-normal-response"),
+                    "model": .string(model),
+                ]),
+            ])),
+            .json(.object([
+                "type": .string("response.reasoning_summary_text.delta"),
+                "output_index": .number(.integer(0)),
+                "summary_index": .number(.integer(0)),
+                "delta": .string("Considered."),
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.done"),
+                "output_index": .number(.integer(0)),
+                "item": reasoning,
+            ])),
+            .json(.object([
+                "type": .string("response.output_text.delta"),
+                "output_index": .number(.integer(1)),
+                "content_index": .number(.integer(0)),
+                "delta": .string("First answer"),
+            ])),
+            .json(.object([
+                "type": .string("response.output_item.done"),
+                "output_index": .number(.integer(1)),
+                "item": message,
+            ])),
+            .json(.object([
+                "type": .string("response.completed"),
+                "response": .object([
+                    "id": .string("codex-normal-response"),
+                    "model": .string(model),
+                    "status": .string("completed"),
+                    "output": .array([reasoning, message]),
+                    "usage": .object([
+                        "input_tokens": .number(.integer(4)),
+                        "output_tokens": .number(.integer(2)),
+                    ]),
+                ]),
+            ])),
+            .done,
+        ]
+    }
+
     private static func toolFrames(
         name: String,
         callID: String,
@@ -1037,10 +1147,21 @@ private actor DeterministicEngineClock: AgentEngineClock {
 
 private actor FixtureContextPreparer: AgentContextPreparing {
     private let preferredAdapterIDs: [ProviderAdapterID]
+    private let model: ProviderModelID
+    private let options: ProviderGenerationOptions
     private var round: Int = 0
 
-    init(preferredAdapterIDs: [ProviderAdapterID]) {
+    init(
+        preferredAdapterIDs: [ProviderAdapterID],
+        model: ProviderModelID = .init(rawValue: "fixture-model"),
+        options: ProviderGenerationOptions = .init(
+            parallelToolCalls: false,
+            toolChoice: .auto
+        )
+    ) {
         self.preferredAdapterIDs = preferredAdapterIDs
+        self.model = model
+        self.options = options
     }
 
     func prepareProviderTurn(
@@ -1059,16 +1180,13 @@ private actor FixtureContextPreparer: AgentContextPreparing {
         return AgentPreparedProviderTurn(
             request: CanonicalProviderRequest(
                 requestID: "engine-request",
-                model: .init(rawValue: "fixture-model"),
+                model: model,
                 messages: [.init(
                     role: .user,
                     content: [.text("fixture round \(round)")]
                 )],
                 tools: definitions,
-                options: .init(
-                    parallelToolCalls: false,
-                    toolChoice: .auto
-                )
+                options: options
             ),
             preferredAdapterIDs: preferredAdapterIDs,
             itemIDs: state.modelItems.map(\.id),

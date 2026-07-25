@@ -175,6 +175,7 @@ struct AppRootView: View {
     @State private var didInjectNetworkFailureFixture = false
     @State private var didInjectPendingApprovalFixture = false
     @State private var didInjectLocalAgentBoundaryFixture = false
+    @State private var debugLocalAgentBoundaryFixtureReady = false
     @State private var didInjectArtifactDedupeFixture = false
     @State private var didInjectWebPageArtifactFixture = false
     @State private var debugWebPageArtifactFixtureReady = false
@@ -224,8 +225,13 @@ struct AppRootView: View {
         conversationsDescriptor.fetchLimit = 80
         _conversations = Query(conversationsDescriptor)
 
-        var settingsDescriptor = FetchDescriptor<AgentSettings>()
-        settingsDescriptor.fetchLimit = 1
+        var settingsDescriptor = FetchDescriptor<AgentSettings>(
+            sortBy: [
+                SortDescriptor(\AgentSettings.updatedAt, order: .reverse)
+            ]
+        )
+        settingsDescriptor.fetchLimit =
+            AgentSettingsRecordSelection.boundedFetchLimit
         _settingsList = Query(settingsDescriptor)
     }
 
@@ -290,7 +296,9 @@ struct AppRootView: View {
     }
     #endif
 
-    private var settings: AgentSettings? { settingsList.first }
+    private var settings: AgentSettings? {
+        try? AgentSettingsRecordSelection.canonical(from: settingsList)
+    }
     private var activeProject: Project? {
         ProjectBootstrap.preferredProject(from: projects, settings: settings)
     }
@@ -777,6 +785,14 @@ struct AppRootView: View {
             rootToastLayer
 
             #if DEBUG
+            if debugLocalAgentBoundaryFixtureReady {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Local agent boundary fixture ready")
+                    .accessibilityIdentifier("localAgentBoundaryFixtureReady")
+                    .allowsHitTesting(false)
+            }
             if debugWebPageArtifactFixtureReady {
                 Color.clear
                     .frame(width: 1, height: 1)
@@ -1171,7 +1187,7 @@ struct AppRootView: View {
                 settings: settings
             )
         }
-        if arguments.contains("--local-agent-boundary-test"),
+        if hasDebugLaunchFlag("--local-agent-boundary-test", in: arguments),
            let conversation = selectedConversation,
            !runtime.isWorking,
            !didInjectLocalAgentBoundaryFixture {
@@ -1179,8 +1195,14 @@ struct AppRootView: View {
             selectedTab = .chat
             do {
                 try await installLocalAgentBoundaryFixture(in: conversation)
-                saveRootLaunchState("local agent boundary transcript fixture")
+                if saveRootLaunchState("local agent boundary transcript fixture") {
+                    debugLocalAgentBoundaryFixtureReady = true
+                    clearLocalAgentBoundaryFixtureRootErrorIfNeeded()
+                } else {
+                    didInjectLocalAgentBoundaryFixture = false
+                }
             } catch {
+                didInjectLocalAgentBoundaryFixture = false
                 reportDebugWorkspaceFixtureFailure(
                     "local agent boundary",
                     error: error,
@@ -1615,7 +1637,13 @@ struct AppRootView: View {
     }
 
     private func scheduleDebugLaunchTaskRetryIfNeeded(arguments: [String]) {
-        guard debugLaunchTaskRetryCount < 8,
+        // The local boundary fixture can wait on cold-store recovery. Keep retrying
+        // across the UI test's full 20-second readiness budget (134 * 150 ms), while
+        // preserving the short retry window for unrelated demo fixtures.
+        let localBoundaryIsPending = hasDebugLaunchFlag("--local-agent-boundary-test", in: arguments) &&
+            !debugLocalAgentBoundaryFixtureReady
+        let retryLimit = localBoundaryIsPending ? 134 : 8
+        guard debugLaunchTaskRetryCount < retryLimit,
               hasPendingDebugLaunchFixture(arguments) else { return }
         debugLaunchTaskRetryCount += 1
         Task { @MainActor in
@@ -1635,6 +1663,10 @@ struct AppRootView: View {
         #endif
         if hasDebugLaunchFlag("--stress-chat", in: arguments),
            selectedConversation?.title.localizedCaseInsensitiveContains("NovaForge Stress") != true {
+            return true
+        }
+        if hasDebugLaunchFlag("--local-agent-boundary-test", in: arguments),
+           !debugLocalAgentBoundaryFixtureReady {
             return true
         }
         if hasDebugLaunchFlag("--pending-approval-demo", in: arguments),
@@ -5448,6 +5480,17 @@ struct AppRootView: View {
         let message = "NovaForge could not durably confirm the \(fixtureName) fixture. No completed fixture state was recorded. \(error.localizedDescription)"
         rootError = message
         targetRuntime.presentToast(message, tone: .error)
+    }
+
+    private func clearLocalAgentBoundaryFixtureRootErrorIfNeeded() {
+        guard let rootError else { return }
+        let matchingPrefixes = [
+            "NovaForge could not durably confirm the local agent boundary fixture.",
+            "NovaForge could not save launch state for local agent boundary transcript fixture:"
+        ]
+        if matchingPrefixes.contains(where: { rootError.hasPrefix($0) }) {
+            self.rootError = nil
+        }
     }
 
     private func jsonString(_ values: [String: String]) -> String {

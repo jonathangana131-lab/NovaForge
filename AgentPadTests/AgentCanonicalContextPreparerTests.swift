@@ -1,6 +1,8 @@
 import AgentDomain
 import AgentEngine
+import AgentPolicy
 import AgentProviders
+import AgentStore
 import AgentTools
 import Foundation
 import XCTest
@@ -439,6 +441,240 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
         XCTAssertLessThanOrEqual(prepared.estimatedTokens + 160, 1_024)
     }
 
+    func testEngineCodexOutputPreparesSecondNormalTurnWithEncryptedHistory() async throws {
+        let fixture = CanonicalContextFixture(seed: 9)
+        let model = ProviderModelID(rawValue: "gpt-5.5")
+        let adapter = OpenAICodexResponsesAdapter(model: model)
+        let registry = try SandboxToolCatalog.canonicalRegistry()
+        let toolLocalities = Dictionary(
+            uniqueKeysWithValues: registry.descriptors.map {
+                ($0.name, ToolExecutionLocality.onDevice)
+            }
+        )
+        let preparer = try AgentCanonicalContextPreparer(configuration:
+            AgentCanonicalContextConfiguration(
+                context: fixture.context,
+                providerID: ProviderID(rawValue: "openai-codex"),
+                model: model,
+                preferredAdapterIDs: [
+                    ProviderAdapterID(rawValue: "openai-codex-responses"),
+                ],
+                options: ProviderGenerationOptions(
+                    maximumOutputTokens: 4_096,
+                    parallelToolCalls: false,
+                    toolChoice: .auto,
+                    reasoningSummary: true,
+                    minimumContextWindowTokens: 128_000
+                ),
+                toolLocalities: toolLocalities
+            )
+        )
+        let transport = CanonicalCodexNormalTransport(
+            frames: codexNormalIntegrationFrames(model: model.rawValue)
+        )
+        let journal = InMemoryAgentEventJournal(
+            clock: { AgentInstant(rawValue: 20_000) }
+        )
+        let engine = AgentEngine(
+            journal: journal,
+            providerGateway: ModelGateway(
+                catalog: try ProviderAdapterCatalog([adapter]),
+                transport: transport
+            ),
+            toolRegistry: registry,
+            contextPreparer: preparer,
+            readOnlyExecutor: CanonicalUnexpectedReadExecutor(),
+            mutationExecutor: CanonicalUnexpectedMutationExecutor(),
+            approvalResolver: CanonicalUnexpectedApprovalResolver(),
+            runIndex: InMemoryAgentEngineRunIndex()
+        )
+        let firstUser = fixture.userItem(
+            id: canonicalTagged(902),
+            text: "First turn"
+        )
+        let command = AgentCommand(
+            header: AgentCommandHeader(
+                commandID: canonicalTagged(903),
+                schemaVersion: .current,
+                runID: fixture.context.lineage.runID,
+                issuedAt: fixture.context.acceptedAt,
+                correlationID: canonicalTagged(904)
+            ),
+            payload: .send(.init(
+                context: fixture.context,
+                userItem: firstUser
+            ))
+        )
+
+        let completed = try await engine.execute(command)
+        XCTAssertEqual(completed.phase, .completed)
+        guard case let .reasoningSummary(engineReasoning) =
+                completed.modelItems[1].payload
+        else {
+            return XCTFail("Engine did not persist typed Responses reasoning")
+        }
+        let replay = try XCTUnwrap(engineReasoning.replay)
+        var secondItems = completed.modelItems
+        secondItems.append(fixture.userItem(
+            id: canonicalTagged(905),
+            text: "Second turn"
+        ))
+        let secondState = AgentDomain.AgentRunState(
+            schemaVersion: completed.schemaVersion,
+            context: completed.context,
+            phase: .running,
+            lastSequence: completed.lastSequence,
+            lastEventID: completed.lastEventID,
+            appliedEventIDs: completed.appliedEventIDs,
+            budget: completed.budget,
+            modelItems: secondItems,
+            modelAttempts: completed.modelAttempts,
+            retryLineage: completed.retryLineage,
+            tools: completed.tools,
+            approvals: completed.approvals,
+            artifacts: completed.artifacts,
+            checkpoints: completed.checkpoints,
+            latestPlanRevision: completed.latestPlanRevision
+        )
+
+        let prepared = try await preparer.prepareProviderTurn(
+            state: secondState,
+            tools: registry.descriptors
+        )
+        XCTAssertEqual(prepared.request.messages.map(\.role), [
+            .user, .assistant, .assistant, .user,
+        ])
+        XCTAssertEqual(prepared.request.messages[1].content, [])
+        XCTAssertEqual(prepared.request.messages[1].reasoningReplay, replay)
+
+        let encoded = try adapter.encode(prepared.request)
+        guard case let .object(body) = encoded.body,
+              case let .array(input)? = body["input"]
+        else {
+            return XCTFail("Expected encoded Responses history")
+        }
+        XCTAssertEqual(input.count, 4)
+        guard case let .object(reasoningItem) = input[1],
+              case let .object(answerItem) = input[2],
+              case let .object(secondTurnItem) = input[3]
+        else {
+            return XCTFail("Expected reasoning, answer, then second user input")
+        }
+        XCTAssertEqual(
+            reasoningItem["encrypted_content"],
+            .string("encrypted-normal-reasoning")
+        )
+        XCTAssertEqual(reasoningItem["id"], .string("reasoning-normal-1"))
+        XCTAssertEqual(answerItem["role"], .string("assistant"))
+        XCTAssertEqual(secondTurnItem["role"], .string("user"))
+    }
+
+    func testDeepSeekMixedTextAndToolRemainOneReasoningAssistantEnvelope() async throws {
+        let fixture = CanonicalContextFixture(seed: 10)
+        let descriptor = try readFileDescriptor()
+        let attemptID: AttemptID = canonicalTagged(1_001)
+        let tool = try toolRound(
+            seed: 1_010,
+            providerCallID: "call-provider-mixed",
+            attemptID: attemptID,
+            descriptor: descriptor
+        )
+        let state = fixture.state(
+            modelItems: [
+                fixture.userItem(id: canonicalTagged(1_002)),
+                ModelItem(
+                    id: canonicalTagged(1_003),
+                    createdAt: AgentInstant(rawValue: 10_003),
+                    payload: .message(.init(
+                        role: .assistant,
+                        content: [.text("I will inspect it.")]
+                    ))
+                ),
+                ModelItem(
+                    id: canonicalTagged(1_004),
+                    createdAt: AgentInstant(rawValue: 10_004),
+                    payload: .reasoningSummary(.init(
+                        text: "private-reasoning",
+                        providerReference: "deepseek-response",
+                        modelAttemptID: attemptID,
+                        replay: .chatCompletions(.init(
+                            content: "private-reasoning"
+                        ))
+                    ))
+                ),
+                tool.invocationItem,
+                tool.resultItem,
+            ],
+            modelAttempts: [try fixture.committedAttempt(
+                id: attemptID,
+                ordinal: 1,
+                finishReason: .toolCalls,
+                provider: "opencode-zen",
+                model: "deepseek-v4-flash-free",
+                adapter: "opencode-zen-chat-completions"
+            )],
+            tools: [tool.execution]
+        )
+        let model = ProviderModelID(rawValue: "deepseek-v4-flash-free")
+        let preparer = try AgentCanonicalContextPreparer(configuration:
+            AgentCanonicalContextConfiguration(
+                context: fixture.context,
+                providerID: ProviderID(rawValue: "opencode-zen"),
+                model: model,
+                preferredAdapterIDs: [
+                    ProviderAdapterID(
+                        rawValue: "opencode-zen-chat-completions"
+                    ),
+                ],
+                options: ProviderGenerationOptions(
+                    maximumOutputTokens: 4_096,
+                    parallelToolCalls: false,
+                    toolChoice: .auto,
+                    reasoningSummary: true,
+                    minimumContextWindowTokens: 32_768
+                ),
+                toolLocalities: [descriptor.name: .onDevice]
+            )
+        )
+
+        let prepared = try await preparer.prepareProviderTurn(
+            state: state,
+            tools: [descriptor]
+        )
+        let assistant = try XCTUnwrap(prepared.request.messages.first { message in
+            message.content.contains {
+                if case .toolCall = $0 { return true }
+                return false
+            }
+        })
+        XCTAssertEqual(assistant.reasoningReplay, .chatCompletions(.init(
+            content: "private-reasoning"
+        )))
+        XCTAssertEqual(assistant.content.first, .text("I will inspect it."))
+        XCTAssertEqual(assistant.content.count, 2)
+
+        let encoded = try OpenCodeZenChatCompletionsAdapter(
+            model: model,
+            capabilities: .hostedOpenCodeZenChatSingleCallToolsBaseline
+        ).encode(prepared.request)
+        guard case let .object(body) = encoded.body,
+              case let .array(messages)? = body["messages"],
+              let assistantValue = messages.first(where: { value in
+                  guard case let .object(object) = value else { return false }
+                  return object["tool_calls"] != nil
+              }),
+              case let .object(assistantObject) = assistantValue
+        else {
+            return XCTFail("Expected one assistant tool-call envelope")
+        }
+        XCTAssertEqual(assistantObject["content"], .string("I will inspect it."))
+        XCTAssertEqual(
+            assistantObject["reasoning_content"],
+            .string("private-reasoning")
+        )
+        XCTAssertNotNil(assistantObject["tool_calls"])
+    }
+
     func testPreCancelledPreparationPropagatesCancellation() async throws {
         let fixture = CanonicalContextFixture(seed: 7)
         let preparer = try fixture.preparer()
@@ -463,6 +699,151 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
     }
+}
+
+private enum CanonicalIntegrationFailure: Error {
+    case unexpectedToolBoundary
+}
+
+private actor CanonicalCodexNormalTransport: ProviderTransport {
+    let frames: [ProviderWireFrame]
+
+    init(frames: [ProviderWireFrame]) {
+        self.frames = frames
+    }
+
+    func stream(
+        request: ProviderEncodedRequest,
+        descriptor: ProviderAdapterDescriptor,
+        scope: ProviderAttemptScope
+    ) async throws -> AsyncThrowingStream<ProviderWireFrame, any Error> {
+        AsyncThrowingStream { continuation in
+            for frame in frames {
+                continuation.yield(frame)
+            }
+            continuation.finish()
+        }
+    }
+}
+
+private struct CanonicalUnexpectedReadExecutor: AgentReadOnlyToolExecuting {
+    func executeReadOnly(
+        _ request: AgentReadOnlyToolRequest
+    ) async throws -> AgentReadOnlyToolOutput {
+        throw CanonicalIntegrationFailure.unexpectedToolBoundary
+    }
+}
+
+private struct CanonicalUnexpectedMutationExecutor:
+    AgentMutationPolicyExecuting
+{
+    func prepareMutation(
+        context: AgentRunContext,
+        invocation: ToolInvocation,
+        descriptor: ToolDescriptor,
+        sealer: AgentMutationPreparationSealer
+    ) async throws -> AgentMutationPreparation {
+        throw CanonicalIntegrationFailure.unexpectedToolBoundary
+    }
+
+    func applyMutation(
+        preparation: AgentMutationPreparation,
+        approval: ApprovalResolution?
+    ) async throws -> AgentMutationToolOutput {
+        throw CanonicalIntegrationFailure.unexpectedToolBoundary
+    }
+
+    func recoverMutation(
+        context: AgentRunContext,
+        invocation: ToolInvocation,
+        effectKeySHA256: SHA256Digest
+    ) async throws -> AgentMutationRecoveryDisposition {
+        throw CanonicalIntegrationFailure.unexpectedToolBoundary
+    }
+}
+
+private struct CanonicalUnexpectedApprovalResolver: AgentApprovalResolving {
+    func resolveApproval(
+        _ request: ApprovalRequest
+    ) async throws -> ApprovalResolution {
+        throw CanonicalIntegrationFailure.unexpectedToolBoundary
+    }
+
+    func deliverApprovalDecision(
+        _ command: ApprovalDecisionCommand,
+        for request: ApprovalRequest
+    ) async throws {
+        throw CanonicalIntegrationFailure.unexpectedToolBoundary
+    }
+}
+
+private func codexNormalIntegrationFrames(
+    model: String
+) -> [ProviderWireFrame] {
+    let reasoning: JSONValue = .object([
+        "id": .string("reasoning-normal-1"),
+        "type": .string("reasoning"),
+        "summary": .array([.object([
+            "type": .string("summary_text"),
+            "text": .string("Considered."),
+        ])]),
+        "encrypted_content": .string("encrypted-normal-reasoning"),
+    ])
+    let message: JSONValue = .object([
+        "id": .string("message-normal-1"),
+        "type": .string("message"),
+        "role": .string("assistant"),
+        "status": .string("completed"),
+        "content": .array([.object([
+            "type": .string("output_text"),
+            "text": .string("First answer"),
+        ])]),
+    ])
+    return [
+        .json(.object([
+            "type": .string("response.created"),
+            "response": .object([
+                "id": .string("response-normal-1"),
+                "model": .string(model),
+            ]),
+        ])),
+        .json(.object([
+            "type": .string("response.reasoning_summary_text.delta"),
+            "output_index": .number(.integer(0)),
+            "summary_index": .number(.integer(0)),
+            "delta": .string("Considered."),
+        ])),
+        .json(.object([
+            "type": .string("response.output_item.done"),
+            "output_index": .number(.integer(0)),
+            "item": reasoning,
+        ])),
+        .json(.object([
+            "type": .string("response.output_text.delta"),
+            "output_index": .number(.integer(1)),
+            "content_index": .number(.integer(0)),
+            "delta": .string("First answer"),
+        ])),
+        .json(.object([
+            "type": .string("response.output_item.done"),
+            "output_index": .number(.integer(1)),
+            "item": message,
+        ])),
+        .json(.object([
+            "type": .string("response.completed"),
+            "response": .object([
+                "id": .string("response-normal-1"),
+                "model": .string(model),
+                "status": .string("completed"),
+                "output": .array([reasoning, message]),
+                "usage": .object([
+                    "input_tokens": .number(.integer(4)),
+                    "output_tokens": .number(.integer(2)),
+                ]),
+            ]),
+        ])),
+        .done,
+    ]
 }
 
 private struct CanonicalContextFixture {
@@ -555,14 +936,17 @@ private struct CanonicalContextFixture {
     func committedAttempt(
         id: AttemptID,
         ordinal: UInt32,
-        finishReason: ModelFinishReason
+        finishReason: ModelFinishReason,
+        provider: String = "openai",
+        model: String = "gpt-5-hermes",
+        adapter: String = "openai-responses-primary"
     ) throws -> ModelAttemptState {
         ModelAttemptState(
             attemptID: id,
             route: ModelRoute(
-                provider: "openai",
-                model: "gpt-5-hermes",
-                adapter: "openai-responses-primary"
+                provider: provider,
+                model: model,
+                adapter: adapter
             ),
             providerAttempt: .recordedV1_1(
                 requestDigest: try AgentCanonicalSHA256Digest(

@@ -36,6 +36,58 @@ final class OpenAIClientStreamingTests: XCTestCase {
         XCTAssertEqual(RejectingOpenAIClientURLProtocol.requestCount, 0)
     }
 
+    func testLegacyOpenAIClientOmitsTemperatureFromGPT5RequestBodies()
+        async throws
+    {
+        CapturingOpenAIClientURLProtocol.reset()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [
+            CapturingOpenAIClientURLProtocol.self,
+        ]
+        let client = AIProviderClient(
+            configuration: ProviderConfiguration(
+                provider: .openAI,
+                modelID: "gpt-5.5",
+                apiKey: "test-key",
+                customChatCompletionsURL: ""
+            ),
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        let messages = [ProviderMessageInput(
+            id: UUID(),
+            role: .user,
+            content: "Reply exactly OK.",
+            createdAt: Date(),
+            toolCallID: nil,
+            toolCalls: []
+        )]
+
+        for model in ["gpt-5.5", AIProvider.exactGPT56SolModelID] {
+            _ = try await client.response(
+                messages: messages,
+                model: model,
+                temperature: 0.73,
+                customSystemPrompt: nil,
+                workspaceSummary: ""
+            )
+        }
+
+        let requests = CapturingOpenAIClientURLProtocol.requests
+        XCTAssertEqual(requests.count, 2)
+        for (request, expectedModel) in zip(
+            requests,
+            ["gpt-5.5", AIProvider.exactGPT56SolModelID]
+        ) {
+            let data = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: data)
+                    as? [String: Any]
+            )
+            XCTAssertEqual(body["model"] as? String, expectedModel)
+            XCTAssertNil(body["temperature"], expectedModel)
+        }
+    }
+
     func testDecodesValidContentStreamEndingInDone() async throws {
         let message = try await StreamingResponseDecoder.decode(
             lines: [
@@ -470,4 +522,79 @@ private final class RejectingOpenAIClientURLProtocol:
     }
 
     override func stopLoading() {}
+}
+
+private final class CapturingOpenAIClientURLProtocol:
+    URLProtocol,
+    @unchecked Sendable
+{
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var storedRequests: [URLRequest] = []
+
+    static var requests: [URLRequest] {
+        lock.withLock { storedRequests }
+    }
+
+    static func reset() {
+        lock.withLock { storedRequests = [] }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let captured = Self.capturingBody(from: request)
+        Self.lock.withLock { Self.storedRequests.append(captured) }
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              )
+        else {
+            client?.urlProtocol(
+                self,
+                didFailWithError: URLError(.badServerResponse)
+            )
+            return
+        }
+        client?.urlProtocol(
+            self,
+            didReceive: response,
+            cacheStoragePolicy: .notAllowed
+        )
+        client?.urlProtocol(
+            self,
+            didLoad: Data(
+                #"{"choices":[{"message":{"role":"assistant","content":"OK"}}]}"#
+                    .utf8
+            )
+        )
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func capturingBody(from request: URLRequest) -> URLRequest {
+        guard request.httpBody == nil, let stream = request.httpBodyStream else {
+            return request
+        }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+        while body.count <= 4 * 1_024 * 1_024 {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            body.append(buffer, count: count)
+        }
+        var captured = request
+        captured.httpBodyStream = nil
+        captured.httpBody = body
+        return captured
+    }
 }

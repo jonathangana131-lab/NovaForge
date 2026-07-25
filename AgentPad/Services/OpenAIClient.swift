@@ -42,7 +42,10 @@ struct AIProviderClient {
             model: model,
             messages: apiMessages,
             tools: ChatCompletionsRequest.toolsList,
-            temperature: supportsTemperature(model: model) ? temperature : nil
+            temperature: Self.supportsTemperature(
+                provider: configuration.provider,
+                model: model
+            ) ? temperature : nil
         )
         
         request.httpBody = try JSONEncoder().encode(body)
@@ -98,7 +101,10 @@ struct AIProviderClient {
             model: model,
             messages: apiMessages,
             tools: ChatCompletionsRequest.toolsList,
-            temperature: supportsTemperature(model: model) ? temperature : nil
+            temperature: Self.supportsTemperature(
+                provider: configuration.provider,
+                model: model
+            ) ? temperature : nil
         )
         body.stream = true
 
@@ -156,7 +162,10 @@ struct AIProviderClient {
             model: model,
             messages: apiMessages,
             tools: nil,
-            temperature: supportsTemperature(model: model) ? 0.0 : nil
+            temperature: Self.supportsTemperature(
+                provider: configuration.provider,
+                model: model
+            ) ? 0.0 : nil
         )
         
         request.httpBody = try JSONEncoder().encode(body)
@@ -233,9 +242,13 @@ struct AIProviderClient {
         return accountID
     }
 
-    private func supportsTemperature(model: String) -> Bool {
+    static func supportsTemperature(
+        provider: AIProvider,
+        model: String
+    ) -> Bool {
         let lower = model.lowercased()
-        if configuration.provider == .openAICodex { return false }
+        if provider == .openAICodex { return false }
+        if lower.hasPrefix("gpt-5") { return false }
         if lower.hasPrefix("o") && lower.dropFirst().first?.isNumber == true { return false }
         if lower.contains("reasoning") { return false }
         return true

@@ -11,6 +11,7 @@ struct ProviderStreamSession: Sendable {
     private static let maximumToolArgumentFragmentsPerCall = 4_096
     private static let maximumTotalToolArgumentBytes = 4 * 1_024 * 1_024
     private static let maximumTotalToolArgumentFragments = 16_384
+    private static let maximumReasoningReplayBytes = 1 * 1_024 * 1_024
 
     let descriptor: ProviderAdapterDescriptor
     let scope: ProviderAttemptScope
@@ -23,6 +24,7 @@ struct ProviderStreamSession: Sendable {
     private var wireClosed = false
     private var responseCompleted = false
     private var chatFinishReason: ModelFinishReason?
+    private var chatReasoningContent = ""
     private var usageReported = false
     private var responsesTextByPart: [ResponsesContentKey: String] = [:]
     private var responsesReasoningSummaryByPart: [ResponsesContentKey: String] = [:]
@@ -30,6 +32,9 @@ struct ProviderStreamSession: Sendable {
     private var completedResponsesTextParts: Set<ResponsesContentKey> = []
     private var completedResponsesReasoningSummaryParts: Set<ResponsesContentKey> = []
     private var completedResponsesReasoningTextParts: Set<ResponsesContentKey> = []
+    private var responsesReasoningItemIDByIndex: [Int: String] = [:]
+    private var completedResponsesReasoningItemIndices: Set<Int> = []
+    private var responsesReasoningReplayByIndex: [Int: ModelReasoningReplay] = [:]
     private var toolCalls: [Int: PartialToolCall] = [:]
     private var toolOrder: [Int] = []
     private var wireFrameCount = 0
@@ -125,6 +130,20 @@ struct ProviderStreamSession: Sendable {
             }
             try validateTerminal(reason: reason)
             try requireLocalUsageIfNeeded()
+            if reason == .toolCalls, requiresDeepSeekReasoningReplay {
+                guard !chatReasoningContent.isEmpty else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_reasoning_replay_missing",
+                        descriptor: descriptor
+                    )
+                }
+                events.append(.reasoningReplay(.init(
+                    outputIndex: 0,
+                    replay: .chatCompletions(.init(
+                        content: chatReasoningContent
+                    ))
+                )))
+            }
             events.append(.responseCompleted(.init(responseID: responseID, finishReason: reason)))
             responseCompleted = true
             return events
@@ -294,6 +313,20 @@ struct ProviderStreamSession: Sendable {
                     try requireOutputBeforeUsage()
                     try requireCapability(.reasoning, code: "provider_reasoning_output_not_supported")
                     try recordOutput(reasoning)
+                    if requiresDeepSeekReasoningReplay {
+                        let nextBytes = chatReasoningContent.utf8.count
+                            .addingReportingOverflow(reasoning.utf8.count)
+                        guard !nextBytes.overflow,
+                              nextBytes.partialValue <=
+                                Self.maximumReasoningReplayBytes
+                        else {
+                            throw ProviderFailureMapper.protocolViolation(
+                                "provider_reasoning_replay_too_large",
+                                descriptor: descriptor
+                            )
+                        }
+                        chatReasoningContent.append(reasoning)
+                    }
                     events.append(.reasoningDelta(.init(outputIndex: outputIndex, text: reasoning)))
                 }
                 if let callsValue = delta["tool_calls"], !callsValue.isProviderNull {
@@ -667,11 +700,17 @@ struct ProviderStreamSession: Sendable {
             guard let item = object["item"]?.providerObject else {
                 throw ProviderFailureMapper.malformed("provider_responses_item_missing", descriptor: descriptor)
             }
+            let index = try requiredIndex(
+                object,
+                code: "provider_responses_item_index_missing"
+            )
             guard item["type"]?.providerString == "function_call" else {
-                try validateResponsesNonToolItem(item)
-                return []
+                return try receiveResponsesNonToolItem(
+                    item,
+                    outputIndex: index,
+                    terminal: false
+                )
             }
-            let index = try requiredIndex(object, code: "provider_responses_tool_index_missing")
             return try receiveResponsesToolItem(item, outputIndex: index, complete: false)
 
         case "response.function_call_arguments.delta":
@@ -711,11 +750,11 @@ struct ProviderStreamSession: Sendable {
                     object,
                     code: "provider_responses_item_index_missing"
                 )
-                try validateResponsesNonToolItem(
+                return try receiveResponsesNonToolItem(
                     item,
-                    reconcilingOutputIndex: index
+                    outputIndex: index,
+                    terminal: true
                 )
-                return []
             }
             let index = try requiredIndex(object, code: "provider_responses_tool_index_missing")
             return try receiveResponsesToolItem(item, outputIndex: index, complete: true)
@@ -906,14 +945,48 @@ struct ProviderStreamSession: Sendable {
                         complete: true
                     ))
                 } else {
-                    try validateResponsesNonToolItem(
+                    events.append(contentsOf: try receiveResponsesNonToolItem(
                         item,
-                        reconcilingOutputIndex: index
-                    )
+                        outputIndex: index,
+                        terminal: true
+                    ))
                 }
             }
         }
         events.append(contentsOf: try completePendingToolCalls())
+        if descriptor.route.provenance == .builtInOpenAICodexResponses {
+            let observedReasoningIndices = Set(
+                responsesReasoningSummaryByPart.keys.map(\.outputIndex)
+            ).union(
+                responsesReasoningTextByPart.keys.map(\.outputIndex)
+            ).union(responsesReasoningItemIDByIndex.keys)
+            guard observedReasoningIndices.isSubset(
+                of: completedResponsesReasoningItemIndices
+            ) else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_reasoning_replay_missing",
+                    descriptor: descriptor
+                )
+            }
+            if !toolCalls.isEmpty {
+                guard !responsesReasoningReplayByIndex.isEmpty else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_reasoning_replay_missing",
+                        descriptor: descriptor
+                    )
+                }
+                guard let firstToolIndex = toolCalls.keys.min(),
+                      responsesReasoningReplayByIndex.keys.allSatisfy({
+                          $0 < firstToolIndex
+                      })
+                else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_reasoning_replay_order_invalid",
+                        descriptor: descriptor
+                    )
+                }
+            }
+        }
         if let usageValue = response["usage"], !usageValue.isProviderNull {
             events.append(.usage(try recordUsage(usageValue)))
         }
@@ -1278,10 +1351,11 @@ struct ProviderStreamSession: Sendable {
         }
     }
 
-    private func validateResponsesNonToolItem(
+    private mutating func receiveResponsesNonToolItem(
         _ item: [String: JSONValue],
-        reconcilingOutputIndex outputIndex: Int? = nil
-    ) throws {
+        outputIndex: Int,
+        terminal: Bool
+    ) throws -> [ProviderStreamEvent] {
         guard let type = item["type"]?.providerString else {
             throw ProviderFailureMapper.malformed(
                 "provider_responses_item_type_missing",
@@ -1297,7 +1371,7 @@ struct ProviderStreamSession: Sendable {
                 )
             }
             guard let content = item["content"]?.providerArray else {
-                if outputIndex == nil { return }
+                if !terminal { return [] }
                 throw ProviderFailureMapper.malformed(
                     "provider_responses_message_content_missing",
                     descriptor: descriptor
@@ -1314,13 +1388,13 @@ struct ProviderStreamSession: Sendable {
                     )
                 }
                 guard let text = part["text"]?.providerString else {
-                    if outputIndex == nil { continue }
+                    if !terminal { continue }
                     throw ProviderFailureMapper.malformed(
                         "provider_responses_message_text_missing",
                         descriptor: descriptor
                     )
                 }
-                if let outputIndex {
+                if terminal {
                     let key = ResponsesContentKey(
                         outputIndex: outputIndex,
                         partIndex: contentIndex
@@ -1334,7 +1408,7 @@ struct ProviderStreamSession: Sendable {
                     }
                 }
             }
-            if let outputIndex {
+            if terminal {
                 let hasUnrepresentedText = responsesTextByPart.contains { key, text in
                     key.outputIndex == outputIndex &&
                         !text.isEmpty &&
@@ -1347,13 +1421,20 @@ struct ProviderStreamSession: Sendable {
                     )
                 }
             }
+            return []
 
         case "reasoning":
             try requireCapability(
                 .reasoning,
                 code: "provider_reasoning_output_not_supported"
             )
-            guard let outputIndex else { return }
+            guard terminal else {
+                try receiveProvisionalResponsesReasoningItem(
+                    item,
+                    outputIndex: outputIndex
+                )
+                return []
+            }
             guard let summary = item["summary"]?.providerArray else {
                 throw ProviderFailureMapper.protocolViolation(
                     "provider_responses_reasoning_snapshot_invalid",
@@ -1442,12 +1523,147 @@ struct ProviderStreamSession: Sendable {
                 )
             }
 
+            guard descriptor.route.provenance ==
+                    .builtInOpenAICodexResponses else {
+                return []
+            }
+            guard let itemID = item["id"]?.providerString,
+                  Self.isSafeWireIdentity(
+                      itemID,
+                      maximumUTF8Count: 512
+                  ),
+                  let encryptedContent = item["encrypted_content"]?
+                    .providerString,
+                  !encryptedContent.isEmpty,
+                  encryptedContent.utf8.count <=
+                    Self.maximumReasoningReplayBytes,
+                  encryptedContent.unicodeScalars.allSatisfy({
+                      (0x21 ... 0x7e).contains($0.value)
+                  })
+            else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_reasoning_replay_invalid",
+                    descriptor: descriptor
+                )
+            }
+            if let provisionalItemID = responsesReasoningItemIDByIndex[
+                outputIndex
+            ] {
+                guard provisionalItemID == itemID else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_identity_changed",
+                        descriptor: descriptor
+                    )
+                }
+            } else {
+                guard !responsesReasoningItemIDByIndex.contains(
+                    where: { index, existingID in
+                        index != outputIndex && existingID == itemID
+                    }
+                ) else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_identity_reused",
+                        descriptor: descriptor
+                    )
+                }
+                responsesReasoningItemIDByIndex[outputIndex] = itemID
+            }
+            let replay: ModelReasoningReplay = .responses(.init(
+                itemID: itemID,
+                summary: summary.compactMap { value in
+                    value.providerObject?["text"]?.providerString
+                },
+                content: content.compactMap { value in
+                    value.providerObject?["text"]?.providerString
+                },
+                encryptedContent: encryptedContent
+            ))
+            if completedResponsesReasoningItemIndices.contains(outputIndex) {
+                guard responsesReasoningReplayByIndex[outputIndex] == replay else {
+                    throw ProviderFailureMapper.protocolViolation(
+                        "provider_responses_reasoning_replay_changed",
+                        descriptor: descriptor
+                    )
+                }
+                return []
+            }
+            guard responsesReasoningReplayByIndex[outputIndex] == nil else {
+                throw ProviderFailureMapper.protocolViolation(
+                    "provider_responses_reasoning_replay_changed",
+                    descriptor: descriptor
+                )
+            }
+            responsesReasoningReplayByIndex[outputIndex] = replay
+            completedResponsesReasoningItemIndices.insert(outputIndex)
+            return [.reasoningReplay(.init(
+                outputIndex: outputIndex,
+                replay: replay
+            ))]
+
         default:
             throw ProviderFailureMapper.protocolViolation(
                 "provider_responses_output_item_not_supported",
                 descriptor: descriptor
             )
         }
+    }
+
+    /// `response.output_item.added` only announces the identity-bearing shell
+    /// of a reasoning item. Its provider-owned replay payload is terminal
+    /// state, so it is captured only from `output_item.done` or the terminal
+    /// response output.
+    private mutating func receiveProvisionalResponsesReasoningItem(
+        _ item: [String: JSONValue],
+        outputIndex: Int
+    ) throws {
+        guard let summary = item["summary"]?.providerArray else {
+            throw ProviderFailureMapper.protocolViolation(
+                "provider_responses_reasoning_snapshot_invalid",
+                descriptor: descriptor
+            )
+        }
+        guard descriptor.route.provenance ==
+                .builtInOpenAICodexResponses else {
+            return
+        }
+
+        let contentIsEmpty: Bool
+        if let content = item["content"], !content.isProviderNull {
+            contentIsEmpty = content.providerArray?.isEmpty == true
+        } else {
+            contentIsEmpty = true
+        }
+        let encryptedContentIsAbsent: Bool
+        if let encryptedContent = item["encrypted_content"] {
+            encryptedContentIsAbsent = encryptedContent.isProviderNull
+        } else {
+            encryptedContentIsAbsent = true
+        }
+
+        guard let itemID = item["id"]?.providerString,
+              Self.isSafeWireIdentity(itemID, maximumUTF8Count: 512),
+              summary.isEmpty,
+              contentIsEmpty,
+              encryptedContentIsAbsent,
+              item["status"] == nil ||
+                item["status"]?.providerString == "in_progress",
+              responsesReasoningItemIDByIndex[outputIndex] == nil,
+              !completedResponsesReasoningItemIndices.contains(outputIndex),
+              !responsesReasoningItemIDByIndex.values.contains(itemID)
+        else {
+            throw ProviderFailureMapper.protocolViolation(
+                "provider_responses_reasoning_provisional_invalid",
+                descriptor: descriptor
+            )
+        }
+        responsesReasoningItemIDByIndex[outputIndex] = itemID
+    }
+
+    private var requiresDeepSeekReasoningReplay: Bool {
+        descriptor.route.provenance ==
+            .builtInOpenCodeZenChatCompletions &&
+            descriptor.route.modelID.rawValue.lowercased()
+                .hasPrefix("deepseek-v4-")
     }
 
     private func responsesContentKey(

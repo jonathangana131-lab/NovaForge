@@ -735,6 +735,8 @@ public actor AgentEngine {
         var textOrder: [Int] = []
         var reasoningByIndex: [Int: String] = [:]
         var reasoningOrder: [Int] = []
+        var reasoningReplayByIndex: [Int: ModelReasoningReplay] = [:]
+        var reasoningReplayOrder: [Int] = []
         var toolCalls: [ProviderToolCallCompletion] = []
         var usage: ProviderUsage?
         var finishReason: ModelFinishReason?
@@ -753,6 +755,14 @@ public actor AgentEngine {
                     reasoningOrder.append(delta.outputIndex)
                 }
                 reasoningByIndex[delta.outputIndex, default: ""] += delta.text
+            case let .reasoningReplay(value):
+                guard reasoningReplayByIndex[value.outputIndex] == nil else {
+                    throw AgentEngineError.providerContract(
+                        "duplicate_provider_reasoning_replay"
+                    )
+                }
+                reasoningReplayByIndex[value.outputIndex] = value.replay
+                reasoningReplayOrder.append(value.outputIndex)
             case .toolCallStarted, .toolCallArgumentsDelta:
                 break
             case let .toolCallCompleted(call):
@@ -783,30 +793,118 @@ public actor AgentEngine {
         }
 
         var items: [ModelItem] = []
+        var indexedItems: [(
+            outputIndex: Int,
+            kindOrder: Int,
+            sequence: Int,
+            item: ModelItem
+        )] = []
+        var indexedSequence = 0
         let now = try await clock.now()
-        let text = textOrder.compactMap { textByIndex[$0] }.joined()
-        if !text.isEmpty {
-            items.append(ModelItem(
-                id: ModelItemID(rawValue: try await identities.nextUUID()),
-                createdAt: now,
-                payload: .message(ModelMessage(
-                    role: .assistant,
-                    content: [.text(text)]
-                ))
-            ))
+        let hasReasoningReplay = !reasoningReplayOrder.isEmpty
+        let usesChatReasoningReplay = hasReasoningReplay &&
+            reasoningReplayOrder.allSatisfy { index in
+                guard let replay = reasoningReplayByIndex[index],
+                      case .chatCompletions = replay else { return false }
+                return true
+            }
+        let usesResponsesReasoningReplay = hasReasoningReplay &&
+            reasoningReplayOrder.allSatisfy { index in
+                guard let replay = reasoningReplayByIndex[index],
+                      case .responses = replay else { return false }
+                return true
+            }
+        guard !hasReasoningReplay ||
+                (usesChatReasoningReplay != usesResponsesReasoningReplay)
+        else {
+            throw AgentEngineError.providerContract(
+                "provider_reasoning_replay_dialect_mixed"
+            )
         }
-        let reasoning = reasoningOrder.compactMap {
-            reasoningByIndex[$0]
-        }.joined()
-        if !reasoning.isEmpty {
-            items.append(ModelItem(
-                id: ModelItemID(rawValue: try await identities.nextUUID()),
-                createdAt: now,
-                payload: .reasoningSummary(ReasoningSummary(
-                    text: reasoning,
-                    providerReference: responseID
+
+        if !hasReasoningReplay {
+            let text = textOrder.compactMap { textByIndex[$0] }.joined()
+            if !text.isEmpty {
+                items.append(ModelItem(
+                    id: ModelItemID(rawValue: try await identities.nextUUID()),
+                    createdAt: now,
+                    payload: .message(ModelMessage(
+                        role: .assistant,
+                        content: [.text(text)]
+                    ))
                 ))
-            ))
+            }
+            let reasoning = reasoningOrder.compactMap {
+                reasoningByIndex[$0]
+            }.joined()
+            if !reasoning.isEmpty {
+                items.append(ModelItem(
+                    id: ModelItemID(rawValue: try await identities.nextUUID()),
+                    createdAt: now,
+                    payload: .reasoningSummary(ReasoningSummary(
+                        text: reasoning,
+                        providerReference: responseID
+                    ))
+                ))
+            }
+        } else {
+            guard Set(reasoningOrder).isSubset(of: Set(reasoningReplayOrder)),
+                  !usesChatReasoningReplay ||
+                    (finishReason == .toolCalls &&
+                        reasoningReplayOrder.count == 1)
+            else {
+                throw AgentEngineError.providerContract(
+                    "provider_reasoning_replay_count_invalid"
+                )
+            }
+            for outputIndex in textOrder {
+                guard let text = textByIndex[outputIndex], !text.isEmpty else {
+                    continue
+                }
+                indexedItems.append((
+                    outputIndex: outputIndex,
+                    kindOrder: usesChatReasoningReplay ? 0 : 1,
+                    sequence: indexedSequence,
+                    item: ModelItem(
+                        id: ModelItemID(
+                            rawValue: try await identities.nextUUID()
+                        ),
+                        createdAt: now,
+                        payload: .message(ModelMessage(
+                            role: .assistant,
+                            content: [.text(text)]
+                        ))
+                    )
+                ))
+                indexedSequence += 1
+            }
+            for outputIndex in reasoningReplayOrder {
+                guard let replay = reasoningReplayByIndex[outputIndex] else {
+                    throw AgentEngineError.providerContract(
+                        "provider_reasoning_replay_missing"
+                    )
+                }
+                let replayText = reasoningByIndex[outputIndex]
+                    ?? Self.reasoningReplayDisplayText(replay)
+                indexedItems.append((
+                    outputIndex: outputIndex,
+                    kindOrder: usesChatReasoningReplay ? 1 : 0,
+                    sequence: indexedSequence,
+                    item: ModelItem(
+                        id: ModelItemID(
+                            rawValue: try await identities.nextUUID()
+                        ),
+                        createdAt: now,
+                        payload: .reasoningSummary(ReasoningSummary(
+                            text: replayText,
+                            providerReference: responseID,
+                            modelAttemptID: plan.attemptID,
+                            replay: replay
+                        ))
+                    )
+                ))
+                indexedSequence += 1
+            }
         }
 
         var providerCallIDs: Set<String> = []
@@ -840,17 +938,50 @@ public actor AgentEngine {
                 locality: prepared.toolLocalities[tool.descriptor.name]
                     ?? .onDevice
             )
-            items.append(ModelItem(
+            let item = ModelItem(
                 id: ModelItemID(rawValue: try await identities.nextUUID()),
                 createdAt: now,
                 payload: .toolInvocation(invocation)
-            ))
+            )
+            if hasReasoningReplay {
+                indexedItems.append((
+                    outputIndex: call.outputIndex,
+                    kindOrder: 2,
+                    sequence: indexedSequence,
+                    item: item
+                ))
+                indexedSequence += 1
+            } else {
+                items.append(item)
+            }
+        }
+        if hasReasoningReplay {
+            items = indexedItems.sorted { lhs, rhs in
+                if lhs.outputIndex != rhs.outputIndex {
+                    return lhs.outputIndex < rhs.outputIndex
+                }
+                if lhs.kindOrder != rhs.kindOrder {
+                    return lhs.kindOrder < rhs.kindOrder
+                }
+                return lhs.sequence < rhs.sequence
+            }.map(\.item)
         }
         return ProviderAttemptOutput(
             items: items,
             usage: usage.modelUsage,
             finishReason: finishReason
         )
+    }
+
+    private static func reasoningReplayDisplayText(
+        _ replay: ModelReasoningReplay
+    ) -> String {
+        switch replay {
+        case let .chatCompletions(value):
+            value.content
+        case let .responses(value):
+            (value.summary + value.content).joined()
+        }
     }
 
     // MARK: Tool loop

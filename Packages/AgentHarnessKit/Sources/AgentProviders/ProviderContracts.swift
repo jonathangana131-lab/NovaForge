@@ -451,17 +451,20 @@ public struct ProviderMessage: Codable, Equatable, Sendable {
     public let content: [ProviderContentPart]
     public let toolCallID: String?
     public let name: String?
+    public let reasoningReplay: ModelReasoningReplay?
 
     public init(
         role: ProviderMessageRole,
         content: [ProviderContentPart],
         toolCallID: String? = nil,
-        name: String? = nil
+        name: String? = nil,
+        reasoningReplay: ModelReasoningReplay? = nil
     ) {
         self.role = role
         self.content = content
         self.toolCallID = toolCallID
         self.name = name
+        self.reasoningReplay = reasoningReplay
     }
 }
 
@@ -676,6 +679,16 @@ public struct ProviderTextDelta: Codable, Equatable, Sendable {
     }
 }
 
+public struct ProviderReasoningReplay: Codable, Equatable, Sendable {
+    public let outputIndex: Int
+    public let replay: ModelReasoningReplay
+
+    public init(outputIndex: Int, replay: ModelReasoningReplay) {
+        self.outputIndex = outputIndex
+        self.replay = replay
+    }
+}
+
 public struct ProviderToolCallStart: Codable, Equatable, Sendable {
     public let outputIndex: Int
     public let itemID: String?
@@ -793,6 +806,7 @@ public enum ProviderStreamEvent: Codable, Equatable, Sendable {
     case responseStarted(ProviderResponseStart)
     case textDelta(ProviderTextDelta)
     case reasoningDelta(ProviderTextDelta)
+    case reasoningReplay(ProviderReasoningReplay)
     case toolCallStarted(ProviderToolCallStart)
     case toolCallArgumentsDelta(ProviderToolCallArgumentsDelta)
     case toolCallCompleted(ProviderToolCallCompletion)
@@ -805,6 +819,7 @@ public enum ProviderStreamEvent: Codable, Equatable, Sendable {
         case responseStarted
         case textDelta
         case reasoningDelta
+        case reasoningReplay
         case toolCallStarted
         case toolCallArgumentsDelta
         case toolCallCompleted
@@ -822,6 +837,11 @@ public enum ProviderStreamEvent: Codable, Equatable, Sendable {
             self = .textDelta(try container.decode(ProviderTextDelta.self, forKey: .body))
         case .reasoningDelta:
             self = .reasoningDelta(try container.decode(ProviderTextDelta.self, forKey: .body))
+        case .reasoningReplay:
+            self = .reasoningReplay(try container.decode(
+                ProviderReasoningReplay.self,
+                forKey: .body
+            ))
         case .toolCallStarted:
             self = .toolCallStarted(try container.decode(ProviderToolCallStart.self, forKey: .body))
         case .toolCallArgumentsDelta:
@@ -852,6 +872,9 @@ public enum ProviderStreamEvent: Codable, Equatable, Sendable {
             try container.encode(value, forKey: .body)
         case let .reasoningDelta(value):
             try container.encode(Kind.reasoningDelta, forKey: .kind)
+            try container.encode(value, forKey: .body)
+        case let .reasoningReplay(value):
+            try container.encode(Kind.reasoningReplay, forKey: .kind)
             try container.encode(value, forKey: .body)
         case let .toolCallStarted(value):
             try container.encode(Kind.toolCallStarted, forKey: .kind)

@@ -161,6 +161,121 @@ final class AgentProductionProviderGatewayTests: XCTestCase {
         }
     }
 
+    func testChatGPTOAuthCredentialBoundaryMatchesKeychainWhileAPIKeysStayBounded()
+        throws
+    {
+        let codexSelection = try AgentProductionProviderRouteSelection
+            .hostedOpenAICodexResponses(
+                modelID: ProviderModelID(rawValue: "gpt-5.5")
+            )
+        for byteCount in [4_097, KeychainStore.maximumSecretBytes] {
+            let bundle = try AgentProductionProviderGatewayFactory
+                .hostedOpenAICodexResponses(
+                    selection: codexSelection,
+                    credential: String(repeating: "c", count: byteCount)
+                )
+            XCTAssertEqual(bundle.selection, codexSelection)
+        }
+        XCTAssertThrowsError(
+            try AgentProductionProviderGatewayFactory
+                .hostedOpenAICodexResponses(
+                    selection: codexSelection,
+                    credential: String(
+                        repeating: "c",
+                        count: KeychainStore.maximumSecretBytes + 1
+                    )
+                )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentProductionProviderGatewayError,
+                .invalidHostedCredential
+            )
+        }
+
+        let openAISelection = try AgentProductionProviderRouteSelection
+            .hostedOpenAIChatCompletions(
+                modelID: ProviderModelID(rawValue: "gpt-5.2")
+            )
+        _ = try AgentProductionProviderGatewayFactory
+            .hostedOpenAIChatCompletions(
+                selection: openAISelection,
+                credential: String(repeating: "a", count: 4_096)
+            )
+        XCTAssertThrowsError(
+            try AgentProductionProviderGatewayFactory
+                .hostedOpenAIChatCompletions(
+                    selection: openAISelection,
+                    credential: String(repeating: "a", count: 4_097)
+                )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentProductionProviderGatewayError,
+                .invalidHostedCredential
+            )
+        }
+
+        _ = try AgentProductionProviderGatewayFactory
+            .hostedOpenCodeZenChatCompletions(
+                modelID: ProviderModelID(rawValue: "big-pickle"),
+                credential: String(repeating: "z", count: 4_096)
+            )
+        XCTAssertThrowsError(
+            try AgentProductionProviderGatewayFactory
+                .hostedOpenCodeZenChatCompletions(
+                    modelID: ProviderModelID(rawValue: "big-pickle"),
+                    credential: String(repeating: "z", count: 4_097)
+                )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentProductionProviderGatewayError,
+                .invalidHostedCredential
+            )
+        }
+    }
+
+    func testChatGPTAccountIdentityIsBoundedBeforeTransportComposition()
+        throws
+    {
+        let selection = try AgentProductionProviderRouteSelection
+            .hostedOpenAICodexResponses(
+                modelID: ProviderModelID(rawValue: "gpt-5.5")
+            )
+        for accountID in [
+            "acct_approved_in_id_token",
+            String(repeating: "a", count: 512),
+        ] {
+            let bundle = try AgentProductionProviderGatewayFactory
+                .hostedOpenAICodexResponses(
+                    selection: selection,
+                    credential: "codex-oauth-token",
+                    accountID: accountID
+                )
+            XCTAssertEqual(bundle.selection, selection)
+        }
+
+        for accountID in [
+            "",
+            " account",
+            "account\nheader",
+            "account-🔑",
+            String(repeating: "a", count: 513),
+        ] {
+            XCTAssertThrowsError(
+                try AgentProductionProviderGatewayFactory
+                    .hostedOpenAICodexResponses(
+                        selection: selection,
+                        credential: "codex-oauth-token",
+                        accountID: accountID
+                    )
+            ) { error in
+                XCTAssertEqual(
+                    error as? AgentProductionProviderGatewayError,
+                    .invalidHostedAccountID
+                )
+            }
+        }
+    }
+
     func testZenFreeCompositionAcceptsAnonymousCredentialButPaidDoesNot()
         throws
     {

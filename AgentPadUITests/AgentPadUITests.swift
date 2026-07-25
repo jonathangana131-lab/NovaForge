@@ -275,9 +275,9 @@ final class AgentPadUITests: XCTestCase {
     /// phone's provider selection and Keychain credential, sends one harmless
     /// nonce, and requires that nonce inside a completed assistant bubble.
     func testPhysicalHostedProviderCanaryReturnsRealResponse() throws {
-        guard ProcessInfo.processInfo.environment[
+        guard optInEnvironmentEnabled(
             "NOVAFORGE_RUN_PHYSICAL_PROVIDER_CANARY"
-        ] == "1" else {
+        ) else {
             throw XCTSkip("Requires an explicitly authorized physical-device provider run.")
         }
 
@@ -311,7 +311,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 8))
         composer.tap()
         composer.typeText(prompt)
-        tapReadySendButton(in: app)
+        tapReadySendButton(in: app, readinessTimeout: 45)
 
         XCTAssertTrue(
             app.staticTexts[prompt].firstMatch.waitForExistence(timeout: 10),
@@ -337,14 +337,403 @@ final class AgentPadUITests: XCTestCase {
         )
     }
 
+    /// Opt-in Simulator proof for the production ChatGPT subscription route.
+    /// Authorization must be completed inside this Simulator beforehand so
+    /// the bearer and refresh tokens never cross into XCTest arguments,
+    /// environment variables, logs, screenshots, or fixtures. `--reset-ui`
+    /// deliberately preserves that app-owned Keychain material while clearing
+    /// the conversation/run state used by this proof.
+    func testSimulatorChatGPTProviderCanaryCompletesAndPersists() throws {
+        guard optInEnvironmentEnabled(
+            "NOVAFORGE_RUN_SIMULATOR_CHATGPT_CANARY"
+        ) else {
+            throw XCTSkip(
+                "Requires an explicitly authorized ChatGPT session in this Simulator."
+            )
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["currentChatTitle"].waitForExistence(timeout: 12),
+            "Forge should launch with clean run state in the authorized Simulator."
+        )
+
+        let modelMenu = composerModelControl(in: app)
+        XCTAssertTrue(
+            modelMenu.waitForExistence(timeout: 8),
+            "The ChatGPT canary needs the production model and provider chooser."
+        )
+        modelMenu.tap()
+
+        XCTAssertTrue(
+            app.navigationBars["Model & provider"].waitForExistence(timeout: 8),
+            "The production composer chooser should open before selecting ChatGPT."
+        )
+        let chatGPTProvider = app.buttons[
+            "composerProvider-openAICodex"
+        ].firstMatch
+        XCTAssertTrue(
+            chatGPTProvider.waitForExistence(timeout: 8),
+            "The exact ChatGPT subscription provider must be selectable."
+        )
+        chatGPTProvider.tap()
+
+        let gpt55 = app.buttons["composerModel-gpt-5.5"].firstMatch
+        XCTAssertTrue(
+            gpt55.waitForExistence(timeout: 8),
+            "The canary must bind the exact gpt-5.5 route before sending."
+        )
+        for _ in 0 ..< 5 where !gpt55.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(
+            gpt55.isHittable,
+            "GPT-5.5 must be visible and tappable in the production chooser."
+        )
+        gpt55.tap()
+        let chooserDone = app.buttons["Done"].firstMatch
+        XCTAssertTrue(chooserDone.waitForExistence(timeout: 5))
+        chooserDone.tap()
+
+        let exactRouteReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@",
+                "ChatGPT",
+                "GPT-5.5"
+            ),
+            object: modelMenu
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [exactRouteReady], timeout: 8),
+            .completed,
+            "The canary must visibly remain on ChatGPT GPT-5.5, not another hosted route."
+        )
+        let nonce = "NF_CHATGPT_BUILD3"
+        let prompt = "Reply with exactly \(nonce). Do not call tools."
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap()
+        composer.typeText(prompt)
+        // A valid ChatGPT session can briefly refresh after a clean launch.
+        // The canonical send-readiness contract distinguishes that transient
+        // state from an actually missing credential without inspecting tokens.
+        tapReadySendButton(in: app, readinessTimeout: 45)
+
+        let acceptedPrompt = app.otherElements
+            .matching(identifier: "chatUserMessageBubble")
+            .firstMatch
+        XCTAssertTrue(
+            acceptedPrompt.waitForExistence(timeout: 20),
+            "The real ChatGPT canary prompt should be durably accepted."
+        )
+        XCTAssertTrue(
+            acceptedPrompt.staticTexts[prompt].waitForExistence(timeout: 5),
+            "The durable user bubble must contain the exact ChatGPT canary prompt."
+        )
+
+        let assistantText = app.otherElements
+            .matching(identifier: "chatAssistantResponse")
+            .staticTexts
+            .matching(NSPredicate(format: "label == %@", nonce))
+            .firstMatch
+        XCTAssertTrue(
+            assistantText.waitForExistence(timeout: 120),
+            "ChatGPT GPT-5.5 did not return the exact canary nonce in a completed assistant response."
+        )
+
+        for forbiddenText in [
+            "provider stream violated",
+            "provider connection failed",
+            "Recovery available",
+            "Run failed",
+        ] {
+            XCTAssertFalse(
+                app.staticTexts.containing(
+                    NSPredicate(
+                        format: "label CONTAINS[c] %@",
+                        forbiddenText
+                    )
+                ).firstMatch.exists,
+                "The completed ChatGPT canary must not show failure UI containing '\(forbiddenText)'."
+            )
+        }
+        XCTAssertFalse(
+            app.staticTexts["Failed"].firstMatch.exists,
+            "The completed ChatGPT canary must not retain a failed outcome."
+        )
+        XCTAssertFalse(
+            app.alerts.firstMatch.exists,
+            "The completed ChatGPT canary must not leave a recovery or failure alert presented."
+        )
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(
+            keyboard.waitForNonExistence(timeout: 5),
+            "A successful ChatGPT send must dismiss the keyboard before History navigation."
+        )
+        let historyTab = app.tabBars.buttons["History"]
+        XCTAssertTrue(historyTab.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            historyTab.isHittable,
+            "History must remain tappable after the ChatGPT response completes."
+        )
+        historyTab.tap()
+        let historySelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "selected == true"),
+            object: historyTab
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [historySelected], timeout: 8),
+            .completed,
+            "The ChatGPT proof must actually navigate from Forge to History."
+        )
+        let persistedOutcome = identifiedElement(
+            "historyLatestMissionOutcome",
+            in: app
+        )
+        XCTAssertTrue(
+            persistedOutcome.waitForExistence(timeout: 20),
+            "The completed ChatGPT run must persist into History."
+        )
+        XCTAssertTrue(
+            persistedOutcome.staticTexts["Completed"].firstMatch
+                .waitForExistence(timeout: 8),
+            "History must preserve the ChatGPT canary as completed."
+        )
+        capture("live-chatgpt-provider-completed-and-persisted", app: app)
+    }
+
+    /// Opt-in clean-Simulator proof for the exact production route shown in
+    /// the adapter-contract failure report: ChatGPT GPT-5.5 with UltraCode.
+    /// This is intentionally separate from the single-run ChatGPT canary
+    /// because UltraCode owns three isolated workers plus the visible lead
+    /// run. A pass therefore proves the composer selection, delegated stream
+    /// lifecycle, visible durable handoff, and History projection together.
+    func testSimulatorChatGPTUltraCodeCanaryCompletesAndPersists() throws {
+        guard optInEnvironmentEnabled(
+            "NOVAFORGE_RUN_SIMULATOR_CHATGPT_ULTRACODE_CANARY"
+        ) else {
+            throw XCTSkip(
+                "Requires an explicitly authorized ChatGPT session in this Simulator."
+            )
+        }
+        // The production UltraCode route performs bounded real provider work
+        // for three workers and one integrator. Keep XCTest's own watchdog
+        // explicit so this proof cannot run indefinitely on a stalled stream.
+        executionTimeAllowance = 1_020
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["currentChatTitle"].waitForExistence(timeout: 12),
+            "Forge should launch with clean run state in the authorized Simulator."
+        )
+
+        let modelMenu = composerModelControl(in: app)
+        XCTAssertTrue(
+            modelMenu.waitForExistence(timeout: 8),
+            "The UltraCode canary needs the production model and provider chooser."
+        )
+        modelMenu.tap()
+        XCTAssertTrue(
+            app.navigationBars["Model & provider"].waitForExistence(timeout: 8),
+            "The production composer chooser should open before selecting ChatGPT."
+        )
+
+        let chatGPTProvider = app.buttons[
+            "composerProvider-openAICodex"
+        ].firstMatch
+        XCTAssertTrue(
+            chatGPTProvider.waitForExistence(timeout: 8),
+            "The exact ChatGPT subscription provider must be selectable."
+        )
+        chatGPTProvider.tap()
+
+        let gpt55 = app.buttons["composerModel-gpt-5.5"].firstMatch
+        XCTAssertTrue(
+            gpt55.waitForExistence(timeout: 8),
+            "The UltraCode canary must bind the exact gpt-5.5 route."
+        )
+        for _ in 0 ..< 5 where !gpt55.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(
+            gpt55.isHittable,
+            "GPT-5.5 must be visible and tappable in the production chooser."
+        )
+        gpt55.tap()
+        let chooserDone = app.buttons["Done"].firstMatch
+        XCTAssertTrue(chooserDone.waitForExistence(timeout: 5))
+        chooserDone.tap()
+
+        selectUltraCode(in: app)
+
+        let exactRouteReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@",
+                "ChatGPT",
+                "GPT-5.5"
+            ),
+            object: modelMenu
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [exactRouteReady], timeout: 8),
+            .completed,
+            "UltraCode must remain visibly bound to ChatGPT GPT-5.5 before Send."
+        )
+
+        let nonce = "NF_CHATGPT_ULTRACODE_BUILD3"
+        let prompt = "Reply with exactly \(nonce). Do not modify files or call tools."
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap()
+        composer.typeText(prompt)
+        tapReadySendButton(in: app, readinessTimeout: 45)
+
+        let liveRail = identifiedElement("composerLiveRunRail", in: app)
+        XCTAssertTrue(
+            liveRail.waitForExistence(timeout: 30),
+            "UltraCode must enter its visible delegated-run state after Send."
+        )
+        let progress = runProgressToggle(in: app)
+        XCTAssertTrue(progress.waitForExistence(timeout: 5))
+        let progressLabel = progress.label.lowercased()
+        XCTAssertTrue(
+            progressLabel.contains("agent") ||
+                progressLabel.contains("isolated") ||
+                progressLabel.contains("integrat"),
+            "The live rail must describe UltraCode orchestration, not a silent standard run; label='\(progress.label)'."
+        )
+
+        // UltraCode does not create the public user bubble until its visible
+        // integrator crosses durable acceptance. Polling for known failure UI
+        // prevents an adapter rejection from burning the entire long timeout.
+        let acceptedPrompt = app.otherElements
+            .matching(identifier: "chatUserMessageBubble")
+            .firstMatch
+        let acceptance = waitForProviderProofElement(
+            acceptedPrompt,
+            in: app,
+            timeout: 600
+        )
+        XCTAssertNil(
+            acceptance.failure,
+            "UltraCode surfaced failure UI before visible acceptance: \(acceptance.failure ?? "unknown")."
+        )
+        XCTAssertTrue(
+            acceptance.found,
+            "UltraCode never crossed the visible durable-acceptance boundary."
+        )
+        XCTAssertTrue(
+            acceptedPrompt.staticTexts[prompt].waitForExistence(timeout: 5),
+            "The visible durable user bubble must contain the exact submitted prompt."
+        )
+
+        let assistantText = app.otherElements
+            .matching(identifier: "chatAssistantResponse")
+            .staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", nonce))
+            .firstMatch
+        let completion = waitForProviderProofElement(
+            assistantText,
+            in: app,
+            timeout: 300
+        )
+        XCTAssertNil(
+            completion.failure,
+            "UltraCode surfaced failure UI after visible acceptance: \(completion.failure ?? "unknown")."
+        )
+        XCTAssertTrue(
+            completion.found,
+            "ChatGPT GPT-5.5 UltraCode did not produce the canary marker in a completed assistant response."
+        )
+
+        assertNoProviderFailureSurface(
+            in: app,
+            messagePrefix: "The completed ChatGPT UltraCode canary"
+        )
+        XCTAssertTrue(
+            liveRail.waitForNonExistence(timeout: 90),
+            "UltraCode must settle its workers and cleanup before the run is considered complete."
+        )
+
+        let restoredReasoning = app.buttons["composerReasoningPickerButton"]
+        XCTAssertTrue(restoredReasoning.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            restoredReasoning.label.localizedCaseInsensitiveContains("UltraCode"),
+            "The completed route must retain the explicitly selected UltraCode mode."
+        )
+
+        let historyTab = app.tabBars.buttons["History"]
+        XCTAssertTrue(historyTab.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            historyTab.isHittable,
+            "History must remain tappable after the delegated run completes."
+        )
+        historyTab.tap()
+        let historySelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "selected == true"),
+            object: historyTab
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [historySelected], timeout: 8),
+            .completed,
+            "The UltraCode proof must navigate from Forge to History."
+        )
+
+        let persistedOutcome = identifiedElement(
+            "historyLatestMissionOutcome",
+            in: app
+        )
+        XCTAssertTrue(
+            persistedOutcome.waitForExistence(timeout: 30),
+            "The visible UltraCode integrator run must persist into History."
+        )
+        XCTAssertTrue(
+            persistedOutcome.staticTexts["Completed"].firstMatch
+                .waitForExistence(timeout: 8),
+            "History must preserve the visible UltraCode run as completed."
+        )
+        XCTAssertTrue(
+            persistedOutcome.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", nonce)
+            ).firstMatch.waitForExistence(timeout: 8),
+            "The latest History receipt must retain the exact UltraCode canary request."
+        )
+        XCTAssertTrue(
+            persistedOutcome.staticTexts.containing(
+                NSPredicate(
+                    format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@",
+                    "ChatGPT",
+                    "gpt-5.5"
+                )
+            ).firstMatch.waitForExistence(timeout: 8),
+            "The durable receipt must retain the exact ChatGPT GPT-5.5 route."
+        )
+        XCTAssertFalse(
+            persistedOutcome.staticTexts["Failed"].firstMatch.exists,
+            "The latest UltraCode receipt must not be a failed worker receipt."
+        )
+        assertNoProviderFailureSurface(
+            in: app,
+            messagePrefix: "The persisted ChatGPT UltraCode proof"
+        )
+        capture("live-chatgpt-ultracode-completed-and-persisted", app: app)
+    }
+
     /// Opt-in clean-Simulator proof for the anonymous Zen route that exposed
     /// the production reasoning-stream contract failure. This is deliberately
     /// stronger than a transport log: the nonce must reach a completed Forge
     /// bubble and the same run must materialize as a durable History receipt.
     func testSimulatorAnonymousZenProviderCanaryCompletesAndPersists() throws {
-        guard ProcessInfo.processInfo.environment[
+        guard optInEnvironmentEnabled(
             "NOVAFORGE_RUN_SIMULATOR_ZEN_CANARY"
-        ] == "1" else {
+        ) else {
             throw XCTSkip(
                 "Requires an explicitly authorized live Simulator provider run."
             )
@@ -362,7 +751,8 @@ final class AgentPadUITests: XCTestCase {
             app.staticTexts["currentChatTitle"].waitForExistence(timeout: 12),
             "Forge should launch in the clean Simulator."
         )
-        let prompt = "Reply with exactly NF_SIMULATOR_BUILD3. Do not call tools."
+        let nonce = "NF_SIMULATOR_BUILD3"
+        let prompt = "Reply with exactly \(nonce). Do not call tools."
         let modelMenu = app.descendants(matching: .any)[
             "composerModelNativeMenu"
         ]
@@ -387,7 +777,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 8))
         composer.tap()
         composer.typeText(prompt)
-        tapReadySendButton(in: app)
+        tapReadySendButton(in: app, readinessTimeout: 45)
 
         let acceptedPrompt = app.otherElements
             .matching(identifier: "chatUserMessageBubble")
@@ -407,7 +797,7 @@ final class AgentPadUITests: XCTestCase {
             .containing(
                 NSPredicate(
                     format: "label CONTAINS %@",
-                    "NF_SIMULATOR_BUILD3"
+                    nonce
                 )
             )
             .firstMatch
@@ -446,13 +836,17 @@ final class AgentPadUITests: XCTestCase {
             .completed,
             "The live proof must actually navigate from Forge to History."
         )
+        let persistedOutcome = identifiedElement(
+            "historyLatestMissionOutcome",
+            in: app
+        )
         XCTAssertTrue(
-            identifiedElement("historyLatestMissionOutcome", in: app)
-                .waitForExistence(timeout: 20),
+            persistedOutcome.waitForExistence(timeout: 20),
             "The completed live provider run must persist into History."
         )
         XCTAssertTrue(
-            app.staticTexts["Completed"].firstMatch.waitForExistence(timeout: 8),
+            persistedOutcome.staticTexts["Completed"].firstMatch
+                .waitForExistence(timeout: 8),
             "History must record the live provider run as completed."
         )
         capture("live-zen-provider-completed-and-persisted", app: app)
@@ -1331,11 +1725,22 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
-        if !app.staticTexts["On-Device Model"].waitForExistence(timeout: 2) {
+        if !app.staticTexts["On-Device Models"].waitForExistence(timeout: 2) {
             app.swipeUp()
         }
-        XCTAssertTrue(app.staticTexts["On-Device Model"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["On-Device Models"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Qwen Coder 1.5B — iPhone 12"].waitForExistence(timeout: 5))
+
+        let picker = app.buttons["modelPickerButton"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.tap()
+        XCTAssertTrue(app.staticTexts["Choose On-Device Model"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("localModelSafetyCard", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Atlas 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Jul 20, 2026")).firstMatch.waitForExistence(timeout: 5),
+            "The primary local-model picker should show the release date before selection."
+        )
         capture("18-local-model-settings", app: app)
     }
 
@@ -1396,10 +1801,10 @@ final class AgentPadUITests: XCTestCase {
             app.launchArguments = ["--reset-ui", launchArgument, "--open-settings"]
             app.launch()
             XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
-            if !app.staticTexts["On-Device Model"].waitForExistence(timeout: 2) {
+            if !app.staticTexts["On-Device Models"].waitForExistence(timeout: 2) {
                 app.swipeUp()
             }
-            XCTAssertTrue(app.staticTexts["On-Device Model"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["On-Device Models"].waitForExistence(timeout: 5))
             return app
         }
 
@@ -1687,6 +2092,152 @@ final class AgentPadUITests: XCTestCase {
             reasoningButton.label.localizedCaseInsensitiveContains("UltraCode"),
             "The collapsed liquid-glass control should retain the selected UltraCode mode."
         )
+    }
+
+    /// Deterministic UI regression for the cancellation boundary that is
+    /// unique to UltraCode. Stopping while hidden workers are active must not
+    /// manufacture a public user turn or clear the submitted draft. Sending
+    /// that preserved draft again then has to complete through the same real
+    /// orchestration owner and persist its visible integrator receipt.
+    func testUltraCodeStopBeforeVisibleAcceptancePreservesDraftAndCanRetry() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-ui",
+            "--debug-provider-send-ready",
+            "--open-chat",
+        ]
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8)
+        )
+        waitForDebugProviderFixture(in: app)
+        selectUltraCode(in: app)
+
+        let prompt = "Keep this exact UltraCode draft through Stop"
+        let composer = chatComposerInput(in: app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText(prompt)
+        tapReadySendButton(in: app)
+
+        let liveRail = identifiedElement("composerLiveRunRail", in: app)
+        XCTAssertTrue(
+            liveRail.waitForExistence(timeout: 8),
+            "UltraCode should expose its delegated-run rail before visible acceptance."
+        )
+        let stop = app.buttons["composerStopButton"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(stop, named: "UltraCode stop")
+        stop.tap()
+
+        XCTAssertTrue(
+            liveRail.waitForNonExistence(timeout: 20),
+            "Stopping UltraCode should settle accepted workers before releasing the composer."
+        )
+        let preservedComposer = chatComposerInput(in: app)
+        XCTAssertTrue(preservedComposer.waitForExistence(timeout: 5))
+        let preservedDraft = (preservedComposer.value as? String) ??
+            preservedComposer.label
+        XCTAssertEqual(
+            preservedDraft,
+            prompt,
+            "A pre-integrator Stop must preserve the exact unaccepted draft."
+        )
+        let cancelledPublicBubble = app.otherElements
+            .matching(identifier: "chatUserMessageBubble")
+            .staticTexts[prompt]
+            .firstMatch
+        XCTAssertFalse(
+            cancelledPublicBubble.exists,
+            "Hidden worker acceptance must not create a public user bubble."
+        )
+        XCTAssertFalse(
+            app.otherElements.matching(identifier: "chatAssistantResponse")
+                .firstMatch.exists,
+            "A cancelled hidden-worker phase must not manufacture an assistant handoff."
+        )
+        let restoredMode = app.buttons["composerReasoningPickerButton"]
+        XCTAssertTrue(restoredMode.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            restoredMode.label.localizedCaseInsensitiveContains("UltraCode"),
+            "Stop must preserve the selected UltraCode mode for an explicit retry."
+        )
+
+        // Retry the exact preserved draft. The deterministic transport is
+        // deliberately slow enough that Stop above cannot race full worker
+        // completion, but it remains bounded for the ordinary release lane.
+        let retrySend = app.buttons["sendMessageButton"]
+        XCTAssertTrue(retrySend.waitForExistence(timeout: 5))
+        let retryReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: retrySend
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [retryReady], timeout: 12),
+            .completed,
+            "The composer must become sendable again after cancelled workers settle."
+        )
+        retrySend.tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        let retryRail = identifiedElement("composerLiveRunRail", in: app)
+        XCTAssertTrue(
+            retryRail.waitForExistence(timeout: 8),
+            "Retry must start a new UltraCode delegated-run lifecycle."
+        )
+        let acceptedPrompt = app.otherElements
+            .matching(identifier: "chatUserMessageBubble")
+            .firstMatch
+        XCTAssertTrue(
+            acceptedPrompt.waitForExistence(timeout: 30),
+            "Retry must reach visible durable acceptance after the cancelled workers settle."
+        )
+        XCTAssertTrue(
+            acceptedPrompt.staticTexts[prompt].waitForExistence(timeout: 5),
+            "Retry must publish the exact preserved draft once, at integrator acceptance."
+        )
+
+        let assistant = app.otherElements
+            .matching(identifier: "chatAssistantResponse")
+            .staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", "Hey! I’m on it"))
+            .firstMatch
+        XCTAssertTrue(
+            assistant.waitForExistence(timeout: 35),
+            "The retried UltraCode integrator must finish with a durable assistant handoff."
+        )
+        XCTAssertTrue(
+            retryRail.waitForNonExistence(timeout: 20),
+            "Successful retry must release the delegated-run rail."
+        )
+        assertNoProviderFailureSurface(
+            in: app,
+            messagePrefix: "The deterministic UltraCode Stop/retry proof"
+        )
+
+        let historyTab = app.tabBars.buttons["History"]
+        XCTAssertTrue(historyTab.waitForExistence(timeout: 5))
+        historyTab.tap()
+        let persistedOutcome = identifiedElement(
+            "historyLatestMissionOutcome",
+            in: app
+        )
+        XCTAssertTrue(
+            persistedOutcome.waitForExistence(timeout: 20),
+            "The retried visible integrator run must persist into History."
+        )
+        XCTAssertTrue(
+            persistedOutcome.staticTexts["Completed"].firstMatch
+                .waitForExistence(timeout: 8),
+            "The latest UltraCode retry receipt must be completed."
+        )
+        XCTAssertTrue(
+            persistedOutcome.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", prompt)
+            ).firstMatch.waitForExistence(timeout: 8),
+            "History must retain the exact preserved-and-retried request."
+        )
+        capture("ultracode-stop-retry-completed-and-persisted", app: app)
     }
 
     func testStreamingKeepsBottomPinnedDuringLiveResponse() throws {
@@ -2077,13 +2628,29 @@ final class AgentPadUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Playable game ready")).firstMatch.waitForExistence(timeout: 8))
+        let fixtureReady = app.descendants(matching: .any)
+            .matching(identifier: "localAgentBoundaryFixtureReady").firstMatch
+        XCTAssertTrue(
+            fixtureReady.waitForExistence(timeout: 20),
+            "The cold Simulator must finish installing the deterministic local-agent artifact fixture before preview verification begins."
+        )
+        XCTAssertTrue(
+            app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "Playable game ready")
+            ).firstMatch.waitForExistence(timeout: 5)
+        )
 
         XCTAssertFalse(runProgressToggle(in: app).exists, "Completed artifact work should not require reopening an obsolete bottom drawer.")
         let inlineArtifactOpen = app.buttons["toolArtifactOpenButton"]
         XCTAssertTrue(inlineArtifactOpen.waitForExistence(timeout: 5), "Artifact preview should open from the compact transcript receipt.")
         assertMinimumTouchTarget(inlineArtifactOpen, named: "inline artifact preview")
         inlineArtifactOpen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let previewStatusTitle = app.staticTexts["artifactPreviewStatusTitle"]
+        XCTAssertTrue(previewStatusTitle.waitForExistence(timeout: 4), "Artifact preview should expose an explicit loading or ready state.")
+        XCTAssertTrue(
+            ["Loading preview", "Normal preview"].contains(previewStatusTitle.label),
+            "A web artifact must describe the renderer's real state instead of claiming readiness while its canvas is loading."
+        )
         capture("42-artifact-button-tapped", app: app)
         let previewStudio = app.descendants(matching: .any).matching(identifier: "artifactPreviewStudio").firstMatch
         let normalPreviewLabel = app.staticTexts["Normal preview"]
@@ -2109,6 +2676,11 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertFalse(app.buttons["artifactViewportFit"].exists, "Release artifact viewer should not show a mode picker.")
         XCTAssertFalse(app.buttons["artifactViewportPortrait"].exists, "Release artifact viewer should not show a portrait mode button.")
         XCTAssertFalse(app.buttons["artifactViewportLandscape"].exists, "Release artifact viewer should not show a landscape mode button.")
+        XCTAssertTrue(normalPreviewLabel.waitForExistence(timeout: 8), "Normal preview should appear only after WebKit finishes the active artifact navigation.")
+        let previewFooterStatus = app.staticTexts["artifactPreviewFooterStatus"]
+        XCTAssertTrue(previewFooterStatus.waitForExistence(timeout: 3))
+        XCTAssertTrue(previewFooterStatus.label.hasPrefix("Preview ready"))
+        XCTAssertFalse(app.otherElements["artifactPreviewLoadingState"].exists, "The loading cover should leave only after the preview reports ready.")
         Thread.sleep(forTimeInterval: 1.0)
         capture("43-artifact-preview-normal", app: app)
 
@@ -2136,7 +2708,15 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertGreaterThan(screenFrame.width, screenFrame.height, "App window should report a landscape frame before fullscreen proof captures.")
         XCTAssertEqual(fullscreenFrame.width, screenFrame.width, accuracy: 2.0, "Artifact fullscreen should fill the landscape window width.")
         XCTAssertEqual(fullscreenFrame.height, screenFrame.height, accuracy: 2.0, "Artifact fullscreen should fill the landscape window height.")
-        Thread.sleep(forTimeInterval: 1.0)
+        let fullScreenReadyExpectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "ready"),
+            object: fullScreenSurface
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [fullScreenReadyExpectation], timeout: 24),
+            .completed,
+            "Fullscreen proof must wait for the visible landscape container to publish exact-viewport render readiness."
+        )
         let fullscreenProof = capture("46-artifact-preview-studio-fullscreen", app: app)
         assertFullBleedLandscapeScreenshot(fullscreenProof)
         XCTAssertFalse(app.buttons["artifactFullScreenButton"].waitForExistence(timeout: 1), "Fullscreen should not leave the preview header/chrome visible above the game.")
@@ -3145,6 +3725,77 @@ final class AgentPadUITests: XCTestCase {
         return normalized
     }
 
+    private func optInEnvironmentEnabled(_ key: String) -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment[key] == "1" ||
+            environment["TEST_RUNNER_\(key)"] == "1"
+    }
+
+    private func waitForProviderProofElement(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> (found: Bool, failure: String?) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists { return (true, nil) }
+            if let failure = visibleProviderFailureSurface(in: app) {
+                return (false, failure)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        if element.exists { return (true, nil) }
+        return (false, visibleProviderFailureSurface(in: app))
+    }
+
+    private func assertNoProviderFailureSurface(
+        in app: XCUIApplication,
+        messagePrefix: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let failure = visibleProviderFailureSurface(in: app)
+        XCTAssertNil(
+            failure,
+            "\(messagePrefix) must not show failure or recovery UI: \(failure ?? "unknown").",
+            file: file,
+            line: line
+        )
+    }
+
+    private func visibleProviderFailureSurface(
+        in app: XCUIApplication
+    ) -> String? {
+        for forbiddenText in [
+            "provider stream violated",
+            "provider connection failed",
+            "Recovery available",
+            "Run failed",
+            "adapter contract",
+        ] {
+            if app.staticTexts.containing(
+                NSPredicate(
+                    format: "label CONTAINS[c] %@",
+                    forbiddenText
+                )
+            ).firstMatch.exists {
+                return forbiddenText
+            }
+        }
+        if app.staticTexts["Failed"].firstMatch.exists {
+            return "Failed"
+        }
+        if app.descendants(matching: .any)
+            .matching(identifier: "agentActivityUnavailable")
+            .firstMatch.exists {
+            return "agent activity unavailable"
+        }
+        if app.alerts.firstMatch.exists {
+            return "unexpected alert: \(app.alerts.firstMatch.label)"
+        }
+        return nil
+    }
+
     private func normalizedForProof(_ image: UIImage) -> UIImage {
         guard image.imageOrientation != .up else { return image }
         let format = UIGraphicsImageRendererFormat.default()
@@ -3392,6 +4043,63 @@ final class AgentPadUITests: XCTestCase {
         return firstMatch
     }
 
+    private func selectUltraCode(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let reasoningButton = app.buttons["composerReasoningPickerButton"]
+        XCTAssertTrue(
+            reasoningButton.waitForExistence(timeout: 8),
+            "The composer must expose its reasoning and agent-mode control.",
+            file: file,
+            line: line
+        )
+        reasoningButton.tap()
+
+        let reasoningSlider = app.descendants(matching: .any)
+            .matching(identifier: "reasoningEffortSlider")
+            .firstMatch
+        XCTAssertTrue(
+            reasoningSlider.waitForExistence(timeout: 8),
+            "The reasoning picker must expose its adjustable five-stop control.",
+            file: file,
+            line: line
+        )
+        reasoningSlider.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
+        ).tap()
+        let ultraSelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "UltraCode"),
+            object: reasoningSlider
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [ultraSelected], timeout: 8),
+            .completed,
+            "The exact UltraCode stop must become the active mode.",
+            file: file,
+            line: line
+        )
+
+        // The reasoning control intentionally presents as a compact popover;
+        // tap the unobstructed top-trailing chrome to commit and dismiss it.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.08)).tap()
+        let collapsedUltra = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "label CONTAINS[c] %@",
+                "UltraCode"
+            ),
+            object: reasoningButton
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [collapsedUltra], timeout: 8),
+            .completed,
+            "The collapsed composer must visibly retain UltraCode.",
+            file: file,
+            line: line
+        )
+    }
+
     private func waitForDebugProviderFixture(
         in app: XCUIApplication,
         file: StaticString = #filePath,
@@ -3418,6 +4126,7 @@ final class AgentPadUITests: XCTestCase {
 
     private func tapReadySendButton(
         in app: XCUIApplication,
+        readinessTimeout: TimeInterval = 12,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
@@ -3433,13 +4142,23 @@ final class AgentPadUITests: XCTestCase {
             predicate: ready,
             object: send
         )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [expectation], timeout: 12),
-            .completed,
-            "Send should wait for the canonical runtime to become ready instead of accepting a silent no-op tap.",
-            file: file,
-            line: line
+        let readinessResult = XCTWaiter.wait(
+            for: [expectation],
+            timeout: readinessTimeout
         )
+        guard readinessResult == .completed else {
+            let needsChatGPTAuthorization = app.staticTexts[
+                "Sign in with ChatGPT"
+            ].firstMatch.exists
+            XCTFail(
+                needsChatGPTAuthorization
+                    ? "Send never became ready because ChatGPT is not authorized in this Simulator. Sign in through Control, then rerun the canary without erasing the Simulator Keychain."
+                    : "Send should wait for the canonical runtime to become ready instead of accepting a silent no-op tap.",
+                file: file,
+                line: line
+            )
+            return
+        }
         send.tap()
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         print("NovaForge Send disposition: \(String(describing: send.value))")

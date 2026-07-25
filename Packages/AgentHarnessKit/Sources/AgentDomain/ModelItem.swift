@@ -69,13 +69,88 @@ public struct ModelMessage: Codable, Equatable, Sendable {
     }
 }
 
+public struct ChatCompletionsReasoningReplay: Codable, Equatable, Sendable {
+    public let content: String
+
+    public init(content: String) {
+        self.content = content
+    }
+}
+
+public struct ResponsesReasoningReplay: Codable, Equatable, Sendable {
+    public let itemID: String
+    public let summary: [String]
+    public let content: [String]
+    public let encryptedContent: String
+
+    public init(
+        itemID: String,
+        summary: [String],
+        content: [String] = [],
+        encryptedContent: String
+    ) {
+        self.itemID = itemID
+        self.summary = summary
+        self.content = content
+        self.encryptedContent = encryptedContent
+    }
+}
+
+/// Provider-owned state that must be replayed verbatim enough to continue
+/// stateless history. It is intentionally distinct from visible reasoning
+/// text: adapters encode it only in their exact, trusted wire shape.
+public enum ModelReasoningReplay: Codable, Equatable, Sendable {
+    case chatCompletions(ChatCompletionsReasoningReplay)
+    case responses(ResponsesReasoningReplay)
+
+    private enum CodingKeys: String, CodingKey { case kind, body }
+    private enum Kind: String, Codable { case chatCompletions, responses }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .chatCompletions:
+            self = .chatCompletions(try container.decode(
+                ChatCompletionsReasoningReplay.self,
+                forKey: .body
+            ))
+        case .responses:
+            self = .responses(try container.decode(
+                ResponsesReasoningReplay.self,
+                forKey: .body
+            ))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .chatCompletions(value):
+            try container.encode(Kind.chatCompletions, forKey: .kind)
+            try container.encode(value, forKey: .body)
+        case let .responses(value):
+            try container.encode(Kind.responses, forKey: .kind)
+            try container.encode(value, forKey: .body)
+        }
+    }
+}
+
 public struct ReasoningSummary: Codable, Equatable, Sendable {
     public let text: String
     public let providerReference: String?
+    public let modelAttemptID: AttemptID?
+    public let replay: ModelReasoningReplay?
 
-    public init(text: String, providerReference: String? = nil) {
+    public init(
+        text: String,
+        providerReference: String? = nil,
+        modelAttemptID: AttemptID? = nil,
+        replay: ModelReasoningReplay? = nil
+    ) {
         self.text = text
         self.providerReference = providerReference
+        self.modelAttemptID = modelAttemptID
+        self.replay = replay
     }
 }
 

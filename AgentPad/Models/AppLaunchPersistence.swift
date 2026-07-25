@@ -123,7 +123,7 @@ enum AppRootPersistence {
         guard let settings else { return false }
 
         let previous = AgentSettingsPersistence.snapshot(settings)
-        let reportedChange = settings.repairStaleModelSelection()
+        let reportedChange = settings.repairStaleModelSelection(now: now)
         let repaired = AgentSettingsPersistence.snapshot(settings) != previous
         guard reportedChange || repaired else { return false }
 
@@ -146,17 +146,60 @@ struct AppRootLaunchRepairResult {
     let createdConversation: Bool
 }
 
-enum AppRootLaunchRepairError: LocalizedError {
+enum AppRootLaunchRepairError: LocalizedError, Equatable {
     case settingsUnavailable
+    case settingsCandidateLimitExceeded
 
     var errorDescription: String? {
-        "The persisted NovaForge settings record is unavailable for launch repair."
+        switch self {
+        case .settingsUnavailable:
+            "The persisted NovaForge settings record is unavailable for launch repair."
+        case .settingsCandidateLimitExceeded:
+            "NovaForge found too many settings records to repair safely."
+        }
     }
+}
+
+/// One durable settings row owns every provider/model and workspace choice.
+/// Legacy stores can contain duplicates after an interrupted migration, so all
+/// readers use the same bounded, deterministic winner until launch deletes the
+/// older rows in its existing save transaction.
+enum AgentSettingsRecordSelection {
+    static let maximumCandidateCount = 256
+
+    static func canonical(
+        from candidates: [AgentSettings]
+    ) throws -> AgentSettings? {
+        guard candidates.count <= maximumCandidateCount else {
+            throw AppRootLaunchRepairError.settingsCandidateLimitExceeded
+        }
+        return candidates.min { lhs, rhs in
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    static func canonicalAndDeleteDuplicates(
+        from candidates: [AgentSettings],
+        in context: ModelContext
+    ) throws -> AgentSettings? {
+        guard let canonical = try canonical(from: candidates) else {
+            return nil
+        }
+        for candidate in candidates where candidate !== canonical {
+            context.delete(candidate)
+        }
+        return canonical
+    }
+
+    static var boundedFetchLimit: Int { maximumCandidateCount + 1 }
 }
 
 enum AppRootLaunchRepair {
     struct Fetches {
-        var settings: (ModelContext) throws -> AgentSettings?
+        var settings: (ModelContext) throws -> [AgentSettings]
         var conversations: (ModelContext) throws -> [Conversation]
         var projectBootstrap: ProjectBootstrap.Fetches
 
@@ -164,8 +207,9 @@ enum AppRootLaunchRepair {
             Fetches(
                 settings: { context in
                     var descriptor = FetchDescriptor<AgentSettings>()
-                    descriptor.fetchLimit = 1
-                    return try context.fetch(descriptor).first
+                    descriptor.fetchLimit =
+                        AgentSettingsRecordSelection.boundedFetchLimit
+                    return try context.fetch(descriptor)
                 },
                 conversations: { context in
                     let descriptor = FetchDescriptor<Conversation>(
@@ -180,7 +224,7 @@ enum AppRootLaunchRepair {
 
     static func ensureLaunchRecords(
         in context: ModelContext,
-        settings suppliedSettings: AgentSettings?,
+        settings _: AgentSettings?,
         selectedConversation: Conversation? = nil,
         selectedConversationID: UUID? = nil,
         now: Date = Date(),
@@ -190,12 +234,7 @@ enum AppRootLaunchRepair {
         // Complete every launch read before inserting or repairing anything.
         // A fetch failure therefore cannot be mistaken for an empty store and
         // cannot leave behind a partially-created launch graph.
-        let fetchedSettings: AgentSettings?
-        if let suppliedSettings {
-            fetchedSettings = suppliedSettings
-        } else {
-            fetchedSettings = try fetches.settings(context)
-        }
+        let fetchedSettings = try fetches.settings(context)
         let existingConversations = try fetches.conversations(context)
         let projectRecords = try ProjectBootstrap.prefetchRecords(
             in: context,
@@ -205,10 +244,14 @@ enum AppRootLaunchRepair {
 
         let settings: AgentSettings
         let createdSettings: Bool
-        if let suppliedSettings {
-            settings = suppliedSettings
-            createdSettings = false
-        } else if let existing = fetchedSettings {
+        if let existing = try AgentSettingsRecordSelection
+            .canonicalAndDeleteDuplicates(
+                from: fetchedSettings,
+                in: context
+            )
+        {
+            // A caller may still hold a pre-cleanup row. Never let that stale
+            // reference override the canonical newest record.
             settings = existing
             createdSettings = false
         } else {
@@ -217,6 +260,7 @@ enum AppRootLaunchRepair {
             settings = created
             createdSettings = true
         }
+        _ = settings.repairStaleModelSelection(now: now)
 
         let project = ProjectBootstrap.ensureDefaultProject(
             in: context,
@@ -402,8 +446,55 @@ enum AgentSettingsPersistence {
         }
     }
 
+    enum ProviderModelSelectionError: Error, Equatable {
+        case unsupportedProvider
+        case unsupportedModel
+    }
+
+    /// Pure mutation/save seam shared by the composer's provider and model
+    /// taps. A model tap always writes the target provider and its exact model
+    /// in one transaction, and the common snapshot restores both on failure.
+    static func persistProviderModelSelection(
+        provider: AIProvider,
+        modelID: String,
+        settings: AgentSettings,
+        now: Date = Date(),
+        save: () throws -> Void
+    ) throws {
+        guard AIProvider.agentRuntimeProviders.contains(provider) else {
+            throw ProviderModelSelectionError.unsupportedProvider
+        }
+        let trimmedModelID = modelID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard provider.modelOptions.contains(trimmedModelID) else {
+            throw ProviderModelSelectionError.unsupportedModel
+        }
+        try persist(
+            settings: settings,
+            now: now,
+            mutate: { settings in
+                settings.providerRawValue = provider.rawValue
+                settings.modelID = trimmedModelID
+            },
+            save: save
+        )
+    }
+
+    static func coherentModelID(
+        for provider: AIProvider,
+        currentModelID: String
+    ) -> String {
+        let trimmed = currentModelID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return provider.modelOptions.contains(trimmed)
+            ? trimmed
+            : provider.defaultModel
+    }
+
     private static func providerDisplayName(_ rawValue: String?) -> String {
-        (AIProvider(rawValue: rawValue ?? "") ?? .openAI).displayName
+        (AIProvider(rawValue: rawValue ?? "") ?? .local).displayName
     }
 
     private static func displayModel(_ modelID: String) -> String {

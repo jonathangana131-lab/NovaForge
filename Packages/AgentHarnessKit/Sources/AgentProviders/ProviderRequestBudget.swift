@@ -39,6 +39,20 @@ enum ProviderRequestBudget {
             try meter.recordString(message.role.rawValue)
             if let callID = message.toolCallID { try meter.recordString(callID) }
             if let name = message.name { try meter.recordString(name) }
+            if let replay = message.reasoningReplay {
+                try meter.recordContainer()
+                switch replay {
+                case let .chatCompletions(value):
+                    try meter.recordString(value.content)
+                case let .responses(value):
+                    try meter.recordString(value.itemID)
+                    try meter.recordContainer()
+                    for text in value.summary { try meter.recordString(text) }
+                    try meter.recordContainer()
+                    for text in value.content { try meter.recordString(text) }
+                    try meter.recordString(value.encryptedContent)
+                }
+            }
             for part in message.content {
                 try meter.recordContainer()
                 switch part {
