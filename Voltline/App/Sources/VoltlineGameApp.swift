@@ -10,9 +10,16 @@ struct VoltlineGameApp: App {
         WindowGroup {
             ZStack {
                 VoltlineShellView(session: session)
-                if settings.hasCompletedOnboarding,
-                   !session.isPaused || missions.isBoardPresented {
+                if settings.hasCompletedOnboarding {
                     MissionLayerView(session: session)
+                        .opacity(
+                            session.isPaused && !missions.isBoardPresented
+                                ? 0
+                                : 1
+                        )
+                        .allowsHitTesting(
+                            !session.isPaused || missions.isBoardPresented
+                        )
                 }
             }
             .preferredColorScheme(.dark)
