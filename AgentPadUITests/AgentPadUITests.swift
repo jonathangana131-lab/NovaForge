@@ -1840,6 +1840,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(restartButton.waitForExistence(timeout: 5), "Canceling Restart should keep the partial download resumable.")
     }
 
+
     func testNativeModelPickerAndChatGPTProviderScreenshot() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
@@ -1849,45 +1850,42 @@ final class AgentPadUITests: XCTestCase {
         let settingsTab = app.tabBars.buttons["Control"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         tapButtonOrCoordinate(
-            settingsTab,
-            in: app,
-            normalizedOffset: CGVector(dx: 0.83, dy: 0.94)
+  settingsTab,
+  in: app,
+  normalizedOffset: CGVector(dx: 0.83, dy: 0.94)
         )
 
-        let chatGPTProvider = app.buttons["settingsProvider-openAICodex"]
-        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
-        chatGPTProvider.tap()
+        XCTAssertFalse(
+  app.buttons["settingsProvider-openAICodex"].exists,
+  "The private ChatGPT backend must not be offered for a fresh phone run."
+        )
+        let zenProvider = app.buttons["settingsProvider-openCodeZen"]
+        XCTAssertTrue(zenProvider.waitForExistence(timeout: 5))
+        zenProvider.tap()
 
         let pickerButton = app.buttons["modelPickerButton"]
-        if !pickerButton.waitForExistence(timeout: 2) {
-            app.swipeUp()
-        }
+        if !pickerButton.waitForExistence(timeout: 2) { app.swipeUp() }
         XCTAssertTrue(pickerButton.waitForExistence(timeout: 5))
         pickerButton.tap()
 
         XCTAssertTrue(app.staticTexts["Choose Model"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["GPT-5.5"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["mimo-v2.5-free"].waitForExistence(timeout: 5))
         let settingsModelSearch = app.textFields["Search models"]
         XCTAssertTrue(settingsModelSearch.waitForExistence(timeout: 5))
         settingsModelSearch.tap()
-        settingsModelSearch.typeText("5.5")
+        settingsModelSearch.typeText("mimo")
         let settingsClear = app.buttons["settingsModelSearchClearButton"]
         XCTAssertTrue(settingsClear.waitForExistence(timeout: 5))
         assertMinimumTouchTarget(settingsClear, named: "settings model search clear")
-        let revealButton = app.buttons["settingsAPIKeyRevealButton"]
-        if revealButton.waitForExistence(timeout: 3) {
-            assertMinimumTouchTarget(revealButton, named: "settings API key reveal")
-        }
         assertMinimumTouchTarget(app.buttons["modelPickerDone"], named: "model picker Done")
         if app.buttons["modelRefreshButton"].waitForExistence(timeout: 2) {
-            assertMinimumTouchTarget(app.buttons["modelRefreshButton"], named: "model refresh card")
+  assertMinimumTouchTarget(app.buttons["modelRefreshButton"], named: "model refresh card")
         }
-        XCTAssertTrue(
-            app.staticTexts["Live ChatGPT models"].waitForExistence(timeout: 5),
-            "ChatGPT model choices should expose the live subscription-backed catalog."
+        XCTAssertFalse(
+  app.staticTexts["Live ChatGPT models"].exists,
+  "Fresh phone model selection must not expose the private ChatGPT catalog."
         )
-        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "OpenAI API key needed")).firstMatch.exists)
-        capture("21-native-model-picker-chatgpt", app: app)
+        capture("21-native-model-picker-public-provider", app: app)
         app.buttons["Done"].tap()
     }
 
@@ -1901,33 +1899,30 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         settingsTab.tap()
 
-        let chatGPTProvider = app.staticTexts["ChatGPT"]
-        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
-        chatGPTProvider.tap()
-
-        let subscriptionTitle = app.staticTexts["ChatGPT subscription"]
-        let signInButton = app.buttons["Sign in with ChatGPT"]
-        if !subscriptionTitle.waitForExistence(timeout: 2) {
-            app.swipeUp()
-        }
-        if !subscriptionTitle.waitForExistence(timeout: 2) {
-            app.swipeUp()
-        }
-        XCTAssertTrue(subscriptionTitle.waitForExistence(timeout: 5), "ChatGPT should present the real subscription sign-in flow.")
-        XCTAssertTrue(signInButton.waitForExistence(timeout: 5), "ChatGPT should expose device-code sign-in instead of asking for an API key.")
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "never asks for your ChatGPT password")).firstMatch.exists)
-        XCTAssertFalse(app.staticTexts["OpenAI Key"].exists, "The ChatGPT subscription route should stay separate from the OpenAI API-key provider.")
+        XCTAssertFalse(
+  app.buttons["settingsProvider-openAICodex"].exists,
+  "Control must not offer the private ChatGPT backend for a fresh phone run."
+        )
+        XCTAssertTrue(app.buttons["settingsProvider-openCodeZen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["settingsProvider-local"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["settingsProvider-openAI"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["ChatGPT subscription"].exists)
+        XCTAssertFalse(app.buttons["Sign in with ChatGPT"].exists)
         XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists)
-        capture("38-settings-chatgpt-subscription-sign-in", app: app)
+        capture("38-settings-public-phone-providers", app: app)
 
         let chatTab = app.tabBars.buttons["Forge"]
         XCTAssertTrue(chatTab.waitForExistence(timeout: 5))
         chatTab.tap()
         XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists, "Chat should never show the removed fake Codex terminal.")
-        capture("39-chat-chatgpt-subscription-route", app: app)
+        let modelMenu = composerModelControl(in: app)
+        XCTAssertTrue(modelMenu.waitForExistence(timeout: 5))
+        modelMenu.tap()
+        XCTAssertFalse(app.buttons["composerProvider-openAICodex"].exists)
+        XCTAssertTrue(app.buttons["composerProvider-openCodeZen"].waitForExistence(timeout: 5))
+        capture("39-chat-public-provider-route", app: app)
+        app.buttons["Done"].tap()
     }
-
     func testChatGPTDeviceCodeIsVisibleBeforeSafariHandoff() throws {
         let app = XCUIApplication()
         app.launchArguments = [
@@ -1992,6 +1987,7 @@ final class AgentPadUITests: XCTestCase {
         app.buttons["Done"].tap()
     }
 
+
     func testComposerProviderSwitchingRepairsStaleModelInline() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--stale-openai-local-model"]
@@ -2005,18 +2001,22 @@ final class AgentPadUITests: XCTestCase {
         composerModelButton.tap()
 
         XCTAssertTrue(
-            app.buttons["composerModel-gpt-5.5"].firstMatch.waitForExistence(timeout: 5),
-            "Repaired OpenAI state should show the current default OpenAI model in the native composer menu."
+  app.buttons["composerModel-gpt-5.5"].firstMatch.waitForExistence(timeout: 5),
+  "Repaired OpenAI state should show the current default OpenAI model in the native composer menu."
         )
         XCTAssertFalse(app.staticTexts["Switch model"].exists, "Composer provider switching should not bring back the old custom model sheet.")
+        XCTAssertFalse(
+  app.buttons["composerProvider-openAICodex"].exists,
+  "The private ChatGPT route must not return through the compact composer."
+        )
 
-        let chatGPTProvider = app.buttons["composerProvider-openAICodex"].firstMatch
-        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
-        chatGPTProvider.tap()
-        XCTAssertTrue(app.buttons["composerModel-gpt-5.5"].waitForExistence(timeout: 5))
+        let zenProvider = app.buttons["composerProvider-openCodeZen"].firstMatch
+        XCTAssertTrue(zenProvider.waitForExistence(timeout: 5))
+        zenProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-mimo-v2.5-free"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
         XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(composerModelButton.label.contains("ChatGPT"), "Selecting ChatGPT should update the compact composer label immediately.")
+        XCTAssertTrue(composerModelButton.label.contains("Zen"), "Selecting Zen Free should update the compact composer label immediately.")
 
         composerModelButton.tap()
         let localProvider = app.buttons["composerProvider-local"].firstMatch
@@ -2039,10 +2039,11 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
         composerModelButton.tap()
 
-        let chatGPTProvider = app.buttons["composerProvider-openAICodex"]
-        XCTAssertTrue(chatGPTProvider.waitForExistence(timeout: 5))
-        chatGPTProvider.tap()
-        XCTAssertTrue(app.buttons["composerModel-gpt-5.5"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["composerProvider-openAICodex"].exists)
+        let zenProvider = app.buttons["composerProvider-openCodeZen"]
+        XCTAssertTrue(zenProvider.waitForExistence(timeout: 5))
+        zenProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-mimo-v2.5-free"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
 
         let reasoningButton = app.buttons["composerReasoningPickerButton"]
@@ -2051,54 +2052,48 @@ final class AgentPadUITests: XCTestCase {
         reasoningButton.tap()
 
         let reasoningPicker = app.descendants(matching: .any)
-            .matching(identifier: "composerReasoningPicker").firstMatch
+  .matching(identifier: "composerReasoningPicker").firstMatch
         XCTAssertTrue(
-            reasoningPicker.waitForExistence(timeout: 5) ||
-                app.staticTexts["Reasoning"].waitForExistence(timeout: 5)
+  reasoningPicker.waitForExistence(timeout: 5) ||
+      app.staticTexts["Reasoning"].waitForExistence(timeout: 5)
         )
         let reasoningSlider = app.descendants(matching: .any)
-            .matching(identifier: "reasoningEffortSlider").firstMatch
+  .matching(identifier: "reasoningEffortSlider").firstMatch
         XCTAssertTrue(reasoningSlider.waitForExistence(timeout: 5))
         assertMinimumTouchTarget(reasoningSlider, named: "reasoning effort slider")
         XCTAssertFalse(app.staticTexts["Agent mode"].exists, "The composer should not reopen the old settings-style mode menu.")
 
         let dragStart = reasoningSlider.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.14, dy: 0.34)
+  withNormalizedOffset: CGVector(dx: 0.14, dy: 0.34)
         )
         let dragEnd = reasoningSlider.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.50, dy: 0.34)
+  withNormalizedOffset: CGVector(dx: 0.50, dy: 0.34)
         )
         dragStart.press(forDuration: 0.12, thenDragTo: dragEnd)
         XCTAssertEqual(
-            reasoningSlider.value as? String,
-            "High",
-            "Dragging across the glass pill should move the reasoning thumb, not behave like a static menu."
+  reasoningSlider.value as? String,
+  "High",
+  "Dragging across the glass pill should move the reasoning thumb, not behave like a static menu."
         )
 
         reasoningSlider.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
+  withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
         ).tap()
         XCTAssertTrue(
-            app.staticTexts.containing(
-                NSPredicate(format: "label CONTAINS[c] %@", "workspace")
-            ).firstMatch.waitForExistence(timeout: 5),
-            "UltraCode should compactly explain its maximum-reasoning workspace behavior."
+  app.staticTexts.containing(
+      NSPredicate(format: "label CONTAINS[c] %@", "workspace")
+  ).firstMatch.waitForExistence(timeout: 5),
+  "UltraCode should compactly explain its maximum-reasoning workspace behavior."
         )
         capture("23-reasoning-ultracode-liquid-glass", app: app)
 
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.08)).tap()
         XCTAssertTrue(reasoningButton.waitForExistence(timeout: 5))
         XCTAssertTrue(
-            reasoningButton.label.localizedCaseInsensitiveContains("UltraCode"),
-            "The collapsed liquid-glass control should retain the selected UltraCode mode."
+  reasoningButton.label.localizedCaseInsensitiveContains("UltraCode"),
+  "The collapsed liquid-glass control should retain the selected UltraCode mode."
         )
     }
-
-    /// Deterministic UI regression for the cancellation boundary that is
-    /// unique to UltraCode. Stopping while hidden workers are active must not
-    /// manufacture a public user turn or clear the submitted draft. Sending
-    /// that preserved draft again then has to complete through the same real
-    /// orchestration owner and persist its visible integrator receipt.
     func testUltraCodeStopBeforeVisibleAcceptancePreservesDraftAndCanRetry() throws {
         let app = XCUIApplication()
         app.launchArguments = [
