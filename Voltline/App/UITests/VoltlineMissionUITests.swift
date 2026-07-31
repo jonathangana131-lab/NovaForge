@@ -23,7 +23,7 @@ final class VoltlineMissionUITests: XCTestCase {
 
         let missionHUD = element("missionHUD", in: app)
         let throttle = element("throttlePedal", in: app)
-        let speedTelemetry = element("qaSpeedMPH", in: app)
+        let speedTelemetry = app.descendants(matching: .any)["qaSpeedMPH"].firstMatch
         XCTAssertTrue(missionHUD.waitForExistence(timeout: 5))
         XCTAssertTrue(throttle.waitForExistence(timeout: 5))
         XCTAssertTrue(speedTelemetry.waitForExistence(timeout: 5))
