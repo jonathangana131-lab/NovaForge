@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - codex/voltline-ios-foundation
+      - codex/voltline-release-parallel
+      - codex/voltline-performance-parallel
+      - codex/voltline-gameplay-completion
+      - codex/voltline-final-polish
     paths:
       - "Voltline/**"
       - ".github/workflows/voltline-ios-game.yml"
@@ -20,17 +24,36 @@ concurrency:
 jobs:
   native-game:
     name: Native build, tests and screenshots
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select App Store-capable Xcode
+        shell: bash
+        run: |
+          SELECTED=""
+          for APP in /Applications/Xcode_26*.app /Applications/Xcode.app; do
+            [ -d "$APP" ] || continue
+            MAJOR=$(DEVELOPER_DIR="$APP/Contents/Developer" xcodebuild -version | awk '/^Xcode / { split($2, v, "."); print v[1] }')
+            if [ -n "$MAJOR" ] && [ "$MAJOR" -ge 26 ]; then
+              SELECTED="$APP/Contents/Developer"
+            fi
+          done
+          if [ -z "$SELECTED" ]; then
+            echo "Xcode 26 or newer is required."
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$SELECTED" >> "$GITHUB_ENV"
+
       - name: Show Apple toolchain
         run: |
           xcodebuild -version
           xcrun swift --version
+          xcrun --sdk iphonesimulator --show-sdk-version
           xcrun simctl list runtimes
 
       - name: Install XcodeGen
@@ -42,18 +65,28 @@ jobs:
           chmod +x Scripts/bootstrap.sh
           Scripts/bootstrap.sh
           test -f Resources/Assets.xcassets/AppIcon.appiconset/VoltlineIcon-1024.png
+          test -f Resources/PrivacyInfo.xcprivacy
           test -f VoltlineGame.xcodeproj/project.pbxproj
+          plutil -lint Resources/Info.plist
+          plutil -lint Resources/PrivacyInfo.xcprivacy
+          plutil -lint Resources/ExportOptions-AppStore.plist
 
-      - name: Create iPhone 12 simulator
+      - name: Create SDK-matched iPhone simulator
         id: simulator
         shell: bash
         run: |
+          SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          export SDK_VERSION
           RUNTIME=$(xcrun simctl list runtimes available -j | python3 -c '
-          import json,sys
+          import json, os, sys
           runtimes=json.load(sys.stdin)["runtimes"]
           ios=[r for r in runtimes if r.get("isAvailable") and "iOS" in r.get("name","")]
           if not ios: raise SystemExit("No available iOS runtime")
-          print(ios[-1]["identifier"])
+          sdk=os.environ["SDK_VERSION"]
+          exact=[r for r in ios if r.get("version") == sdk]
+          same_major=[r for r in ios if r.get("version", "").split(".")[0] == sdk.split(".")[0]]
+          chosen=(exact or same_major or ios)[-1]
+          print(chosen["identifier"])
           ')
           DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-12"
           if ! xcrun simctl list devicetypes | grep -q "iPhone 12"; then
@@ -65,7 +98,7 @@ jobs:
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           echo "runtime=$RUNTIME" >> "$GITHUB_OUTPUT"
 
-      - name: Build and run native tests
+      - name: Build app and test bundles
         working-directory: Voltline/App
         env:
           SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
@@ -76,11 +109,45 @@ jobs:
             -scheme VoltlineGame \
             -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
             -derivedDataPath DerivedData \
-            -resultBundlePath VoltlineTests.xcresult \
             CODE_SIGNING_ALLOWED=NO \
-            test | tee xcodebuild-test.log
+            build-for-testing | tee xcodebuild-build-for-testing.log
 
-      - name: Verify unsigned device compilation
+      - name: Run native unit tests
+        working-directory: Voltline/App
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          set -o pipefail
+          rm -rf VoltlineUnitTests.xcresult
+          xcodebuild \
+            -project VoltlineGame.xcodeproj \
+            -scheme VoltlineGame \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath VoltlineUnitTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test-without-building \
+            -only-testing:VoltlineGameTests | tee xcodebuild-unit-tests.log
+
+      - name: Run native UI tests
+        working-directory: Voltline/App
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          set -o pipefail
+          rm -rf VoltlineUITests.xcresult
+          xcodebuild \
+            -project VoltlineGame.xcodeproj \
+            -scheme VoltlineGame \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath VoltlineUITests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test-without-building \
+            -only-testing:VoltlineGameUITests | tee xcodebuild-ui-tests.log
+
+      - name: Verify unsigned iPhoneOS compilation
+        if: always()
         working-directory: Voltline/App
         run: |
           set -o pipefail
@@ -101,26 +168,45 @@ jobs:
         run: |
           mkdir -p Artifacts/Screenshots
           APP="DerivedData/Build/Products/Debug-iphonesimulator/VoltlineGame.app"
-          if [ ! -d "$APP" ]; then
-            echo "Built app not found at $APP"
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "A complete built app was not produced; skipping launch artifacts."
             exit 0
           fi
+          BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP/Info.plist" 2>/dev/null || true)
+          if [ -z "$BUNDLE_ID" ]; then
+            echo "Built app has no bundle identifier; skipping launch artifacts."
+            exit 0
+          fi
+          test -f "$APP/PrivacyInfo.xcprivacy"
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
           xcrun simctl install "$SIMULATOR_UDID" "$APP"
 
           capture() {
             local name="$1"
             shift
-            xcrun simctl terminate "$SIMULATOR_UDID" com.joey.VoltlineGame >/dev/null 2>&1 || true
-            xcrun simctl launch --terminate-running-process "$SIMULATOR_UDID" com.joey.VoltlineGame "$@"
+            local destination="Artifacts/Screenshots/${name}.png"
+            xcrun simctl terminate "$SIMULATOR_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+            xcrun simctl launch --terminate-running-process "$SIMULATOR_UDID" "$BUNDLE_ID" "$@"
             sleep 5
-            xcrun simctl io "$SIMULATOR_UDID" screenshot "Artifacts/Screenshots/${name}.png"
+            for attempt in 1 2 3 4 5; do
+              rm -f "$destination"
+              if xcrun simctl io "$SIMULATOR_UDID" screenshot "$destination" && test -s "$destination"; then
+                return 0
+              fi
+              echo "Screenshot attempt $attempt failed for $name."
+              sleep 2
+            done
+            echo "Unable to capture $name after five attempts."
+            return 1
           }
 
+          capture "00-onboarding" --qa-onboarding
           capture "01-ride-hud" --qa-rich
           capture "02-garage" --qa-rich --qa-garage
           capture "03-phone-bank" --qa-rich --qa-bank
           capture "04-phone-vesc" --qa-rich --qa-vesc
           capture "05-crash" --qa-crash
+          capture "07-mission-board" --qa-rich --qa-mission
 
           ditto -c -k --sequesterRsrc --keepParent "$APP" Artifacts/Voltline-Simulator-App.zip
           cp Resources/Assets.xcassets/AppIcon.appiconset/VoltlineIcon-1024.png Artifacts/Voltline-App-Icon.png
@@ -134,8 +220,11 @@ jobs:
           retention-days: 14
           path: |
             Voltline/App/Artifacts
-            Voltline/App/VoltlineTests.xcresult
-            Voltline/App/xcodebuild-test.log
+            Voltline/App/VoltlineUnitTests.xcresult
+            Voltline/App/VoltlineUITests.xcresult
+            Voltline/App/xcodebuild-build-for-testing.log
+            Voltline/App/xcodebuild-unit-tests.log
+            Voltline/App/xcodebuild-ui-tests.log
             Voltline/App/xcodebuild-device.log
 
       - name: Shutdown simulator
