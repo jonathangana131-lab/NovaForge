@@ -95,7 +95,7 @@ jobs:
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           echo "runtime=$RUNTIME" >> "$GITHUB_OUTPUT"
 
-      - name: Build and run native tests
+      - name: Build app and test bundles
         working-directory: Voltline/App
         env:
           SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
@@ -106,11 +106,43 @@ jobs:
             -scheme VoltlineGame \
             -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
             -derivedDataPath DerivedData \
-            -resultBundlePath VoltlineTests.xcresult \
             CODE_SIGNING_ALLOWED=NO \
-            test | tee xcodebuild-test.log
+            build-for-testing | tee xcodebuild-build-for-testing.log
+
+      - name: Run native unit tests
+        working-directory: Voltline/App
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project VoltlineGame.xcodeproj \
+            -scheme VoltlineGame \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath VoltlineUnitTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test-without-building \
+            -only-testing:VoltlineGameTests | tee xcodebuild-unit-tests.log
+
+      - name: Run native UI tests
+        working-directory: Voltline/App
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project VoltlineGame.xcodeproj \
+            -scheme VoltlineGame \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath VoltlineUITests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test-without-building \
+            -only-testing:VoltlineGameUITests | tee xcodebuild-ui-tests.log
 
       - name: Verify unsigned iPhoneOS compilation
+        if: always()
         working-directory: Voltline/App
         run: |
           set -o pipefail
@@ -152,6 +184,7 @@ jobs:
             xcrun simctl io "$SIMULATOR_UDID" screenshot "Artifacts/Screenshots/${name}.png"
           }
 
+          capture "00-onboarding" --qa-onboarding
           capture "01-ride-hud" --qa-rich
           capture "02-garage" --qa-rich --qa-garage
           capture "03-phone-bank" --qa-rich --qa-bank
@@ -170,8 +203,11 @@ jobs:
           retention-days: 14
           path: |
             Voltline/App/Artifacts
-            Voltline/App/VoltlineTests.xcresult
-            Voltline/App/xcodebuild-test.log
+            Voltline/App/VoltlineUnitTests.xcresult
+            Voltline/App/VoltlineUITests.xcresult
+            Voltline/App/xcodebuild-build-for-testing.log
+            Voltline/App/xcodebuild-unit-tests.log
+            Voltline/App/xcodebuild-ui-tests.log
             Voltline/App/xcodebuild-device.log
 
       - name: Shutdown simulator
