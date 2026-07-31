@@ -487,30 +487,52 @@ final class GameSession: ObservableObject {
     }
 
     private func buildTraffic() {
-        traffic = (0..<10).map { index in
-            TrafficAgent(
-                id: UUID(),
-                laneX: index.isMultiple(of: 2) ? -3.4 : 3.4,
-                z: Double(index * 34 - 130),
-                speedMetersPerSecond: Double(7 + index % 4),
-                desiredSpeedMetersPerSecond: Double(8 + index % 5),
-                direction: index.isMultiple(of: 2) ? 1 : -1,
-                bodyHue: Double(index) / 10
-            )
-        }
-        scooterRiders = (0..<4).map { index in
-            ScooterRiderAgent(
-                id: UUID(),
-                x: index.isMultiple(of: 2) ? -5.6 : 5.6,
-                z: Double(index * 55 - 80),
-                speedMetersPerSecond: Double(5 + index),
-                direction: index.isMultiple(of: 2) ? 1 : -1,
-                scooterHue: 0.12 + Double(index) * 0.18
-            )
-        }
+    var builtTraffic: [TrafficAgent] = []
+    builtTraffic.reserveCapacity(10)
+    for index in 0..<10 {
+        let evenLane = index.isMultiple(of: 2)
+        let laneX: Double = evenLane ? -3.4 : 3.4
+        let z: Double = Double(index * 34 - 130)
+        let speed: Double = Double(7 + index % 4)
+        let desiredSpeed: Double = Double(8 + index % 5)
+        let direction: Double = evenLane ? 1.0 : -1.0
+        let hue: Double = Double(index) / 10.0
+        let agent = TrafficAgent(
+            id: UUID(),
+            laneX: laneX,
+            z: z,
+            speedMetersPerSecond: speed,
+            desiredSpeedMetersPerSecond: desiredSpeed,
+            direction: direction,
+            bodyHue: hue
+        )
+        builtTraffic.append(agent)
     }
+    traffic = builtTraffic
 
-    private func updateTraffic(dt: Double) {
+    var builtRiders: [ScooterRiderAgent] = []
+    builtRiders.reserveCapacity(4)
+    for index in 0..<4 {
+        let evenSide = index.isMultiple(of: 2)
+        let x: Double = evenSide ? -5.6 : 5.6
+        let z: Double = Double(index * 55 - 80)
+        let speed: Double = Double(5 + index)
+        let direction: Double = evenSide ? 1.0 : -1.0
+        let hue: Double = 0.12 + Double(index) * 0.18
+        let rider = ScooterRiderAgent(
+            id: UUID(),
+            x: x,
+            z: z,
+            speedMetersPerSecond: speed,
+            direction: direction,
+            scooterHue: hue
+        )
+        builtRiders.append(rider)
+    }
+    scooterRiders = builtRiders
+}
+
+private func updateTraffic(dt: Double) {
         for index in traffic.indices {
             var agent = traffic[index]
             let relativeZ = (worldZ - agent.z) * agent.direction
