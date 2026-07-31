@@ -44,6 +44,7 @@ final class RideFeedbackController: ObservableObject {
     private let modeImpact = UIImpactFeedbackGenerator(style: .medium)
 
     func start() {
+        guard PlayerExperienceSettings.shared.rideAudioEnabled else { return }
         guard !isRunning else { return }
 
         let audioSession = AVAudioSession.sharedInstance()
@@ -140,6 +141,10 @@ final class RideFeedbackController: ObservableObject {
     }
 
     func update(state: SimulationState, crashed: Bool, paused: Bool) {
+        guard PlayerExperienceSettings.shared.rideAudioEnabled else {
+            stop()
+            return
+        }
         if !isRunning { start() }
         parameters.update(.init(
             motorRPM: Float(state.motorRPM),
@@ -152,17 +157,20 @@ final class RideFeedbackController: ObservableObject {
     }
 
     func playCrashFeedback() {
+        guard PlayerExperienceSettings.shared.hapticsEnabled else { return }
         crashImpact.impactOccurred(intensity: 1)
         crashNotification.notificationOccurred(.error)
         prepareHaptics()
     }
 
     func playModeFeedback() {
+        guard PlayerExperienceSettings.shared.hapticsEnabled else { return }
         modeImpact.impactOccurred(intensity: 0.72)
         modeImpact.prepare()
     }
 
     private func prepareHaptics() {
+        guard PlayerExperienceSettings.shared.hapticsEnabled else { return }
         crashNotification.prepare()
         crashImpact.prepare()
         modeImpact.prepare()
@@ -172,6 +180,7 @@ final class RideFeedbackController: ObservableObject {
 /// A zero-size bridge that follows the live simulation without owning gameplay state.
 struct GameFeedbackBridge: View {
     @ObservedObject var session: GameSession
+    @ObservedObject private var settings = PlayerExperienceSettings.shared
     @StateObject private var feedback = RideFeedbackController()
     @State private var wasCrashed = false
 
@@ -213,6 +222,17 @@ struct GameFeedbackBridge: View {
             }
             .onReceive(session.$driveMode.dropFirst()) { _ in
                 feedback.playModeFeedback()
+            }
+            .onReceive(settings.$rideAudioEnabled) { enabled in
+                if enabled {
+                    feedback.update(
+                        state: session.simulationState,
+                        crashed: session.isCrashed,
+                        paused: session.isPaused
+                    )
+                } else {
+                    feedback.stop()
+                }
             }
     }
 }
