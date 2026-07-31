@@ -100,7 +100,7 @@ jobs:
           SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
         run: |
           mkdir -p Artifacts/Screenshots
-          APP="DerivedData/Build/Products/Debug-iphonesimulator/Voltline.app"
+          APP="DerivedData/Build/Products/Debug-iphonesimulator/VoltlineGame.app"
           if [ ! -d "$APP" ]; then
             echo "Built app not found at $APP"
             exit 0
