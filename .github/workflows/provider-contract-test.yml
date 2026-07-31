@@ -1,0 +1,31 @@
+name: Temporary provider contract test
+
+on:
+  push:
+    branches:
+      - agent/provider-contract-test
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-provider-contract-test
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run provider contract tests
+        run: swift test --package-path Packages/AgentHarnessKit --filter ProviderAdapterContractTests
+      - name: Record success
+        run: |
+          mkdir -p QA
+          printf 'ProviderAdapterContractTests passed for f30cdf5f9503b1d161672ec4ffe906a72d4c9ae0\n' > QA/provider-contract-success.txt
+          git config user.name "NovaForge Test Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add QA/provider-contract-success.txt
+          git commit -m "Record provider contract test success"
+          git push origin HEAD:agent/provider-contract-test
