@@ -76,7 +76,10 @@ final class PlayerExperienceSettings: ObservableObject {
     private var thermalObserver: NSObjectProtocol?
 
     private init() {
-        let qaLaunch = ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--qa-") }
+        let arguments = ProcessInfo.processInfo.arguments
+        let forceOnboarding = arguments.contains("--qa-onboarding")
+        let qaLaunch = arguments.contains { $0.hasPrefix("--qa-") } && !forceOnboarding
+
         if let data = UserDefaults.standard.data(forKey: defaultsKey),
            let stored = try? JSONDecoder().decode(Stored.self, from: data) {
             performanceMode = stored.performanceMode
@@ -84,7 +87,7 @@ final class PlayerExperienceSettings: ObservableObject {
             rideAudioEnabled = stored.rideAudioEnabled
             hapticsEnabled = stored.hapticsEnabled
             reduceMotion = stored.reduceMotion
-            hasCompletedOnboarding = qaLaunch || stored.hasCompletedOnboarding
+            hasCompletedOnboarding = forceOnboarding ? false : (qaLaunch || stored.hasCompletedOnboarding)
         } else {
             performanceMode = .balanced
             automaticThermalProtection = true
