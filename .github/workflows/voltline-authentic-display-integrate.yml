@@ -1,0 +1,76 @@
+name: Integrate authentic first-person display
+
+on:
+  push:
+    branches:
+      - codex/voltline-authentic-displays
+    paths:
+      - .github/workflows/voltline-authentic-display-integrate.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/voltline-authentic-displays
+          fetch-depth: 0
+
+      - name: Replace floating telemetry with physical cockpit
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("Voltline/App/Sources/GameRootView.swift")
+          source = path.read_text()
+
+          dashboard = '''                    ScooterDashboardView(session: session)
+                        .accessibilityIdentifier("scooterDashboard")
+
+                    Spacer(minLength: 10)
+'''
+          dashboard_replacement = '''                    Spacer(minLength: 10)
+'''
+
+          telemetry = '''                HStack(alignment: .bottom, spacing: 12) {
+                    TelemetryCard(session: session)
+
+                    Spacer()
+
+                    TouchDrivingControls(session: session)
+                }
+'''
+          telemetry_replacement = '''                HStack(alignment: .bottom, spacing: 12) {
+                    Spacer()
+
+                    TouchDrivingControls(session: session)
+                }
+'''
+
+          cockpit_anchor = '''            VStack(spacing: 0) {
+'''
+          cockpit_replacement = '''            FirstPersonCockpitView(session: session)
+                .zIndex(2)
+
+            VStack(spacing: 0) {
+'''
+
+          assert source.count(dashboard) == 1, "Expected one floating dashboard block"
+          assert source.count(telemetry) == 1, "Expected one telemetry card block"
+          assert source.count(cockpit_anchor) >= 1, "Expected root VStack anchor"
+
+          source = source.replace(dashboard, dashboard_replacement, 1)
+          source = source.replace(telemetry, telemetry_replacement, 1)
+          source = source.replace(cockpit_anchor, cockpit_replacement, 1)
+          path.write_text(source)
+
+      - name: Commit integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Voltline/App/Sources/GameRootView.swift
+          git commit -m "Mount authentic display in first-person cockpit"
+          git push origin HEAD:codex/voltline-authentic-displays
