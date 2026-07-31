@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: provider-targeted-tests-clean-repair
@@ -22,3 +24,7 @@ jobs:
           ref: agent/fix-phone-provider-reliability-clean
       - name: Run provider contract tests
         run: swift test --package-path Packages/AgentHarnessKit --filter ProviderAdapterContractTests
+      - name: Report success on repair PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment 12 --repo jonathangana131-lab/NovaForge --body "✅ ProviderAdapterContractTests passed on clean repair commit f30cdf5f9503b1d161672ec4ffe906a72d4c9ae0."
