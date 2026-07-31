@@ -21,7 +21,7 @@ concurrency:
 jobs:
   native-game:
     name: Native build, tests and screenshots
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:
