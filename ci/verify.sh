@@ -42,6 +42,14 @@ if [ -z "$UDID" ]; then
   UDID=$(xcrun simctl create "NovaForge CI" "$DEVICE_TYPE")
 fi
 
+# Xcode 27 can leave xcodebuild alive for minutes after all 487 unit tests pass
+# while finalizing a very large critical-lane xcresult. Critical already keeps
+# complete per-run logs; visual and release lanes retain their richer evidence.
+WRITE_RESULT_BUNDLE=0
+if [ "$TEST_LANE" != "critical" ]; then
+  WRITE_RESULT_BUNDLE=1
+fi
+
 echo "==> Running NovaForge $TEST_LANE lane"
 SIMULATOR_ID="$UDID" \
 DERIVED_DATA_PATH="$DERIVED_DATA" \
@@ -49,6 +57,7 @@ LOG_DIR="$ARTIFACT_DIR" \
 RESULT_BUNDLE_PATH="$ARTIFACT_DIR/$TEST_LANE.xcresult" \
 TEST_TIMEOUT="$((XCODEBUILD_CAP_MINUTES * 60))" \
 UNIT_TEST_TIMEOUT="$UNIT_TEST_TIMEOUT" \
+WRITE_RESULT_BUNDLE="$WRITE_RESULT_BUNDLE" \
 SHUTDOWN_SIMULATOR_AFTER_TESTS=1 \
 zsh scripts/codex-test.sh "$TEST_LANE"
 
