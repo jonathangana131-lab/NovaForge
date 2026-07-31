@@ -1,2 +1,2 @@
 Apply the narrow provider migration correction to the clean phone reliability branch.
-Trigger revision 3 via the registered controller.
+Trigger revision 4 after macOS regression diagnostics.
