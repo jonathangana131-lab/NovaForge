@@ -415,11 +415,23 @@ run_critical_lane() {
 
   local result_prefix="${RESULT_BUNDLE_PATH%.xcresult}"
   echo "==> Running critical units in one fresh XCTest runner"
+  local unit_status=0
   run_xctest_selection \
     "$UNIT_TEST_TIMEOUT" \
     "$LOG_DIR/test-unit.log" \
     "$result_prefix-unit.xcresult" \
-    test-without-building -only-testing:AgentPadTests
+    test-without-building -only-testing:AgentPadTests || unit_status=$?
+  if (( unit_status != 0 )); then
+    if (( unit_status == 142 )) &&
+       grep -Fq "Test Suite 'AgentPadTests.xctest' passed" "$LOG_DIR/test-unit.log" &&
+       grep -Fq "Test Suite 'Selected tests' passed" "$LOG_DIR/test-unit.log" &&
+       grep -Eq "Executed [0-9]+ tests, with .*0 failures \(0 unexpected\)" "$LOG_DIR/test-unit.log" &&
+       ! grep -Eq "Test (Case|Suite).* failed|\*\* TEST FAILED \*\*" "$LOG_DIR/test-unit.log"; then
+      echo "PASS: all AgentPad unit tests completed; drained Xcode 27 after its post-suite exit hang."
+    else
+      return "$unit_status"
+    fi
+  fi
 
   local index=0
   local batch=1
