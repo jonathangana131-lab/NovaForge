@@ -10,7 +10,7 @@ final class ScooterModelRegistryTests: XCTestCase {
     func testCurrentPlayableScootersResolveToConcreteDashboardTechnology() {
         let playableIDs = ScooterCatalogItem.all.map(\.id)
         for id in playableIDs {
-            let record = ScooterModelRegistry.record(id: id)
+            let record = ScooterModelRegistry.playableRecord(for: id)
             XCTAssertNotNil(record, "Missing registry record for \(id)")
             XCTAssertNotEqual(record?.dashboardTechnology, .referenceRequired)
         }
