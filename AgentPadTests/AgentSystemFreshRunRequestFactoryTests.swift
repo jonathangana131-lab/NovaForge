@@ -7,6 +7,31 @@ import XCTest
 
 @MainActor
 final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
+    func testPhoneProviderCatalogUsesPublicVerifiedDefaults() {
+        XCTAssertEqual(
+            AIProvider.userSelectableProviders,
+            [.openCodeZen, .local, .openAI]
+        )
+        XCTAssertFalse(
+            AIProvider.userSelectableProviders.contains(.openAICodex)
+        )
+        XCTAssertEqual(AIProvider.openAI.defaultModel, "gpt-5")
+        XCTAssertFalse(AIProvider.openAI.modelOptions.contains("gpt-5.5"))
+        XCTAssertTrue(
+            AIProvider.openCodeZen.modelOptions.contains("mimo-v2.5-free")
+        )
+    }
+
+    func testLegacyChatGPTSelectionRepairsToFreeZenOnPhone() {
+        let settings = AgentSettings(
+            provider: .openAICodex,
+            modelID: "gpt-5.5"
+        )
+
+        XCTAssertTrue(settings.repairStaleModelSelection())
+        XCTAssertEqual(settings.providerRawValue, AIProvider.openCodeZen.rawValue)
+        XCTAssertEqual(settings.modelID, AIProvider.openCodeZen.defaultModel)
+    }
     private var previousReasoningEffort: ProviderReasoningEffort?
     private var previousOrchestrationMode: AgentOrchestrationMode?
 
@@ -290,8 +315,7 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
             "o3",
             "o3-mini",
             "o4-mini",
-            "gpt-5.5",
-            AIProvider.exactGPT56SolModelID,
+            "gpt-5",
         ] {
             fixture.settings.modelID = modelID
             let request = try fixture.make(

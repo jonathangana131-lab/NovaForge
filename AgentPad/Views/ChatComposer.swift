@@ -1247,7 +1247,7 @@ private struct ComposerModelChooserSheet: View {
     }
 
     private var supportedProviders: [AIProvider] {
-        AIProvider.agentRuntimeProviders
+        AIProvider.userSelectableProviders
     }
 
     private var providerSectionDetail: String {
