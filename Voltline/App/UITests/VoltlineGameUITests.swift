@@ -24,11 +24,11 @@ final class VoltlineGameUITests: XCTestCase {
         let app = launch(arguments: ["--qa-rich"])
 
         XCTAssertTrue(element("scooterDashboard", in: app).waitForExistence(timeout: 15))
-        XCTAssertTrue(element("phoneButton", in: app).exists)
-        XCTAssertTrue(element("garageButton", in: app).exists)
-        XCTAssertTrue(element("throttlePedal", in: app).exists)
-        XCTAssertTrue(element("brakePedal", in: app).exists)
-        XCTAssertTrue(element("steeringPad", in: app).exists)
+        XCTAssertTrue(element("phoneButton", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("garageButton", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("throttlePedal", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("brakePedal", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("steeringPad", in: app).waitForExistence(timeout: 5))
         attachScreenshot(name: "01-ride-hud")
     }
 
@@ -42,7 +42,8 @@ final class VoltlineGameUITests: XCTestCase {
         let overlay = element("settingsOverlay", in: app)
         let closeButton = element("closeSettingsButton", in: app)
         XCTAssertTrue(overlay.waitForExistence(timeout: 5))
-        XCTAssertTrue(closeButton.exists)
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(closeButton.isHittable)
         attachScreenshot(name: "06-settings")
         closeButton.tap()
         XCTAssertFalse(overlay.waitForExistence(timeout: 3))
@@ -52,7 +53,7 @@ final class VoltlineGameUITests: XCTestCase {
         let app = launch(arguments: ["--qa-rich", "--qa-garage"])
 
         XCTAssertTrue(element("garageOverlay", in: app).waitForExistence(timeout: 15))
-        XCTAssertTrue(element("closeGarageButton", in: app).exists)
+        XCTAssertTrue(element("closeGarageButton", in: app).waitForExistence(timeout: 5))
         attachScreenshot(name: "02-garage")
     }
 
@@ -61,7 +62,7 @@ final class VoltlineGameUITests: XCTestCase {
 
         XCTAssertTrue(element("phoneOS", in: app).waitForExistence(timeout: 15))
         XCTAssertTrue(element("bankPhoneApp", in: app).waitForExistence(timeout: 5))
-        XCTAssertTrue(element("closePhoneButton", in: app).exists)
+        XCTAssertTrue(element("closePhoneButton", in: app).waitForExistence(timeout: 5))
         attachScreenshot(name: "03-phone-bank")
     }
 
@@ -70,7 +71,7 @@ final class VoltlineGameUITests: XCTestCase {
 
         XCTAssertTrue(element("phoneOS", in: app).waitForExistence(timeout: 15))
         XCTAssertTrue(element("vescPhoneApp", in: app).waitForExistence(timeout: 5))
-        XCTAssertTrue(element("writeVESCButton", in: app).exists)
+        XCTAssertTrue(element("writeVESCButton", in: app).waitForExistence(timeout: 5))
         attachScreenshot(name: "04-phone-vesc")
     }
 
@@ -91,10 +92,6 @@ final class VoltlineGameUITests: XCTestCase {
         return app
     }
 
-    /// SwiftUI can expose the same accessibility identifier as a button,
-    /// container, or generic element depending on view composition and SDK.
-    /// Querying all descendants keeps tests tied to the identifier rather than
-    /// an implementation-specific accessibility element type.
     private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }
