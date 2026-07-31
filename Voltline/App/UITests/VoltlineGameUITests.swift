@@ -19,6 +19,21 @@ final class VoltlineGameUITests: XCTestCase {
         attachScreenshot(name: "01-ride-hud")
     }
 
+    func testSettingsFixtureCanOpenAndClose() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--qa-rich"]
+        app.launch()
+
+        let settingsButton = app.buttons["settingsButton"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 15))
+        settingsButton.tap()
+        XCTAssertTrue(app.otherElements["settingsOverlay"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["closeSettingsButton"].exists)
+        attachScreenshot(name: "06-settings")
+        app.buttons["closeSettingsButton"].tap()
+        XCTAssertFalse(app.otherElements["settingsOverlay"].waitForExistence(timeout: 3))
+    }
+
     func testGarageFixture() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--qa-rich", "--qa-garage"]
