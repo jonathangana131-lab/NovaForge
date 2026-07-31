@@ -1,0 +1,51 @@
+name: Provider repair controller
+
+on:
+  pull_request:
+    branches:
+      - agent/provider-repair-control
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: provider-repair-controller-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  repair-head:
+    if: github.head_ref == 'agent/fix-phone-provider-reliability'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Apply deterministic repair
+        run: |
+          if [ ! -f scripts/apply-phone-provider-reliability-fix.py ]; then
+            echo "Provider repair already applied."
+            exit 0
+          fi
+          python3 -m py_compile scripts/apply-phone-provider-reliability-fix.py
+          python3 scripts/apply-phone-provider-reliability-fix.py
+          git diff --check
+          ! rg 'AIProvider\.agentRuntimeProviders' AgentPad/Views
+          rg 'LocalizedError' Packages/AgentHarnessKit/Sources/AgentProviders/ProviderFailures.swift
+          rg 'static let userSelectableProviders' AgentPad/Services/AIProvider.swift
+
+      - name: Commit repaired source to PR branch
+        run: |
+          if [ ! -f scripts/apply-phone-provider-reliability-fix.py ]; then
+            exit 0
+          fi
+          rm -f .github/workflows/apply-phone-provider-reliability-fix.yml
+          rm -f scripts/apply-phone-provider-reliability-fix.py
+          git config user.name "NovaForge Repair Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix phone provider model failures"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
