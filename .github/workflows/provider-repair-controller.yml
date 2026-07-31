@@ -15,37 +15,51 @@ concurrency:
 
 jobs:
   repair-head:
-    if: github.head_ref == 'agent/fix-phone-provider-reliability'
+    if: github.head_ref == 'agent/provider-migration-patch-trigger'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: agent/fix-phone-provider-reliability-clean
           fetch-depth: 0
 
-      - name: Apply deterministic repair
+      - name: Preserve local recovery for corrupt provider data
         run: |
-          if [ ! -f scripts/apply-phone-provider-reliability-fix.py ]; then
-            echo "Provider repair already applied."
-            exit 0
-          fi
-          python3 -m py_compile scripts/apply-phone-provider-reliability-fix.py
-          python3 scripts/apply-phone-provider-reliability-fix.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('AgentPad/Models/Models.swift')
+          text = path.read_text()
+          old = '''        let decodedProvider = AIProvider(rawValue: providerRawValue ?? "")
+        let selectedProvider = decodedProvider.flatMap {
+            $0.isUserSelectable ? $0 : nil
+        } ?? .openCodeZen
+'''
+          new = '''        let decodedProvider = AIProvider(rawValue: providerRawValue ?? "")
+        let selectedProvider: AIProvider
+        switch decodedProvider {
+        case .none:
+            // Corrupt or unknown persisted data keeps the original safe local
+            // recovery contract instead of silently selecting a network route.
+            selectedProvider = .local
+        case .some(let provider) where provider.isUserSelectable:
+            selectedProvider = provider
+        case .some:
+            // A real saved legacy ChatGPT/Codex selection is no longer offered
+            // for fresh phone runs; migrate it to the anonymous Zen Free route.
+            selectedProvider = .openCodeZen
+        }
+'''
+          if text.count(old) != 1:
+              raise SystemExit('expected provider migration snippet was not found exactly once')
+          path.write_text(text.replace(old, new, 1))
+          PY
           git diff --check
-          ! grep -R -n 'AIProvider\.agentRuntimeProviders' AgentPad/Views
-          grep -n 'LocalizedError' Packages/AgentHarnessKit/Sources/AgentProviders/ProviderFailures.swift
-          grep -n 'static let userSelectableProviders' AgentPad/Services/AIProvider.swift
 
-      - name: Commit repaired source to PR branch
+      - name: Commit correction to repair branch
         run: |
-          if [ ! -f scripts/apply-phone-provider-reliability-fix.py ]; then
-            exit 0
-          fi
-          rm -f .github/workflows/apply-phone-provider-reliability-fix.yml
-          rm -f scripts/apply-phone-provider-reliability-fix.py
           git config user.name "NovaForge Repair Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add -A
-          git commit -m "Fix phone provider model failures"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          git add AgentPad/Models/Models.swift
+          git commit -m "Preserve local recovery for invalid provider data"
+          git push origin HEAD:agent/fix-phone-provider-reliability-clean
