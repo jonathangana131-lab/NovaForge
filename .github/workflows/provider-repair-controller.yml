@@ -33,9 +33,9 @@ jobs:
           python3 -m py_compile scripts/apply-phone-provider-reliability-fix.py
           python3 scripts/apply-phone-provider-reliability-fix.py
           git diff --check
-          ! rg 'AIProvider\.agentRuntimeProviders' AgentPad/Views
-          rg 'LocalizedError' Packages/AgentHarnessKit/Sources/AgentProviders/ProviderFailures.swift
-          rg 'static let userSelectableProviders' AgentPad/Services/AIProvider.swift
+          ! grep -R -n 'AIProvider\.agentRuntimeProviders' AgentPad/Views
+          grep -n 'LocalizedError' Packages/AgentHarnessKit/Sources/AgentProviders/ProviderFailures.swift
+          grep -n 'static let userSelectableProviders' AgentPad/Services/AIProvider.swift
 
       - name: Commit repaired source to PR branch
         run: |
