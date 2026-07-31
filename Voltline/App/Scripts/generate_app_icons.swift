@@ -1,160 +1,223 @@
 #!/usr/bin/env swift
-import AppKit
+import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 let outputDirectory = CommandLine.arguments.dropFirst().first
     ?? "Resources/Assets.xcassets/AppIcon.appiconset"
 let outputURL = URL(fileURLWithPath: outputDirectory, isDirectory: true)
 try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
 
+struct RGBA {
+    let red: CGFloat
+    let green: CGFloat
+    let blue: CGFloat
+    let alpha: CGFloat
+
+    init(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, _ alpha: CGFloat = 1) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+    }
+
+    var cgColor: CGColor {
+        CGColor(red: red, green: green, blue: blue, alpha: alpha)
+    }
+
+    func opacity(_ value: CGFloat) -> RGBA {
+        RGBA(red, green, blue, value)
+    }
+}
+
 struct IconPalette {
-    let top: NSColor
-    let bottom: NSColor
-    let road: NSColor
-    let accent: NSColor
-    let foreground: NSColor
+    let top: RGBA
+    let bottom: RGBA
+    let road: RGBA
+    let accent: RGBA
+    let foreground: RGBA
 }
 
 let palettes: [(String, IconPalette)] = [
     ("VoltlineIcon-1024.png", .init(
-        top: NSColor(calibratedRed: 0.02, green: 0.10, blue: 0.18, alpha: 1),
-        bottom: NSColor(calibratedRed: 0.00, green: 0.025, blue: 0.055, alpha: 1),
-        road: NSColor(calibratedWhite: 0.11, alpha: 1),
-        accent: NSColor(calibratedRed: 0.05, green: 0.78, blue: 0.98, alpha: 1),
-        foreground: .white
+        top: RGBA(0.02, 0.10, 0.18),
+        bottom: RGBA(0.00, 0.025, 0.055),
+        road: RGBA(0.11, 0.11, 0.11),
+        accent: RGBA(0.05, 0.78, 0.98),
+        foreground: RGBA(1, 1, 1)
     )),
     ("VoltlineIcon-Dark-1024.png", .init(
-        top: NSColor(calibratedWhite: 0.045, alpha: 1),
-        bottom: .black,
-        road: NSColor(calibratedWhite: 0.08, alpha: 1),
-        accent: NSColor(calibratedRed: 0.10, green: 0.86, blue: 1.0, alpha: 1),
-        foreground: .white
+        top: RGBA(0.045, 0.045, 0.045),
+        bottom: RGBA(0, 0, 0),
+        road: RGBA(0.08, 0.08, 0.08),
+        accent: RGBA(0.10, 0.86, 1.0),
+        foreground: RGBA(1, 1, 1)
     )),
     ("VoltlineIcon-Tinted-1024.png", .init(
-        top: NSColor(calibratedWhite: 0.16, alpha: 1),
-        bottom: NSColor(calibratedWhite: 0.04, alpha: 1),
-        road: NSColor(calibratedWhite: 0.09, alpha: 1),
-        accent: .white,
-        foreground: .white
+        top: RGBA(0.16, 0.16, 0.16),
+        bottom: RGBA(0.04, 0.04, 0.04),
+        road: RGBA(0.09, 0.09, 0.09),
+        accent: RGBA(1, 1, 1),
+        foreground: RGBA(1, 1, 1)
     ))
 ]
 
-func line(_ from: CGPoint, _ to: CGPoint, width: CGFloat, color: NSColor, cap: NSBezierPath.LineCapStyle = .round) {
-    let path = NSBezierPath()
-    path.move(to: from)
-    path.line(to: to)
-    path.lineWidth = width
-    path.lineCapStyle = cap
-    color.setStroke()
-    path.stroke()
+func roundedRect(_ rect: CGRect, radius: CGFloat) -> CGPath {
+    CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
 }
 
-func circle(center: CGPoint, radius: CGFloat, fill: NSColor, stroke: NSColor, strokeWidth: CGFloat) {
+func fill(_ path: CGPath, color: RGBA, context: CGContext) {
+    context.addPath(path)
+    context.setFillColor(color.cgColor)
+    context.fillPath()
+}
+
+func stroke(_ path: CGPath, color: RGBA, width: CGFloat, context: CGContext) {
+    context.addPath(path)
+    context.setStrokeColor(color.cgColor)
+    context.setLineWidth(width)
+    context.strokePath()
+}
+
+func line(_ from: CGPoint, _ to: CGPoint, width: CGFloat, color: RGBA, context: CGContext) {
+    context.beginPath()
+    context.move(to: from)
+    context.addLine(to: to)
+    context.setLineCap(.round)
+    context.setLineWidth(width)
+    context.setStrokeColor(color.cgColor)
+    context.strokePath()
+}
+
+func circle(center: CGPoint, radius: CGFloat, fillColor: RGBA, strokeColor: RGBA, strokeWidth: CGFloat, context: CGContext) {
     let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-    let path = NSBezierPath(ovalIn: rect)
-    fill.setFill()
-    path.fill()
-    stroke.setStroke()
-    path.lineWidth = strokeWidth
-    path.stroke()
+    context.setFillColor(fillColor.cgColor)
+    context.fillEllipse(in: rect)
+    context.setStrokeColor(strokeColor.cgColor)
+    context.setLineWidth(strokeWidth)
+    context.strokeEllipse(in: rect)
 }
 
 func generate(filename: String, palette: IconPalette) throws {
-    let size = NSSize(width: 1024, height: 1024)
-    let image = NSImage(size: size)
-    image.lockFocus()
-    defer { image.unlockFocus() }
-
-    guard let context = NSGraphicsContext.current?.cgContext else {
+    let width = 1024
+    let height = 1024
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else {
         throw NSError(domain: "VoltlineIcon", code: 1)
     }
 
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let gradient = CGGradient(
+    context.setAllowsAntialiasing(true)
+    context.setShouldAntialias(true)
+
+    guard let background = CGGradient(
         colorsSpace: colorSpace,
-        colors: [palette.top.cgColor, palette.bottom.cgColor] as CFArray,
+        colors: [palette.bottom.cgColor, palette.top.cgColor] as CFArray,
         locations: [0, 1]
-    )!
+    ) else {
+        throw NSError(domain: "VoltlineIcon", code: 2)
+    }
     context.drawLinearGradient(
-        gradient,
-        start: CGPoint(x: 512, y: 1024),
-        end: CGPoint(x: 512, y: 0),
+        background,
+        start: CGPoint(x: 512, y: 0),
+        end: CGPoint(x: 512, y: 1024),
         options: []
     )
 
-    // Speed glow.
-    let glowColors = [palette.accent.withAlphaComponent(0.0).cgColor,
-                      palette.accent.withAlphaComponent(0.42).cgColor,
-                      palette.accent.withAlphaComponent(0.0).cgColor] as CFArray
-    let glow = CGGradient(colorsSpace: colorSpace, colors: glowColors, locations: [0, 0.5, 1])!
+    guard let glow = CGGradient(
+        colorsSpace: colorSpace,
+        colors: [
+            palette.accent.opacity(0).cgColor,
+            palette.accent.opacity(0.42).cgColor,
+            palette.accent.opacity(0).cgColor
+        ] as CFArray,
+        locations: [0, 0.52, 1]
+    ) else {
+        throw NSError(domain: "VoltlineIcon", code: 3)
+    }
     context.drawRadialGradient(
         glow,
         startCenter: CGPoint(x: 520, y: 520),
-        startRadius: 30,
+        startRadius: 20,
         endCenter: CGPoint(x: 520, y: 520),
-        endRadius: 470,
+        endRadius: 480,
         options: []
     )
 
-    // Perspective road.
-    let road = NSBezierPath()
+    let road = CGMutablePath()
     road.move(to: CGPoint(x: 260, y: 0))
-    road.line(to: CGPoint(x: 764, y: 0))
-    road.line(to: CGPoint(x: 600, y: 610))
-    road.line(to: CGPoint(x: 424, y: 610))
-    road.close()
-    palette.road.setFill()
-    road.fill()
+    road.addLine(to: CGPoint(x: 764, y: 0))
+    road.addLine(to: CGPoint(x: 600, y: 610))
+    road.addLine(to: CGPoint(x: 424, y: 610))
+    road.closeSubpath()
+    fill(road, color: palette.road, context: context)
 
     for index in 0..<5 {
         let y = CGFloat(70 + index * 110)
-        let width = CGFloat(25 + index * 5)
-        let dash = NSBezierPath(roundedRect: CGRect(x: 512 - width / 2, y: y, width: width, height: 66), xRadius: width / 2, yRadius: width / 2)
-        palette.foreground.withAlphaComponent(0.78).setFill()
-        dash.fill()
+        let dashWidth = CGFloat(25 + index * 5)
+        fill(
+            roundedRect(CGRect(x: 512 - dashWidth / 2, y: y, width: dashWidth, height: 66), radius: dashWidth / 2),
+            color: palette.foreground.opacity(0.78),
+            context: context
+        )
     }
 
-    // Scooter silhouette.
+    let black = RGBA(0, 0, 0)
     let rear = CGPoint(x: 355, y: 350)
     let front = CGPoint(x: 690, y: 350)
-    circle(center: rear, radius: 86, fill: .black, stroke: palette.accent, strokeWidth: 24)
-    circle(center: front, radius: 86, fill: .black, stroke: palette.accent, strokeWidth: 24)
-    circle(center: rear, radius: 22, fill: palette.accent, stroke: palette.foreground, strokeWidth: 5)
-    circle(center: front, radius: 22, fill: palette.accent, stroke: palette.foreground, strokeWidth: 5)
+    circle(center: rear, radius: 86, fillColor: black, strokeColor: palette.accent, strokeWidth: 24, context: context)
+    circle(center: front, radius: 86, fillColor: black, strokeColor: palette.accent, strokeWidth: 24, context: context)
+    circle(center: rear, radius: 22, fillColor: palette.accent, strokeColor: palette.foreground, strokeWidth: 5, context: context)
+    circle(center: front, radius: 22, fillColor: palette.accent, strokeColor: palette.foreground, strokeWidth: 5, context: context)
 
-    let deck = NSBezierPath(roundedRect: CGRect(x: 360, y: 330, width: 300, height: 52), xRadius: 22, yRadius: 22)
-    palette.foreground.setFill()
-    deck.fill()
-    line(CGPoint(x: 635, y: 370), CGPoint(x: 605, y: 710), width: 38, color: palette.foreground)
-    line(CGPoint(x: 605, y: 710), CGPoint(x: 745, y: 710), width: 34, color: palette.foreground)
-    line(CGPoint(x: 657, y: 705), CGPoint(x: 700, y: 646), width: 23, color: palette.accent)
+    fill(
+        roundedRect(CGRect(x: 360, y: 330, width: 300, height: 52), radius: 22),
+        color: palette.foreground,
+        context: context
+    )
+    line(CGPoint(x: 635, y: 370), CGPoint(x: 605, y: 710), width: 38, color: palette.foreground, context: context)
+    line(CGPoint(x: 605, y: 710), CGPoint(x: 745, y: 710), width: 34, color: palette.foreground, context: context)
+    line(CGPoint(x: 657, y: 705), CGPoint(x: 700, y: 646), width: 23, color: palette.accent, context: context)
 
-    let display = NSBezierPath(roundedRect: CGRect(x: 570, y: 685, width: 92, height: 62), xRadius: 21, yRadius: 21)
-    NSColor.black.setFill()
-    display.fill()
-    palette.accent.setStroke()
-    display.lineWidth = 7
-    display.stroke()
+    let display = roundedRect(CGRect(x: 570, y: 685, width: 92, height: 62), radius: 21)
+    fill(display, color: black, context: context)
+    stroke(display, color: palette.accent, width: 7, context: context)
 
-    // Electric bolt / V mark.
-    let bolt = NSBezierPath()
+    let bolt = CGMutablePath()
     bolt.move(to: CGPoint(x: 287, y: 800))
-    bolt.line(to: CGPoint(x: 470, y: 800))
-    bolt.line(to: CGPoint(x: 390, y: 650))
-    bolt.line(to: CGPoint(x: 525, y: 650))
-    bolt.line(to: CGPoint(x: 315, y: 430))
-    bolt.line(to: CGPoint(x: 370, y: 610))
-    bolt.line(to: CGPoint(x: 250, y: 610))
-    bolt.close()
-    palette.accent.setFill()
-    bolt.fill()
+    bolt.addLine(to: CGPoint(x: 470, y: 800))
+    bolt.addLine(to: CGPoint(x: 390, y: 650))
+    bolt.addLine(to: CGPoint(x: 525, y: 650))
+    bolt.addLine(to: CGPoint(x: 315, y: 430))
+    bolt.addLine(to: CGPoint(x: 370, y: 610))
+    bolt.addLine(to: CGPoint(x: 250, y: 610))
+    bolt.closeSubpath()
+    fill(bolt, color: palette.accent, context: context)
 
-    guard let tiff = image.tiffRepresentation,
-          let bitmap = NSBitmapImageRep(data: tiff),
-          let png = bitmap.representation(using: .png, properties: [:]) else {
-        throw NSError(domain: "VoltlineIcon", code: 2)
+    guard let image = context.makeImage() else {
+        throw NSError(domain: "VoltlineIcon", code: 4)
     }
-    try png.write(to: outputURL.appendingPathComponent(filename), options: .atomic)
+    let destinationURL = outputURL.appendingPathComponent(filename)
+    guard let destination = CGImageDestinationCreateWithURL(
+        destinationURL as CFURL,
+        UTType.png.identifier as CFString,
+        1,
+        nil
+    ) else {
+        throw NSError(domain: "VoltlineIcon", code: 5)
+    }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+        throw NSError(domain: "VoltlineIcon", code: 6)
+    }
 }
 
 for (filename, palette) in palettes {
