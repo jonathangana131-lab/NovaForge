@@ -557,12 +557,23 @@ final class LocalModelManager {
                 }
             } catch {
                 await MainActor.run {
-                    self?.downloadTask = nil
-                    self?.refreshStatus()
-                    if case .partial = self?.status {
-                        return
+                    guard let self else { return }
+                    self.downloadTask = nil
+                    guard self.selectedVariantID == variant.id else { return }
+
+                    let destination = try? LocalModelCatalog.fileURL(for: variant)
+                    let partialURL = destination.map(LocalModelDownloader.temporaryURL(for:))
+                    let partialBytes = partialURL.flatMap(self.fileSize(at:)) ?? 0
+                    if partialBytes > 0, partialBytes < variant.expectedBytes {
+                        self.downloadedBytes = partialBytes
+                        self.progress = .init(
+                            receivedBytes: partialBytes,
+                            totalBytes: variant.expectedBytes
+                        )
+                        self.status = .partial
+                    } else {
+                        self.status = .failed(error.localizedDescription)
                     }
-                    self?.status = .failed(error.localizedDescription)
                 }
             }
         }
