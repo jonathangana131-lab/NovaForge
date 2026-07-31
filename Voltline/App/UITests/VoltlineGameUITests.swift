@@ -5,6 +5,21 @@ final class VoltlineGameUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testFirstRunOnboardingFitsAndStarts() throws {
+        let app = launch(arguments: ["--qa-onboarding"])
+
+        let onboarding = element("onboardingOverlay", in: app)
+        let startButton = element("startRidingButton", in: app)
+        XCTAssertTrue(onboarding.waitForExistence(timeout: 15))
+        XCTAssertTrue(startButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(startButton.isHittable)
+        attachScreenshot(name: "00-onboarding")
+
+        startButton.tap()
+        XCTAssertFalse(onboarding.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("scooterDashboard", in: app).waitForExistence(timeout: 10))
+    }
+
     func testRideHUDAndControlsExist() throws {
         let app = launch(arguments: ["--qa-rich"])
 
