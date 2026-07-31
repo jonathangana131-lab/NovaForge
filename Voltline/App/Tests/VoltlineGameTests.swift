@@ -16,6 +16,20 @@ final class VoltlineGameTests: XCTestCase {
         XCTAssertGreaterThan(RideSurface.gravel.rollingMultiplier, RideSurface.dryAsphalt.rollingMultiplier)
     }
 
+    func testPerformanceModesDriveRealFrameTargets() {
+        XCTAssertEqual(VoltlinePerformanceMode.batterySaver.preferredFramesPerSecond, 30)
+        XCTAssertEqual(VoltlinePerformanceMode.balanced.preferredFramesPerSecond, 60)
+        XCTAssertEqual(VoltlinePerformanceMode.highFrameRate.preferredFramesPerSecond, 120)
+        XCTAssertLessThan(
+            VoltlinePerformanceMode.batterySaver.preferredFramesPerSecond,
+            VoltlinePerformanceMode.balanced.preferredFramesPerSecond
+        )
+        XCTAssertLessThan(
+            VoltlinePerformanceMode.balanced.preferredFramesPerSecond,
+            VoltlinePerformanceMode.highFrameRate.preferredFramesPerSecond
+        )
+    }
+
     func testMaxshotStartsOwnedAndSelected() {
         let session = GameSession(startLoop: false)
         XCTAssertEqual(session.selectedScooterID, ScooterCatalogItem.maxshot.id)
