@@ -6,9 +6,12 @@ struct VoltlineGameApp: App {
 
     var body: some Scene {
         WindowGroup {
-            VoltlineShellView(session: session)
-                .preferredColorScheme(.dark)
-                .persistentSystemOverlays(.hidden)
+            ZStack {
+                VoltlineShellView(session: session)
+                MissionLayerView(session: session)
+            }
+            .preferredColorScheme(.dark)
+            .persistentSystemOverlays(.hidden)
         }
     }
 }
