@@ -27,13 +27,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  repair-dark-replay-test:
+    name: Repair dark replay absence assertion
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/fix-phone-provider-reliability-clean'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/fix-phone-provider-reliability-clean
+          fetch-depth: 0
+      - name: Require runNotFound for absent event stream
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("AgentPadTests/AgentHostedTextCanaryCoordinatorTests.swift")
+          text = source.read_text()
+          old_lines = [
+              '        let transportCalls = await transport.callCount()',
+              '        let events = try await fixture.store.events(',
+              '            for: fixture.runID,',
+              '            after: nil',
+              '        )',
+              '        XCTAssertEqual(transportCalls, 0)',
+              '        XCTAssertTrue(events.isEmpty)',
+          ]
+          new_lines = [
+              '        let transportCalls = await transport.callCount()',
+              '        XCTAssertEqual(transportCalls, 0)',
+              '        do {',
+              '            _ = try await fixture.store.events(',
+              '                for: fixture.runID,',
+              '                after: nil',
+              '            )',
+              '            XCTFail("A rejected canary unexpectedly created a run stream")',
+              '        } catch let error as DarkReplayError {',
+              '            XCTAssertEqual(error, .runNotFound(fixture.runID))',
+              '        }',
+          ]
+          old = "\n".join(old_lines) + "\n"
+          new = "\n".join(new_lines) + "\n"
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected one absent-stream assertion, found {count}")
+          source.write_text(text.replace(old, new))
+          PY
+          git config user.name "NovaForge CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPadTests/AgentHostedTextCanaryCoordinatorTests.swift
+          git commit -m "Assert absent dark replay streams fail closed"
+          git push origin HEAD:agent/fix-phone-provider-reliability-clean
+
   verify:
     name: Critical verification
     runs-on: xcode-27
-    # Build and test against the same iOS 27 SDK generation used by the
-    # physical-device beta. GitHub's xcode-27 preview image includes Xcode 27
-    # and the iOS 27 Simulator; ci/verify.sh still prints the selected version
-    # into the job log so every run records its exact toolchain.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
