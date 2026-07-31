@@ -20,7 +20,12 @@ final class VoltlineMissionUITests: XCTestCase {
 
         routeButton.tap()
         XCTAssertFalse(board.waitForExistence(timeout: 5))
-        XCTAssertTrue(element("missionHUD", in: app).waitForExistence(timeout: 5))
+
+        let missionHUD = element("missionHUD", in: app)
+        let throttle = element("throttlePedal", in: app)
+        XCTAssertTrue(missionHUD.waitForExistence(timeout: 5))
+        XCTAssertTrue(throttle.waitForExistence(timeout: 5))
+        XCTAssertTrue(throttle.isHittable)
         attachScreenshot(name: "08-mission-hud")
     }
 
