@@ -7,7 +7,7 @@ cd "$APP_DIR"
 
 DEVICE_ID="${1:-${VOLTLINE_DEVICE_ID:-}}"
 TEAM_ID="${DEVELOPMENT_TEAM:-93MYZUV85K}"
-BUNDLE_ID="com.joey.VoltlineGame"
+EXPECTED_BUNDLE_ID="com.joey.VoltlineGame"
 DERIVED_DATA="$APP_DIR/DeviceDerivedData"
 
 if [[ -z "$DEVICE_ID" ]]; then
@@ -44,6 +44,14 @@ xcodebuild \
 APP_PATH="$DERIVED_DATA/Build/Products/Debug-iphoneos/VoltlineGame.app"
 if [[ ! -d "$APP_PATH" ]]; then
   echo "Signed app was not produced at: $APP_PATH"
+  exit 1
+fi
+
+test -f "$APP_PATH/Info.plist"
+test -f "$APP_PATH/PrivacyInfo.xcprivacy"
+BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Info.plist")
+if [[ "$BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]]; then
+  echo "Unexpected bundle identifier: $BUNDLE_ID"
   exit 1
 fi
 
