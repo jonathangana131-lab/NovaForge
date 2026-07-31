@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/voltline-ios-foundation
+      - codex/voltline-release-parallel
     paths:
       - "Voltline/**"
       - ".github/workflows/voltline-ios-game.yml"
