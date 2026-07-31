@@ -8,6 +8,7 @@
 - [ ] All native unit tests pass.
 - [ ] All native UI tests pass on the SDK-matched iPhone simulator.
 - [ ] Mission selection closes the objective board and returns usable throttle control.
+- [ ] Transparent mission HUD and completion layers pass steering, brake, and throttle touches outside their visible buttons.
 - [ ] Unsigned generic iPhoneOS compilation passes.
 - [ ] At least nine real XCUITest screenshots are exported for onboarding, ride HUD, settings, garage, Bank, VESC, crash, objective board, and active objective HUD.
 - [ ] The simulator `.app`, app icon, screenshots, logs, and `.xcresult` bundles are uploaded.
