@@ -122,76 +122,86 @@ private struct VoltlineOnboardingView: View {
     let onStart: () -> Void
 
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.01, green: 0.04, blue: 0.08),
-                    Color(red: 0.02, green: 0.13, blue: 0.19),
-                    .black
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+        GeometryReader { proxy in
+            let widthScale = max(0.76, min(1, (proxy.size.width - 16) / 754))
+            let heightScale = max(0.76, min(1, (proxy.size.height - 12) / 360))
+            let contentScale = min(widthScale, heightScale)
 
-            HStack(spacing: 34) {
-                VStack(alignment: .leading, spacing: 15) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "bolt.circle.fill")
-                            .font(.system(size: 38, weight: .black))
-                            .foregroundStyle(.cyan)
-                        Text("VOLTLINE")
-                            .font(.system(size: 42, weight: .black, design: .rounded))
-                            .tracking(2)
-                    }
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.01, green: 0.04, blue: 0.08),
+                        Color(red: 0.02, green: 0.13, blue: 0.19),
+                        .black
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
 
-                    Text("A physics-driven electric scooter game")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.72))
-
-                    Text("Ride the Maxshot, feel voltage sag and tire grip, earn upgrades, tune the controller, and explore the night district from chase or true POV cameras.")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.60))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: 470, alignment: .leading)
-
-                    Button(action: onStart) {
-                        HStack(spacing: 9) {
-                            Text("START RIDING")
-                            Image(systemName: "arrow.right")
+                HStack(spacing: 24) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "bolt.circle.fill")
+                                .font(.system(size: 36, weight: .black))
+                                .foregroundStyle(.cyan)
+                            Text("VOLTLINE")
+                                .font(.system(size: 40, weight: .black, design: .rounded))
+                                .tracking(2)
                         }
-                        .font(.system(size: 15, weight: .black, design: .rounded))
-                        .padding(.horizontal, 24)
-                        .frame(height: 49)
-                        .background(.cyan, in: Capsule())
-                        .foregroundStyle(.black)
+
+                        Text("A physics-driven electric scooter game")
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.72))
+
+                        Text("Ride the Maxshot, feel voltage sag and tire grip, earn upgrades, tune the controller, and explore the night district from chase or true POV cameras.")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.60))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: 390, alignment: .leading)
+
+                        Button(action: onStart) {
+                            HStack(spacing: 9) {
+                                Text("START RIDING")
+                                Image(systemName: "arrow.right")
+                            }
+                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .padding(.horizontal, 24)
+                            .frame(height: 49)
+                            .background(.cyan, in: Capsule())
+                            .foregroundStyle(.black)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("startRidingButton")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("startRidingButton")
-                }
+                    .frame(width: 390, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 13) {
-                    OnboardingControlRow(symbol: "arrow.left.and.right", title: "Steer", detail: "Left pad or controller left stick")
-                    OnboardingControlRow(symbol: "bolt.fill", title: "Throttle", detail: "Right pedal or R2")
-                    OnboardingControlRow(symbol: "hand.raised.fill", title: "Brake", detail: "Left pedal or L2")
-                    OnboardingControlRow(symbol: "camera.rotate", title: "Camera", detail: "HUD button or R3")
-                    OnboardingControlRow(symbol: "iphone", title: "PhoneOS", detail: "Telemetry, bank, market and tuning")
+                    VStack(alignment: .leading, spacing: 12) {
+                        OnboardingControlRow(symbol: "arrow.left.and.right", title: "Steer", detail: "Left pad or controller left stick")
+                        OnboardingControlRow(symbol: "bolt.fill", title: "Throttle", detail: "Right pedal or R2")
+                        OnboardingControlRow(symbol: "hand.raised.fill", title: "Brake", detail: "Left pedal or L2")
+                        OnboardingControlRow(symbol: "camera.rotate", title: "Camera", detail: "HUD button or R3")
+                        OnboardingControlRow(symbol: "iphone", title: "PhoneOS", detail: "Telemetry, bank, market and tuning")
 
-                    Divider().overlay(.white.opacity(0.16))
+                        Divider().overlay(.white.opacity(0.16))
 
-                    Label("In-game riding only—never copy risky riding on real roads.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.yellow.opacity(0.86))
+                        Label("In-game riding only—never copy risky riding on real roads.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.yellow.opacity(0.86))
+                    }
+                    .padding(19)
+                    .frame(width: 300)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 25, style: .continuous)
+                            .stroke(.white.opacity(0.16), lineWidth: 1)
+                    }
                 }
-                .padding(22)
-                .frame(width: 330)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 25, style: .continuous)
-                        .stroke(.white.opacity(0.16), lineWidth: 1)
-                }
+                .padding(20)
+                .frame(width: 754)
+                .scaleEffect(contentScale)
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
-            .padding(34)
         }
         .accessibilityIdentifier("onboardingOverlay")
     }
