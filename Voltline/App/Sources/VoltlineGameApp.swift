@@ -12,6 +12,13 @@ struct VoltlineGameApp: App {
             }
             .preferredColorScheme(.dark)
             .persistentSystemOverlays(.hidden)
+            .onAppear {
+                session.applyQAPresentationFixture()
+                Task { @MainActor in
+                    await Task.yield()
+                    session.applyQAPresentationFixture()
+                }
+            }
         }
     }
 }
