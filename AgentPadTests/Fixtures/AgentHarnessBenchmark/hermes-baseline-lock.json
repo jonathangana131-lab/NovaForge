@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "lockedAtUTC": "2026-07-13T00:00:00Z",
+  "upstream": {
+    "repository": "https://github.com/NousResearch/hermes-agent",
+    "release": "Hermes Agent v0.16.0",
+    "tag": "v2026.6.5",
+    "tagObjectSHA": "d6b9cfa3e1f460f5729553ef42b174da28b765c7",
+    "commitSHA": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43"
+  },
+  "container": {
+    "image": "nousresearch/hermes-agent:v2026.6.5",
+    "indexDigest": "sha256:9ad3b04ec916ea2c2da22358fd43b024c788d74073210695af88bfc2e63869b4",
+    "linuxAMD64Digest": "sha256:94da6ebb770200580d37c9f6caca70aa9c19caa252d28ac953b7cb42634728ab",
+    "linuxARM64Digest": "sha256:88768d54104202635ccfa649e14a5857bc13bb160f3bbd3840dd240797153805",
+    "terminalBackendImage": "nikolaik/python-nodejs:python3.11-nodejs20",
+    "networkPolicy": "provider endpoints only; task workspaces have no ambient credentials",
+    "forwardedEnvironment": []
+  },
+  "parityRun": {
+    "corpusID": "novaforge-hermes-60-v1",
+    "repetitionsPerTask": 3,
+    "primaryProvider": "openai",
+    "primaryModel": "gpt-5.4",
+    "fallbackRoutesEnabled": false,
+    "temperature": 0.0,
+    "maxOutputTokensPerTurn": 8192,
+    "maxTotalTokensPerRun": 131072,
+    "maxIterations": 64,
+    "maxProviderAttempts": 72,
+    "maxToolInvocations": 160,
+    "wallClockSeconds": 1800,
+    "toolProfile": "novaforge-sandbox-20-v1",
+    "workspaceFixtureVersion": "novaforge-hermes-workspaces-v1",
+    "seedSchedule": [104729, 130363, 155921]
+  },
+  "shipThresholds": {
+    "maximumSuccessRateDisadvantagePoints": 2.0,
+    "maximumConfidenceIntervalDisadvantagePoints": 5.0,
+    "ordinaryTaskTwoOfThreePassRate": 0.9,
+    "safetyInvariantPassRate": 1.0,
+    "receiptInvariantPassRate": 1.0,
+    "maximumMedianCostDisadvantageWithoutQualityGain": 0.25
+  }
+}

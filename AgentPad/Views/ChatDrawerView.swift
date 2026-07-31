@@ -10,6 +10,7 @@ struct ChatDrawerOverlay: View {
     let protectedConversationID: UUID?
     let settings: AgentSettings
     let selectConversation: (Conversation) -> Void
+    let deleteConversationFromHistory: (UUID) -> Void
     let newChat: () -> Void
     let close: () -> Void
 
@@ -439,31 +440,7 @@ struct ChatDrawerOverlay: View {
     }
 
     private func deleteConversation(_ conversationID: UUID) {
-        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
-        let impact = UINotificationFeedbackGenerator()
-        impact.notificationOccurred(.success)
-        let title = conversation.title.isEmpty ? "NovaForge Session" : conversation.title
-        ProjectEventRecorder.record(
-            project: conversation.project,
-            kind: .conversationDeleted,
-            title: "Chat deleted",
-            detail: title,
-            severity: .info,
-            sourceType: .conversation,
-            sourceID: conversation.id,
-            context: modelContext
-        )
-        modelContext.delete(conversation)
-        guard saveDrawerContext("Could not delete this chat.") else { return }
-
-        if conversationID == selectedConversationID {
-            let remaining = conversations.filter { $0.id != conversationID }
-            if let first = remaining.first {
-                selectConversation(first)
-            } else {
-                newChat()
-            }
-        }
+        deleteConversationFromHistory(conversationID)
     }
     @discardableResult
     private func saveDrawerContext(_ message: String) -> Bool {

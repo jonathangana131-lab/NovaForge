@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "fixtureSet": "AgentHarnessV1",
+  "capturedAt": "2026-07-13T07:00:00.000Z",
+  "source": {
+    "baseCommit": "05cb2b2c4c43955e9c329e4e197c0fbd22026bcf",
+    "baseCommitSubject": "Replace live response stack with bounded transcript rendering",
+    "captureState": "M0 stabilization worktree based on the source commit",
+    "plan": "QA/agent-harness-v2-hermes-baseline-plan.md"
+  },
+  "compatibility": {
+    "swiftDataSchema": "NovaForgeSchemaV1",
+    "schemaVersion": "1.0.0",
+    "engineVersion": "v1",
+    "eventEncodingVersion": 1,
+    "minimumFixtureReaderVersion": 1
+  },
+  "routing": {
+    "defaultEngineVersion": "v1",
+    "enabledFeatures": [],
+    "activeRunRoutingIsImmutable": true
+  },
+  "determinism": {
+    "clock": "fixed RFC3339 UTC timestamps with millisecond precision",
+    "identifiers": "fixed uppercase UUID strings",
+    "providerCalls": "none",
+    "workspaceEffects": "described only; never executed by fixture tests"
+  },
+  "rollback": {
+    "referenceCommit": "05cb2b2c4c43955e9c329e4e197c0fbd22026bcf",
+    "engineForNewRuns": "v1",
+    "databaseDowngradeAllowed": false,
+    "deleteV2EvidenceAllowed": false,
+    "replayAmbiguousEffectsAllowed": false
+  },
+  "files": [
+    "NovaForgeV1.store",
+    "NovaForgeV1.store.metadata.json",
+    "canonical_mutating_run.json",
+    "projectos_projection.json",
+    "recovery_matrix.json",
+    "routing_defaults.json"
+  ],
+  "integrity": {
+    "algorithm": "sha256",
+    "ledger": "SHA256SUMS",
+    "manifestIsCovered": true
+  }
+}

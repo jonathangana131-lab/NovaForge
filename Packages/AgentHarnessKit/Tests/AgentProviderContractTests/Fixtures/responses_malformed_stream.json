@@ -1,0 +1,16 @@
+{
+  "dialect": "responses",
+  "frames": [
+    {"kind": "json", "value": {"type": "response.created", "response": {"id": "bad-1", "model": "fixture-model"}}},
+    {
+      "kind": "json",
+      "value": {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"id": "bad-item", "type": "function_call", "call_id": "bad-call", "name": "write_file", "arguments": ""}
+      }
+    },
+    {"kind": "json", "value": {"type": "response.function_call_arguments.done", "output_index": 0, "item_id": "bad-item", "arguments": "{"}}
+  ],
+  "expectedFailureCode": "provider_tool_arguments_invalid_json"
+}

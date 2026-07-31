@@ -1,0 +1,64 @@
+{
+  "formatVersion": 1,
+  "caseName": "v1-fail-closed-recovery-matrix",
+  "recoveredAt": "2026-07-13T07:03:00.000Z",
+  "agentRuns": [
+    { "before": "queued", "after": "interrupted", "startedAtRemainsNil": true, "terminalStatePreserved": false },
+    { "before": "running", "after": "interrupted", "startedAtRemainsNil": false, "terminalStatePreserved": false },
+    { "before": "awaitingApproval", "after": "interrupted", "startedAtRemainsNil": false, "terminalStatePreserved": false },
+    { "before": "completed", "after": "completed", "startedAtRemainsNil": false, "terminalStatePreserved": true }
+  ],
+  "toolOperations": [
+    {
+      "before": "scheduled",
+      "after": "interrupted",
+      "startedAtRemainsNil": true,
+      "mayHaveApplied": false,
+      "automaticallyReplayed": false,
+      "diagnosticContains": "before the workspace mutation started"
+    },
+    {
+      "before": "executing",
+      "after": "interrupted",
+      "startedAtRemainsNil": false,
+      "mayHaveApplied": true,
+      "automaticallyReplayed": false,
+      "diagnosticContains": "while this mutation was executing"
+    },
+    {
+      "before": "applied",
+      "after": "interrupted",
+      "startedAtRemainsNil": false,
+      "mayHaveApplied": true,
+      "automaticallyReplayed": false,
+      "diagnosticContains": "final receipt was interrupted"
+    },
+    {
+      "before": "completed",
+      "after": "completed",
+      "startedAtRemainsNil": false,
+      "mayHaveApplied": false,
+      "automaticallyReplayed": false,
+      "diagnosticContains": ""
+    }
+  ],
+  "legacyToolRuns": [
+    { "before": "pendingApproval", "after": "rejected", "projectEvent": "toolRejected" },
+    { "before": "approved", "after": "failed", "projectEvent": "toolFailed" },
+    { "before": "completed", "after": "completed", "projectEvent": null }
+  ],
+  "projectOSRuns": [
+    { "before": "planning", "after": "stopped", "nonterminalStepsAfter": "stopped" },
+    { "before": "running", "after": "stopped", "nonterminalStepsAfter": "stopped" },
+    { "before": "completed", "after": "completed", "nonterminalStepsAfter": null }
+  ],
+  "autoContinue": [
+    { "before": "countdown", "after": "paused", "paused": true, "automaticallyStarted": false }
+  ],
+  "invariants": {
+    "lateFetchFailureMutatesNothing": true,
+    "ambiguousMutationNeverReplays": true,
+    "recoveryIsIdempotent": true,
+    "noProviderCall": true
+  }
+}

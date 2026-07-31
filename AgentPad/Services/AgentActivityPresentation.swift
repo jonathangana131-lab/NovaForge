@@ -40,14 +40,22 @@ enum AgentActivityPresentation {
         }
 
         switch name {
-        case "read_file", "read_file_range", "tail_file", "file_info":
+        case "read_file", "read_file_range", "tail_file":
+            return ("Reading file", target)
+        case "file_info":
             return ("Inspecting file", target)
-        case "list_directory", "list_tree", "workspace_summary", "search_files", "search":
-            return ("Searching workspace", target)
-        case "write_file", "append_file", "make_directory":
-            return ("Writing file", target)
-        case "replace_text", "move_path", "copy_path":
+        case "list_directory":
+            return ("Browsing files", target)
+        case "list_tree", "workspace_summary":
+            return ("Scanning workspace", target)
+        case "search_files", "search", "search_text":
+            return ("Searching files", target)
+        case "write_file":
+            return ("Creating file", target)
+        case "append_file", "replace_text", "move_path", "copy_path":
             return ("Editing file", target)
+        case "make_directory":
+            return ("Creating folder", target)
         case "delete_path":
             return ("Deleting file", target)
         case "run_command":
@@ -75,7 +83,9 @@ enum AgentActivityPresentation {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return fallback ?? "" }
         let lower = trimmed.lowercased()
-        if lower.contains("word tree") || lower.contains("word-tree") {
+        if lower.contains("word tree") ||
+            lower.contains("word-tree") ||
+            lower.contains("forge live response") {
             return "Writing answer…"
         }
         if lower.contains("normalizing chunk") {

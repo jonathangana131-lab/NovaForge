@@ -9,6 +9,10 @@ import Foundation
 /// across hosted and local models while avoiding an unbounded message-count
 /// window in long-running projects.
 enum ProviderContextWindow {
+    enum PreparationError: Error, Equatable, Sendable {
+        case invalidSanitizedTranscript
+    }
+
     struct Budget: Equatable, Sendable {
         var maximumEstimatedTokens: Int
         var maximumMessages: Int
@@ -107,6 +111,78 @@ enum ProviderContextWindow {
         history.reduce(0) { partial, message in
             partial + estimatedTokenCount(message)
         }
+    }
+
+    /// One prompt/context boundary shared by V1 and every V2 canary. Keeping
+    /// selection, prompt construction, compaction, and validation here makes
+    /// byte-for-byte parity testable instead of relying on two similar strings.
+    static func prepareHostedTranscript(
+        history: [ProviderMessageInput],
+        customSystemPrompt: String?,
+        workspaceSummary: String,
+        budget: Budget = .hosted
+    ) throws -> SanitizedProviderTranscript {
+        let selected = select(history, budget: budget)
+        let transcript = ProviderMessageSanitizer.sanitize(
+            systemPrompt: systemPrompt(
+                customSystemPrompt: customSystemPrompt,
+                workspaceSummary: workspaceSummary
+            ),
+            history: selected
+        )
+        guard ProviderMessageSanitizer.validate(transcript.messages).isEmpty else {
+            throw PreparationError.invalidSanitizedTranscript
+        }
+        return transcript
+    }
+
+    static func systemPrompt(
+        customSystemPrompt: String?,
+        workspaceSummary: String
+    ) -> String {
+        if let customSystemPrompt,
+           !customSystemPrompt.trimmingCharacters(
+               in: .whitespacesAndNewlines
+           ).isEmpty {
+            return customSystemPrompt
+        }
+        return """
+        You are NovaForge, an iOS sandbox coding and file assistant.
+        You can inspect project structure, summarize workspaces, read whole files or line ranges, get file metadata, write/append/replace text, manage files/folders, diff files, validate JSON/HTML, extract code outlines, search text, and run safe commands in the sandbox using your tools.
+        When the user asks you to build an app, web page, or game, create or edit real workspace files with write_file/append_file/replace_text instead of pasting the project into chat.
+        Use tools in small inspect-edit-validate loops: list_tree or workspace_summary, read only relevant files/ranges, write changes, run targeted validators/checks, then fix any failure before the final response.
+        For HTML games/pages, write the file, then run validate_html <path>, wc <path>, head -n 40 <path>, and find . before the final response.
+        For code tasks, prefer tool actions over long chat output. Never stream full generated source into chat unless the user explicitly asks to see the source.
+        Do not greet, restate the request, or narrate obvious preparation. Before tool calls, use at most one short sentence and only when it clarifies what will happen next.
+        Use short paragraphs. Use Markdown only when it improves scanning, and never wrap a filename in both bold and inline-code markers.
+        Keep final chat responses short: say what changed, which file to open, and what validation passed.
+
+        Current workspace files:
+        \(workspaceSummary)
+
+        Always output a clear final text response to the user once you have finished executing tools or if no tools are needed.
+        """
+    }
+
+    static func workspaceSummary(
+        for workspace: SandboxWorkspace,
+        provider: AIProvider
+    ) -> String {
+        let items = (try? workspace.manifest(
+            maxItems: provider == .local ? 120 : 500,
+            maxDepth: provider == .local ? 3 : 5
+        )) ?? []
+        guard !items.isEmpty else { return "No files yet." }
+
+        let limit = provider == .local ? 36 : 160
+        let paths = items.map { item in
+            "\(item.isDirectory ? "folder" : "file"): \(item.relativePath)"
+        }
+        let visible = paths.prefix(limit).joined(separator: "\n")
+        let remaining = max(0, paths.count - limit)
+        return remaining > 0
+            ? "\(visible)\n... \(remaining) more workspace items hidden for responsive provider setup."
+            : visible
     }
 
     private static func coherentGroups(from ordered: [ProviderMessageInput]) -> [[ProviderMessageInput]] {

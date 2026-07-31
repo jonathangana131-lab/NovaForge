@@ -1,0 +1,64 @@
+{
+  "dialect": "responses",
+  "frames": [
+    {
+      "kind": "json",
+      "value": {"type": "response.created", "response": {"id": "resp-tool-1", "model": "fixture-model"}}
+    },
+    {
+      "kind": "json",
+      "value": {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"id": "item-1", "type": "function_call", "call_id": "call-1", "name": "write_file", "arguments": ""}
+      }
+    },
+    {
+      "kind": "json",
+      "value": {"type": "response.function_call_arguments.delta", "output_index": 0, "item_id": "item-1", "delta": "{\"path\":\""}
+    },
+    {
+      "kind": "json",
+      "value": {"type": "response.function_call_arguments.delta", "output_index": 0, "item_id": "item-1", "delta": "a.txt\",\"replace\":true}"}
+    },
+    {
+      "kind": "json",
+      "value": {
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "item_id": "item-1",
+        "arguments": "{\"path\":\"a.txt\",\"replace\":true}"
+      }
+    },
+    {
+      "kind": "json",
+      "value": {
+        "type": "response.completed",
+        "response": {
+          "id": "resp-tool-1",
+          "model": "fixture-model",
+          "status": "completed",
+          "usage": {
+            "input_tokens": 12,
+            "input_tokens_details": {"cached_tokens": 4},
+            "output_tokens": 5,
+            "output_tokens_details": {"reasoning_tokens": 1}
+          },
+          "output": [
+            {"type": "function_call", "id": "item-1", "call_id": "call-1", "name": "write_file", "arguments": "{\"path\":\"a.txt\",\"replace\":true}"}
+          ]
+        }
+      }
+    },
+    {"kind": "done"}
+  ],
+  "expected": [
+    "started|resp-tool-1|fixture-model",
+    "toolStarted|0|item-1|call-1|write_file",
+    "toolDelta|0|call-1|{\"path\":\"",
+    "toolDelta|0|call-1|a.txt\",\"replace\":true}",
+    "toolCompleted|0|item-1|call-1|write_file|{\"path\":\"a.txt\",\"replace\":true}",
+    "usage|12|4|5|1",
+    "completed|resp-tool-1|toolCalls"
+  ]
+}

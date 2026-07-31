@@ -300,6 +300,23 @@ struct CommandRunner {
     private static let unclosedQuoteIssue = "Close the quoted argument before running."
 
     func run(_ commandLine: String) throws -> String {
+        guard !TerminalCommandDraft(commandLine).isMutating else {
+            throw SandboxError.workspaceMutationPermitRequired
+        }
+        return try runCommand(commandLine, mutationPermit: nil)
+    }
+
+    func run(
+        _ commandLine: String,
+        permit: WorkspaceMutationPermit
+    ) throws -> String {
+        try runCommand(commandLine, mutationPermit: permit)
+    }
+
+    private func runCommand(
+        _ commandLine: String,
+        mutationPermit: WorkspaceMutationPermit?
+    ) throws -> String {
         try rejectShellSyntax(commandLine)
         let tokens = Self.tokenize(commandLine)
         guard let command = tokens.first else { return "" }
@@ -323,7 +340,9 @@ struct CommandRunner {
             return try workspace.read(path)
         case "mkdir":
             guard args.count == 1, let path = args.first else { throw SandboxError.invalidArguments }
-            try workspace.makeDirectory(path)
+            let permit = try requiredPermit(mutationPermit)
+            try validateTerminalMutation(commandLine, permit: permit)
+            try workspace.makeDirectory(path, permit: permit)
             return "Created \(path)"
         case "touch":
             // Create an empty file if missing, or refresh its modification
@@ -331,19 +350,35 @@ struct CommandRunner {
             // `(try? workspace.read(path)) ?? ""` then wrote that back, which
             // silently truncated files larger than `maxReadableBytes` to empty.
             guard args.count == 1, let path = args.first else { throw SandboxError.invalidArguments }
-            try workspace.touch(path)
+            let permit = try requiredPermit(mutationPermit)
+            try validateTerminalMutation(commandLine, permit: permit)
+            try workspace.touch(path, permit: permit)
             return "Touched \(path)"
         case "rm":
             let path = try deletionPath(from: args)
-            try workspace.delete(path)
+            let permit = try requiredPermit(mutationPermit)
+            try validateTerminalMutation(commandLine, permit: permit)
+            try workspace.delete(path, permit: permit)
             return "Removed \(path)"
         case "mv":
             guard args.count == 2 else { throw SandboxError.invalidArguments }
-            try workspace.move(from: args[0], to: args[1])
+            let permit = try requiredPermit(mutationPermit)
+            try validateTerminalMutation(commandLine, permit: permit)
+            try workspace.move(
+                from: args[0],
+                to: args[1],
+                permit: permit
+            )
             return "Moved \(args[0]) to \(args[1])"
         case "cp":
             guard args.count == 2 else { throw SandboxError.invalidArguments }
-            try workspace.copy(from: args[0], to: args[1])
+            let permit = try requiredPermit(mutationPermit)
+            try validateTerminalMutation(commandLine, permit: permit)
+            try workspace.copy(
+                from: args[0],
+                to: args[1],
+                permit: permit
+            )
             return "Copied \(args[0]) to \(args[1])"
         case "grep":
             guard args.count == 2 else { throw SandboxError.invalidArguments }
@@ -362,6 +397,28 @@ struct CommandRunner {
         default:
             throw SandboxError.unsupportedCommand(command)
         }
+    }
+
+    private func requiredPermit(
+        _ permit: WorkspaceMutationPermit?
+    ) throws -> WorkspaceMutationPermit {
+        guard let permit else {
+            throw SandboxError.workspaceMutationPermitRequired
+        }
+        return permit
+    }
+
+    private func validateTerminalMutation(
+        _ commandLine: String,
+        permit: WorkspaceMutationPermit
+    ) throws {
+        try permit.validate(
+            workspace: workspace,
+            operation: .terminalCommand(
+                command: commandLine,
+                targetPaths: WorkspaceMutationOperation.terminalTargetPaths(for: commandLine)
+            )
+        )
     }
 
     func validateHTMLFile(path: String, profile: String = "auto") throws -> String {

@@ -108,4 +108,37 @@ final class HistoryWorkspacePresentationTests: XCTestCase {
             )
         )
     }
+
+    func testHistoryToolRunCacheSignatureChangesForInPlaceLifecycleMutation() {
+        let run = ToolRun(
+            name: "run_command",
+            argumentsJSON: #"{"command":"swift test"}"#,
+            status: .approved,
+            isMutating: false
+        )
+        let active = HistoryToolRunCacheSignature(run)
+
+        run.output = "All tests passed"
+        run.status = .completed
+        run.completedAt = Date()
+
+        XCTAssertNotEqual(active, HistoryToolRunCacheSignature(run))
+    }
+
+    func testHistoryTerminalCacheSignatureChangesForInPlaceOutputMutation() {
+        let record = TerminalCommandRecord(
+            project: nil,
+            command: "swift test",
+            output: "running",
+            status: .completed,
+            workspaceName: "Default",
+            durationMs: 10
+        )
+        let initial = HistoryTerminalRecordCacheSignature(record)
+
+        record.output = "All tests passed"
+        record.durationMs = 20
+
+        XCTAssertNotEqual(initial, HistoryTerminalRecordCacheSignature(record))
+    }
 }

@@ -1,0 +1,11 @@
+{
+  "dialect": "responses",
+  "frames": [
+    {"kind": "json", "value": {"type": "response.created", "response": {"id": "cancel-1", "model": "fixture-model"}}},
+    {"kind": "cancelled", "reason": "user_requested"}
+  ],
+  "expected": [
+    "started|cancel-1|fixture-model",
+    "cancelled|cancel-1|user_requested"
+  ]
+}

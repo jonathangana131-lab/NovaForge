@@ -660,7 +660,7 @@ struct LlamaServiceTests {
         // Re-process the same prompt through a fresh Llama to retrieve tokens deterministically
         let llama = try Llama(modelPath: URL.llama1B.path, config: .init(batchSize: 256, maxTokenCount: 2048, useGPU: false))
         try await llama.initializeCompletion(messages: messages)
-        await llama.updateSamplingConfig(cfg)
+        try await llama.updateSamplingConfig(cfg)
         var tokens: [Int32] = []
         generation: while await llama.currentTokenPosition < llama.maxTokenCount && tokens.count < 240 {
             let result = try await llama.generateNextToken()
@@ -981,4 +981,3 @@ private enum TestError: Error, LocalizedError {
         }
     }
 }
-

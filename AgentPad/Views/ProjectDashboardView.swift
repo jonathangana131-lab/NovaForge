@@ -24,15 +24,18 @@ struct ProjectDashboardView: View {
     @SceneStorage("ProjectDashboardView.selectedDetailScope") var restoredDetailScopeRawValue = "review"
     @SceneStorage("ProjectDashboardView.showsProjectDetails") var restoredShowsProjectDetails = false
     @State var presentedProjectSheet: ProjectSheetDestination?
+    @State var showingProjectActions = false
     @State var confirmingProjectDelete = false
     @State var runStartFeedback = false
     @State var dashboardSaveError: String?
     @State var projectScrollStartedAt: Date?
+    @State var projectScrollSettleTask: Task<Void, Never>?
     @State var didRunAutoScrollProfile = false
     @State var didPresentProjectIntakeDemo = false
     @State var didArmProjectFrameProbe = false
     @Namespace var projectSwitchGlassNamespace
     let project: Project
+    let materializedEvidenceRevision: Int64
     let projects: [Project]
     let runtimeStatus: WorkspaceStatusSnapshot
     let autoContinueState: ProjectAutoContinueViewState
@@ -168,6 +171,7 @@ struct ProjectDashboardView: View {
 
     init(
         project: Project,
+        materializedEvidenceRevision: Int64,
         projects: [Project],
         runtimeStatus: WorkspaceStatusSnapshot,
         autoContinueState: ProjectAutoContinueViewState,
@@ -190,6 +194,7 @@ struct ProjectDashboardView: View {
         isVisibleForFrameProfiling: Bool = true
     ) {
         self.project = project
+        self.materializedEvidenceRevision = materializedEvidenceRevision
         self.projects = projects
         self.runtimeStatus = runtimeStatus
         self.autoContinueState = autoContinueState
@@ -362,26 +367,33 @@ struct ProjectDashboardView: View {
     }
 
     var projectOSCompletedStepCount: Int {
-        projectOSDisplaySteps.filter { $0.status == .completed }.count
+        let steps = projectOSDisplaySteps
+        return steps.filter { $0.status == .completed }.count
     }
 
     var projectOSProgressFraction: Double {
-        guard !projectOSDisplaySteps.isEmpty else { return 0 }
-        return Double(projectOSCompletedStepCount) / Double(projectOSDisplaySteps.count)
+        let steps = projectOSDisplaySteps
+        guard !steps.isEmpty else { return 0 }
+        return Double(steps.lazy.filter { $0.status == .completed }.count) / Double(steps.count)
     }
 
     var projectOSCurrentStep: ProjectOSDisplayStep? {
-        projectOSDisplaySteps.first { $0.status == .running || $0.status == .planning || $0.status == .waiting || $0.status == .blocked } ??
-            projectOSDisplaySteps.first { !$0.status.isTerminal } ??
-            projectOSDisplaySteps.last
+        let steps = projectOSDisplaySteps
+        return steps.first { $0.status == .running || $0.status == .planning || $0.status == .waiting || $0.status == .blocked } ??
+            steps.first { !$0.status.isTerminal } ??
+            steps.last
     }
 
     var projectOSNextStep: ProjectOSDisplayStep? {
-        guard let current = projectOSCurrentStep,
-              let index = projectOSDisplaySteps.firstIndex(where: { $0.id == current.id }) else {
-            return projectOSDisplaySteps.first
+        let steps = projectOSDisplaySteps
+        let current = steps.first { $0.status == .running || $0.status == .planning || $0.status == .waiting || $0.status == .blocked } ??
+            steps.first { !$0.status.isTerminal } ??
+            steps.last
+        guard let current,
+              let index = steps.firstIndex(where: { $0.id == current.id }) else {
+            return steps.first
         }
-        return projectOSDisplaySteps.dropFirst(index + 1).first { !$0.status.isTerminal }
+        return steps.dropFirst(index + 1).first { !$0.status.isTerminal }
     }
 
     struct ProjectOSDisplayStep: Identifiable, Equatable {
@@ -411,21 +423,28 @@ struct ProjectDashboardView: View {
         cachedSummary
     }
 
-    var primarySurfaceKey: ProjectPrimarySurfaceKey {
+    func primarySurfaceKey(
+        snapshotKey: ProjectDashboardSnapshotKey,
+        activeRun: ProjectOSRun?
+    ) -> ProjectPrimarySurfaceKey {
         let latestArtifact = projectArtifacts.first
         return ProjectPrimarySurfaceKey(
             projectID: project.id,
             projectName: project.name,
             workspaceName: project.workspaceName,
             summary: summary,
+            snapshotKey: snapshotKey,
             latestArtifactID: latestArtifact?.id,
             latestArtifactPath: latestArtifact?.path,
             latestArtifactTitle: latestArtifact?.title,
             latestArtifactKindRawValue: latestArtifact?.kindRawValue,
             latestArtifactUpdatedAt: latestArtifact?.updatedAt,
             recommendedCommandIntent: recommendedCommandIntent,
-            commandContext: trimmedCommandContext,
+            selectedCommandIntent: selectedCommandIntent,
+            selectedDetailScope: selectedDetailScope,
+            commandContext: commandContext,
             commandRunBlocked: commandRunBlocked,
+            runStartFeedback: runStartFeedback,
             showsWorkspaceStatusStrip: runtimeStatus.isVisible,
             runtimeStatusTitle: runtimeStatus.title,
             runtimeStatusDetail: runtimeStatus.detail,
@@ -434,33 +453,25 @@ struct ProjectDashboardView: View {
             runtimeStatusIsWorking: runtimeStatus.isWorking,
             runtimeProgressSteps: runtimeStatus.progressSteps,
             autoContinueState: autoContinueState,
-            projectOSRunID: activeProjectOSRun?.id,
-            projectOSRunStatusRawValue: activeProjectOSRun?.statusRawValue,
-            projectOSRunUpdatedAt: activeProjectOSRun?.updatedAt,
-            projectOSRunStepCount: activeProjectOSRun?.steps.count ?? 0
+            projectOSRunID: activeRun?.id,
+            projectOSRunStatusRawValue: activeRun?.statusRawValue,
+            projectOSRunUpdatedAt: activeRun?.updatedAt
         )
     }
 
-    var dashboardSnapshotID: String {
-        let projectMessageCount = Self.totalMessageCount(in: project.conversations)
-        let fetchedMessageCount = Self.totalMessageCount(in: conversations)
-        var components: [String] = []
-        components.reserveCapacity(11)
-        components.append(project.id.uuidString)
-        components.append(String(project.updatedAt.timeIntervalSince1970))
-        components.append(String(project.conversations.count))
-        components.append(String(conversations.count))
-        components.append(String(projectMessageCount))
-        components.append(String(fetchedMessageCount))
-        components.append(String(dashboardRuns.count))
-        components.append(String(dashboardEvents.count))
-        components.append(String(dashboardArtifacts.count))
-        components.append(String(dashboardTerminalCommands.count))
-        components.append(String(dashboardFileChanges.count))
-        components.append(String(dashboardProjectOSRuns.count))
-        components.append(String(activeProjectOSRun?.updatedAt.timeIntervalSince1970 ?? 0))
-        components.append(activeProjectOSRun?.statusRawValue ?? "none")
-        return components.joined(separator: "-")
+    func dashboardSnapshotKey(activeRun: ProjectOSRun?) -> ProjectDashboardSnapshotKey {
+        // Projectors advance the companion revision in the same transaction as
+        // their rows and cursor. Keep this refresh key scalar so the render
+        // boundary does not fault relationships just to detect new evidence.
+        ProjectDashboardSnapshotKey(
+            projectID: project.id,
+            materializedEvidenceRevision: materializedEvidenceRevision,
+            projectUpdatedAt: project.updatedAt,
+            projectLastActivityAt: project.lastActivityAt,
+            activeProjectOSRunID: activeRun?.id,
+            activeProjectOSRunUpdatedAt: activeRun?.updatedAt,
+            activeProjectOSRunStatusRawValue: activeRun?.statusRawValue
+        )
     }
 
     var sortedProjects: [Project] {
@@ -601,70 +612,61 @@ struct ProjectDashboardView: View {
 
     var body: some View {
         let _ = AgentPerformance.bodyEvaluation("Project Dashboard Body")
-        Group {
-            if AgentPerformance.shouldProfileFrameRate {
+        let activeRun = activeProjectOSRun
+        let snapshotKey = dashboardSnapshotKey(activeRun: activeRun)
+        let surfaceKey = primarySurfaceKey(snapshotKey: snapshotKey, activeRun: activeRun)
+        ZStack(alignment: .top) {
+            ProjectStableSurface(key: surfaceKey) {
                 VStack(spacing: 0) {
                     projectPinnedCommandCenter
                         .padding(.horizontal)
                         .padding(.top, 6)
                         .padding(.bottom, 4)
+                        .zIndex(3)
 
-                    projectPerformanceProfileSurface
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    projectPinnedActionDock
-                        .padding(.horizontal)
-                        .padding(.top, 6)
-                        .padding(.bottom, 4)
-                }
-            } else {
-                ZStack(alignment: .top) {
-                    VStack(spacing: 0) {
-                        projectPinnedCommandCenter
+                    ScrollViewReader { scrollProxy in
+                        ScrollView(showsIndicators: false) {
+                            LazyVStack(alignment: .leading, spacing: 14) {
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id(Self.projectScrollTopID)
+                                    .accessibilityHidden(true)
+
+                                projectOSControlCenter
+
+                                projectOSWorkspaceSection
+
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id(Self.projectScrollBottomID)
+                                    .accessibilityHidden(true)
+                            }
                             .padding(.horizontal)
                             .padding(.top, 6)
-                            .padding(.bottom, 4)
-                            .zIndex(3)
-
-                        ScrollViewReader { scrollProxy in
-                            ScrollView(showsIndicators: false) {
-                                LazyVStack(alignment: .leading, spacing: 14) {
-                                    Color.clear
-                                        .frame(height: 1)
-                                        .id(Self.projectScrollTopID)
-                                        .accessibilityHidden(true)
-
-                                    projectOSControlCenter
-
-                                    projectOSWorkspaceSection
-
-                                    Color.clear
-                                        .frame(height: 1)
-                                        .id(Self.projectScrollBottomID)
-                                        .accessibilityHidden(true)
-                                }
-                                .padding(.horizontal)
-                                .padding(.top, 6)
-                                .padding(.bottom, 12)
-                            }
-                            .scrollContentBackground(.hidden)
-                            .scrollDismissesKeyboard(.interactively)
-                            .simultaneousGesture(projectScrollInstrumentationGesture)
-                            .task(id: project.id) {
-                                await runProjectAutoScrollProfileIfNeeded(scrollProxy)
-                            }
+                            .padding(.bottom, 12)
+                        }
+                        .scrollContentBackground(.hidden)
+                        .accessibilityIdentifier("projectDossierScroll")
+                        .scrollDismissesKeyboard(.interactively)
+                        .simultaneousGesture(projectScrollInstrumentationGesture)
+                        .task(id: project.id) {
+                            await runProjectAutoScrollProfileIfNeeded(scrollProxy)
                         }
                     }
-
-                    projectFrameRateProbe
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    projectPinnedActionDock
-                        .padding(.horizontal)
-                        .padding(.top, 6)
-                        .padding(.bottom, 4)
                 }
             }
+            .equatable()
+
+            projectFrameRateProbe
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ProjectStableSurface(key: surfaceKey) {
+                projectPinnedActionDock
+                    .padding(.horizontal)
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
+            }
+            .equatable()
         }
         .accessibilityIdentifier("projectDashboard")
         .onAppear {
@@ -676,7 +678,11 @@ struct ProjectDashboardView: View {
             presentProjectIntakeDemoIfNeeded()
             armProjectFrameProbeAfterSettle()
         }
-        .task(id: dashboardSnapshotID) {
+        .onDisappear {
+            projectScrollSettleTask?.cancel()
+            projectScrollSettleTask = nil
+        }
+        .task(id: snapshotKey) {
             try? await Task.sleep(for: .milliseconds(90))
             guard !Task.isCancelled else { return }
             refreshDashboardSnapshot()
@@ -746,60 +752,6 @@ struct ProjectDashboardView: View {
         }
     }
 
-    @ViewBuilder
-    var projectPerformanceProfileSurface: some View {
-        ZStack(alignment: .top) {
-            ScrollViewReader { scrollProxy in
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Color.clear
-                            .frame(height: 1)
-                            .id(Self.projectScrollTopID)
-                            .accessibilityHidden(true)
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Mission Dossier")
-                                .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.primaryAccent)
-                            Text(project.name)
-                                .font(.system(size: 20, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.ink)
-                                .lineLimit(2)
-                            Text(summary.review.headline)
-                                .font(.system(size: 11, weight: .semibold, design: AgentPalette.interfaceFontDesign))
-                                .foregroundStyle(AgentPalette.secondaryText)
-                                .lineLimit(2)
-                        }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AgentPalette.surfaceElevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("projectOSControlCenter")
-
-                        Color.clear
-                            .frame(height: 760)
-                            .accessibilityHidden(true)
-
-                        Color.clear
-                            .frame(height: 1)
-                            .id(Self.projectScrollBottomID)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.horizontal)
-                    .padding(.top, 10)
-                    .padding(.bottom, BottomDockMetrics.scrollClearance)
-                }
-                .scrollContentBackground(.hidden)
-                .simultaneousGesture(projectScrollInstrumentationGesture)
-                .task(id: project.id) {
-                    await runProjectAutoScrollProfileIfNeeded(scrollProxy)
-                }
-            }
-
-            projectFrameRateProbe
-        }
-    }
-
     var projectScrollInstrumentationGesture: some Gesture {
         DragGesture(minimumDistance: 8)
             .onChanged { _ in
@@ -812,20 +764,34 @@ struct ProjectDashboardView: View {
                     // so stop the sampler before screenshot/dismissal work can
                     // poison the Project idle averages.
                     didArmProjectFrameProbe = false
+                    projectScrollSettleTask?.cancel()
+                    projectScrollSettleTask = nil
                     projectScrollStartedAt = nil
                     return
                 }
                 guard projectScrollStartedAt == nil else { return }
+                projectScrollSettleTask?.cancel()
+                projectScrollSettleTask = nil
                 projectScrollStartedAt = Date()
                 AgentPerformance.event("Project Scroll Started")
             }
             .onEnded { value in
                 guard let startedAt = projectScrollStartedAt else { return }
-                let durationMilliseconds = max(0, Date().timeIntervalSince(startedAt) * 1_000)
-                AgentPerformance.value("Project Scroll Duration ms", durationMilliseconds)
-                AgentPerformance.value("Project Scroll Distance", Double(abs(value.translation.height)))
-                AgentPerformance.event("Project Scroll Completed")
-                projectScrollStartedAt = nil
+                let distance = Double(abs(value.translation.height))
+                projectScrollSettleTask?.cancel()
+                projectScrollSettleTask = Task { @MainActor in
+                    // Keep the sampler labeled as scrolling through deceleration,
+                    // not only while the finger is physically down. This makes
+                    // the gate match a real swipe instead of a sub-second drag.
+                    try? await Task.sleep(for: .milliseconds(1_100))
+                    guard !Task.isCancelled, projectScrollStartedAt == startedAt else { return }
+                    let durationMilliseconds = max(0, Date().timeIntervalSince(startedAt) * 1_000)
+                    AgentPerformance.value("Project Scroll Duration ms", durationMilliseconds)
+                    AgentPerformance.value("Project Scroll Distance", distance)
+                    AgentPerformance.event("Project Scroll Completed")
+                    projectScrollStartedAt = nil
+                    projectScrollSettleTask = nil
+                }
             }
     }
 
@@ -860,21 +826,25 @@ struct ProjectDashboardView: View {
         guard !didRunAutoScrollProfile else { return }
         guard ProcessInfo.processInfo.arguments.contains("--auto-project-scroll") else { return }
         didRunAutoScrollProfile = true
-        try? await Task.sleep(for: .milliseconds(3_400))
+        // Leave launch/accessibility discovery outside the measured idle
+        // window, then exercise the real dossier with two complete animations.
+        try? await Task.sleep(for: .milliseconds(4_600))
         guard !Task.isCancelled else { return }
 
         projectScrollStartedAt = Date()
+        projectScrollSettleTask?.cancel()
+        projectScrollSettleTask = nil
         AgentPerformance.event("Project Scroll Started")
         withAnimation(projectAutoScrollAnimation(duration: 1.1)) {
             proxy.scrollTo(Self.projectScrollBottomID, anchor: .bottom)
         }
-        try? await Task.sleep(for: .milliseconds(850))
+        try? await Task.sleep(for: .milliseconds(1_200))
         guard !Task.isCancelled else { return }
 
         withAnimation(projectAutoScrollAnimation(duration: 1.0)) {
             proxy.scrollTo(Self.projectScrollTopID, anchor: .top)
         }
-        try? await Task.sleep(for: .milliseconds(650))
+        try? await Task.sleep(for: .milliseconds(1_100))
         guard !Task.isCancelled else { return }
 
         if let startedAt = projectScrollStartedAt {
@@ -895,7 +865,7 @@ struct ProjectDashboardView: View {
         }
         didArmProjectFrameProbe = false
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(1_600))
+            try? await Task.sleep(for: .milliseconds(3_200))
             guard !Task.isCancelled else { return }
             didArmProjectFrameProbe = true
         }
@@ -904,7 +874,11 @@ struct ProjectDashboardView: View {
     func projectAutoScrollAnimation(duration: TimeInterval) -> Animation? {
         guard !reduceMotion else { return nil }
         if AgentPerformance.shouldProfileFrameRate {
-            return nil
+            // The performance gate must exercise real scroll frames. Returning
+            // nil turns both scrollTo calls into instantaneous jumps and labels
+            // the following sleeps as "scroll" FPS, which measures a static
+            // display link instead of Mission Dossier interaction health.
+            return .linear(duration: duration)
         }
         guard !AgentPerformance.prefersReducedVisualEffects else { return nil }
         return .smooth(duration: duration)
@@ -1256,14 +1230,18 @@ struct ProjectPrimarySurfaceKey: Equatable {
     let projectName: String
     let workspaceName: String
     let summary: ProjectMissionSummary
+    let snapshotKey: ProjectDashboardSnapshotKey
     let latestArtifactID: UUID?
     let latestArtifactPath: String?
     let latestArtifactTitle: String?
     let latestArtifactKindRawValue: String?
     let latestArtifactUpdatedAt: Date?
     let recommendedCommandIntent: ProjectCommandIntent
+    let selectedCommandIntent: ProjectCommandIntent
+    let selectedDetailScope: ProjectDashboardView.ProjectDetailScope
     let commandContext: String
     let commandRunBlocked: Bool
+    let runStartFeedback: Bool
     let showsWorkspaceStatusStrip: Bool
     let runtimeStatusTitle: String
     let runtimeStatusDetail: String
@@ -1275,7 +1253,6 @@ struct ProjectPrimarySurfaceKey: Equatable {
     let projectOSRunID: UUID?
     let projectOSRunStatusRawValue: String?
     let projectOSRunUpdatedAt: Date?
-    let projectOSRunStepCount: Int
 }
 
 private struct ProjectIntakeSheet: View {
@@ -1402,7 +1379,7 @@ private struct ProjectIntakeSheet: View {
             }
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .background(AgentBackground().ignoresSafeArea())
+            .background(AgentBackground(isAnimated: false).ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -1414,6 +1391,7 @@ private struct ProjectIntakeSheet: View {
                         create(draft)
                     }
                     .disabled(!canCreate)
+                    .accessibilityIdentifier("projectIntakeCreateButton")
                 }
             }
             .task {
@@ -1511,7 +1489,7 @@ private struct ProjectEditSheet: View {
                 .padding(18)
             }
             .scrollContentBackground(.hidden)
-            .background(AgentBackground().ignoresSafeArea())
+            .background(AgentBackground(isAnimated: false).ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

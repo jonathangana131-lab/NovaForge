@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    {
+      "frames": [
+        {"kind": "json", "value": {"id": "attempt-poison", "model": "fixture-model", "choices": [{"index": 0, "delta": {"content": "POISON"}, "finish_reason": null}]}}
+      ],
+      "failure": "transport"
+    },
+    {
+      "frames": [
+        {"kind": "json", "value": {"id": "attempt-clean", "model": "fixture-model", "choices": [{"index": 0, "delta": {"content": "clean"}, "finish_reason": null}]}},
+        {"kind": "json", "value": {"id": "attempt-clean", "model": "fixture-model", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}},
+        {"kind": "json", "value": {"id": "attempt-clean", "model": "fixture-model", "choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 1}}},
+        {"kind": "done"}
+      ]
+    }
+  ],
+  "expectedCommittedText": "clean",
+  "forbiddenCommittedText": "POISON"
+}

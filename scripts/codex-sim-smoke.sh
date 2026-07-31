@@ -32,6 +32,7 @@ LOG_DIR="${LOG_DIR:-$ROOT_DIR/QA/codex-smoke}"
 SCREENSHOT_DIR="${SCREENSHOT_DIR:-$ROOT_DIR/NovaForgeScreenshots}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 SCREENSHOT_NAME="${SCREENSHOT_NAME:-codex-smoke-$STAMP.png}"
+NOVAFORGE_SOURCE_COMMIT="${NOVAFORGE_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)}"
 
 if (( $# > 0 )); then
   LAUNCH_ARGS=("$@")
@@ -131,6 +132,7 @@ if [[ "$BUILD_FIRST" == "1" ]]; then
     -destination "$BUILD_DESTINATION" \
     ONLY_ACTIVE_ARCH="$ONLY_ACTIVE_ARCH" \
     CODE_SIGNING_ALLOWED=NO \
+    NOVAFORGE_SOURCE_COMMIT="$NOVAFORGE_SOURCE_COMMIT" \
     -quiet \
     build >"$BUILD_LOG" 2>&1; then
     :

@@ -717,17 +717,33 @@ struct NovaGlassToolbar<Content: View>: View {
 
 struct NovaGlassSheetBackground: View {
     var tint: Color = AgentPalette.accent
+    var lightweight = false
 
+    @ViewBuilder
     var body: some View {
-        AgentBackground()
-            .overlay(
+        if lightweight {
+            ZStack {
+                Rectangle()
+                    .fill(.thinMaterial)
+                AgentPalette.surface.opacity(AgentPalette.isLight ? 0.72 : 0.54)
                 LinearGradient(
-                    colors: [tint.opacity(0.12), Color.clear, AgentPalette.surface.opacity(0.30)],
+                    colors: [tint.opacity(0.15), Color.clear, AgentPalette.surface.opacity(0.24)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-            )
+            }
             .ignoresSafeArea()
+        } else {
+            AgentBackground()
+                .overlay(
+                    LinearGradient(
+                        colors: [tint.opacity(0.12), Color.clear, AgentPalette.surface.opacity(0.30)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .ignoresSafeArea()
+        }
     }
 }
 

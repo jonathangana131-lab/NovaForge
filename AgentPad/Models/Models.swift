@@ -1405,6 +1405,8 @@ final class ProjectOSStep {
 
 @Model
 final class Conversation {
+    static let orchestrationTitlePrefix = "NovaForge Subagent · "
+
     var id: UUID
     var title: String
     var createdAt: Date
@@ -1415,6 +1417,10 @@ final class Conversation {
     @Relationship(deleteRule: .cascade, inverse: \ChatMessage.conversation)
     var messages: [ChatMessage]
     var project: Project?
+
+    var isOrchestrationChild: Bool {
+        title.hasPrefix(Self.orchestrationTitlePrefix)
+    }
 
     init(title: String = "NovaForge", project: Project? = nil) {
         self.id = UUID()
@@ -1454,7 +1460,12 @@ final class Conversation {
     func refreshMessageMetadata(updateTimestamp: Date? = nil) {
         messageCount = messages.count
         hasUserMessages = messages.contains { $0.role == .user }
-        if let latest = messages.max(by: { $0.createdAt < $1.createdAt }) {
+        if let latest = messages.max(by: { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt {
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            return lhs.createdAt < rhs.createdAt
+        }) {
             lastMessagePreview = Self.previewText(for: latest.content)
         } else {
             lastMessagePreview = ""
@@ -1517,6 +1528,19 @@ enum PersistedPayloadBudget {
 
     static func compactToolRunArguments(_ argumentsJSON: String) -> String {
         compactJSONArguments(argumentsJSON, label: "persisted tool arguments", limit: maxToolRunArgumentsCharacters)
+    }
+
+    /// Leaves room for the gateway's receipt envelope while preserving the
+    /// same structured compaction behavior as ordinary tool arguments.
+    static func compactWorkspaceMutationArguments(
+        _ argumentsJSON: String,
+        limit: Int
+    ) -> String {
+        compactJSONArguments(
+            argumentsJSON,
+            label: "persisted workspace mutation arguments",
+            limit: min(maxToolRunArgumentsCharacters, max(512, limit))
+        )
     }
 
     static func compactToolRunOutput(_ output: String) -> String {
@@ -2017,6 +2041,52 @@ final class ToolOperationRecord {
     }
 }
 
+/// A non-persisted validation error used by the mandatory workspace journal.
+/// Keeping this outside `ToolOperationRecord` preserves NovaForgeSchemaV1's
+/// stored shape while giving the new gateway a strict state machine.
+struct ToolOperationJournalTransitionError: Error, Equatable, Sendable {
+    let currentPhase: ToolOperationPhase
+    let requestedPhase: ToolOperationPhase
+}
+
+extension ToolOperationRecord {
+    /// Advances only through the write-ahead journal's monotonic state graph.
+    /// Replaying the already-durable phase is an idempotent no-op.
+    func advanceJournalPhase(
+        to nextPhase: ToolOperationPhase,
+        at timestamp: Date = Date(),
+        resultSummary: String? = nil,
+        errorMessage: String? = nil
+    ) throws {
+        let currentPhase = phase
+        guard currentPhase != nextPhase else { return }
+
+        let isAllowed = switch (currentPhase, nextPhase) {
+        case (.scheduled, .executing),
+             (.scheduled, .interrupted),
+             (.executing, .applied),
+             (.executing, .interrupted),
+             (.applied, .completed):
+            true
+        default:
+            false
+        }
+        guard isAllowed else {
+            throw ToolOperationJournalTransitionError(
+                currentPhase: currentPhase,
+                requestedPhase: nextPhase
+            )
+        }
+
+        transition(
+            to: nextPhase,
+            at: timestamp,
+            resultSummary: resultSummary,
+            errorMessage: errorMessage
+        )
+    }
+}
+
 @Model
 final class AgentSettings {
     var id: UUID
@@ -2032,9 +2102,13 @@ final class AgentSettings {
     var updatedAt: Date
 
     var provider: AIProvider {
-        get { AIProvider(rawValue: providerRawValue ?? "") ?? .openAI }
+        // Unknown and pre-provider settings have never authorized a hosted
+        // route. Keep the UI on the same fail-safe local default that launch
+        // repair persists instead of rendering OpenAI while AgentSystem
+        // correctly rejects the raw value.
+        get { AIProvider(rawValue: providerRawValue ?? "") ?? .local }
         set {
-            let oldProvider = AIProvider(rawValue: providerRawValue ?? "") ?? .openAI
+            let oldProvider = AIProvider(rawValue: providerRawValue ?? "") ?? .local
             providerRawValue = newValue.rawValue
             if oldProvider != newValue, !newValue.modelOptions.contains(modelID) {
                 modelID = newValue.defaultModel
@@ -2044,6 +2118,7 @@ final class AgentSettings {
 
     @discardableResult
     func switchProvider(to newProvider: AIProvider) -> Bool {
+        let oldProviderRawValue = providerRawValue
         let oldProvider = provider
         let oldModelID = modelID
         providerRawValue = newProvider.rawValue
@@ -2059,7 +2134,8 @@ final class AgentSettings {
             repairStaleModelSelection()
         }
 
-        let changed = oldProvider != newProvider || oldModelID != modelID
+        let changed = oldProviderRawValue != providerRawValue ||
+            oldProvider != newProvider || oldModelID != modelID
         if changed {
             updatedAt = Date()
         }
@@ -2080,51 +2156,50 @@ final class AgentSettings {
     }
 
     @discardableResult
-    func repairStaleModelSelection() -> Bool {
-        let selectedProvider = provider
+    func repairStaleModelSelection(now: Date = Date()) -> Bool {
+        let selectedProvider = AIProvider(rawValue: providerRawValue ?? "")
+            ?? .local
+        var changed = false
+        if providerRawValue != selectedProvider.rawValue {
+            providerRawValue = selectedProvider.rawValue
+            changed = true
+        }
         let trimmedModel = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !trimmedModel.isEmpty else {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
+        if trimmedModel.isEmpty {
+            if modelID != selectedProvider.defaultModel {
+                modelID = selectedProvider.defaultModel
+                changed = true
+            }
+        } else if selectedProvider.modelOptions.contains(trimmedModel) {
+            if trimmedModel != modelID {
+                modelID = trimmedModel
+                changed = true
+            }
+        } else if selectedProvider.requiresExplicitGPT56ModelSelection(
+            trimmedModel
+        ) {
+            // GPT-5.6-sol is an exact provenance boundary, not a model family.
+            // Keep unsupported aliases visible and blocked so launch/runtime
+            // repair cannot silently convert them into the exact selection.
+            if trimmedModel != modelID {
+                modelID = trimmedModel
+                changed = true
+            }
+        } else {
+            // AgentSystem mints route authority from a closed provider/model
+            // catalog. An empty, local, cross-provider, or arbitrary stale ID
+            // must be repaired at the persistence boundary.
+            if modelID != selectedProvider.defaultModel {
+                modelID = selectedProvider.defaultModel
+                changed = true
+            }
         }
 
-        if selectedProvider.modelOptions.contains(trimmedModel) {
-            if trimmedModel != modelID { modelID = trimmedModel }
-            return false
+        if changed {
+            updatedAt = now
         }
-
-        if selectedProvider == .local {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
-        }
-
-        if LocalModelCatalog.variant(for: trimmedModel) != nil {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
-        }
-
-        let belongsToAnotherBuiltInProvider = AIProvider.allCases.contains { candidate in
-            candidate != selectedProvider && candidate.modelOptions.contains(trimmedModel)
-        }
-        if belongsToAnotherBuiltInProvider {
-            modelID = selectedProvider.defaultModel
-            updatedAt = Date()
-            return true
-        }
-
-        // Unknown exact IDs are intentional: Settings exposes a manual model-ID
-        // escape hatch for custom/new provider models before /models refresh knows
-        // about them. Keep those instead of over-correcting.
-        if trimmedModel != modelID {
-            modelID = trimmedModel
-            updatedAt = Date()
-            return true
-        }
-        return false
+        return changed
     }
 
     init(
@@ -2151,10 +2226,11 @@ final class AgentSettings {
     }
 }
 
-/// The first explicit SwiftData schema baseline. Existing NovaForge releases
-/// used an unversioned `Schema` with the same model names. The additional
-/// entities and optional linkage fields in this baseline are lightweight,
-/// additive changes so those stores can be opened in place.
+/// The first explicit SwiftData schema baseline. The earlier default SwiftData
+/// schema also reported 1.0.0 but had a different exact model checksum, fewer
+/// entities, and older ChatMessage / ToolRun shapes. Launch persistence handles
+/// that one known signature with a verified snapshot before allowing Core Data
+/// to infer its additive migration; it is intentionally not a wildcard stage.
 enum NovaForgeSchemaV1: VersionedSchema {
     static let versionIdentifier = Schema.Version(1, 0, 0)
 
@@ -2177,14 +2253,77 @@ enum NovaForgeSchemaV1: VersionedSchema {
     }
 }
 
+/// The exact event-ledger schema shipped as version 2.0.0. Treat this list as a
+/// frozen compatibility boundary: released stores contain these seven companion
+/// records and must continue to match this version byte-for-byte.
+enum NovaForgeSchemaV2: VersionedSchema {
+    static let versionIdentifier = Schema.Version(2, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        NovaForgeSchemaV1.models + [
+            AgentEventRecord.self,
+            PersistedAgentRunMetadataRecord.self,
+            ApprovalRequestRecord.self,
+            ToolEffectEvidenceRecord.self,
+            ProjectionCursorRecord.self,
+            ProjectionSnapshotRecord.self,
+            ExecutionNodeRecord.self
+        ]
+    }
+}
+
+/// Additive materialization schema. Artifact projections and the two deletion /
+/// invalidation companions were introduced after the released V2 model, so all
+/// three belong to V3 and both earlier model shapes remain immutable.
+enum NovaForgeSchemaV3: VersionedSchema {
+    static let versionIdentifier = Schema.Version(3, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        NovaForgeSchemaV2.models + [
+            AgentArtifactProjectionRecord.self,
+            ProjectMaterializedEvidenceRevisionRecord.self,
+            AgentMaterializationDispositionRecord.self
+        ]
+    }
+}
+
+/// Additive immutable run-composition schema. V1-V3 remain frozen release
+/// boundaries; V4 adds only the credential-free execution record required for
+/// exact acceptance retry and recovery.
+enum NovaForgeSchemaV4: VersionedSchema {
+    static let versionIdentifier = Schema.Version(4, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        NovaForgeSchemaV3.models + [
+            PersistedAgentRunExecutionCompositionRecord.self
+        ]
+    }
+}
+
 enum NovaForgeSchemaMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [NovaForgeSchemaV1.self]
+        [
+            NovaForgeSchemaV1.self,
+            NovaForgeSchemaV2.self,
+            NovaForgeSchemaV3.self,
+            NovaForgeSchemaV4.self
+        ]
     }
 
-    /// V1 is the explicit baseline. Add a lightweight or custom stage here when
-    /// V2 changes the persisted shape.
     static var stages: [MigrationStage] {
-        []
+        [
+            .lightweight(
+                fromVersion: NovaForgeSchemaV1.self,
+                toVersion: NovaForgeSchemaV2.self
+            ),
+            .lightweight(
+                fromVersion: NovaForgeSchemaV2.self,
+                toVersion: NovaForgeSchemaV3.self
+            ),
+            .lightweight(
+                fromVersion: NovaForgeSchemaV3.self,
+                toVersion: NovaForgeSchemaV4.self
+            )
+        ]
     }
 }

@@ -1,0 +1,75 @@
+{
+  "formatVersion": 1,
+  "fixture": "NovaForgePreExplicit.store",
+  "capture": {
+    "capturedAt": "2026-07-14T19:11:31.000Z",
+    "method": "SQLite online backup after clean simulator app termination",
+    "simulatorRuntime": "com.apple.CoreSimulator.SimRuntime.iOS-26-1",
+    "simulatorDeviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-12",
+    "launchArguments": [
+      "--reset-ui",
+      "--stress-chat",
+      "--open-chat"
+    ],
+    "containsOnlySyntheticLaunchFixtures": true
+  },
+  "sourceApp": {
+    "bundleIdentifier": "com.joey.NovaForge",
+    "shortVersion": "1.0",
+    "bundleVersion": "1",
+    "configuration": "Release-iphonesimulator",
+    "sourceCommit": "3dcca6fa91f3188bdf6ff08c95f1f12857bebc36",
+    "sourceCommitSubject": "Complete NovaForge app refresh",
+    "builtAt": "2026-07-14T19:07:02.000Z",
+    "executableSHA256": "d2baa4a5386381e0578400e4c02d67e4a997cb450ccb18eba2b614714cc6693d"
+  },
+  "store": {
+    "schema": "pre-explicit default SwiftData schema",
+    "modelVersionIdentifiers": [
+      "1.0.0"
+    ],
+    "modelVersionChecksum": "aQOGil0EMr8AGv/erCZU9WHPLjisZqFlY+zxDBGc0Ag=",
+    "modelVersionHashesDigest": "masscU9dDKfkvThS8HL2SNsPQ8xkq3WNzYSvll3+5yodpVgBRY3wEcdeOCSL/1yTS43oIYe8fgLzUspAbHtuGg==",
+    "entityNames": [
+      "AgentSettings",
+      "ChatMessage",
+      "Conversation",
+      "Project",
+      "ProjectArtifact",
+      "ProjectEvent",
+      "ProjectFileChange",
+      "ProjectOSRun",
+      "ProjectOSStep",
+      "TerminalCommandRecord",
+      "ToolRun"
+    ],
+    "sqliteQuickCheck": "ok",
+    "byteCount": 413696,
+    "sha256": "93211f6a05f8b8b4ed6ec182f9be310d9b3dcb470fc57d38ddbf9d6d0a0e890e",
+    "rowCounts": {
+      "ZAGENTSETTINGS": 1,
+      "ZCHATMESSAGE": 200,
+      "ZCONVERSATION": 2,
+      "ZPROJECT": 1,
+      "ZPROJECTARTIFACT": 0,
+      "ZPROJECTEVENT": 1,
+      "ZPROJECTFILECHANGE": 0,
+      "ZPROJECTOSRUN": 0,
+      "ZPROJECTOSSTEP": 0,
+      "ZTERMINALCOMMANDRECORD": 0,
+      "ZTOOLRUN": 66
+    },
+    "semanticDigest": {
+      "canonicalization": "NovaForgePreExplicitSemanticRowsV1",
+      "algorithm": "sha256",
+      "lineCount": 271,
+      "byteCount": 331485,
+      "sha256": "c5f0bd28f6d1329625201fa4b7025bc84765428013139bca275208697652c989",
+      "excludedScalarFields": [
+        "timestamps",
+        "AgentSettings.temperature"
+      ],
+      "expectedAgentSettingsTemperature": 0.2
+    }
+  }
+}

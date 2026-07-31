@@ -2,6 +2,92 @@ import Foundation
 import XCTest
 
 final class OpenAIClientStreamingTests: XCTestCase {
+    func testLegacyClientRejectsChatGPTResponsesRouteBeforeHTTP() async throws {
+        RejectingOpenAIClientURLProtocol.reset()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [
+            RejectingOpenAIClientURLProtocol.self,
+        ]
+        let client = AIProviderClient(
+            configuration: ProviderConfiguration(
+                provider: .openAICodex,
+                modelID: AIProvider.exactGPT56SolModelID,
+                apiKey: "test-token",
+                customChatCompletionsURL: ""
+            ),
+            session: URLSession(configuration: sessionConfiguration)
+        )
+
+        do {
+            _ = try await client.streamingResponse(
+                messages: [],
+                model: AIProvider.exactGPT56SolModelID,
+                temperature: 0,
+                customSystemPrompt: nil,
+                workspaceSummary: "",
+                onContentBatch: { _ in }
+            )
+            XCTFail("Expected the legacy Chat Completions client to fail closed")
+        } catch {
+            XCTAssertTrue(
+                error.localizedDescription.contains("canonical Responses runtime")
+            )
+        }
+        XCTAssertEqual(RejectingOpenAIClientURLProtocol.requestCount, 0)
+    }
+
+    func testLegacyOpenAIClientOmitsTemperatureFromGPT5RequestBodies()
+        async throws
+    {
+        CapturingOpenAIClientURLProtocol.reset()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [
+            CapturingOpenAIClientURLProtocol.self,
+        ]
+        let client = AIProviderClient(
+            configuration: ProviderConfiguration(
+                provider: .openAI,
+                modelID: "gpt-5.5",
+                apiKey: "test-key",
+                customChatCompletionsURL: ""
+            ),
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        let messages = [ProviderMessageInput(
+            id: UUID(),
+            role: .user,
+            content: "Reply exactly OK.",
+            createdAt: Date(),
+            toolCallID: nil,
+            toolCalls: []
+        )]
+
+        for model in ["gpt-5.5", AIProvider.exactGPT56SolModelID] {
+            _ = try await client.response(
+                messages: messages,
+                model: model,
+                temperature: 0.73,
+                customSystemPrompt: nil,
+                workspaceSummary: ""
+            )
+        }
+
+        let requests = CapturingOpenAIClientURLProtocol.requests
+        XCTAssertEqual(requests.count, 2)
+        for (request, expectedModel) in zip(
+            requests,
+            ["gpt-5.5", AIProvider.exactGPT56SolModelID]
+        ) {
+            let data = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: data)
+                    as? [String: Any]
+            )
+            XCTAssertEqual(body["model"] as? String, expectedModel)
+            XCTAssertNil(body["temperature"], expectedModel)
+        }
+    }
+
     func testDecodesValidContentStreamEndingInDone() async throws {
         let message = try await StreamingResponseDecoder.decode(
             lines: [
@@ -250,6 +336,113 @@ final class OpenAIClientStreamingTests: XCTestCase {
         )
     }
 
+    func testChatGPTModelCatalogParsesCurrentShapeAndReasoningOrder() throws {
+        let data = Data(#"""
+        {
+          "models": [
+            {
+              "slug": "gpt-5.5",
+              "display_name": "GPT-5.5",
+              "supported_reasoning_levels": [
+                {"effort":"low"},
+                {"effort":"medium"},
+                {"effort":"high"},
+                {"effort":"xhigh"}
+              ]
+            },
+            {"slug":"gpt-4o"},
+            {"slug":"gpt-5.3-codex-spark"},
+            {"slug":"codex-auto-review"}
+          ]
+        }
+        """#.utf8)
+
+        let catalog = try ProviderModelCatalogParser.parse(
+            data,
+            provider: .openAICodex
+        )
+
+        XCTAssertEqual(catalog.map(\.id), ["gpt-5.5", "gpt-5.3-codex-spark"])
+        XCTAssertEqual(catalog.first?.displayName, "GPT-5.5")
+        XCTAssertEqual(
+            catalog.first?.supportedReasoningEfforts,
+            ["low", "medium", "high", "xhigh"]
+        )
+    }
+
+    @MainActor
+    func testChatGPTFallbackCatalogUsesCurrentFamilyWithoutLegacyProductNames() {
+        let store = ProviderModelCatalogStore.shared
+        store.clear(provider: .openAICodex)
+        defer { store.clear(provider: .openAICodex) }
+        let entries = store.entries(for: .openAICodex)
+        XCTAssertEqual(
+            entries.map(\.id),
+            [
+                AIProvider.exactGPT56SolModelID,
+                AIProvider.exactGPT56TerraModelID,
+                AIProvider.exactGPT56LunaModelID,
+                "gpt-5.5",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.3-codex-spark",
+            ]
+        )
+        XCTAssertEqual(entries.first?.displayName, "GPT-5.6 Sol")
+        XCTAssertEqual(
+            entries.first?.supportedReasoningEfforts,
+            ["none", "low", "medium", "high", "xhigh", "max"]
+        )
+        XCTAssertEqual(
+            store.displayName(
+                for: .openAICodex,
+                modelID: "gpt-5.3-codex-spark"
+            ),
+            "GPT-5.3 Codex Spark"
+        )
+    }
+
+    func testChatGPTCatalogURLCarriesSemanticClientVersion() throws {
+        let configuration = ProviderConfiguration(
+            provider: .openAICodex,
+            modelID: AIProvider.openAICodex.defaultModel,
+            apiKey: "token",
+            customChatCompletionsURL: ""
+        )
+        let components = try XCTUnwrap(configuration.modelsURL).appendingPathComponent("")
+        let query = try XCTUnwrap(
+            URLComponents(
+                url: components,
+                resolvingAgainstBaseURL: false
+            )
+        ).queryItems
+        let version = try XCTUnwrap(
+            query?.first(where: { $0.name == "client_version" })?.value
+        )
+
+        XCTAssertTrue(version.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression) != nil)
+        XCTAssertEqual(AIProvider.normalizedChatGPTClientVersion("1.0"), "1.0.0")
+        XCTAssertEqual(AIProvider.normalizedChatGPTClientVersion("2.4.7-beta"), "2.4.7")
+        XCTAssertEqual(AIProvider.normalizedChatGPTClientVersion("bad"), "1.0.0")
+    }
+
+    func testOpenAIModelCatalogParsesDataShapeAndRejectsUnsafeIDs() throws {
+        let data = Data(#"""
+        {
+          "data": [
+            {"id":"gpt-5.4"},
+            {"id":"gpt-5.4\u0000leak"},
+            {"id":"gpt 5 unsafe"},
+            {"id":"gpt-5.4"}
+          ]
+        }
+        """#.utf8)
+
+        let catalog = try ProviderModelCatalogParser.parse(data, provider: .openAI)
+
+        XCTAssertEqual(catalog.map(\.id), ["gpt-5.4"])
+    }
+
     private func sseContent(_ text: String) -> String {
         let escaped = text
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -296,5 +489,112 @@ private func XCTAssertThrowsAsyncError<T>(
         XCTFail("Expected async expression to throw", file: file, line: line)
     } catch {
         errorHandler(error)
+    }
+}
+
+private final class RejectingOpenAIClientURLProtocol:
+    URLProtocol,
+    @unchecked Sendable
+{
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var storedRequestCount = 0
+
+    static var requestCount: Int {
+        lock.withLock { storedRequestCount }
+    }
+
+    static func reset() {
+        lock.withLock { storedRequestCount = 0 }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        Self.lock.withLock { Self.storedRequestCount += 1 }
+        client?.urlProtocol(
+            self,
+            didFailWithError: URLError(.dataNotAllowed)
+        )
+    }
+
+    override func stopLoading() {}
+}
+
+private final class CapturingOpenAIClientURLProtocol:
+    URLProtocol,
+    @unchecked Sendable
+{
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var storedRequests: [URLRequest] = []
+
+    static var requests: [URLRequest] {
+        lock.withLock { storedRequests }
+    }
+
+    static func reset() {
+        lock.withLock { storedRequests = [] }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let captured = Self.capturingBody(from: request)
+        Self.lock.withLock { Self.storedRequests.append(captured) }
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              )
+        else {
+            client?.urlProtocol(
+                self,
+                didFailWithError: URLError(.badServerResponse)
+            )
+            return
+        }
+        client?.urlProtocol(
+            self,
+            didReceive: response,
+            cacheStoragePolicy: .notAllowed
+        )
+        client?.urlProtocol(
+            self,
+            didLoad: Data(
+                #"{"choices":[{"message":{"role":"assistant","content":"OK"}}]}"#
+                    .utf8
+            )
+        )
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func capturingBody(from request: URLRequest) -> URLRequest {
+        guard request.httpBody == nil, let stream = request.httpBodyStream else {
+            return request
+        }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+        while body.count <= 4 * 1_024 * 1_024 {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            body.append(buffer, count: count)
+        }
+        var captured = request
+        captured.httpBodyStream = nil
+        captured.httpBody = body
+        return captured
     }
 }

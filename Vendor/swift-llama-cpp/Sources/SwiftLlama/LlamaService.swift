@@ -117,7 +117,7 @@ public final actor LlamaService {
         let llama = try initializeLlamaIfNecessary()
         await stopCompletion()
         try await  llama.initializeCompletion(messages: messages)
-        await llama.updateSamplingConfig(samplingConfig)
+        try await llama.updateSamplingConfig(samplingConfig)
 
         return AsyncThrowingStream { continuation in
             currentTask = Task {

@@ -1,0 +1,34 @@
+{
+  "formatVersion": 1,
+  "caseName": "v1-engine-routing-defaults",
+  "schema": {
+    "name": "NovaForgeSchemaV1",
+    "version": "1.0.0"
+  },
+  "acceptanceDefaults": {
+    "engineVersion": "v1",
+    "enabledFeatures": [],
+    "executionNode": "onDevice",
+    "shadowMode": false,
+    "activeRunMaySwitchEngine": false
+  },
+  "featureFlags": {
+    "v2DarkReplay": false,
+    "v2HostedText": false,
+    "v2ReadTools": false,
+    "v2MutationTools": false,
+    "v2Local": false,
+    "v2Worker": false,
+    "v2MemorySkills": false,
+    "v2Subagents": false,
+    "v2MCP": false,
+    "v2Automation": false
+  },
+  "rollbackDefaults": {
+    "newRunsUseEngineVersion": "v1",
+    "activeRunsRetainAcceptedEngine": true,
+    "deleteEvidence": false,
+    "downgradeStore": false,
+    "replayAmbiguousMutation": false
+  }
+}

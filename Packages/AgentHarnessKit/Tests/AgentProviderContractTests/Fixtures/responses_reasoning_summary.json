@@ -1,0 +1,31 @@
+{
+  "dialect": "responses",
+  "frames": [
+    {"kind": "json", "value": {"type": "response.created", "response": {"id": "reason-1", "model": "fixture-model"}}},
+    {"kind": "json", "value": {"type": "response.reasoning_summary_text.delta", "output_index": 0, "delta": "Checked "}},
+    {"kind": "json", "value": {"type": "response.reasoning_summary_text.delta", "output_index": 0, "delta": "the constraints."}},
+    {"kind": "json", "value": {"type": "response.output_text.delta", "output_index": 1, "delta": "Ready."}},
+    {
+      "kind": "json",
+      "value": {
+        "type": "response.completed",
+        "response": {
+          "id": "reason-1",
+          "model": "fixture-model",
+          "status": "completed",
+          "usage": {"input_tokens": 30, "output_tokens": 9, "output_tokens_details": {"reasoning_tokens": 6}},
+          "output": []
+        }
+      }
+    },
+    {"kind": "done"}
+  ],
+  "expected": [
+    "started|reason-1|fixture-model",
+    "reasoning|0|Checked ",
+    "reasoning|0|the constraints.",
+    "text|1|Ready.",
+    "usage|30|0|9|6",
+    "completed|reason-1|completed"
+  ]
+}

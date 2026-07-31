@@ -1,6 +1,42 @@
 import XCTest
 
 final class ProviderContextWindowTests: XCTestCase {
+    func testPreparedHostedTranscriptUsesOneSharedSystemPromptBoundary() throws {
+        let user = message(.user, "Inspect the project", offset: 0)
+        let prepared = try ProviderContextWindow.prepareHostedTranscript(
+            history: [user],
+            customSystemPrompt: nil,
+            workspaceSummary: "file: Sources/App.swift"
+        )
+
+        XCTAssertEqual(prepared.messages.map(\.role), ["system", "user"])
+        XCTAssertTrue(
+            prepared.messages[0].content?.contains(
+                "Current workspace files:\nfile: Sources/App.swift"
+            ) == true
+        )
+        XCTAssertEqual(prepared.messages[1].content, "Inspect the project")
+        XCTAssertTrue(ProviderMessageSanitizer.validate(prepared.messages).isEmpty)
+    }
+
+    func testPreparedHostedTranscriptPreservesExactCustomPrompt() throws {
+        let prepared = try ProviderContextWindow.prepareHostedTranscript(
+            history: [message(.user, "Hello", offset: 0)],
+            customSystemPrompt: "  Use this exact custom prompt.  ",
+            workspaceSummary: "must not be interpolated"
+        )
+
+        XCTAssertEqual(
+            prepared.messages.first?.content,
+            "  Use this exact custom prompt.  "
+        )
+        XCTAssertFalse(
+            prepared.messages.first?.content?.contains(
+                "must not be interpolated"
+            ) == true
+        )
+    }
+
     func testSelectKeepsLatestUserWithinSmallBudget() {
         let oldUser = message(.user, "old request", offset: 0)
         let oldReply = message(.assistant, String(repeating: "x", count: 2_000), offset: 1)

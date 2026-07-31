@@ -52,6 +52,23 @@ struct LiveTranscriptSnapshot: Equatable, Sendable {
         let id: ID
         let ordinal: Int
         let text: String
+        /// An emergency literal presentation for malformed Markdown that never
+        /// reaches a neutral split point. `text` always preserves the exact
+        /// provider source; this value only keeps broken syntax from leaking
+        /// into the visual layer after the mutable tail is hard-capped.
+        let fallbackPresentationText: String?
+
+        init(
+            id: ID,
+            ordinal: Int,
+            text: String,
+            fallbackPresentationText: String? = nil
+        ) {
+            self.id = id
+            self.ordinal = ordinal
+            self.text = text
+            self.fallbackPresentationText = fallbackPresentationText
+        }
     }
 
     struct ActiveParagraph: Identifiable, Equatable, Sendable {
@@ -102,10 +119,19 @@ struct LiveTranscriptSnapshot: Equatable, Sendable {
     let cadence: Cadence
     let suggestedPauseFrames: Int
 
-    /// Cached by the composer as text is revealed. Renderers and accessibility
-    /// clients can read it without rebuilding the document from every
-    /// paragraph on every display tick.
-    let visibleText: String
+    /// Reconstruct the exact provider prefix only for clients that actually need
+    /// the whole document (accessibility checkpoints, copy, and handoff tests).
+    /// Keeping a cumulative String inside every published snapshot made each
+    /// phrase append retain/copy the response-so-far. The visual renderer already
+    /// consumes the paragraph/segment fields directly, so ordinary reveal ticks
+    /// now stay chunked and bounded.
+    var visibleText: String {
+        var text = settledParagraphs.reduce(into: "") { partial, paragraph in
+            partial += paragraph.visibleText
+        }
+        text += activeParagraph.visibleText
+        return text
+    }
 
     var isEmpty: Bool { characterCount == 0 }
 
@@ -124,8 +150,7 @@ struct LiveTranscriptSnapshot: Equatable, Sendable {
             backlogCharacters: 0,
             revision: 0,
             cadence: .idle,
-            suggestedPauseFrames: 0,
-            visibleText: ""
+            suggestedPauseFrames: 0
         )
     }
 }

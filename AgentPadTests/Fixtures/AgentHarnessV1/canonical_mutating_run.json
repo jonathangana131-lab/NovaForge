@@ -1,0 +1,112 @@
+{
+  "formatVersion": 1,
+  "caseName": "v1-successful-mutating-tool-round",
+  "run": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "conversationID": "20000000-0000-4000-8000-000000000001",
+    "projectID": "30000000-0000-4000-8000-000000000001",
+    "workspaceID": "40000000-0000-4000-8000-000000000001",
+    "requestMessageID": "50000000-0000-4000-8000-000000000001",
+    "responseMessageID": "50000000-0000-4000-8000-000000000004",
+    "origin": "user",
+    "provider": "openAI",
+    "modelID": "gpt-5.1",
+    "engineVersion": "v1",
+    "enabledFeatures": [],
+    "statusHistory": [
+      { "status": "running", "at": "2026-07-13T07:00:00.000Z" },
+      { "status": "completed", "at": "2026-07-13T07:00:09.000Z" }
+    ]
+  },
+  "transcript": [
+    {
+      "sequence": 0,
+      "recordKind": "message",
+      "id": "50000000-0000-4000-8000-000000000001",
+      "role": "user",
+      "semanticKind": "request",
+      "toolCallID": null,
+      "runStatus": "completed",
+      "createdAt": "2026-07-13T07:00:00.000Z"
+    },
+    {
+      "sequence": 1,
+      "recordKind": "message",
+      "id": "50000000-0000-4000-8000-000000000002",
+      "role": "assistant",
+      "semanticKind": "toolPlan",
+      "toolCallID": "call_write_readme",
+      "runStatus": "completed",
+      "createdAt": "2026-07-13T07:00:01.000Z"
+    },
+    {
+      "sequence": 2,
+      "recordKind": "toolRun",
+      "id": "60000000-0000-4000-8000-000000000001",
+      "role": null,
+      "semanticKind": "toolReceipt",
+      "toolCallID": "call_write_readme",
+      "runStatus": "completed",
+      "createdAt": "2026-07-13T07:00:06.000Z"
+    },
+    {
+      "sequence": 3,
+      "recordKind": "message",
+      "id": "50000000-0000-4000-8000-000000000003",
+      "role": "tool",
+      "semanticKind": "toolResult",
+      "toolCallID": "call_write_readme",
+      "runStatus": "completed",
+      "createdAt": "2026-07-13T07:00:07.000Z"
+    },
+    {
+      "sequence": 4,
+      "recordKind": "message",
+      "id": "50000000-0000-4000-8000-000000000004",
+      "role": "assistant",
+      "semanticKind": "finalResponse",
+      "toolCallID": null,
+      "runStatus": "completed",
+      "createdAt": "2026-07-13T07:00:08.000Z"
+    }
+  ],
+  "projectEvents": [
+    { "sequence": 0, "kind": "promptQueued", "severity": "running", "at": "2026-07-13T07:00:00.100Z" },
+    { "sequence": 1, "kind": "responseSaved", "severity": "running", "at": "2026-07-13T07:00:01.100Z" },
+    { "sequence": 2, "kind": "agentPlanCreated", "severity": "running", "at": "2026-07-13T07:00:01.200Z" },
+    { "sequence": 3, "kind": "missionCheckpoint", "severity": "info", "at": "2026-07-13T07:00:01.300Z" },
+    { "sequence": 4, "kind": "toolCompleted", "severity": "success", "at": "2026-07-13T07:00:06.100Z" },
+    { "sequence": 5, "kind": "fileChanged", "severity": "success", "at": "2026-07-13T07:00:06.200Z" },
+    { "sequence": 6, "kind": "responseSaved", "severity": "success", "at": "2026-07-13T07:00:08.100Z" },
+    { "sequence": 7, "kind": "runCompleted", "severity": "success", "at": "2026-07-13T07:00:08.200Z" },
+    { "sequence": 8, "kind": "agentProofCreated", "severity": "success", "at": "2026-07-13T07:00:08.300Z" },
+    { "sequence": 9, "kind": "missionCheckpoint", "severity": "info", "at": "2026-07-13T07:00:08.400Z" }
+  ],
+  "tool": {
+    "toolRunID": "60000000-0000-4000-8000-000000000001",
+    "operationID": "70000000-0000-4000-8000-000000000001",
+    "callID": "call_write_readme",
+    "name": "write_file",
+    "argumentsJSON": "{\"contents\":\"Hermes baseline\",\"path\":\"README.md\"}",
+    "argumentsSHA256": "015ec4b595fa9d3c4394a9d78aee2b18014df6f6074fbc17d13e578bdfee5e3e",
+    "targetPaths": ["README.md"],
+    "isMutating": true,
+    "requiresApproval": true,
+    "toolRunStatus": "completed",
+    "resultSummary": "Wrote README.md",
+    "phaseHistory": [
+      { "phase": "scheduled", "at": "2026-07-13T07:00:04.000Z" },
+      { "phase": "executing", "at": "2026-07-13T07:00:05.000Z" },
+      { "phase": "applied", "at": "2026-07-13T07:00:06.000Z" },
+      { "phase": "completed", "at": "2026-07-13T07:00:06.500Z" }
+    ]
+  },
+  "invariants": {
+    "acceptanceCommittedBeforeProviderWork": true,
+    "operationScheduledBeforeEffect": true,
+    "effectAppliedAtMostOnce": true,
+    "terminalReceiptAfterEvidence": true,
+    "oneRunTimelineClock": true,
+    "providerCallsDuringFixtureTest": 0
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "formatVersion": 1,
+  "fixture": "NovaForgeV1.store",
+  "capture": {
+    "capturedAt": "2026-07-13T22:57:00.000Z",
+    "method": "SQLite online backup after clean simulator app termination",
+    "simulatorRuntime": "com.apple.CoreSimulator.SimRuntime.iOS-26-1",
+    "simulatorDeviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-12",
+    "launchArguments": [
+      "--reset-ui",
+      "--open-project",
+      "--project-proof-demo",
+      "--files-actions-test"
+    ],
+    "containsOnlySyntheticLaunchFixtures": true
+  },
+  "sourceApp": {
+    "bundleIdentifier": "com.joey.NovaForge",
+    "shortVersion": "1.0",
+    "bundleVersion": "1",
+    "configuration": "Release-iphonesimulator",
+    "builtAt": "2026-07-12T22:56:43.000Z",
+    "executableSHA256": "70d35ef771ecb4547bd1d1bf596ffd134a8b8fffcb8f4d8082acb904b8ea2b41",
+    "embeddedGitCommitAvailable": false
+  },
+  "store": {
+    "schema": "NovaForgeSchemaV1",
+    "sqliteQuickCheck": "ok",
+    "byteCount": 180224,
+    "sha256": "3386079e3ce43111814cfa324aa3575f180edd60ae1a6c933dfbf274e99b4d6f",
+    "rowCounts": {
+      "ZPROJECT": 1,
+      "ZCONVERSATION": 2,
+      "ZCHATMESSAGE": 2,
+      "ZAGENTRUNRECORD": 0,
+      "ZPROJECTEVENT": 9,
+      "ZTOOLOPERATIONRECORD": 0
+    }
+  }
+}

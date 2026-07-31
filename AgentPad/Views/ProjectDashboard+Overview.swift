@@ -9,6 +9,7 @@
 
 import SwiftData
 import SwiftUI
+import UIKit
 
 extension ProjectDashboardView {
     var projectPinnedCommandCenter: some View {
@@ -65,17 +66,9 @@ extension ProjectDashboardView {
                 .accessibilityLabel("Open projects")
                 .accessibilityIdentifier("projectPinnedSwitcherButton")
 
-                Menu {
-                    Button {
-                        presentedProjectSheet = .edit
-                    } label: {
-                        Label("Edit Project", systemImage: "pencil")
-                    }
-                    Button(role: .destructive) {
-                        confirmingProjectDelete = true
-                    } label: {
-                        Label("Delete Project", systemImage: "trash")
-                    }
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showingProjectActions = true
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 13, weight: .bold))
@@ -86,6 +79,10 @@ extension ProjectDashboardView {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .popover(isPresented: $showingProjectActions, attachmentAnchor: .rect(.bounds)) {
+                    projectActionsPopover
+                        .presentationCompactAdaptation(.popover)
+                }
                 .accessibilityLabel("Project actions")
                 .accessibilityIdentifier("projectPinnedActionsMenu")
             }
@@ -103,45 +100,130 @@ extension ProjectDashboardView {
         .accessibilityIdentifier("projectPinnedCommandCenter")
     }
 
-    var projectPinnedActionDock: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                projectPinnedActionContext
-                projectPinnedDockActions
-            }
+    private var projectActionsPopover: some View {
+        ZStack {
+            NovaGlassSheetBackground(tint: AgentPalette.cyan)
 
             VStack(alignment: .leading, spacing: 8) {
-                projectPinnedActionContext
-                projectPinnedDockActions
+                Text("Project actions")
+                    .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .textCase(.uppercase)
+                    .tracking(0.8)
+                    .padding(.horizontal, 4)
+
+                Button {
+                    showingProjectActions = false
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(180))
+                        presentedProjectSheet = .edit
+                    }
+                } label: {
+                    projectActionRow(
+                        title: "Edit Project",
+                        detail: "Rename or update the mission",
+                        symbol: "pencil",
+                        tint: AgentPalette.cyan
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("projectEditAction")
+
+                Button(role: .destructive) {
+                    showingProjectActions = false
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(180))
+                        confirmingProjectDelete = true
+                    }
+                } label: {
+                    projectActionRow(
+                        title: "Delete Project",
+                        detail: "Remove this project and fall back safely",
+                        symbol: "trash",
+                        tint: AgentPalette.rose
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("projectDeleteAction")
             }
+            .padding(14)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .agentGlass(radius: 22, interactive: false, tint: pinnedRunTint.opacity(0.11))
+        .frame(width: 286)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("projectPinnedActionDock")
+        .accessibilityIdentifier("projectActionsPopover")
+    }
+
+    private func projectActionRow(
+        title: String,
+        detail: String,
+        symbol: String,
+        tint: Color
+    ) -> some View {
+        HStack(spacing: 11) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(tint.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .bold, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(title == "Delete Project" ? AgentPalette.rose : AgentPalette.ink)
+                Text(detail)
+                    .font(.system(size: 10.5, weight: .medium, design: AgentPalette.interfaceFontDesign))
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget, alignment: .leading)
+        .agentControlSurface(radius: 14, tint: tint.opacity(0.08))
+        .contentShape(Rectangle())
+    }
+
+    var projectPinnedActionDock: some View {
+        HStack(spacing: 8) {
+            projectPinnedActionContext
+            projectPinnedDockActions
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .agentGlass(radius: 22, interactive: false, tint: pinnedRunTint.opacity(0.11))
+        .background {
+            ProjectDashboardAccessibilityMarker(
+                identifier: "projectPinnedActionDock",
+                label: "Project run controls"
+            )
+        }
+        .accessibilityElement(children: .contain)
     }
 
     private var projectPinnedActionContext: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(autoContinueState.isCountingDown ? "Scheduled action" : "Next action")
-                .novaLabel(autoContinueState.isCountingDown ? AgentPalette.cyan : pinnedRunTint)
-            Text(projectPinnedDockDetail)
-                .font(NovaType.caption)
-                .foregroundStyle(AgentPalette.secondaryText)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .accessibilityIdentifier("projectPinnedRunReason")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .layoutPriority(1)
+        Text(projectPinnedDockContextLabel)
+            .novaLabel(autoContinueState.isCountingDown ? AgentPalette.cyan : pinnedRunTint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .accessibilityIdentifier("projectPinnedRunContext")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
     }
 
-    private var projectPinnedDockDetail: String {
-        if autoContinueState.isCountingDown {
-            return "Next step starts in \(autoContinueState.remainingSeconds)s"
+    private var projectPinnedNeedsApproval: Bool {
+        runtimeStatus.tone == .approval || summary.pendingApprovalCount > 0
+    }
+
+    private var projectPinnedDockContextLabel: String {
+        if autoContinueState.isCountingDown { return "Starts in \(autoContinueState.remainingSeconds)s" }
+        if projectPinnedNeedsApproval { return "Review required" }
+        if runtimeStatus.tone == .working { return "Run active" }
+        if runtimeStatus.tone == .paused { return "Run paused" }
+        if runtimeStatus.tone == .error || projectOSStatus == .blocked || projectOSStatus == .failed {
+            return "Recovery ready"
         }
-        return pinnedRunDetail
+        return "Run controls"
     }
 
     @ViewBuilder
@@ -162,12 +244,12 @@ extension ProjectDashboardView {
                     tint: AgentPalette.cyan,
                     disabled: false,
                     hint: "Pause the auto-continue countdown.",
-                    identifier: "projectPinnedRunButton"
+                    identifier: "projectAutoContinuePauseButton"
                 ) {
                     pauseAutoContinue(project)
                 }
             }
-        } else if runtimeStatus.tone == .approval {
+        } else if projectPinnedNeedsApproval {
             HStack(spacing: 8) {
                 projectDockSecondaryButton(
                     title: "Reject",
@@ -183,12 +265,11 @@ extension ProjectDashboardView {
                     tint: AgentPalette.cyan,
                     disabled: false,
                     hint: "Approve the pending project tool request.",
-                    identifier: "projectPinnedRunButton"
+                    identifier: "projectApprovalApproveButton"
                 ) {
                     approvePendingTool()
                 }
             }
-            .accessibilityIdentifier("projectOSApprovalActions")
         } else {
             projectDockPrimaryButton(
                 title: pinnedRunButtonTitle,
@@ -221,9 +302,12 @@ extension ProjectDashboardView {
                 .padding(.horizontal, 4)
                 .contentShape(Capsule())
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(identifier)
         .buttonStyle(.plain)
         .agentControlSurface(radius: AgentDesign.minimumTouchTarget / 2, tint: tint.opacity(0.10), selected: false)
-        .accessibilityIdentifier(identifier)
     }
 
     private func projectDockPrimaryButton(
@@ -245,10 +329,13 @@ extension ProjectDashboardView {
                 .padding(.horizontal, 6)
                 .contentShape(Capsule())
         }
-        .buttonStyle(ProjectRunButtonStyle(tint: tint, isDisabled: disabled))
-        .disabled(disabled)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(title)
         .accessibilityHint(hint)
         .accessibilityIdentifier(identifier)
+        .buttonStyle(ProjectRunButtonStyle(tint: tint, isDisabled: disabled))
+        .disabled(disabled)
     }
 
     func handlePinnedRunButton() {
@@ -257,7 +344,7 @@ extension ProjectDashboardView {
             stopWorkspaceRun()
             return
         }
-        if runtimeStatus.tone == .approval {
+        if projectPinnedNeedsApproval {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             approvePendingTool()
             return
@@ -272,34 +359,10 @@ extension ProjectDashboardView {
         }
     }
 
-    var pinnedRunEyebrow: String {
-        if runStartFeedback { return "Starting" }
-        if runtimeStatus.tone == .working { return "Running" }
-        if runtimeStatus.tone == .approval { return "Approval Needed" }
-        if runtimeStatus.tone == .paused { return "Resume Ready" }
-        if runtimeStatus.tone == .error { return "Recovery" }
-        if projectOSStatus == .blocked || projectOSStatus == .failed { return "Blocked" }
-        if projectOSStatus == .completed { return "Proof Ready" }
-        if commandRunBlocked { return "Unavailable" }
-        return "Next Run"
-    }
-
-    var pinnedRunDetail: String {
-        if runStartFeedback { return "NovaForge is opening the project run now." }
-        if runtimeStatus.tone == .approval { return "Review the pending request. Approve here, or reject from the approval panel below." }
-        if runtimeStatus.tone == .paused { return runtimeStatus.detail }
-        if runtimeStatus.tone == .error { return runtimeStatus.detail }
-        if runtimeStatus.isVisible { return runtimeStatus.detail }
-        if projectOSStatus == .blocked || projectOSStatus == .failed { return projectOSBlockerText }
-        if projectOSStatus == .completed { return projectOSProofText }
-        if commandRunBlocked { return pinnedRunDisabledReason }
-        return nextStepReason
-    }
-
     var pinnedRunButtonTitle: String {
         if runStartFeedback { return "Starting" }
         if runtimeStatus.tone == .working { return "Stop" }
-        if runtimeStatus.tone == .approval { return "Approve" }
+        if projectPinnedNeedsApproval { return "Approve" }
         if runtimeStatus.tone == .paused { return "Resume" }
         if runtimeStatus.tone == .error { return "Retry" }
         if projectOSStatus == .blocked || projectOSStatus == .failed { return "Recover" }
@@ -309,7 +372,7 @@ extension ProjectDashboardView {
     var pinnedRunButtonSymbol: String {
         if runStartFeedback { return "hourglass" }
         if runtimeStatus.tone == .working { return "stop.fill" }
-        if runtimeStatus.tone == .approval { return "checkmark.shield.fill" }
+        if projectPinnedNeedsApproval { return "checkmark.shield.fill" }
         if runtimeStatus.tone == .paused { return "play.fill" }
         if runtimeStatus.tone == .error { return "arrow.clockwise" }
         if projectOSStatus == .blocked || projectOSStatus == .failed { return "wrench.and.screwdriver.fill" }
@@ -318,7 +381,7 @@ extension ProjectDashboardView {
 
     var pinnedRunTint: Color {
         if runtimeStatus.tone == .working { return AgentPalette.rose }
-        if runtimeStatus.tone == .approval { return AgentPalette.cyan }
+        if projectPinnedNeedsApproval { return AgentPalette.cyan }
         if runtimeStatus.tone == .paused { return AgentPalette.lilac }
         if runtimeStatus.tone == .error { return AgentPalette.rose }
         if runStartFeedback { return AgentPalette.green }
@@ -329,7 +392,7 @@ extension ProjectDashboardView {
 
     var pinnedRunButtonDisabled: Bool {
         if runtimeStatus.tone == .working { return false }
-        if runtimeStatus.tone == .approval { return false }
+        if projectPinnedNeedsApproval { return false }
         return commandRunBlocked
     }
 
@@ -345,7 +408,7 @@ extension ProjectDashboardView {
     }
 
     var pinnedRunAccessibilityHint: String {
-        if runtimeStatus.tone == .approval { return "Approve the pending project tool request." }
+        if projectPinnedNeedsApproval { return "Approve the pending project tool request." }
         if runtimeStatus.tone == .working { return "Stop the current workspace run." }
         if runtimeStatus.tone == .paused { return "Resume the interrupted project run." }
         if runtimeStatus.tone == .error { return "Retry the recommended recovery step." }
@@ -524,6 +587,7 @@ extension ProjectDashboardView {
     var projectReviewDashboard: some View {
         let review = summary.review
         let tint = self.reviewTint(for: review.recommendation)
+        let shape = RoundedRectangle(cornerRadius: 17, style: .continuous)
         return VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .center, spacing: 12) {
                 projectReviewScoreGauge(score: review.healthScore, tint: tint)
@@ -567,22 +631,28 @@ extension ProjectDashboardView {
             }
         }
         .padding(11)
-        .background(
-            LinearGradient(
-                colors: [
-                    tint.opacity(0.12),
-                    AgentPalette.row.opacity(0.62),
-                    AgentPalette.surfaceAlt.opacity(0.25)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 17, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 17, style: .continuous)
-                .strokeBorder(tint.opacity(0.20), lineWidth: 0.65)
-        )
+        .background {
+            if AgentPerformance.prefersReducedVisualEffects {
+                shape.fill(AgentPalette.opaqueSurfaceElevated)
+            } else {
+                shape.fill(
+                    LinearGradient(
+                        colors: [
+                            tint.opacity(0.12),
+                            AgentPalette.row.opacity(0.62),
+                            AgentPalette.surfaceAlt.opacity(0.25)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            }
+        }
+        .overlay {
+            if !AgentPerformance.prefersReducedVisualEffects {
+                shape.strokeBorder(tint.opacity(0.20), lineWidth: 0.65)
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projectReviewDashboard")
     }
@@ -1053,34 +1123,11 @@ extension ProjectDashboardView {
 
             if autoContinueState.isCountingDown {
                 VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 8) {
-                        Text("Starts in \(autoContinueState.remainingSeconds)s")
-                            .font(.system(size: 10.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                            .foregroundStyle(autoContinueTint)
-                            .monospacedDigit()
-                        Spacer(minLength: 0)
-                        Button {
-                            pauseAutoContinue(project)
-                        } label: {
-                            Label("Pause", systemImage: "pause.fill")
-                                .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .frame(minHeight: 30)
-                        }
-                        .buttonStyle(.plain)
+                    Text("The next step is queued. Pause or cancel it from the pinned controls below.")
+                        .font(.system(size: 9.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                         .foregroundStyle(AgentPalette.secondaryText)
-                        .accessibilityIdentifier("projectAutoContinuePauseButton")
-
-                        Button {
-                            cancelAutoContinue(project)
-                        } label: {
-                            Label("Cancel", systemImage: "xmark")
-                                .font(.system(size: 9.5, weight: .black, design: AgentPalette.interfaceFontDesign))
-                                .frame(minHeight: 30)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(AgentPalette.rose)
-                        .accessibilityIdentifier("projectAutoContinueCancelButton")
-                    }
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     ProgressView(
                         value: Double(ProjectAutoContinuePolicy.countdownSeconds - autoContinueState.remainingSeconds),
@@ -1094,8 +1141,13 @@ extension ProjectDashboardView {
                 }
                 .padding(9)
                 .background(autoContinueTint.opacity(0.08), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .background {
+                    ProjectDashboardAccessibilityMarker(
+                        identifier: "projectAutoContinueCountdown",
+                        label: "Auto-continue countdown"
+                    )
+                }
                 .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("projectAutoContinueCountdown")
             } else if autoContinueState.isPaused {
                 HStack(spacing: 8) {
                     Text(autoContinueState.detail)
@@ -1334,5 +1386,26 @@ extension ProjectDashboardView {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(item.title). \(item.detail)")
         .accessibilityIdentifier("projectLatestProofCard")
+    }
+}
+
+private struct ProjectDashboardAccessibilityMarker: UIViewRepresentable {
+    let identifier: String
+    let label: String
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = identifier
+        view.accessibilityLabel = label
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = identifier
+        view.accessibilityLabel = label
     }
 }

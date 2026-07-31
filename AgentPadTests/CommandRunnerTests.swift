@@ -31,20 +31,27 @@ final class CommandRunnerTests: XCTestCase {
     }
 
     func testSupportedCommands() throws {
-        XCTAssertEqual(try runner.run("mkdir notes"), "Created notes")
-        XCTAssertEqual(try runner.run("touch notes/a.md"), "Touched notes/a.md")
-        XCTAssertTrue(try runner.run("ls notes").contains("a.md"))
-        XCTAssertTrue(try runner.run("find").contains("notes/a.md"))
+        XCTAssertEqual(try runner.testRun("mkdir notes"), "Created notes")
+        XCTAssertEqual(try runner.testRun("touch notes/a.md"), "Touched notes/a.md")
+        XCTAssertTrue(try runner.testRun("ls notes").contains("a.md"))
+        XCTAssertTrue(try runner.testRun("find").contains("notes/a.md"))
+    }
+
+    func testMutatingCommandCannotRunWithoutGatewayPermit() {
+        XCTAssertThrowsError(try runner.run("touch bypass.txt")) { error in
+            XCTAssertEqual(error as? SandboxError, .workspaceMutationPermitRequired)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("bypass.txt").path))
     }
 
     func testTouchAndMkdirRejectWorkspaceRoot() throws {
-        try workspace.write("keep.txt", contents: "safe")
+        try workspace.testWrite("keep.txt", contents: "safe")
 
         for rootPath in [".", "./"] {
-            XCTAssertThrowsError(try runner.run("touch \(rootPath)")) { error in
+            XCTAssertThrowsError(try runner.testRun("touch \(rootPath)")) { error in
                 XCTAssertEqual(error as? SandboxError, .workspaceRootMutationDenied)
             }
-            XCTAssertThrowsError(try runner.run("mkdir \(rootPath)")) { error in
+            XCTAssertThrowsError(try runner.testRun("mkdir \(rootPath)")) { error in
                 XCTAssertEqual(error as? SandboxError, .workspaceRootMutationDenied)
             }
         }
@@ -53,13 +60,13 @@ final class CommandRunnerTests: XCTestCase {
     }
 
     func testRejectsShellOperators() throws {
-        XCTAssertThrowsError(try runner.run("cat README.md | grep hi"))
-        XCTAssertThrowsError(try runner.run("touch a && rm a"))
-        XCTAssertThrowsError(try runner.run("cat a > b"))
+        XCTAssertThrowsError(try runner.testRun("cat README.md | grep hi"))
+        XCTAssertThrowsError(try runner.testRun("touch a && rm a"))
+        XCTAssertThrowsError(try runner.testRun("cat a > b"))
     }
 
     func testQuotedOperatorCharactersAreSearchableText() throws {
-        try workspace.write(
+        try workspace.testWrite(
             "site/index page.html",
             contents: """
             <main>Alpha</main>
@@ -68,9 +75,9 @@ final class CommandRunnerTests: XCTestCase {
             """
         )
 
-        XCTAssertTrue(try runner.run("grep '<main>' \"site/index page.html\"").contains("site/index page.html:1"))
-        XCTAssertTrue(try runner.run("grep \"a | b\" \"site/index page.html\"").contains("site/index page.html:2"))
-        XCTAssertTrue(try runner.run("grep 'value > 1' \"site/index page.html\"").contains("site/index page.html:3"))
+        XCTAssertTrue(try runner.testRun("grep '<main>' \"site/index page.html\"").contains("site/index page.html:1"))
+        XCTAssertTrue(try runner.testRun("grep \"a | b\" \"site/index page.html\"").contains("site/index page.html:2"))
+        XCTAssertTrue(try runner.testRun("grep 'value > 1' \"site/index page.html\"").contains("site/index page.html:3"))
 
         let draft = TerminalCommandDraft("grep '<main>' \"site/index page.html\"")
         XCTAssertTrue(draft.canRun)
@@ -82,62 +89,62 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertFalse(unsafeDraft.canRun)
         XCTAssertEqual(unsafeDraft.argumentIssue, "Shell operators are not available in the safe iPhone terminal.")
 
-        XCTAssertThrowsError(try runner.run("grep main site/index.html > out.txt")) { error in
+        XCTAssertThrowsError(try runner.testRun("grep main site/index.html > out.txt")) { error in
             XCTAssertEqual(error as? SandboxError, .unsupportedCommand("shell operators are not available"))
         }
-        XCTAssertThrowsError(try runner.run("grep main site/index.html | cat")) { error in
+        XCTAssertThrowsError(try runner.testRun("grep main site/index.html | cat")) { error in
             XCTAssertEqual(error as? SandboxError, .unsupportedCommand("shell operators are not available"))
         }
 
         let unclosedQuoteDraft = TerminalCommandDraft("grep \"main site/index.html")
         XCTAssertFalse(unclosedQuoteDraft.canRun)
         XCTAssertEqual(unclosedQuoteDraft.argumentIssue, "Close the quoted argument before running.")
-        XCTAssertThrowsError(try runner.run("grep \"main site/index.html")) { error in
+        XCTAssertThrowsError(try runner.testRun("grep \"main site/index.html")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
     }
 
     func testRejectsAmbiguousExtraArgumentsAndDeleteFlags() throws {
-        try workspace.write("notes/a.md", contents: "keep")
-        try workspace.write("notes/b.md", contents: "other")
+        try workspace.testWrite("notes/a.md", contents: "keep")
+        try workspace.testWrite("notes/b.md", contents: "other")
 
-        XCTAssertThrowsError(try runner.run("rm -rf notes/a.md")) { error in
+        XCTAssertThrowsError(try runner.testRun("rm -rf notes/a.md")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
         XCTAssertEqual(try workspace.read("notes/a.md"), "keep")
 
-        XCTAssertThrowsError(try runner.run("pwd notes")) { error in
+        XCTAssertThrowsError(try runner.testRun("pwd notes")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("ls notes extra")) { error in
+        XCTAssertThrowsError(try runner.testRun("ls notes extra")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("cat notes/a.md notes/b.md")) { error in
+        XCTAssertThrowsError(try runner.testRun("cat notes/a.md notes/b.md")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("grep keep notes extra")) { error in
+        XCTAssertThrowsError(try runner.testRun("grep keep notes extra")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("find notes extra")) { error in
+        XCTAssertThrowsError(try runner.testRun("find notes extra")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("wc -l notes/a.md")) { error in
+        XCTAssertThrowsError(try runner.testRun("wc -l notes/a.md")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("head notes/a.md notes/b.md")) { error in
+        XCTAssertThrowsError(try runner.testRun("head notes/a.md notes/b.md")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("head -n notes/a.md")) { error in
+        XCTAssertThrowsError(try runner.testRun("head -n notes/a.md")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
-        XCTAssertThrowsError(try runner.run("head --bytes notes/a.md")) { error in
+        XCTAssertThrowsError(try runner.testRun("head --bytes notes/a.md")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
     }
 
     func testGrepSearchesText() throws {
-        try workspace.write("notes/a.md", contents: "alpha\nbeta\n")
-        XCTAssertTrue(try runner.run("grep beta notes").contains("notes/a.md:2"))
+        try workspace.testWrite("notes/a.md", contents: "alpha\nbeta\n")
+        XCTAssertTrue(try runner.testRun("grep beta notes").contains("notes/a.md:2"))
     }
 
     func testTerminalCommandDraftMirrorsRunnerArgumentValidation() throws {
@@ -243,15 +250,15 @@ final class CommandRunnerTests: XCTestCase {
     }
 
     func testCpAndMvKeepExistingFoldersSafe() throws {
-        try workspace.write("Folder/keep.txt", contents: "keep")
-        try workspace.write("source.txt", contents: "source")
+        try workspace.testWrite("Folder/keep.txt", contents: "keep")
+        try workspace.testWrite("source.txt", contents: "source")
 
-        XCTAssertThrowsError(try runner.run("cp source.txt Folder")) { error in
+        XCTAssertThrowsError(try runner.testRun("cp source.txt Folder")) { error in
             XCTAssertEqual(error as? SandboxError, .directoryOverwriteDenied)
         }
         XCTAssertEqual(try workspace.read("Folder/keep.txt"), "keep")
 
-        XCTAssertThrowsError(try runner.run("mv source.txt Folder")) { error in
+        XCTAssertThrowsError(try runner.testRun("mv source.txt Folder")) { error in
             XCTAssertEqual(error as? SandboxError, .directoryOverwriteDenied)
         }
         XCTAssertEqual(try workspace.read("Folder/keep.txt"), "keep")
@@ -259,28 +266,28 @@ final class CommandRunnerTests: XCTestCase {
     }
 
     func testHTMLValidationProfilesPagesAndGamesSeparately() throws {
-        try workspace.write(
+        try workspace.testWrite(
             "landing.html",
             contents: """
             <!doctype html><html><head><meta name="viewport" content="width=device-width"><title>Landing</title></head><body><main><h1>Ship</h1></main></body></html>
             """
         )
-        let pageResult = try runner.run("validate_html --profile page landing.html")
+        let pageResult = try runner.testRun("validate_html --profile page landing.html")
         XCTAssertTrue(pageResult.contains("Profile: responsive page"))
         XCTAssertTrue(pageResult.contains("Result: ready for preview"))
         XCTAssertFalse(pageResult.contains("missing: script tag"), "Normal pages should not be falsely treated as broken games.")
 
-        try workspace.write(
+        try workspace.testWrite(
             "game.html",
             contents: """
             <!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><canvas id="game"></canvas><script>requestAnimationFrame(()=>{}); addEventListener('keydown', () => {});</script></body></html>
             """
         )
-        let gameResult = try runner.run("validate_html --profile game game.html")
+        let gameResult = try runner.testRun("validate_html --profile game game.html")
         XCTAssertTrue(gameResult.contains("Profile: playable game"))
         XCTAssertTrue(gameResult.contains("Result: ready for preview"))
 
-        XCTAssertThrowsError(try runner.run("validate_html landing.html game.html")) { error in
+        XCTAssertThrowsError(try runner.testRun("validate_html landing.html game.html")) { error in
             XCTAssertEqual(error as? SandboxError, .invalidArguments)
         }
     }
@@ -290,18 +297,18 @@ final class CommandRunnerTests: XCTestCase {
         runner = CommandRunner(workspace: workspace)
 
         let body = (1...120).map { "line\($0) word" }.joined(separator: "\n")
-        try workspace.write("large.txt", contents: body)
+        try workspace.testWrite("large.txt", contents: body)
         XCTAssertThrowsError(try workspace.read("large.txt")) { error in
             XCTAssertEqual(error as? SandboxError, .fileTooLarge)
         }
 
-        let head = try runner.run("head -n 3 large.txt")
+        let head = try runner.testRun("head -n 3 large.txt")
         XCTAssertTrue(head.contains("line1 word"))
         XCTAssertTrue(head.contains("line2 word"))
         XCTAssertTrue(head.contains("line3 word"))
         XCTAssertTrue(head.contains("truncated"), "Head should be explicit when it returns only a safe prefix.")
 
-        let wc = try runner.run("wc large.txt")
+        let wc = try runner.testRun("wc large.txt")
         XCTAssertTrue(wc.hasPrefix("120 240 "), wc)
         XCTAssertTrue(wc.hasSuffix(" large.txt"), wc)
     }
@@ -313,12 +320,12 @@ final class CommandRunnerTests: XCTestCase {
         let oversizedPage = """
         <!doctype html><html><head><meta name="viewport" content="width=device-width"><title>Landing</title></head><body><main><h1>Ship</h1></main></body></html>
         """ + String(repeating: "\n<!-- padding -->", count: 200)
-        try workspace.write("large.html", contents: oversizedPage)
+        try workspace.testWrite("large.html", contents: oversizedPage)
         XCTAssertThrowsError(try workspace.read("large.html")) { error in
             XCTAssertEqual(error as? SandboxError, .fileTooLarge)
         }
 
-        let result = try runner.run("validate_html --profile page large.html")
+        let result = try runner.testRun("validate_html --profile page large.html")
         XCTAssertTrue(result.contains("Profile: responsive page"))
         XCTAssertTrue(result.contains("Result: ready for preview"))
     }

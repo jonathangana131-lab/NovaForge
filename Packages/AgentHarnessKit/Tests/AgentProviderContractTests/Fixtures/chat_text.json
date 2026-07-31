@@ -1,0 +1,51 @@
+{
+  "dialect": "chat",
+  "frames": [
+    {
+      "kind": "json",
+      "value": {
+        "id": "chat-text-1",
+        "model": "fixture-model",
+        "choices": [{"index": 0, "delta": {"content": "Hel"}, "finish_reason": null}]
+      }
+    },
+    {
+      "kind": "json",
+      "value": {
+        "id": "chat-text-1",
+        "model": "fixture-model",
+        "choices": [{"index": 0, "delta": {"content": "lo"}, "finish_reason": null}]
+      }
+    },
+    {
+      "kind": "json",
+      "value": {
+        "id": "chat-text-1",
+        "model": "fixture-model",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+      }
+    },
+    {
+      "kind": "json",
+      "value": {
+        "id": "chat-text-1",
+        "model": "fixture-model",
+        "choices": [],
+        "usage": {
+          "prompt_tokens": 10,
+          "prompt_tokens_details": {"cached_tokens": 3},
+          "completion_tokens": 2,
+          "completion_tokens_details": {"reasoning_tokens": 0}
+        }
+      }
+    },
+    {"kind": "done"}
+  ],
+  "expected": [
+    "started|chat-text-1|fixture-model",
+    "text|0|Hel",
+    "text|0|lo",
+    "usage|10|3|2|0",
+    "completed|chat-text-1|completed"
+  ]
+}
