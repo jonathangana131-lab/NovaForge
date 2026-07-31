@@ -1,0 +1,99 @@
+name: Voltline QA Repair
+
+on:
+  push:
+    branches:
+      - codex/voltline-release-parallel
+    paths:
+      - ".github/workflows/voltline-qa-repair.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Phase 2
+        uses: actions/checkout@v4
+        with:
+          ref: codex/voltline-release-parallel
+
+      - name: Stabilize QA overlays and simulator captures
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("Voltline/App/Sources/GameRootView.swift")
+          text = root.read_text()
+          marker = "        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: session.showPhone)"
+          insertion = '''        .onAppear {
+              session.applyQAPresentationFixture()
+              Task { @MainActor in
+                  await Task.yield()
+                  session.applyQAPresentationFixture()
+              }
+          }
+          .animation(.spring(response: 0.34, dampingFraction: 0.82), value: session.showPhone)'''
+          if "session.applyQAPresentationFixture()" not in text:
+              if text.count(marker) != 1:
+                  raise SystemExit("GameRootView animation marker was not unique")
+              text = text.replace(marker, insertion, 1)
+              root.write_text(text)
+
+          tests = Path("Voltline/App/UITests/VoltlineGameUITests.swift")
+          test_text = tests.read_text()
+          test_text = test_text.replace(
+              '        XCTAssertTrue(element("closeGarageButton", in: app).waitForExistence(timeout: 15))',
+              '        XCTAssertTrue(element("garageOverlay", in: app).waitForExistence(timeout: 15))\n        XCTAssertTrue(element("closeGarageButton", in: app).waitForExistence(timeout: 5))'
+          )
+          test_text = test_text.replace(
+              '        XCTAssertTrue(element("closePhoneButton", in: app).waitForExistence(timeout: 15))\n        XCTAssertTrue(element("bankPhoneApp", in: app).exists)',
+              '        XCTAssertTrue(element("phoneOS", in: app).waitForExistence(timeout: 15))\n        XCTAssertTrue(element("closePhoneButton", in: app).waitForExistence(timeout: 5))\n        XCTAssertTrue(element("bankPhoneApp", in: app).waitForExistence(timeout: 5))'
+          )
+          test_text = test_text.replace(
+              '        XCTAssertTrue(element("closePhoneButton", in: app).waitForExistence(timeout: 15))\n        XCTAssertTrue(element("vescPhoneApp", in: app).exists)',
+              '        XCTAssertTrue(element("phoneOS", in: app).waitForExistence(timeout: 15))\n        XCTAssertTrue(element("closePhoneButton", in: app).waitForExistence(timeout: 5))\n        XCTAssertTrue(element("vescPhoneApp", in: app).waitForExistence(timeout: 5))'
+          )
+          tests.write_text(test_text)
+
+          workflow = Path(".github/workflows/voltline-ios-game.yml")
+          workflow_text = workflow.read_text()
+          old = '''            sleep 5
+              xcrun simctl io "$SIMULATOR_UDID" screenshot "Artifacts/Screenshots/${name}.png"'''
+          new = '''            sleep 5
+              local destination="Artifacts/Screenshots/${name}.png"
+              for attempt in 1 2 3 4 5; do
+                if xcrun simctl io "$SIMULATOR_UDID" screenshot "$destination"; then
+                  test -s "$destination"
+                  return 0
+                fi
+                echo "Screenshot attempt $attempt failed for $name; retrying."
+                sleep 2
+              done
+              echo "Could not capture $name after five attempts."
+              return 1'''
+          if "Screenshot attempt $attempt failed" not in workflow_text:
+              if old not in workflow_text:
+                  raise SystemExit("Screenshot function marker missing")
+              workflow_text = workflow_text.replace(old, new, 1)
+              workflow.write_text(workflow_text)
+          PY
+
+      - name: Commit QA repair
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "QA repair is already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            Voltline/App/Sources/GameRootView.swift \
+            Voltline/App/UITests/VoltlineGameUITests.swift \
+            .github/workflows/voltline-ios-game.yml
+          git commit -m "Fix Voltline launch fixtures and screenshot retries"
+          git push origin HEAD:codex/voltline-release-parallel
