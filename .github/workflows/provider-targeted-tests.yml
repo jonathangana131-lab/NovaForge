@@ -1,26 +1,24 @@
 name: Provider targeted tests
 
 on:
-  pull_request:
+  push:
     branches:
       - agent/provider-repair-control
-    types: [opened, reopened, synchronize, edited]
 
 permissions:
   contents: read
 
 concurrency:
-  group: provider-targeted-tests-${{ github.event.pull_request.number }}
+  group: provider-targeted-tests-clean-repair
   cancel-in-progress: true
 
 jobs:
   provider-contracts:
-    if: github.head_ref == 'agent/fix-phone-provider-reliability-clean'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: agent/fix-phone-provider-reliability-clean
       - name: Run provider contract tests
         run: swift test --package-path Packages/AgentHarnessKit --filter ProviderAdapterContractTests
