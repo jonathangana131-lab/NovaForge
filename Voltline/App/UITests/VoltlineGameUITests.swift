@@ -6,76 +6,82 @@ final class VoltlineGameUITests: XCTestCase {
     }
 
     func testRideHUDAndControlsExist() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--qa-rich"]
-        app.launch()
+        let app = launch(arguments: ["--qa-rich"])
 
-        XCTAssertTrue(app.otherElements["scooterDashboard"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["phoneButton"].exists)
-        XCTAssertTrue(app.buttons["garageButton"].exists)
-        XCTAssertTrue(app.otherElements["throttlePedal"].exists)
-        XCTAssertTrue(app.otherElements["brakePedal"].exists)
-        XCTAssertTrue(app.otherElements["steeringPad"].exists)
+        XCTAssertTrue(element("scooterDashboard", in: app).waitForExistence(timeout: 15))
+        XCTAssertTrue(element("phoneButton", in: app).exists)
+        XCTAssertTrue(element("garageButton", in: app).exists)
+        XCTAssertTrue(element("throttlePedal", in: app).exists)
+        XCTAssertTrue(element("brakePedal", in: app).exists)
+        XCTAssertTrue(element("steeringPad", in: app).exists)
         attachScreenshot(name: "01-ride-hud")
     }
 
     func testSettingsFixtureCanOpenAndClose() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--qa-rich"]
-        app.launch()
+        let app = launch(arguments: ["--qa-rich"])
 
-        let settingsButton = app.buttons["settingsButton"]
+        let settingsButton = element("settingsButton", in: app)
         XCTAssertTrue(settingsButton.waitForExistence(timeout: 15))
         settingsButton.tap()
-        XCTAssertTrue(app.otherElements["settingsOverlay"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["closeSettingsButton"].exists)
+
+        let overlay = element("settingsOverlay", in: app)
+        let closeButton = element("closeSettingsButton", in: app)
+        XCTAssertTrue(overlay.waitForExistence(timeout: 5))
+        XCTAssertTrue(closeButton.exists)
         attachScreenshot(name: "06-settings")
-        app.buttons["closeSettingsButton"].tap()
-        XCTAssertFalse(app.otherElements["settingsOverlay"].waitForExistence(timeout: 3))
+        closeButton.tap()
+        XCTAssertFalse(overlay.waitForExistence(timeout: 3))
     }
 
     func testGarageFixture() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--qa-rich", "--qa-garage"]
-        app.launch()
+        let app = launch(arguments: ["--qa-rich", "--qa-garage"])
 
-        XCTAssertTrue(app.otherElements["garageOverlay"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["closeGarageButton"].exists)
+        XCTAssertTrue(element("garageOverlay", in: app).waitForExistence(timeout: 15))
+        XCTAssertTrue(element("closeGarageButton", in: app).exists)
         attachScreenshot(name: "02-garage")
     }
 
     func testPhoneAndBankFixture() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--qa-rich", "--qa-bank"]
-        app.launch()
+        let app = launch(arguments: ["--qa-rich", "--qa-bank"])
 
-        XCTAssertTrue(app.otherElements["phoneOS"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.otherElements["bankPhoneApp"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["closePhoneButton"].exists)
+        XCTAssertTrue(element("phoneOS", in: app).waitForExistence(timeout: 15))
+        XCTAssertTrue(element("bankPhoneApp", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("closePhoneButton", in: app).exists)
         attachScreenshot(name: "03-phone-bank")
     }
 
     func testVESCFixtureAndWriteButton() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--qa-rich", "--qa-vesc"]
-        app.launch()
+        let app = launch(arguments: ["--qa-rich", "--qa-vesc"])
 
-        XCTAssertTrue(app.otherElements["phoneOS"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.otherElements["vescPhoneApp"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["writeVESCButton"].exists)
+        XCTAssertTrue(element("phoneOS", in: app).waitForExistence(timeout: 15))
+        XCTAssertTrue(element("vescPhoneApp", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("writeVESCButton", in: app).exists)
         attachScreenshot(name: "04-phone-vesc")
     }
 
     func testCrashFixtureCanReset() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--qa-crash"]
-        app.launch()
+        let app = launch(arguments: ["--qa-crash"])
 
-        let reset = app.buttons["resetCrashButton"]
+        let reset = element("resetCrashButton", in: app)
         XCTAssertTrue(reset.waitForExistence(timeout: 15))
         attachScreenshot(name: "05-crash")
         reset.tap()
         XCTAssertFalse(reset.waitForExistence(timeout: 3))
+    }
+
+    private func launch(arguments: [String]) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = arguments
+        app.launch()
+        return app
+    }
+
+    /// SwiftUI can expose the same accessibility identifier as a button,
+    /// container, or generic element depending on view composition and SDK.
+    /// Querying all descendants keeps tests tied to the identifier rather than
+    /// an implementation-specific accessibility element type.
+    private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)[identifier]
     }
 
     private func attachScreenshot(name: String) {
