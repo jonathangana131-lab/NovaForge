@@ -8,6 +8,21 @@ extension GameSession {
     func applyQAPresentationFixture() {
         let arguments = ProcessInfo.processInfo.arguments
 
+        if arguments.contains("--qa-cockpit-maxshot") {
+            prepareCockpitFixture(scooterID: ScooterCatalogItem.maxshot.id, mode: .eco)
+            return
+        }
+
+        if arguments.contains("--qa-cockpit-kukirin") {
+            prepareCockpitFixture(scooterID: ScooterCatalogItem.kukirin.id, mode: .sport)
+            return
+        }
+
+        if arguments.contains("--qa-cockpit-dualtron") {
+            prepareCockpitFixture(scooterID: ScooterCatalogItem.dualtron.id, mode: .sport)
+            return
+        }
+
         if arguments.contains("--qa-garage") {
             showPhone = false
             showGarage = true
@@ -32,6 +47,17 @@ extension GameSession {
             isPaused = true
             releaseQATouchControls()
         }
+    }
+
+    private func prepareCockpitFixture(scooterID: String, mode: DriveMode) {
+        ownedScooterIDs.insert(scooterID)
+        selectedScooterID = scooterID
+        driveMode = mode
+        camera = .pov
+        showPhone = false
+        showGarage = false
+        isPaused = false
+        releaseQATouchControls()
     }
 
     private func releaseQATouchControls() {

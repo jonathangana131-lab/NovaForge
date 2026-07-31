@@ -1,0 +1,65 @@
+name: Voltline Authentic UI Finalizer
+
+on:
+  push:
+    branches:
+      - codex/voltline-authentic-displays
+    paths:
+      - .github/workflows/voltline-authentic-ui-finalize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/voltline-authentic-displays
+          fetch-depth: 0
+      - name: Apply checked-in PhoneOS transformation and catalog cockpit
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          controller = Path('.github/workflows/voltline-phone27-integrate.yml').read_text()
+          start = controller.index("          python3 - <<'PY'\n") + len("          python3 - <<'PY'\n")
+          end = controller.index("\n          PY", start)
+          embedded = textwrap.dedent(controller[start:end])
+          exec(compile(embedded, 'phone27-embedded', 'exec'), {})
+
+          root_path = Path('Voltline/App/Sources/GameRootView.swift')
+          root = root_path.read_text()
+          root = root.replace(
+              'if session.camera == .pov && session.selectedScooterID == ScooterCatalogItem.maxshot.id {',
+              'if session.camera == .pov {',
+              1,
+          )
+          root = root.replace(
+              'MaxshotFirstPersonCockpitView(session: session)',
+              'CatalogFirstPersonCockpitView(session: session)',
+              1,
+          )
+          root_path.write_text(root)
+          PY
+      - name: Verify presentation invariants
+        shell: bash
+        run: |
+          grep -q 'CatalogFirstPersonCockpitView(session: session)' Voltline/App/Sources/GameRootView.swift
+          ! grep -q 'ScooterDashboardView(session: session)' Voltline/App/Sources/GameRootView.swift
+          ! grep -q 'TelemetryCard(session: session)' Voltline/App/Sources/GameRootView.swift
+          grep -q 'GlassEffectContainer' Voltline/App/Sources/PhoneOSView.swift
+          grep -q '9.0 / 19.5' Voltline/App/Sources/PhoneOSView.swift
+      - name: Commit latest-head integration
+        shell: bash
+        run: |
+          git config user.name "voltline-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add Voltline/App/Sources/PhoneOSView.swift Voltline/App/Sources/GameRootView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m "Finalize catalog cockpit and Liquid Glass PhoneOS"
+          git pull --rebase origin codex/voltline-authentic-displays
+          git push origin HEAD:codex/voltline-authentic-displays
