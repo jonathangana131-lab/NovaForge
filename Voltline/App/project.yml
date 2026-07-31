@@ -42,6 +42,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_PREVIEWS: YES
         OTHER_LDFLAGS: "$(inherited) -ObjC"
+        OTHER_SWIFT_FLAGS: "$(inherited) -Xfrontend -solver-expression-time-threshold=60000"
   VoltlineGameTests:
     type: bundle.unit-test
     platform: iOS
