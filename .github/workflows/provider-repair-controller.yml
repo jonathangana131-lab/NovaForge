@@ -24,152 +24,228 @@ jobs:
           ref: agent/fix-phone-provider-reliability-clean
           fetch-depth: 0
 
-      - name: Separate phone migration from durable provider repair
+      - name: Align UI contracts with public phone providers
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
-          def replace_once(path, old, new, label):
-              p = Path(path)
-              text = p.read_text()
-              if text.count(old) != 1:
-                  raise SystemExit(f'{label}: expected snippet exactly once, found {text.count(old)}')
-              p.write_text(text.replace(old, new, 1))
+          path = Path('AgentPadUITests/AgentPadUITests.swift')
+          text = path.read_text()
 
-          models = Path('AgentPad/Models/Models.swift')
-          text = models.read_text()
-          old = '''    @discardableResult
-    func repairStaleModelSelection(now: Date = Date()) -> Bool {
-        let decodedProvider = AIProvider(rawValue: providerRawValue ?? "")
-        let selectedProvider = decodedProvider.flatMap {
-            $0.isUserSelectable ? $0 : nil
-        } ?? .openCodeZen
-'''
-          new = '''    /// Repairs the provider used for a fresh phone session without rewriting
-    /// valid legacy provider state that durable recovery may still need.
-    /// Only the retired private ChatGPT/Codex route migrates to anonymous Zen
-    /// Free; unknown/corrupt data retains NovaForge's fail-safe Local behavior.
-    @discardableResult
-    func repairPhoneProviderSelection(now: Date = Date()) -> Bool {
-        let previousProviderRawValue = providerRawValue
-        let previousModelID = modelID
-        switch AIProvider(rawValue: providerRawValue ?? "") {
-        case .none:
-            providerRawValue = AIProvider.local.rawValue
-            modelID = AIProvider.local.defaultModel
-        case .some(.openAICodex):
-            providerRawValue = AIProvider.openCodeZen.rawValue
-            modelID = AIProvider.openCodeZen.defaultModel
-        case .some:
-            break
-        }
-        let repaired = repairStaleModelSelection(now: now)
-        let changed = repaired || previousProviderRawValue != providerRawValue ||
-            previousModelID != modelID
-        if changed { updatedAt = now }
-        return changed
-    }
+          def replace_function(source, name, replacement):
+              pattern = rf'    func {re.escape(name)}\(\) throws \{{.*?(?=\n    func )'
+              updated, count = re.subn(pattern, replacement.rstrip(), source, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'expected UI test {name} exactly once, found {count}')
+              return updated
 
-    @discardableResult
-    func repairStaleModelSelection(now: Date = Date()) -> Bool {
-        let selectedProvider = AIProvider(rawValue: providerRawValue ?? "")
-            ?? .local
-'''
-          if text.count(old) != 1:
-              raise SystemExit('Models.swift provider repair snippet mismatch')
-          models.write_text(text.replace(old, new, 1))
+          text = replace_function(text, 'testNativeModelPickerAndChatGPTProviderScreenshot', r'''
+    func testNativeModelPickerAndChatGPTProviderScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
 
-          launch = Path('AgentPad/Models/AppLaunchPersistence.swift')
-          text = launch.read_text()
-          old = '''        let previous = AgentSettingsPersistence.snapshot(settings)
-        if AIProvider(rawValue: settings.providerRawValue ?? "") == nil {
-            // Unknown/corrupt persisted data never authorized a network route.
-            // Preserve NovaForge's existing fail-safe Local recovery contract.
-            settings.providerRawValue = AIProvider.local.rawValue
-        }
-        let reportedChange = settings.repairStaleModelSelection(now: now)
-'''
-          new = '''        let previous = AgentSettingsPersistence.snapshot(settings)
-        let reportedChange = settings.repairPhoneProviderSelection(now: now)
-'''
-          if text.count(old) != 1:
-              raise SystemExit('AppRootPersistence launch repair snippet mismatch')
-          text = text.replace(old, new, 1)
-          old = '''        if AIProvider(rawValue: settings.providerRawValue ?? "") == nil {
-            settings.providerRawValue = AIProvider.local.rawValue
-        }
-        _ = settings.repairStaleModelSelection(now: now)
-'''
-          new = '''        _ = settings.repairPhoneProviderSelection(now: now)
-'''
-          if text.count(old) != 1:
-              raise SystemExit('AppRootLaunchRepair launch repair snippet mismatch')
-          launch.write_text(text.replace(old, new, 1))
-
-          replace_once(
-              'AgentPad/Services/AIProvider.swift',
-              '        guard self == .openAICodex else { return false }\n',
-              '        guard self == .openAI || self == .openAICodex else { return false }\n',
-              'GPT-5.6 alias boundary'
-          )
-
-          tests = Path('AgentPadTests/AgentSystemFreshRunRequestFactoryTests.swift')
-          text = tests.read_text()
-          old = '''    func testLegacyChatGPTSelectionRepairsToFreeZenOnPhone() {
-        let settings = AgentSettings(
-            provider: .openAICodex,
-            modelID: "gpt-5.5"
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let settingsTab = app.tabBars.buttons["Control"]
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
+        tapButtonOrCoordinate(
+            settingsTab,
+            in: app,
+            normalizedOffset: CGVector(dx: 0.83, dy: 0.94)
         )
 
-        XCTAssertTrue(settings.repairStaleModelSelection())
-        XCTAssertEqual(settings.providerRawValue, AIProvider.openCodeZen.rawValue)
-        XCTAssertEqual(settings.modelID, AIProvider.openCodeZen.defaultModel)
+        XCTAssertFalse(
+            app.buttons["settingsProvider-openAICodex"].exists,
+            "The private ChatGPT backend must not be offered for a fresh phone run."
+        )
+        let zenProvider = app.buttons["settingsProvider-openCodeZen"]
+        XCTAssertTrue(zenProvider.waitForExistence(timeout: 5))
+        zenProvider.tap()
+
+        let pickerButton = app.buttons["modelPickerButton"]
+        if !pickerButton.waitForExistence(timeout: 2) { app.swipeUp() }
+        XCTAssertTrue(pickerButton.waitForExistence(timeout: 5))
+        pickerButton.tap()
+
+        XCTAssertTrue(app.staticTexts["Choose Model"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["mimo-v2.5-free"].waitForExistence(timeout: 5))
+        let settingsModelSearch = app.textFields["Search models"]
+        XCTAssertTrue(settingsModelSearch.waitForExistence(timeout: 5))
+        settingsModelSearch.tap()
+        settingsModelSearch.typeText("mimo")
+        let settingsClear = app.buttons["settingsModelSearchClearButton"]
+        XCTAssertTrue(settingsClear.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(settingsClear, named: "settings model search clear")
+        assertMinimumTouchTarget(app.buttons["modelPickerDone"], named: "model picker Done")
+        if app.buttons["modelRefreshButton"].waitForExistence(timeout: 2) {
+            assertMinimumTouchTarget(app.buttons["modelRefreshButton"], named: "model refresh card")
+        }
+        XCTAssertFalse(
+            app.staticTexts["Live ChatGPT models"].exists,
+            "Fresh phone model selection must not expose the private ChatGPT catalog."
+        )
+        capture("21-native-model-picker-public-provider", app: app)
+        app.buttons["Done"].tap()
     }
-'''
-          new = '''    func testLegacyChatGPTSelectionRepairsToFreeZenOnPhone() {
-        let settings = AgentSettings(
-            provider: .openAICodex,
-            modelID: "gpt-5.5"
+''')
+
+          text = replace_function(text, 'testChatGPTSubscriptionSignInReplacesSimulatedTerminal', r'''
+    func testChatGPTSubscriptionSignInReplacesSimulatedTerminal() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let settingsTab = app.tabBars.buttons["Control"]
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
+        settingsTab.tap()
+
+        XCTAssertFalse(
+            app.buttons["settingsProvider-openAICodex"].exists,
+            "Control must not offer the private ChatGPT backend for a fresh phone run."
+        )
+        XCTAssertTrue(app.buttons["settingsProvider-openCodeZen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["settingsProvider-local"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["settingsProvider-openAI"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["ChatGPT subscription"].exists)
+        XCTAssertFalse(app.buttons["Sign in with ChatGPT"].exists)
+        XCTAssertFalse(app.staticTexts["codex simulated terminal"].exists)
+        capture("38-settings-public-phone-providers", app: app)
+
+        let chatTab = app.tabBars.buttons["Forge"]
+        XCTAssertTrue(chatTab.waitForExistence(timeout: 5))
+        chatTab.tap()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 5))
+        let modelMenu = composerModelControl(in: app)
+        XCTAssertTrue(modelMenu.waitForExistence(timeout: 5))
+        modelMenu.tap()
+        XCTAssertFalse(app.buttons["composerProvider-openAICodex"].exists)
+        XCTAssertTrue(app.buttons["composerProvider-openCodeZen"].waitForExistence(timeout: 5))
+        capture("39-chat-public-provider-route", app: app)
+        app.buttons["Done"].tap()
+    }
+''')
+
+          text = replace_function(text, 'testComposerProviderSwitchingRepairsStaleModelInline', r'''
+    func testComposerProviderSwitchingRepairsStaleModelInline() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--stale-openai-local-model"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let composerModelButton = composerModelControl(in: app)
+        XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(composerModelButton.label.contains("OpenAI"), "A stale local model under OpenAI should repair to OpenAI before the user sends.")
+        XCTAssertFalse(composerModelButton.label.contains("Qwen Coder"), "Stale local model labels should not survive under the OpenAI provider.")
+        composerModelButton.tap()
+
+        XCTAssertTrue(
+            app.buttons["composerModel-gpt-5.5"].firstMatch.waitForExistence(timeout: 5),
+            "Repaired OpenAI state should show the current default OpenAI model in the native composer menu."
+        )
+        XCTAssertFalse(app.staticTexts["Switch model"].exists, "Composer provider switching should not bring back the old custom model sheet.")
+        XCTAssertFalse(
+            app.buttons["composerProvider-openAICodex"].exists,
+            "The private ChatGPT route must not return through the compact composer."
         )
 
-        XCTAssertTrue(settings.repairPhoneProviderSelection())
-        XCTAssertEqual(settings.providerRawValue, AIProvider.openCodeZen.rawValue)
-        XCTAssertEqual(settings.modelID, AIProvider.openCodeZen.defaultModel)
-    }
+        let zenProvider = app.buttons["composerProvider-openCodeZen"].firstMatch
+        XCTAssertTrue(zenProvider.waitForExistence(timeout: 5))
+        zenProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-mimo-v2.5-free"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(composerModelButton.label.contains("Zen"), "Selecting Zen Free should update the compact composer label immediately.")
 
-    func testGenericRepairPreservesLegacyCustomProvider() {
-        let settings = AgentSettings(
-            provider: .custom,
-            modelID: AIProvider.local.defaultModel
+        composerModelButton.tap()
+        let localProvider = app.buttons["composerProvider-local"].firstMatch
+        XCTAssertTrue(localProvider.waitForExistence(timeout: 5))
+        localProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(composerModelButton.label.contains("Local"), "Local should be selectable from the compact composer menu.")
+        capture("09-composer-provider-switching-glass", app: app)
+    }
+''')
+
+          text = replace_function(text, 'testReasoningAndUltraCodePickerUsesExpandableLiquidGlassControl', r'''
+    func testReasoningAndUltraCodePickerUsesExpandableLiquidGlassControl() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let composerModelButton = composerModelControl(in: app)
+        XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
+        composerModelButton.tap()
+
+        XCTAssertFalse(app.buttons["composerProvider-openAICodex"].exists)
+        let zenProvider = app.buttons["composerProvider-openCodeZen"]
+        XCTAssertTrue(zenProvider.waitForExistence(timeout: 5))
+        zenProvider.tap()
+        XCTAssertTrue(app.buttons["composerModel-mimo-v2.5-free"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+
+        let reasoningButton = app.buttons["composerReasoningPickerButton"]
+        XCTAssertTrue(reasoningButton.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(reasoningButton, named: "reasoning and agent mode")
+        reasoningButton.tap()
+
+        let reasoningPicker = app.descendants(matching: .any)
+            .matching(identifier: "composerReasoningPicker").firstMatch
+        XCTAssertTrue(
+            reasoningPicker.waitForExistence(timeout: 5) ||
+                app.staticTexts["Reasoning"].waitForExistence(timeout: 5)
+        )
+        let reasoningSlider = app.descendants(matching: .any)
+            .matching(identifier: "reasoningEffortSlider").firstMatch
+        XCTAssertTrue(reasoningSlider.waitForExistence(timeout: 5))
+        assertMinimumTouchTarget(reasoningSlider, named: "reasoning effort slider")
+        XCTAssertFalse(app.staticTexts["Agent mode"].exists, "The composer should not reopen the old settings-style mode menu.")
+
+        let dragStart = reasoningSlider.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.14, dy: 0.34)
+        )
+        let dragEnd = reasoningSlider.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.50, dy: 0.34)
+        )
+        dragStart.press(forDuration: 0.12, thenDragTo: dragEnd)
+        XCTAssertEqual(
+            reasoningSlider.value as? String,
+            "High",
+            "Dragging across the glass pill should move the reasoning thumb, not behave like a static menu."
         )
 
-        XCTAssertTrue(settings.repairStaleModelSelection())
-        XCTAssertEqual(settings.providerRawValue, AIProvider.custom.rawValue)
-        XCTAssertEqual(settings.modelID, AIProvider.custom.defaultModel)
-    }
-'''
-          if text.count(old) != 1:
-              raise SystemExit('phone migration test snippet mismatch')
-          tests.write_text(text.replace(old, new, 1))
+        reasoningSlider.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
+        ).tap()
+        XCTAssertTrue(
+            app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS[c] %@", "workspace")
+            ).firstMatch.waitForExistence(timeout: 5),
+            "UltraCode should compactly explain its maximum-reasoning workspace behavior."
+        )
+        capture("23-reasoning-ultracode-liquid-glass", app: app)
 
-          replace_once(
-              'AgentPad/Services/AgentSystemPresentationStore.swift',
-              '            "This provider or model is not available for agent runs. Choose OpenCode Zen, OpenAI, ChatGPT, or Local in Control."\n',
-              '            "This provider or model is not available for agent runs. Choose OpenCode Zen, OpenAI, or Local in Control."\n',
-              'provider unsupported copy'
-          )
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.08)).tap()
+        XCTAssertTrue(reasoningButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            reasoningButton.label.localizedCaseInsensitiveContains("UltraCode"),
+            "The collapsed liquid-glass control should retain the selected UltraCode mode."
+        )
+    }
+''')
+
+          path.write_text(text)
           PY
           git diff --check
 
-      - name: Commit correction to repair branch
+      - name: Commit UI contract correction
         run: |
           git config user.name "NovaForge Repair Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add \
-            AgentPad/Models/Models.swift \
-            AgentPad/Models/AppLaunchPersistence.swift \
-            AgentPad/Services/AIProvider.swift \
-            AgentPad/Services/AgentSystemPresentationStore.swift \
-            AgentPadTests/AgentSystemFreshRunRequestFactoryTests.swift
-          git commit -m "Separate phone provider migration from durable repair"
+          git add AgentPadUITests/AgentPadUITests.swift
+          git commit -m "Align provider UI tests with public phone routes"
           git push origin HEAD:agent/fix-phone-provider-reliability-clean
