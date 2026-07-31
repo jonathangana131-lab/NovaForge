@@ -1,0 +1,53 @@
+name: Apply phone provider reliability fix
+
+on:
+  push:
+    branches:
+      - agent/fix-phone-provider-reliability
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-phone-provider-reliability-fix
+  cancel-in-progress: false
+
+jobs:
+  apply-and-validate:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply deterministic source repair
+        run: python3 scripts/apply-phone-provider-reliability-fix.py
+
+      - name: Validate provider package contracts
+        run: swift test --package-path Packages/AgentHarnessKit --filter ProviderAdapterContractTests
+
+      - name: Build the iPhone app
+        run: >-
+          xcodebuild
+          -project AgentPad.xcodeproj
+          -scheme AgentPad
+          -configuration Debug
+          -sdk iphonesimulator
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+      - name: Verify patch cleanliness
+        run: git diff --check
+
+      - name: Commit validated repair
+        env:
+          BRANCH_NAME: agent/fix-phone-provider-reliability
+        run: |
+          rm -f .github/workflows/apply-phone-provider-reliability-fix.yml
+          rm -f scripts/apply-phone-provider-reliability-fix.py
+          git config user.name "NovaForge Repair Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix phone provider model failures"
+          git push origin "HEAD:${BRANCH_NAME}"
