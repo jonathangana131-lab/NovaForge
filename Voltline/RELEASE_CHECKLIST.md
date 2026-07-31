@@ -7,9 +7,10 @@
 - [ ] Simulator build and test bundles compile.
 - [ ] All native unit tests pass.
 - [ ] All native UI tests pass on the SDK-matched iPhone simulator.
+- [ ] Mission selection closes the objective board and returns usable throttle control.
 - [ ] Unsigned generic iPhoneOS compilation passes.
-- [ ] Real simulator screenshots exist for onboarding, ride HUD, garage, Bank, VESC, crash, and objective board.
-- [ ] The simulator `.app`, icon, logs, and `.xcresult` bundles are uploaded.
+- [ ] At least nine real XCUITest screenshots are exported for onboarding, ride HUD, settings, garage, Bank, VESC, crash, objective board, and active objective HUD.
+- [ ] The simulator `.app`, app icon, screenshots, logs, and `.xcresult` bundles are uploaded.
 
 ## Manual iPhone 12 pass
 
