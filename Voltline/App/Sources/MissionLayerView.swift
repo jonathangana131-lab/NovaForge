@@ -242,6 +242,7 @@ private struct MissionBoardView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("missionBoard")
     }
 

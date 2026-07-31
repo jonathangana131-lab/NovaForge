@@ -43,6 +43,7 @@ struct GarageOverlay: View {
             }
             .shadow(color: .black.opacity(0.82), radius: 38, y: 18)
             .padding(24)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("garageOverlay")
         }
     }

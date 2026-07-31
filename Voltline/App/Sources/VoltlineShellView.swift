@@ -203,6 +203,7 @@ private struct VoltlineOnboardingView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("onboardingOverlay")
     }
 }
@@ -348,6 +349,7 @@ private struct PlayerSettingsOverlay: View {
             }
             .shadow(color: .black.opacity(0.72), radius: 34, y: 15)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settingsOverlay")
     }
 

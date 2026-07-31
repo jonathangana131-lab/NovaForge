@@ -57,6 +57,7 @@ struct PhoneOSView: View {
                 .padding(.top, 6)
         }
         .shadow(color: .black.opacity(0.72), radius: 28, y: 12)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("phoneOS")
     }
 
