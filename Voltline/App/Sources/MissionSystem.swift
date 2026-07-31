@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -33,7 +34,7 @@ struct VoltlineMission: Identifiable, Codable, Hashable {
         VoltlineMission(
             id: "tunnel-line",
             title: "Tunnel Line",
-            detail: "Hit the boulevard, tunnel entrance, and far exit checkpoints in order.",
+            detail: "Hit the boulevard, tunnel entrance, and north exit checkpoints in order.",
             symbol: "point.topleft.down.to.point.bottomright.curvepath",
             reward: 325,
             kind: .route,
@@ -47,7 +48,7 @@ struct VoltlineMission: Identifiable, Codable, Hashable {
         VoltlineMission(
             id: "half-mile-charge",
             title: "Half-Mile Charge",
-            detail: "Ride 0.5 mile on any surface. Distance is measured by the physics odometer.",
+            detail: "Ride 0.5 mile on any surface. Progress comes from the physics odometer.",
             symbol: "road.lanes",
             reward: 180,
             kind: .distance,
@@ -120,14 +121,13 @@ final class MissionDirector: ObservableObject {
     @Published private(set) var activeMissionID: String?
     @Published private(set) var completedMissionIDs: Set<String> = []
     @Published private(set) var progress: Double = 0
-    @Published private(set) var checkpointIndex: Int = 0
+    @Published private(set) var checkpointIndex = 0
     @Published var isBoardPresented = false
     @Published var recentCompletion: MissionCompletion?
 
     private struct StoredState: Codable {
         var activeMissionID: String?
         var completedMissionIDs: Set<String>
-        var progress: Double
         var checkpointIndex: Int
         var baselineOdometer: Double
         var baselineDeposits: Int
@@ -137,8 +137,8 @@ final class MissionDirector: ObservableObject {
 
     private let defaultsKey = "Voltline.Missions.v1"
     private var baselineOdometer: Double = 0
-    private var baselineDeposits: Int = 0
-    private var baselinePhotos: Int = 0
+    private var baselineDeposits = 0
+    private var baselinePhotos = 0
     private var cleanStartOdometer: Double = 0
     private var completionDismissTask: Task<Void, Never>?
 
@@ -151,7 +151,7 @@ final class MissionDirector: ObservableObject {
     }
 
     var activeMission: VoltlineMission? {
-        VoltlineMission.catalog.first(where: { $0.id == activeMissionID })
+        VoltlineMission.catalog.first { $0.id == activeMissionID }
     }
 
     var completionCount: Int {
@@ -160,7 +160,7 @@ final class MissionDirector: ObservableObject {
 
     var completionFraction: Double {
         guard !VoltlineMission.catalog.isEmpty else { return 0 }
-        return Double(completedMissionIDs.count) / Double(VoltlineMission.catalog.count)
+        return Double(completionCount) / Double(VoltlineMission.catalog.count)
     }
 
     func isCompleted(_ mission: VoltlineMission) -> Bool {
@@ -222,8 +222,8 @@ final class MissionDirector: ObservableObject {
               mission.kind == .route,
               checkpointIndex < mission.checkpoints.count else { return nil }
         let checkpoint = mission.checkpoints[checkpointIndex]
-        let position = session.renderSnapshot
-        return hypot(checkpoint.x - position.playerX, checkpoint.z - position.playerZ)
+        let snapshot = session.renderSnapshot
+        return hypot(checkpoint.x - snapshot.playerX, checkpoint.z - snapshot.playerZ)
     }
 
     func bearingToNextCheckpoint(session: GameSession) -> Double? {
@@ -231,32 +231,42 @@ final class MissionDirector: ObservableObject {
               mission.kind == .route,
               checkpointIndex < mission.checkpoints.count else { return nil }
         let checkpoint = mission.checkpoints[checkpointIndex]
-        let position = session.renderSnapshot
-        let absoluteBearing = atan2(checkpoint.x - position.playerX, checkpoint.z - position.playerZ)
-        return normalizedAngle(absoluteBearing - position.yawRadians)
+        let snapshot = session.renderSnapshot
+        let absoluteBearing = atan2(checkpoint.x - snapshot.playerX, checkpoint.z - snapshot.playerZ)
+        return atan2(
+            sin(absoluteBearing - snapshot.yawRadians),
+            cos(absoluteBearing - snapshot.yawRadians)
+        )
     }
 
     func progressLabel(session: GameSession) -> String {
         guard let mission = activeMission else { return "Choose an objective" }
+
         switch mission.kind {
         case .route:
-            if checkpointIndex < mission.checkpoints.count {
-                let checkpoint = mission.checkpoints[checkpointIndex]
-                let distance = distanceToNextCheckpoint(session: session) ?? 0
-                return "\(checkpoint.title) · \(Int(distance.rounded())) m"
-            }
-            return "Route complete"
+            guard checkpointIndex < mission.checkpoints.count else { return "Route complete" }
+            let checkpoint = mission.checkpoints[checkpointIndex]
+            let distance = distanceToNextCheckpoint(session: session) ?? 0
+            return "\(checkpoint.title) · \(Int(distance.rounded())) m"
         case .distance, .cleanDistance:
             let meters = progress * mission.target
-            return String(format: "%.2f / %.2f mi", meters / 1_609.344, mission.target / 1_609.344)
+            return String(
+                format: "%.2f / %.2f mi",
+                meters / 1_609.344,
+                mission.target / 1_609.344
+            )
         case .speed:
             return "\(Int(session.speedMPH.rounded())) / \(Int(mission.target)) mph"
         case .deposits:
-            return "\(max(0, session.deposits.count - baselineDeposits)) / \(Int(mission.target)) deposit"
+            let count = max(0, session.deposits.count - baselineDeposits)
+            return "\(count) / \(Int(mission.target)) deposit"
         case .photos:
-            return "\(max(0, session.photos.count - baselinePhotos)) / \(Int(mission.target)) photos"
+            let count = max(0, session.photos.count - baselinePhotos)
+            return "\(count) / \(Int(mission.target)) photos"
         case .upgrade:
-            return session.installedItemIDs.contains("vesc-75-100") ? "Installed" : "Controller not installed"
+            return session.installedItemIDs.contains("vesc-75-100")
+                ? "Installed"
+                : "Controller not installed"
         }
     }
 
@@ -305,9 +315,10 @@ final class MissionDirector: ObservableObject {
 
         completionDismissTask?.cancel()
         let completionID = recentCompletion?.id
-        completionDismissTask = Task { [weak self] in
+        completionDismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(4.5))
-            guard !Task.isCancelled, self?.recentCompletion?.id == completionID else { return }
+            guard !Task.isCancelled,
+                  self?.recentCompletion?.id == completionID else { return }
             self?.recentCompletion = nil
         }
     }
@@ -317,15 +328,10 @@ final class MissionDirector: ObservableObject {
         return min(1, max(0, value / target))
     }
 
-    private func normalizedAngle(_ angle: Double) -> Double {
-        atan2(sin(angle), cos(angle))
-    }
-
     private func persist() {
         let stored = StoredState(
             activeMissionID: activeMissionID,
             completedMissionIDs: completedMissionIDs,
-            progress: progress,
             checkpointIndex: checkpointIndex,
             baselineOdometer: baselineOdometer,
             baselineDeposits: baselineDeposits,
@@ -341,7 +347,6 @@ final class MissionDirector: ObservableObject {
               let stored = try? JSONDecoder().decode(StoredState.self, from: data) else { return }
         activeMissionID = stored.activeMissionID
         completedMissionIDs = stored.completedMissionIDs
-        progress = stored.progress
         checkpointIndex = stored.checkpointIndex
         baselineOdometer = stored.baselineOdometer
         baselineDeposits = stored.baselineDeposits
@@ -354,15 +359,20 @@ final class MissionDirector: ObservableObject {
 extension GameSession {
     func grantMissionReward(title: String, amount: Double) {
         bankBalance += amount
+        let rewardText = amount.formatted(
+            .currency(code: "USD").precision(.fractionLength(0))
+        )
         let toast = GameToast(
             title: "Objective complete",
-            detail: "\(title) paid \(amount.formatted(.currency(code: \"USD\").precision(.fractionLength(0)))).",
+            detail: "\(title) paid \(rewardText).",
             symbol: "checkmark.seal.fill"
         )
         currentToast = toast
-        Task { [weak self] in
+
+        Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(3.8))
-            guard !Task.isCancelled, self?.currentToast?.id == toast.id else { return }
+            guard !Task.isCancelled,
+                  self?.currentToast?.id == toast.id else { return }
             self?.currentToast = nil
         }
     }
