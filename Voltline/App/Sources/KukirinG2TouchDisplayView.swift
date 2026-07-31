@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// 2026 KuKirin G2 155 × 55 mm touchscreen dashboard.
-/// Layout is based on the official powered product reference rather than the
-/// G2 Master LCD. The two scooters deliberately do not share artwork.
+/// This is intentionally separate from the G2 Master LCD artwork.
 struct KukirinG2TouchDisplayView: View {
     let frame: ScooterDisplayFrame
 
@@ -92,11 +91,11 @@ struct KukirinG2TouchDisplayView: View {
             HStack(alignment: .top, spacing: 5) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 7) {
-                        icon("speedometer", active: forceAll || frame.telemetry.cruiseActive)
-                        icon("light.max", active: forceAll || frame.telemetry.headlightOn)
+                        displayIcon("speedometer", active: forceAll || frame.telemetry.cruiseActive)
+                        displayIcon("light.max", active: forceAll || frame.telemetry.headlightOn)
                     }
                     HStack(spacing: 6) {
-                        icon("eye", active: forceAll)
+                        displayIcon("eye", active: forceAll)
                         Image(systemName: "figure.walk")
                             .foregroundStyle((forceAll || frame.telemetry.mode == .walk ? orange : inactive).opacity(frame.brightness))
                     }
@@ -133,8 +132,7 @@ struct KukirinG2TouchDisplayView: View {
             }
 
             HStack(spacing: 6) {
-                Text("mode")
-                    .foregroundStyle(orange)
+                Text("mode").foregroundStyle(orange)
                 Text(modeLabel)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 1.5)
@@ -168,7 +166,7 @@ struct KukirinG2TouchDisplayView: View {
         }
     }
 
-    private func icon(_ symbol: String, active: Bool) -> some View {
+    private func displayIcon(_ symbol: String, active: Bool) -> some View {
         Image(systemName: symbol)
             .foregroundStyle((active ? whiteLED : inactive).opacity(frame.brightness))
             .shadow(color: active ? whiteLED.opacity(0.55) : .clear, radius: 3)
@@ -179,9 +177,7 @@ struct KukirinG2TouchDisplayView: View {
             .font(.system(size: 5.8, weight: .black, design: .rounded))
             .foregroundStyle(whiteLED.opacity(0.78))
             .frame(width: 37, height: 11)
-            .overlay {
-                Capsule().stroke(.white.opacity(0.36), lineWidth: 0.8)
-            }
+            .overlay { Capsule().stroke(.white.opacity(0.36), lineWidth: 0.8) }
     }
 
     private func batteryStrip(count: Int) -> some View {
@@ -305,29 +301,36 @@ private struct KukirinG2SegmentDigit: View {
             let segments = activeSegments
 
             ZStack {
-                horizontal(segments.contains(.a)).position(x: width * 0.5, y: thickness * 0.55)
-                horizontal(segments.contains(.g)).position(x: width * 0.5, y: height * 0.5)
-                horizontal(segments.contains(.d)).position(x: width * 0.5, y: height - thickness * 0.55)
-                vertical(segments.contains(.f)).position(x: thickness * 0.55, y: height * 0.27)
-                vertical(segments.contains(.b)).position(x: width - thickness * 0.55, y: height * 0.27)
-                vertical(segments.contains(.e)).position(x: thickness * 0.55, y: height * 0.73)
-                vertical(segments.contains(.c)).position(x: width - thickness * 0.55, y: height * 0.73)
-            }
-
-            func horizontal(_ on: Bool) -> some View {
-                KukirinLEDBar(horizontal: true)
-                    .fill(on ? active : inactive)
-                    .frame(width: width - thickness * 1.1, height: thickness)
-                    .shadow(color: on ? active.opacity(0.72) : .clear, radius: 3)
-            }
-
-            func vertical(_ on: Bool) -> some View {
-                KukirinLEDBar(horizontal: false)
-                    .fill(on ? active : inactive)
-                    .frame(width: thickness, height: height * 0.39)
-                    .shadow(color: on ? active.opacity(0.72) : .clear, radius: 3)
+                horizontalSegment(on: segments.contains(.a), width: width, thickness: thickness)
+                    .position(x: width * 0.5, y: thickness * 0.55)
+                horizontalSegment(on: segments.contains(.g), width: width, thickness: thickness)
+                    .position(x: width * 0.5, y: height * 0.5)
+                horizontalSegment(on: segments.contains(.d), width: width, thickness: thickness)
+                    .position(x: width * 0.5, y: height - thickness * 0.55)
+                verticalSegment(on: segments.contains(.f), height: height, thickness: thickness)
+                    .position(x: thickness * 0.55, y: height * 0.27)
+                verticalSegment(on: segments.contains(.b), height: height, thickness: thickness)
+                    .position(x: width - thickness * 0.55, y: height * 0.27)
+                verticalSegment(on: segments.contains(.e), height: height, thickness: thickness)
+                    .position(x: thickness * 0.55, y: height * 0.73)
+                verticalSegment(on: segments.contains(.c), height: height, thickness: thickness)
+                    .position(x: width - thickness * 0.55, y: height * 0.73)
             }
         }
+    }
+
+    private func horizontalSegment(on: Bool, width: CGFloat, thickness: CGFloat) -> some View {
+        KukirinLEDBar(horizontal: true)
+            .fill(on ? active : inactive)
+            .frame(width: width - thickness * 1.1, height: thickness)
+            .shadow(color: on ? active.opacity(0.72) : .clear, radius: 3)
+    }
+
+    private func verticalSegment(on: Bool, height: CGFloat, thickness: CGFloat) -> some View {
+        KukirinLEDBar(horizontal: false)
+            .fill(on ? active : inactive)
+            .frame(width: thickness, height: height * 0.39)
+            .shadow(color: on ? active.opacity(0.72) : .clear, radius: 3)
     }
 
     private var activeSegments: Set<Segment> {
