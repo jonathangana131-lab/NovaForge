@@ -10,6 +10,13 @@ struct VoltlineGameApp: App {
                 .background(GameFeedbackBridge(session: session))
                 .preferredColorScheme(.dark)
                 .persistentSystemOverlays(.hidden)
+                .onAppear {
+                    session.applyQAPresentationFixture()
+                    Task { @MainActor in
+                        await Task.yield()
+                        session.applyQAPresentationFixture()
+                    }
+                }
         }
     }
 }
