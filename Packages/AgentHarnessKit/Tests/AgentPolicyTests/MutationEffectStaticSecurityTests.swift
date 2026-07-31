@@ -291,17 +291,23 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = [
+        var arguments = [
             "swiftc",
             "-emit-sil",
             "-swift-version",
             "6",
-            "-I",
-            packageRoot.appendingPathComponent(".build/debug/Modules").path,
+        ]
+        for moduleSearchPath in swiftPMModuleSearchPaths(
+            packageRoot: packageRoot
+        ) {
+            arguments.append(contentsOf: ["-I", moduleSearchPath])
+        }
+        arguments.append(contentsOf: [
             "-o",
             "/dev/null",
             sourceURL.path,
-        ]
+        ])
+        process.arguments = arguments
         process.standardOutput = output
         process.standardError = output
         try process.run()
@@ -311,5 +317,48 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             process.terminationStatus,
             String(decoding: data, as: UTF8.self)
         )
+    }
+
+    /// Swift 6.3/Xcode 27 no longer guarantees the legacy
+    /// `.build/debug/Modules` compatibility path. Discover the directory that
+    /// actually contains AgentPolicy so the negative compile checks stay
+    /// portable across both the old and triple-qualified SwiftPM layouts.
+    private func swiftPMModuleSearchPaths(packageRoot: URL) -> [String] {
+        let buildRoot = packageRoot.appendingPathComponent(
+            ".build",
+            isDirectory: true
+        )
+        let fileManager = FileManager.default
+        var paths = Set<String>()
+
+        let legacyModules = buildRoot.appendingPathComponent(
+            "debug/Modules",
+            isDirectory: true
+        )
+        if fileManager.fileExists(atPath: legacyModules.path) {
+            paths.insert(legacyModules.path)
+        }
+
+        let keys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ]
+        if let enumerator = fileManager.enumerator(
+            at: buildRoot,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let candidate as URL in enumerator {
+                let name = candidate.lastPathComponent
+                guard name == "AgentPolicy.swiftmodule"
+                    || name == "AgentTools.swiftmodule"
+                else { continue }
+                paths.insert(candidate.deletingLastPathComponent().path)
+                enumerator.skipDescendants()
+            }
+        }
+
+        return paths.sorted()
     }
 }
