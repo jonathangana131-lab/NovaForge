@@ -1,0 +1,77 @@
+name: Voltline Accessibility Repair
+
+on:
+  push:
+    branches:
+      - codex/voltline-final-polish
+    paths:
+      - ".github/workflows/voltline-accessibility-repair.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout final branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/voltline-final-polish
+
+      - name: Preserve accessibility descendants
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              "Voltline/App/Sources/VoltlineShellView.swift": [
+                  ('        .accessibilityIdentifier("onboardingOverlay")',
+                   '        .accessibilityElement(children: .contain)\n        .accessibilityIdentifier("onboardingOverlay")'),
+                  ('        .accessibilityIdentifier("settingsOverlay")',
+                   '        .accessibilityElement(children: .contain)\n        .accessibilityIdentifier("settingsOverlay")'),
+              ],
+              "Voltline/App/Sources/GarageOverlay.swift": [
+                  ('            .accessibilityIdentifier("garageOverlay")',
+                   '            .accessibilityElement(children: .contain)\n            .accessibilityIdentifier("garageOverlay")'),
+              ],
+              "Voltline/App/Sources/PhoneOSView.swift": [
+                  ('        .accessibilityIdentifier("phoneOS")',
+                   '        .accessibilityElement(children: .contain)\n        .accessibilityIdentifier("phoneOS")'),
+              ],
+              "Voltline/App/Sources/MissionLayerView.swift": [
+                  ('        .accessibilityIdentifier("missionBoard")',
+                   '        .accessibilityElement(children: .contain)\n        .accessibilityIdentifier("missionBoard")'),
+              ],
+          }
+
+          for file_name, edits in replacements.items():
+              path = Path(file_name)
+              text = path.read_text()
+              for old, new in edits:
+                  if new in text:
+                      continue
+                  if text.count(old) != 1:
+                      raise SystemExit(f"Expected one accessibility marker in {file_name}: {old}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text)
+          PY
+
+      - name: Commit accessibility repair
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Accessibility containment is already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            Voltline/App/Sources/VoltlineShellView.swift \
+            Voltline/App/Sources/GarageOverlay.swift \
+            Voltline/App/Sources/PhoneOSView.swift \
+            Voltline/App/Sources/MissionLayerView.swift
+          git commit -m "Expose Voltline overlay child controls to accessibility"
+          git push origin HEAD:codex/voltline-final-polish
