@@ -146,6 +146,44 @@ jobs:
             test-without-building \
             -only-testing:VoltlineGameUITests | tee xcodebuild-ui-tests.log
 
+      - name: Export required UI test screenshots
+        if: always()
+        working-directory: Voltline/App
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+
+          source = Path("VoltlineUITests.xcresult/Data")
+          output = Path("Artifacts/UITestScreenshots")
+          output.mkdir(parents=True, exist_ok=True)
+          png_magic = b"\x89PNG\r\n\x1a\n"
+          screenshots = []
+          if source.exists():
+              for candidate in source.rglob("*"):
+                  if not candidate.is_file():
+                      continue
+                  try:
+                      with candidate.open("rb") as handle:
+                          if handle.read(8) == png_magic:
+                              screenshots.append(candidate)
+                  except OSError:
+                      continue
+
+          for index, screenshot in enumerate(
+              sorted(screenshots, key=lambda item: item.name),
+              start=1,
+          ):
+              shutil.copy2(
+                  screenshot,
+                  output / f"voltline-ui-test-{index:02d}.png",
+              )
+
+          print(f"Exported {len(screenshots)} real XCUITest screenshots")
+          if len(screenshots) < 9:
+              raise SystemExit("Expected at least nine interaction-tested screenshots")
+          PY
+
       - name: Verify unsigned iPhoneOS compilation
         if: always()
         working-directory: Voltline/App
@@ -160,8 +198,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build | tee xcodebuild-device.log
 
-      - name: Capture real simulator states
+      - name: Capture additional simulator states
         if: always()
+        continue-on-error: true
         working-directory: Voltline/App
         env:
           SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
