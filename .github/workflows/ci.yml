@@ -50,71 +50,77 @@ jobs:
           end_marker = "\n    func testComposerModelMenuUsesNativeGlassChooser() throws {\n"
           start = text.index(start_marker)
           end = text.index(end_marker, start)
-          replacement = '''    func testLegacyChatGPTDeviceCodeMigratesToZenBeforeSafariHandoff() throws {
-              let app = XCUIApplication()
-              app.launchArguments = [
-                  "--reset-ui",
-                  "--settings-chatgpt-device-code",
-              ]
-              app.launch()
-
-              XCTAssertTrue(
-                  app.otherElements["settingsRoot"].waitForExistence(timeout: 8)
-              )
-              XCTAssertFalse(
-                  app.buttons["settingsProvider-openAICodex"].exists,
-                  "Legacy ChatGPT state must not restore the private provider choice."
-              )
-              XCTAssertFalse(app.staticTexts["ChatGPT subscription"].exists)
-              XCTAssertFalse(app.staticTexts["TEST-CODE"].exists)
-              XCTAssertFalse(app.buttons["Copy code & open Safari"].exists)
-
-              let zenProvider = app.buttons["settingsProvider-openCodeZen"]
-              XCTAssertTrue(
-                  zenProvider.waitForExistence(timeout: 5),
-                  "Legacy ChatGPT state should repair to the public Zen route."
-              )
-              zenProvider.tap()
-              let modelPicker = app.buttons["modelPickerButton"]
-              if !modelPicker.waitForExistence(timeout: 2) { app.swipeUp() }
-              XCTAssertTrue(modelPicker.waitForExistence(timeout: 5))
-              XCTAssertTrue(
-                  modelPicker.label.localizedCaseInsensitiveContains("mimo") ||
-                      app.staticTexts["mimo-v2.5-free"].exists,
-                  "The repaired Zen route should select its safe free model."
-              )
-              capture(
-                  "38b-settings-legacy-chatgpt-migrates-to-zen",
-                  app: app
-              )
-          }
-          '''
+          replacement_lines = [
+              "    func testLegacyChatGPTDeviceCodeMigratesToZenBeforeSafariHandoff() throws {",
+              "        let app = XCUIApplication()",
+              "        app.launchArguments = [",
+              "            \"--reset-ui\",",
+              "            \"--settings-chatgpt-device-code\",",
+              "        ]",
+              "        app.launch()",
+              "",
+              "        XCTAssertTrue(",
+              "            app.otherElements[\"settingsRoot\"].waitForExistence(timeout: 8)",
+              "        )",
+              "        XCTAssertFalse(",
+              "            app.buttons[\"settingsProvider-openAICodex\"].exists,",
+              "            \"Legacy ChatGPT state must not restore the private provider choice.\"",
+              "        )",
+              "        XCTAssertFalse(app.staticTexts[\"ChatGPT subscription\"].exists)",
+              "        XCTAssertFalse(app.staticTexts[\"TEST-CODE\"].exists)",
+              "        XCTAssertFalse(app.buttons[\"Copy code & open Safari\"].exists)",
+              "",
+              "        let zenProvider = app.buttons[\"settingsProvider-openCodeZen\"]",
+              "        XCTAssertTrue(",
+              "            zenProvider.waitForExistence(timeout: 5),",
+              "            \"Legacy ChatGPT state should repair to the public Zen route.\"",
+              "        )",
+              "        zenProvider.tap()",
+              "        let modelPicker = app.buttons[\"modelPickerButton\"]",
+              "        if !modelPicker.waitForExistence(timeout: 2) { app.swipeUp() }",
+              "        XCTAssertTrue(modelPicker.waitForExistence(timeout: 5))",
+              "        XCTAssertTrue(",
+              "            modelPicker.label.localizedCaseInsensitiveContains(\"mimo\") ||",
+              "                app.staticTexts[\"mimo-v2.5-free\"].exists,",
+              "            \"The repaired Zen route should select its safe free model.\"",
+              "        )",
+              "        capture(",
+              "            \"38b-settings-legacy-chatgpt-migrates-to-zen\",",
+              "            app: app",
+              "        )",
+              "    }",
+          ]
+          replacement = "\n".join(replacement_lines) + "\n"
           text = text[:start] + replacement + text[end:]
 
-          old_hierarchy = '''        for providerID in ["openCodeZen", "local", "openAICodex", "openAI"] {
-              let provider = app.buttons["settingsProvider-\\(providerID)"]
-              XCTAssertTrue(provider.waitForExistence(timeout: 3), "Settings should expose provider route \\(providerID) without hidden horizontal scrolling.")
-              XCTAssertGreaterThanOrEqual(provider.frame.minX, app.frame.minX + 15.5, "Provider route \\(providerID) should stay inside the compact iPhone leading edge.")
-              XCTAssertLessThanOrEqual(provider.frame.maxX, app.frame.maxX - 15.5, "Provider route \\(providerID) should stay inside the compact iPhone trailing edge.")
-              assertMinimumTouchTarget(provider, named: "settings provider \\(providerID)")
-          }
-'''
-          new_hierarchy = '''        XCTAssertFalse(
-              app.buttons["settingsProvider-openAICodex"].exists,
-              "The ready card must not revive the private ChatGPT route."
-          )
-          for providerID in ["openCodeZen", "local", "openAI"] {
-              let provider = app.buttons["settingsProvider-\\(providerID)"]
-              XCTAssertTrue(provider.waitForExistence(timeout: 3), "Settings should expose provider route \\(providerID) without hidden horizontal scrolling.")
-              XCTAssertGreaterThanOrEqual(provider.frame.minX, app.frame.minX + 15.5, "Provider route \\(providerID) should stay inside the compact iPhone leading edge.")
-              XCTAssertLessThanOrEqual(provider.frame.maxX, app.frame.maxX - 15.5, "Provider route \\(providerID) should stay inside the compact iPhone trailing edge.")
-              assertMinimumTouchTarget(provider, named: "settings provider \\(providerID)")
-          }
-'''
-          count = text.count(old_hierarchy)
+          old_lines = [
+              "        for providerID in [\"openCodeZen\", \"local\", \"openAICodex\", \"openAI\"] {",
+              "            let provider = app.buttons[\"settingsProvider-\\(providerID)\"]",
+              "            XCTAssertTrue(provider.waitForExistence(timeout: 3), \"Settings should expose provider route \\(providerID) without hidden horizontal scrolling.\")",
+              "            XCTAssertGreaterThanOrEqual(provider.frame.minX, app.frame.minX + 15.5, \"Provider route \\(providerID) should stay inside the compact iPhone leading edge.\")",
+              "            XCTAssertLessThanOrEqual(provider.frame.maxX, app.frame.maxX - 15.5, \"Provider route \\(providerID) should stay inside the compact iPhone trailing edge.\")",
+              "            assertMinimumTouchTarget(provider, named: \"settings provider \\(providerID)\")",
+              "        }",
+          ]
+          new_lines = [
+              "        XCTAssertFalse(",
+              "            app.buttons[\"settingsProvider-openAICodex\"].exists,",
+              "            \"The ready card must not revive the private ChatGPT route.\"",
+              "        )",
+              "        for providerID in [\"openCodeZen\", \"local\", \"openAI\"] {",
+              "            let provider = app.buttons[\"settingsProvider-\\(providerID)\"]",
+              "            XCTAssertTrue(provider.waitForExistence(timeout: 3), \"Settings should expose provider route \\(providerID) without hidden horizontal scrolling.\")",
+              "            XCTAssertGreaterThanOrEqual(provider.frame.minX, app.frame.minX + 15.5, \"Provider route \\(providerID) should stay inside the compact iPhone leading edge.\")",
+              "            XCTAssertLessThanOrEqual(provider.frame.maxX, app.frame.maxX - 15.5, \"Provider route \\(providerID) should stay inside the compact iPhone trailing edge.\")",
+              "            assertMinimumTouchTarget(provider, named: \"settings provider \\(providerID)\")",
+              "        }",
+          ]
+          old = "\n".join(old_lines) + "\n"
+          new = "\n".join(new_lines) + "\n"
+          count = text.count(old)
           if count != 1:
               raise SystemExit(f"expected one provider hierarchy block, found {count}")
-          source.write_text(text.replace(old_hierarchy, new_hierarchy))
+          source.write_text(text.replace(old, new))
           PY
           git config user.name "NovaForge CI"
           git config user.email "actions@users.noreply.github.com"
