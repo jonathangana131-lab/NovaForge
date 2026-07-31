@@ -29,11 +29,6 @@ targets:
     dependencies:
       - package: Voltline
         product: VoltlineSim
-    preBuildScripts:
-      - name: Generate permanent app icon
-        script: |
-          /usr/bin/xcrun swift "$SRCROOT/Scripts/generate_app_icons.swift" "$SRCROOT/Resources/Assets.xcassets/AppIcon.appiconset"
-        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.joey.VoltlineGame
