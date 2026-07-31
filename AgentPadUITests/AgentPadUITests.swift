@@ -1757,7 +1757,11 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(modelDetail.waitForExistence(timeout: 5), "Ready card should explain the installed on-device model in readable language.")
         XCTAssertGreaterThanOrEqual(modelDetail.frame.width, 120, "Model detail should remain visibly readable on compact iPhones.")
         XCTAssertTrue(app.staticTexts["Writes, commands, and deletes pause for approval."].waitForExistence(timeout: 3), "The current safety policy should remain visible beside provider readiness.")
-        for providerID in ["openCodeZen", "local", "openAICodex", "openAI"] {
+        XCTAssertFalse(
+            app.buttons["settingsProvider-openAICodex"].exists,
+            "The ready card must not revive the private ChatGPT route."
+        )
+        for providerID in ["openCodeZen", "local", "openAI"] {
             let provider = app.buttons["settingsProvider-\(providerID)"]
             XCTAssertTrue(provider.waitForExistence(timeout: 3), "Settings should expose provider route \(providerID) without hidden horizontal scrolling.")
             XCTAssertGreaterThanOrEqual(provider.frame.minX, app.frame.minX + 15.5, "Provider route \(providerID) should stay inside the compact iPhone leading edge.")
@@ -1923,39 +1927,44 @@ final class AgentPadUITests: XCTestCase {
         capture("39-chat-public-provider-route", app: app)
         app.buttons["Done"].tap()
     }
-    func testChatGPTDeviceCodeIsVisibleBeforeSafariHandoff() throws {
-    let app = XCUIApplication()
-    app.launchArguments = [
-        "--reset-ui",
-        "--settings-chatgpt-device-code",
-    ]
-    app.launch()
+    func testLegacyChatGPTDeviceCodeMigratesToZenBeforeSafariHandoff() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-ui",
+            "--settings-chatgpt-device-code",
+        ]
+        app.launch()
 
-    XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
-    XCTAssertFalse(
-        app.buttons["settingsProvider-openAICodex"].exists,
-        "Legacy ChatGPT state must not restore the private provider choice."
-    )
-    XCTAssertFalse(app.staticTexts["ChatGPT subscription"].exists)
-    XCTAssertFalse(app.staticTexts["TEST-CODE"].exists)
-    XCTAssertFalse(app.buttons["Copy code & open Safari"].exists)
+        XCTAssertTrue(
+            app.otherElements["settingsRoot"].waitForExistence(timeout: 8)
+        )
+        XCTAssertFalse(
+            app.buttons["settingsProvider-openAICodex"].exists,
+            "Legacy ChatGPT state must not restore the private provider choice."
+        )
+        XCTAssertFalse(app.staticTexts["ChatGPT subscription"].exists)
+        XCTAssertFalse(app.staticTexts["TEST-CODE"].exists)
+        XCTAssertFalse(app.buttons["Copy code & open Safari"].exists)
 
-    let zenProvider = app.buttons["settingsProvider-openCodeZen"]
-    XCTAssertTrue(
-        zenProvider.waitForExistence(timeout: 5),
-        "Legacy ChatGPT state should repair to the public Zen route."
-    )
-    zenProvider.tap()
-    let modelPicker = app.buttons["modelPickerButton"]
-    if !modelPicker.waitForExistence(timeout: 2) { app.swipeUp() }
-    XCTAssertTrue(modelPicker.waitForExistence(timeout: 5))
-    XCTAssertTrue(
-        modelPicker.label.localizedCaseInsensitiveContains("mimo") ||
-            app.staticTexts["mimo-v2.5-free"].exists,
-        "The repaired Zen route should select its safe free model."
-    )
-    capture("38b-settings-legacy-chatgpt-migrates-to-zen", app: app)
-}
+        let zenProvider = app.buttons["settingsProvider-openCodeZen"]
+        XCTAssertTrue(
+            zenProvider.waitForExistence(timeout: 5),
+            "Legacy ChatGPT state should repair to the public Zen route."
+        )
+        zenProvider.tap()
+        let modelPicker = app.buttons["modelPickerButton"]
+        if !modelPicker.waitForExistence(timeout: 2) { app.swipeUp() }
+        XCTAssertTrue(modelPicker.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            modelPicker.label.localizedCaseInsensitiveContains("mimo") ||
+                app.staticTexts["mimo-v2.5-free"].exists,
+            "The repaired Zen route should select its safe free model."
+        )
+        capture(
+            "38b-settings-legacy-chatgpt-migrates-to-zen",
+            app: app
+        )
+    }
 
     func testComposerModelMenuUsesNativeGlassChooser() throws {
         let app = XCUIApplication()
