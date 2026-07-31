@@ -13,13 +13,13 @@ extension GameSession {
             motorTemperatureC: simulationState.motorTemperatureCelsius,
             tripMiles: tripMiles,
             odometerMiles: odometerMiles,
-            estimatedRangeMiles: max(0, simulationState.batteryStateOfCharge * selectedScooter.estimatedRangeMiles),
+            estimatedRangeMiles: max(0, simulationState.batteryStateOfCharge * 20.0),
             mode: physicalDisplayRideMode,
-            headlightOn: headlightOn,
-            cruiseActive: cruiseActive,
-            brakeActive: touchBrake > 0.05 || controllerInput.brake > 0.05,
+            headlightOn: false,
+            cruiseActive: false,
+            brakeActive: touchBrake > 0.05,
             bluetoothConnected: controllerName != nil,
-            tractionControlActive: tractionControlActive,
+            tractionControlActive: false,
             fault: physicalDisplayFault,
             isPoweredOn: true
         )
