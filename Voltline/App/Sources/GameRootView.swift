@@ -22,8 +22,6 @@ struct GameRootView: View {
             rideChrome
                 .zIndex(12)
 
-            // Compatibility marker for the existing UI acceptance test. It is
-            // accessibility-only and does not draw a duplicate dashboard.
             Color.clear
                 .frame(width: 1, height: 1)
                 .position(x: 1, y: 1)
@@ -31,7 +29,7 @@ struct GameRootView: View {
                 .accessibilityIdentifier("scooterDashboard")
 
             if session.showPhone {
-                PhoneOSView(session: session)
+                PhoneOS27View(session: session)
                     .transition(.scale(scale: 0.90, anchor: .trailing).combined(with: .opacity))
                     .zIndex(20)
             }
@@ -58,8 +56,6 @@ struct GameRootView: View {
             }
         }
         .onAppear {
-            // First person is the product's primary experience. The camera
-            // button still lets the player cycle to the optional external views.
             session.camera = .pov
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.82), value: session.showPhone)
