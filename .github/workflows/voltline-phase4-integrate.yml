@@ -1,0 +1,112 @@
+name: Voltline Phase 4 Integration
+
+on:
+  push:
+    branches:
+      - codex/voltline-gameplay-completion
+    paths:
+      - ".github/workflows/voltline-phase4-integrate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gameplay branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/voltline-gameplay-completion
+
+      - name: Wire missions and fix interpolation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("Voltline/App/Sources/GameRootView.swift")
+          root_text = root.read_text()
+          marker = "            if session.showPhone {"
+          insertion = """            MissionLayerView(session: session)
+                .zIndex(15)
+
+            if session.showPhone {"""
+          if "MissionLayerView(session: session)" not in root_text:
+              if root_text.count(marker) != 1:
+                  raise SystemExit("GameRootView phone marker was not unique")
+              root_text = root_text.replace(marker, insertion, 1)
+              root.write_text(root_text)
+
+          system = Path("Voltline/App/Sources/MissionSystem.swift")
+          system_text = system.read_text()
+          if "let rewardText = amount.formatted" not in system_text:
+              system_text = system_text.replace(
+                  "        let toast = GameToast(",
+                  "        let rewardText = amount.formatted(.currency(code: \"USD\").precision(.fractionLength(0)))\n        let toast = GameToast(",
+                  1,
+              )
+          system_lines = system_text.splitlines()
+          replaced_detail = 0
+          for index, line in enumerate(system_lines):
+              if "detail:" in line and "amount.formatted" in line:
+                  system_lines[index] = '            detail: "\\(title) paid \\(rewardText).",'
+                  replaced_detail += 1
+          if replaced_detail not in (0, 1):
+              raise SystemExit(f"Unexpected mission reward detail replacements: {replaced_detail}")
+          system.write_text("\n".join(system_lines) + "\n")
+
+          layer = Path("Voltline/App/Sources/MissionLayerView.swift")
+          layer_lines = layer.read_text().splitlines()
+          replaced_banner = 0
+          for index, line in enumerate(layer_lines):
+              if "Text(" in line and "completion.reward.formatted" in line:
+                  layer_lines[index] = '                        Text("+$\\(Int(completion.reward.rounded()))")'
+                  replaced_banner += 1
+          if replaced_banner not in (0, 1):
+              raise SystemExit(f"Unexpected completion banner replacements: {replaced_banner}")
+          layer.write_text("\n".join(layer_lines) + "\n")
+
+          workflow = Path(".github/workflows/voltline-ios-game.yml")
+          workflow_text = workflow.read_text()
+          performance_branch = "      - codex/voltline-performance-parallel\n"
+          gameplay_branch = "      - codex/voltline-gameplay-completion\n"
+          if gameplay_branch not in workflow_text:
+              if performance_branch not in workflow_text:
+                  raise SystemExit("Performance branch trigger marker missing")
+              workflow_text = workflow_text.replace(
+                  performance_branch,
+                  performance_branch + gameplay_branch,
+                  1,
+              )
+          capture_marker = '          capture "05-crash" --qa-crash\n'
+          mission_capture = '          capture "07-mission-board" --qa-rich --qa-mission\n'
+          if mission_capture not in workflow_text:
+              if capture_marker not in workflow_text:
+                  raise SystemExit("Screenshot capture marker missing")
+              workflow_text = workflow_text.replace(
+                  capture_marker,
+                  capture_marker + mission_capture,
+                  1,
+              )
+          workflow.write_text(workflow_text)
+          PY
+
+      - name: Commit Phase 4 integration
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Phase 4 is already integrated."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            Voltline/App/Sources/GameRootView.swift \
+            Voltline/App/Sources/MissionSystem.swift \
+            Voltline/App/Sources/MissionLayerView.swift \
+            .github/workflows/voltline-ios-game.yml
+          git commit -m "Integrate Voltline objective gameplay"
+          git push origin HEAD:codex/voltline-gameplay-completion
