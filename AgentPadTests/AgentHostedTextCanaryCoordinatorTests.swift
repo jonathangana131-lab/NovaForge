@@ -367,12 +367,16 @@ final class AgentHostedTextCanaryCoordinatorTests: XCTestCase {
         }
 
         let transportCalls = await transport.callCount()
-        let events = try await fixture.store.events(
-            for: fixture.runID,
-            after: nil
-        )
         XCTAssertEqual(transportCalls, 0)
-        XCTAssertTrue(events.isEmpty)
+        do {
+            _ = try await fixture.store.events(
+                for: fixture.runID,
+                after: nil
+            )
+            XCTFail("A rejected canary unexpectedly created a run stream")
+        } catch let error as DarkReplayError {
+            XCTAssertEqual(error, .runNotFound(fixture.runID))
+        }
     }
 
     func testToolBearingHistoryIsRejectedBeforeReplayOrDispatch() async throws {
