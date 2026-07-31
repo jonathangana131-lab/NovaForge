@@ -1,5 +1,6 @@
 name: Temporary provider contract test
 
+# Triggered after the workflow exists on this branch.
 on:
   push:
     branches:
