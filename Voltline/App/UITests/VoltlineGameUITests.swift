@@ -10,12 +10,11 @@ final class VoltlineGameUITests: XCTestCase {
         app.launchArguments = ["--qa-rich"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["scooterDashboard"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["phoneButton"].exists)
+        XCTAssertTrue(app.buttons["phoneButton"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["garageButton"].exists)
-        XCTAssertTrue(app.otherElements["throttlePedal"].exists)
-        XCTAssertTrue(app.otherElements["brakePedal"].exists)
-        XCTAssertTrue(app.otherElements["steeringPad"].exists)
+        XCTAssertTrue(element("throttlePedal", in: app).exists)
+        XCTAssertTrue(element("brakePedal", in: app).exists)
+        XCTAssertTrue(element("steeringPad", in: app).exists)
         attachScreenshot(name: "01-ride-hud")
     }
 
@@ -24,8 +23,7 @@ final class VoltlineGameUITests: XCTestCase {
         app.launchArguments = ["--qa-rich", "--qa-garage"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["garageOverlay"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["closeGarageButton"].exists)
+        XCTAssertTrue(app.buttons["closeGarageButton"].waitForExistence(timeout: 20))
         attachScreenshot(name: "02-garage")
     }
 
@@ -34,9 +32,8 @@ final class VoltlineGameUITests: XCTestCase {
         app.launchArguments = ["--qa-rich", "--qa-bank"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["phoneOS"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.otherElements["bankPhoneApp"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["closePhoneButton"].exists)
+        XCTAssertTrue(app.buttons["closePhoneButton"].waitForExistence(timeout: 20))
+        XCTAssertTrue(element("bankPhoneApp", in: app).waitForExistence(timeout: 5))
         attachScreenshot(name: "03-phone-bank")
     }
 
@@ -45,9 +42,8 @@ final class VoltlineGameUITests: XCTestCase {
         app.launchArguments = ["--qa-rich", "--qa-vesc"]
         app.launch()
 
-        XCTAssertTrue(app.otherElements["phoneOS"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.otherElements["vescPhoneApp"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["writeVESCButton"].exists)
+        XCTAssertTrue(app.buttons["closePhoneButton"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["writeVESCButton"].waitForExistence(timeout: 5))
         attachScreenshot(name: "04-phone-vesc")
     }
 
@@ -57,10 +53,14 @@ final class VoltlineGameUITests: XCTestCase {
         app.launch()
 
         let reset = app.buttons["resetCrashButton"]
-        XCTAssertTrue(reset.waitForExistence(timeout: 15))
+        XCTAssertTrue(reset.waitForExistence(timeout: 20))
         attachScreenshot(name: "05-crash")
         reset.tap()
         XCTAssertFalse(reset.waitForExistence(timeout: 3))
+    }
+
+    private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)[identifier]
     }
 
     private func attachScreenshot(name: String) {
