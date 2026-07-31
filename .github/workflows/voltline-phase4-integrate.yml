@@ -25,7 +25,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           root = Path("Voltline/App/Sources/GameRootView.swift")
           root_text = root.read_text()
@@ -76,21 +75,13 @@ jobs:
           if gameplay_branch not in workflow_text:
               if performance_branch not in workflow_text:
                   raise SystemExit("Performance branch trigger marker missing")
-              workflow_text = workflow_text.replace(
-                  performance_branch,
-                  performance_branch + gameplay_branch,
-                  1,
-              )
+              workflow_text = workflow_text.replace(performance_branch, performance_branch + gameplay_branch, 1)
           capture_marker = '          capture "05-crash" --qa-crash\n'
           mission_capture = '          capture "07-mission-board" --qa-rich --qa-mission\n'
           if mission_capture not in workflow_text:
               if capture_marker not in workflow_text:
                   raise SystemExit("Screenshot capture marker missing")
-              workflow_text = workflow_text.replace(
-                  capture_marker,
-                  capture_marker + mission_capture,
-                  1,
-              )
+              workflow_text = workflow_text.replace(capture_marker, capture_marker + mission_capture, 1)
           workflow.write_text(workflow_text)
           PY
 
@@ -110,3 +101,5 @@ jobs:
             .github/workflows/voltline-ios-game.yml
           git commit -m "Integrate Voltline objective gameplay"
           git push origin HEAD:codex/voltline-gameplay-completion
+
+# retry 2
