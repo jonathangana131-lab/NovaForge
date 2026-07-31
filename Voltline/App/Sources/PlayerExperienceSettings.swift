@@ -174,8 +174,10 @@ final class VoltlineFrameDriver: NSObject, ObservableObject {
     }
 
     func configure(framesPerSecond: Int) {
-        let target = max(20, min(120, framesPerSecond))
-        activeFramesPerSecond = target
+        let requested = max(20, min(120, framesPerSecond))
+        let screenMaximum = max(20, UIScreen.main.maximumFramesPerSecond)
+        let actual = min(requested, screenMaximum)
+        activeFramesPerSecond = actual
 
         if displayLink == nil {
             let link = CADisplayLink(target: self, selector: #selector(frame(_:)))
@@ -183,12 +185,10 @@ final class VoltlineFrameDriver: NSObject, ObservableObject {
             displayLink = link
         }
 
-        let screenMaximum = Float(UIScreen.main.maximumFramesPerSecond)
-        let preferred = Float(min(target, Int(screenMaximum)))
         displayLink?.preferredFrameRateRange = CAFrameRateRange(
-            minimum: min(20, preferred),
-            maximum: screenMaximum,
-            preferred: preferred
+            minimum: Float(min(20, actual)),
+            maximum: Float(screenMaximum),
+            preferred: Float(actual)
         )
         lastTimestamp = nil
     }
