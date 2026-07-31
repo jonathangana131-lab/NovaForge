@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   repair-head:
-    if: github.head_ref == 'agent/provider-migration-patch-trigger'
+    if: startsWith(github.head_ref, 'agent/provider-ui-contract-trigger')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
