@@ -1,5 +1,6 @@
 name: Apply phone provider reliability fix
 
+# The controller PR applies this branch's deterministic source script.
 on:
   push:
     branches:
