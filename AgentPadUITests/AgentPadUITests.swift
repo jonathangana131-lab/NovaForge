@@ -1924,42 +1924,38 @@ final class AgentPadUITests: XCTestCase {
         app.buttons["Done"].tap()
     }
     func testChatGPTDeviceCodeIsVisibleBeforeSafariHandoff() throws {
-        let app = XCUIApplication()
-        app.launchArguments = [
-            "--reset-ui",
-            "--settings-chatgpt-device-code",
-        ]
-        app.launch()
+    let app = XCUIApplication()
+    app.launchArguments = [
+        "--reset-ui",
+        "--settings-chatgpt-device-code",
+    ]
+    app.launch()
 
-        XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
-        let subscriptionHeading = app.staticTexts.containing(
-            NSPredicate(
-                format: "label CONTAINS[c] %@",
-                "ChatGPT subscription"
-            )
-        ).firstMatch
-        for _ in 0 ..< 7 where !subscriptionHeading.isHittable { app.swipeUp() }
-        XCTAssertTrue(
-            subscriptionHeading.exists && subscriptionHeading.isHittable,
-            "ChatGPT authorization must be directly reachable below its model."
-        )
-        let codeText = app.staticTexts["TEST-CODE"]
-        capture("38b-settings-chatgpt-device-code-visible", app: app)
-        XCTAssertTrue(
-            codeText.waitForExistence(timeout: 5),
-            "The one-time code must appear in NovaForge before any browser covers it."
-        )
-        XCTAssertEqual(codeText.label, "TEST-CODE")
-        XCTAssertTrue(
-            app.buttons["Copy code & open Safari"].waitForExistence(timeout: 3)
-        )
-        XCTAssertTrue(
-            app.staticTexts.containing(
-                NSPredicate(format: "label CONTAINS %@", "code is copied")
-            ).firstMatch.exists
-        )
-        XCTAssertTrue(app.buttons["Cancel"].exists)
-    }
+    XCTAssertTrue(app.otherElements["settingsRoot"].waitForExistence(timeout: 8))
+    XCTAssertFalse(
+        app.buttons["settingsProvider-openAICodex"].exists,
+        "Legacy ChatGPT state must not restore the private provider choice."
+    )
+    XCTAssertFalse(app.staticTexts["ChatGPT subscription"].exists)
+    XCTAssertFalse(app.staticTexts["TEST-CODE"].exists)
+    XCTAssertFalse(app.buttons["Copy code & open Safari"].exists)
+
+    let zenProvider = app.buttons["settingsProvider-openCodeZen"]
+    XCTAssertTrue(
+        zenProvider.waitForExistence(timeout: 5),
+        "Legacy ChatGPT state should repair to the public Zen route."
+    )
+    zenProvider.tap()
+    let modelPicker = app.buttons["modelPickerButton"]
+    if !modelPicker.waitForExistence(timeout: 2) { app.swipeUp() }
+    XCTAssertTrue(modelPicker.waitForExistence(timeout: 5))
+    XCTAssertTrue(
+        modelPicker.label.localizedCaseInsensitiveContains("mimo") ||
+            app.staticTexts["mimo-v2.5-free"].exists,
+        "The repaired Zen route should select its safe free model."
+    )
+    capture("38b-settings-legacy-chatgpt-migrates-to-zen", app: app)
+}
 
     func testComposerModelMenuUsesNativeGlassChooser() throws {
         let app = XCUIApplication()
