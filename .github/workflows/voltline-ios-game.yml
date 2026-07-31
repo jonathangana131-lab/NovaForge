@@ -6,6 +6,8 @@ on:
       - codex/voltline-ios-foundation
       - codex/voltline-release-parallel
       - codex/voltline-performance-parallel
+      - codex/voltline-gameplay-completion
+      - codex/voltline-final-polish
     paths:
       - "Voltline/**"
       - ".github/workflows/voltline-ios-game.yml"
@@ -29,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select an App Store-capable Xcode
+      - name: Select App Store-capable Xcode
         shell: bash
         run: |
           SELECTED=""
@@ -41,7 +43,7 @@ jobs:
             fi
           done
           if [ -z "$SELECTED" ]; then
-            echo "Xcode 26 or newer is required for App Store-valid iOS builds."
+            echo "Xcode 26 or newer is required."
             ls -1 /Applications | grep '^Xcode' || true
             exit 1
           fi
@@ -116,6 +118,7 @@ jobs:
           SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
         run: |
           set -o pipefail
+          rm -rf VoltlineUnitTests.xcresult
           xcodebuild \
             -project VoltlineGame.xcodeproj \
             -scheme VoltlineGame \
@@ -132,6 +135,7 @@ jobs:
           SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
         run: |
           set -o pipefail
+          rm -rf VoltlineUITests.xcresult
           xcodebuild \
             -project VoltlineGame.xcodeproj \
             -scheme VoltlineGame \
@@ -141,6 +145,44 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             test-without-building \
             -only-testing:VoltlineGameUITests | tee xcodebuild-ui-tests.log
+
+      - name: Export required UI test screenshots
+        if: always()
+        working-directory: Voltline/App
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+
+          source = Path("VoltlineUITests.xcresult/Data")
+          output = Path("Artifacts/UITestScreenshots")
+          output.mkdir(parents=True, exist_ok=True)
+          png_magic = b"\x89PNG\r\n\x1a\n"
+          screenshots = []
+          if source.exists():
+              for candidate in source.rglob("*"):
+                  if not candidate.is_file():
+                      continue
+                  try:
+                      with candidate.open("rb") as handle:
+                          if handle.read(8) == png_magic:
+                              screenshots.append(candidate)
+                  except OSError:
+                      continue
+
+          for index, screenshot in enumerate(
+              sorted(screenshots, key=lambda item: item.name),
+              start=1,
+          ):
+              shutil.copy2(
+                  screenshot,
+                  output / f"voltline-ui-test-{index:02d}.png",
+              )
+
+          print(f"Exported {len(screenshots)} real XCUITest screenshots")
+          if len(screenshots) < 9:
+              raise SystemExit("Expected at least nine interaction-tested screenshots")
+          PY
 
       - name: Verify unsigned iPhoneOS compilation
         if: always()
@@ -156,8 +198,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build | tee xcodebuild-device.log
 
-      - name: Capture real simulator states
+      - name: Capture additional simulator states
         if: always()
+        continue-on-error: true
         working-directory: Voltline/App
         env:
           SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
@@ -174,15 +217,26 @@ jobs:
             exit 0
           fi
           test -f "$APP/PrivacyInfo.xcprivacy"
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
           xcrun simctl install "$SIMULATOR_UDID" "$APP"
 
           capture() {
             local name="$1"
             shift
+            local destination="Artifacts/Screenshots/${name}.png"
             xcrun simctl terminate "$SIMULATOR_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
             xcrun simctl launch --terminate-running-process "$SIMULATOR_UDID" "$BUNDLE_ID" "$@"
             sleep 5
-            xcrun simctl io "$SIMULATOR_UDID" screenshot "Artifacts/Screenshots/${name}.png"
+            for attempt in 1 2 3 4 5; do
+              rm -f "$destination"
+              if xcrun simctl io "$SIMULATOR_UDID" screenshot "$destination" && test -s "$destination"; then
+                return 0
+              fi
+              echo "Screenshot attempt $attempt failed for $name."
+              sleep 2
+            done
+            echo "Unable to capture $name after five attempts."
+            return 1
           }
 
           capture "00-onboarding" --qa-onboarding
@@ -191,6 +245,7 @@ jobs:
           capture "03-phone-bank" --qa-rich --qa-bank
           capture "04-phone-vesc" --qa-rich --qa-vesc
           capture "05-crash" --qa-crash
+          capture "07-mission-board" --qa-rich --qa-mission
 
           ditto -c -k --sequesterRsrc --keepParent "$APP" Artifacts/Voltline-Simulator-App.zip
           cp Resources/Assets.xcassets/AppIcon.appiconset/VoltlineIcon-1024.png Artifacts/Voltline-App-Icon.png

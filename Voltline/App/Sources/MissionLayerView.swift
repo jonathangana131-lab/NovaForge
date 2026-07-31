@@ -58,23 +58,22 @@ struct MissionLayerView: View {
     }
 
     private var compactHUD: some View {
-        VStack {
-            HStack {
-                Group {
-                    if let mission = director.activeMission {
-                        activeMissionButton(mission)
-                    } else {
-                        chooseMissionButton
-                    }
-                }
-                .padding(.leading, 14)
-                .padding(.top, 146)
+        ZStack(alignment: .topLeading) {
+            Color.clear
+                .allowsHitTesting(false)
 
-                Spacer()
+            Group {
+                if let mission = director.activeMission {
+                    activeMissionButton(mission)
+                } else {
+                    chooseMissionButton
+                }
             }
-            Spacer()
+            .fixedSize()
+            .padding(.leading, 14)
+            .padding(.top, 146)
+            .allowsHitTesting(!director.isBoardPresented)
         }
-        .allowsHitTesting(!director.isBoardPresented)
     }
 
     private func activeMissionButton(_ mission: VoltlineMission) -> some View {
@@ -242,6 +241,7 @@ private struct MissionBoardView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("missionBoard")
     }
 
@@ -396,33 +396,35 @@ private struct MissionCompletionBanner: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        VStack {
-            Button(action: onDismiss) {
-                HStack(spacing: 12) {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 24, weight: .black))
-                        .foregroundStyle(.green)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("OBJECTIVE COMPLETE")
-                            .font(.system(size: 9, weight: .black, design: .rounded))
-                            .tracking(1.1)
+        Color.clear
+            .allowsHitTesting(false)
+            .overlay(alignment: .top) {
+                Button(action: onDismiss) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 24, weight: .black))
                             .foregroundStyle(.green)
-                        Text(completion.missionTitle)
-                            .font(.system(size: 14, weight: .black, design: .rounded))
-                        Text("+$\(Int(completion.reward.rounded()))")
-                            .font(.system(size: 11, weight: .black, design: .rounded))
-                            .foregroundStyle(.cyan)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("OBJECTIVE COMPLETE")
+                                .font(.system(size: 9, weight: .black, design: .rounded))
+                                .tracking(1.1)
+                                .foregroundStyle(.green)
+                            Text(completion.missionTitle)
+                                .font(.system(size: 14, weight: .black, design: .rounded))
+                            Text("+$\(Int(completion.reward.rounded()))")
+                                .font(.system(size: 11, weight: .black, design: .rounded))
+                                .foregroundStyle(.cyan)
+                        }
                     }
+                    .padding(.horizontal, 17)
+                    .frame(height: 70)
+                    .missionGlass(radius: 21, interactive: true)
                 }
-                .padding(.horizontal, 17)
-                .frame(height: 70)
-                .missionGlass(radius: 21, interactive: true)
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("missionCompletionBanner")
+                .padding(.top, 14)
+                .allowsHitTesting(true)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("missionCompletionBanner")
-            .padding(.top, 14)
-            Spacer()
-        }
     }
 }
 
