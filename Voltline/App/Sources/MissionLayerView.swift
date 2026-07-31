@@ -58,21 +58,22 @@ struct MissionLayerView: View {
     }
 
     private var compactHUD: some View {
-        Color.clear
-            .allowsHitTesting(false)
-            .overlay(alignment: .topLeading) {
-                Group {
-                    if let mission = director.activeMission {
-                        activeMissionButton(mission)
-                    } else {
-                        chooseMissionButton
-                    }
+        ZStack(alignment: .topLeading) {
+            Color.clear
+                .allowsHitTesting(false)
+
+            Group {
+                if let mission = director.activeMission {
+                    activeMissionButton(mission)
+                } else {
+                    chooseMissionButton
                 }
-                .fixedSize()
-                .padding(.leading, 14)
-                .padding(.top, 146)
-                .allowsHitTesting(!director.isBoardPresented)
             }
+            .fixedSize()
+            .padding(.leading, 14)
+            .padding(.top, 146)
+            .allowsHitTesting(!director.isBoardPresented)
+        }
     }
 
     private func activeMissionButton(_ mission: VoltlineMission) -> some View {
