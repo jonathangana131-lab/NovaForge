@@ -24,8 +24,21 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         .openCodeZen, .local, .openAICodex, .openAI,
     ]
 
+    /// Providers that may be selected for a new phone run. The legacy
+    /// ChatGPT/Codex route remains decodable for durable recovery, but it is
+    /// intentionally absent here because ChatGPT subscriptions and the public
+    /// developer API are separate products and the private backend is not a
+    /// stable app integration contract.
+    static let userSelectableProviders: [AIProvider] = [
+        .openCodeZen, .local, .openAI,
+    ]
+
     var supportsAgentRuntime: Bool {
         Self.agentRuntimeProviders.contains(self)
+    }
+
+    var isUserSelectable: Bool {
+        Self.userSelectableProviders.contains(self)
     }
 
     var id: String { rawValue }
@@ -177,21 +190,18 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
             LocalModelCatalog.all.map(\.id)
         case .openAI:
             [
-                Self.exactGPT56SolModelID,
-                Self.exactGPT56TerraModelID,
-                Self.exactGPT56LunaModelID,
-                "gpt-5.5",
-                "gpt-5.4",
-                "gpt-5.4-mini",
-                "gpt-5.1",
                 "gpt-5",
+                "gpt-5.1",
+                "gpt-5-mini",
+                "gpt-5-nano",
                 "gpt-4.1",
                 "gpt-4.1-mini",
-                "gpt-4o",
-                "gpt-4o-mini",
+                "gpt-4.1-nano",
                 "o4-mini",
                 "o3",
-                "o3-mini"
+                "o3-mini",
+                "gpt-4o",
+                "gpt-4o-mini"
             ]
         case .openAICodex:
             [
@@ -214,6 +224,8 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCodeZen:
             [
                 "mimo-v2.5-free",
+                "laguna-s-2.1-free",
+                "ling-3.0-flash-free",
                 "north-mini-code-free",
                 "nemotron-3-ultra-free",
                 "deepseek-v4-flash-free",
@@ -323,7 +335,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 
     func requiresExplicitGPT56ModelSelection(_ modelID: String) -> Bool {
-        guard self == .openAI || self == .openAICodex else { return false }
+        guard self == .openAICodex else { return false }
         let normalized = modelID
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -504,10 +516,13 @@ final class ProviderModelCatalogStore {
                 )
             ).modelCatalog()
             try Task.checkCancellation()
-            let allowed = Set(provider.modelOptions)
-            let compatible = loaded.filter { allowed.contains($0.id) }
+            let loadedByID = loaded.reduce(
+                into: [String: ProviderModelCatalogEntry](),
+                { result, entry in result[entry.id] = entry }
+            )
+            let compatible = provider.modelOptions.compactMap { loadedByID[$0] }
             guard !compatible.isEmpty else {
-                errorsByProvider[provider] = "No currently supported NovaForge agent model was returned."
+                errorsByProvider[provider] = "No verified NovaForge model is available for this account. Refresh the catalog or choose Zen Free."
                 return
             }
             entriesByProvider[provider] = visibleEntries(

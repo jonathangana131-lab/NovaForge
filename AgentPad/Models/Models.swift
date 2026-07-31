@@ -2157,8 +2157,10 @@ final class AgentSettings {
 
     @discardableResult
     func repairStaleModelSelection(now: Date = Date()) -> Bool {
-        let selectedProvider = AIProvider(rawValue: providerRawValue ?? "")
-            ?? .local
+        let decodedProvider = AIProvider(rawValue: providerRawValue ?? "")
+        let selectedProvider = decodedProvider.flatMap {
+            $0.isUserSelectable ? $0 : nil
+        } ?? .openCodeZen
         var changed = false
         if providerRawValue != selectedProvider.rawValue {
             providerRawValue = selectedProvider.rawValue
