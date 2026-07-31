@@ -1,5 +1,6 @@
 name: Apply phone provider reliability fix
 
+# This second branch push exists so GitHub sees the workflow before the event.
 on:
   push:
     branches:
