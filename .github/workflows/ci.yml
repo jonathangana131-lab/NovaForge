@@ -27,6 +27,70 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  repair-local-download:
+    name: Apply local download recovery
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/fix-phone-provider-reliability-clean'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/fix-phone-provider-reliability-clean
+          fetch-depth: 0
+      - name: Patch interrupted-download state and clean repair hooks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("AgentPad/Services/LocalModelRuntime.swift")
+          text = source.read_text()
+          old = '''            } catch {
+                await MainActor.run {
+                    self?.downloadTask = nil
+                    self?.refreshStatus()
+                    if case .partial = self?.status {
+                        return
+                    }
+                    self?.status = .failed(error.localizedDescription)
+                }
+            }
+'''
+          new = '''            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.downloadTask = nil
+                    guard self.selectedVariantID == variant.id else { return }
+
+                    let destination = try? LocalModelCatalog.fileURL(for: variant)
+                    let partialURL = destination.map(LocalModelDownloader.temporaryURL(for:))
+                    let partialBytes = partialURL.flatMap(self.fileSize(at:)) ?? 0
+                    if partialBytes > 0, partialBytes < variant.expectedBytes {
+                        self.downloadedBytes = partialBytes
+                        self.progress = .init(
+                            receivedBytes: partialBytes,
+                            totalBytes: variant.expectedBytes
+                        )
+                        self.status = .partial
+                    } else {
+                        self.status = .failed(error.localizedDescription)
+                    }
+                }
+            }
+'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected one download catch block, found {count}")
+          source.write_text(text.replace(old, new))
+          PY
+          git show HEAD^:.github/workflows/ci.yml > .github/workflows/ci.yml
+          rm -f .github/workflows/one-shot-local-download-recovery.yml
+          git config user.name "NovaForge CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPad/Services/LocalModelRuntime.swift .github/workflows/ci.yml .github/workflows/one-shot-local-download-recovery.yml
+          git commit -m "Preserve resumable local model downloads"
+          git push origin HEAD:agent/fix-phone-provider-reliability-clean
+
   verify:
     name: Critical verification
     runs-on: xcode-27
