@@ -2782,8 +2782,8 @@ final class AgentPadUITests: XCTestCase {
         artifactEntry.tap()
 
         let previewStudio = app.descendants(matching: .any).matching(identifier: "artifactPreviewStudio").firstMatch
-        let normalPreview = app.staticTexts["Normal preview"]
-        if !previewStudio.waitForExistence(timeout: 2), !normalPreview.waitForExistence(timeout: 1) {
+        let previewFooterStatus = app.staticTexts["artifactPreviewFooterStatus"]
+        if !previewStudio.waitForExistence(timeout: 2), !previewFooterStatus.waitForExistence(timeout: 1) {
             let inspector = app.descendants(matching: .any).matching(identifier: "filesMemoryInspector").firstMatch
             XCTAssertTrue(inspector.waitForExistence(timeout: 5), "Tapping Workspace evidence should either preview it directly or open its inspector.")
             let previewAction = app.buttons["Preview"].firstMatch
@@ -2792,9 +2792,13 @@ final class AgentPadUITests: XCTestCase {
             previewAction.tap()
         }
 
-        XCTAssertTrue(previewStudio.waitForExistence(timeout: 8) || normalPreview.waitForExistence(timeout: 8))
+        XCTAssertTrue(previewStudio.waitForExistence(timeout: 8) || previewFooterStatus.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["cron-18-landing.html"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Normal preview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(previewFooterStatus.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            previewFooterStatus.label.localizedCaseInsensitiveContains("Preview ready"),
+            "A completed local web artifact should expose the preview studio's product-owned ready state."
+        )
         XCTAssertFalse(app.buttons["artifactViewportLandscape"].exists, "Local web artifact preview should no longer expose confusing landscape mode controls.")
         capture("71-local-web-artifact-normal-preview", app: app)
     }
