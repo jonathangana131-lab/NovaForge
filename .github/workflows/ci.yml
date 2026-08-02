@@ -87,10 +87,6 @@ jobs:
   verify:
     name: Critical verification
     runs-on: xcode-27
-    # Build and test against the same iOS 27 SDK generation used by the
-    # physical-device beta. GitHub's xcode-27 preview image includes Xcode 27
-    # and the iOS 27 Simulator; ci/verify.sh still prints the selected version
-    # into the job log so every run records its exact toolchain.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
