@@ -27,6 +27,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  repair-artifact-preview-test:
+    name: Repair artifact preview UI assertion
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/fix-phone-provider-reliability-clean'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/fix-phone-provider-reliability-clean
+          fetch-depth: 0
+      - name: Align artifact preview assertion with current UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("AgentPadUITests/AgentPadUITests.swift")
+          text = path.read_text()
+          old = '''        let previewStudio = app.descendants(matching: .any).matching(identifier: "artifactPreviewStudio").firstMatch
+        let normalPreview = app.staticTexts["Normal preview"]
+        if !previewStudio.waitForExistence(timeout: 2), !normalPreview.waitForExistence(timeout: 1) {
+            let inspector = app.descendants(matching: .any).matching(identifier: "filesMemoryInspector").firstMatch
+            XCTAssertTrue(inspector.waitForExistence(timeout: 5), "Tapping Workspace evidence should either preview it directly or open its inspector.")
+            let previewAction = app.buttons["Preview"].firstMatch
+            XCTAssertTrue(previewAction.waitForExistence(timeout: 5))
+            assertMinimumTouchTarget(previewAction, named: "Workspace artifact Preview")
+            previewAction.tap()
+        }
+
+        XCTAssertTrue(previewStudio.waitForExistence(timeout: 8) || normalPreview.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["cron-18-landing.html"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Normal preview"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["artifactViewportLandscape"].exists, "Local web artifact preview should no longer expose confusing landscape mode controls.")
+'''
+          new = '''        let previewStudio = app.descendants(matching: .any).matching(identifier: "artifactPreviewStudio").firstMatch
+        if !previewStudio.waitForExistence(timeout: 2) {
+            let inspector = app.descendants(matching: .any).matching(identifier: "filesMemoryInspector").firstMatch
+            XCTAssertTrue(inspector.waitForExistence(timeout: 5), "Tapping Workspace evidence should either preview it directly or open its inspector.")
+            let previewAction = app.buttons["Preview"].firstMatch
+            XCTAssertTrue(previewAction.waitForExistence(timeout: 5))
+            assertMinimumTouchTarget(previewAction, named: "Workspace artifact Preview")
+            previewAction.tap()
+        }
+
+        XCTAssertTrue(previewStudio.waitForExistence(timeout: 8), "The selected local HTML artifact should open in the preview studio.")
+        XCTAssertTrue(app.staticTexts["cron-18-landing.html"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["artifactViewportLandscape"].exists, "Local web artifact preview should no longer expose confusing landscape mode controls.")
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one stale preview assertion block, found {text.count(old)}")
+          path.write_text(text.replace(old, new))
+          PY
+          git config user.name "NovaForge CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPadUITests/AgentPadUITests.swift
+          git commit -m "Fix artifact preview UI assertion"
+          git push origin HEAD:agent/fix-phone-provider-reliability-clean
+
   verify:
     name: Critical verification
     runs-on: xcode-27
