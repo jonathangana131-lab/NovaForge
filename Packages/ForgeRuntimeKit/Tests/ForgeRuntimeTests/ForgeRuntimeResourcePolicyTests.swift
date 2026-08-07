@@ -62,7 +62,8 @@ final class ForgeRuntimeResourcePolicyTests: XCTestCase {
         defer { fixture.remove() }
         let policy = try makePolicy(
             root: fixture.root,
-            network: .init(mode: .allowListedHTTPS, allowedHosts: ["API.Example.com"])
+            network: .init(mode: .allowListedHTTPS, allowedHosts: ["API.Example.com"]),
+            grantedHTTPSHosts: ["api.example.com"]
         )
 
         XCTAssertEqual(
@@ -76,7 +77,8 @@ final class ForgeRuntimeResourcePolicyTests: XCTestCase {
         defer { fixture.remove() }
         let policy = try makePolicy(
             root: fixture.root,
-            network: .init(mode: .allowListedHTTPS, allowedHosts: ["example.com"])
+            network: .init(mode: .allowListedHTTPS, allowedHosts: ["example.com"]),
+            grantedHTTPSHosts: ["example.com"]
         )
 
         XCTAssertEqual(
@@ -90,7 +92,8 @@ final class ForgeRuntimeResourcePolicyTests: XCTestCase {
         defer { fixture.remove() }
         let policy = try makePolicy(
             root: fixture.root,
-            network: .init(mode: .allowListedHTTPS, allowedHosts: ["api.example.com"])
+            network: .init(mode: .allowListedHTTPS, allowedHosts: ["api.example.com"]),
+            grantedHTTPSHosts: ["api.example.com"]
         )
 
         XCTAssertEqual(
@@ -108,7 +111,8 @@ final class ForgeRuntimeResourcePolicyTests: XCTestCase {
         defer { fixture.remove() }
         let policy = try makePolicy(
             root: fixture.root,
-            network: .init(mode: .allowListedHTTPS, allowedHosts: ["api.example.com"])
+            network: .init(mode: .allowListedHTTPS, allowedHosts: ["api.example.com"]),
+            grantedHTTPSHosts: ["api.example.com"]
         )
 
         XCTAssertEqual(
@@ -141,7 +145,8 @@ final class ForgeRuntimeResourcePolicyTests: XCTestCase {
 
     private func makePolicy(
         root: URL,
-        network: ForgeNetworkPolicy = .init()
+        network: ForgeNetworkPolicy = .init(),
+        grantedHTTPSHosts: Set<String> = []
     ) throws -> ForgeRuntimeResourcePolicy {
         let manifest = ForgeProjectManifest(
             projectID: "neon-racer",
@@ -153,7 +158,11 @@ final class ForgeRuntimeResourcePolicyTests: XCTestCase {
         let authorization = try ForgeRuntimeManifestValidator().authorize(
             manifest,
             expectedProjectID: "neon-racer",
-            host: .init()
+            host: .init(),
+            projectGrant: .init(
+                projectID: "neon-racer",
+                allowedHTTPSHosts: grantedHTTPSHosts
+            )
         )
         return ForgeRuntimeResourcePolicy(
             authorization: authorization,
