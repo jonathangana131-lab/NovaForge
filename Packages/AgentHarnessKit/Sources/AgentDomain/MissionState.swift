@@ -119,6 +119,7 @@ public struct MissionStage: Codable, Equatable, Sendable {
     public var validationError: MissionStageGraphValidationError? {
         guard title.hasMissionStageContent else { return .blankStageTitle }
         guard !dependencies.contains(stageID) else { return .selfDependency }
+        guard !(required && status == .deferred) else { return .requiredStageDeferred }
         return nil
     }
 }
@@ -174,20 +175,17 @@ public struct MissionStageGraph: Codable, Equatable, Sendable {
         stages.filter { $0.status == .active }
     }
 
-    public var requiredWorkIsSettled: Bool {
-        stages.lazy.filter(\.required).allSatisfy { $0.status.isSettled }
+    /// This is deliberately stricter than `MissionStageStatus.isSettled`.
+    /// A failed, cancelled, or deferred required stage is not completion evidence.
+    public var requiredWorkIsSatisfied: Bool {
+        stages.lazy.filter(\.required).allSatisfy { $0.status == .completed }
     }
 
     private var containsDependencyCycle: Bool {
-        enum VisitState {
-            case visiting
-            case visited
-        }
-
         let dependenciesByID = Dictionary(
             uniqueKeysWithValues: stages.map { ($0.stageID, $0.dependencies) }
         )
-        var states: [MissionStageID: VisitState] = [:]
+        var states: [MissionStageID: MissionStageVisitState] = [:]
 
         func visit(_ stageID: MissionStageID) -> Bool {
             if let state = states[stageID] {
@@ -211,8 +209,14 @@ public enum MissionStageGraphValidationError: String, Error, Codable, Equatable,
     case duplicateStageID
     case duplicateStageOrder
     case selfDependency
+    case requiredStageDeferred
     case missingDependency
     case dependencyCycle
+}
+
+private enum MissionStageVisitState {
+    case visiting
+    case visited
 }
 
 private extension String {
