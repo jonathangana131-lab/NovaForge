@@ -55,6 +55,9 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertTrue(css.contains("width: 68px; height: 68px"))
         XCTAssertTrue(css.contains("prefers-reduced-transparency"))
         XCTAssertTrue(css.contains("prefers-reduced-motion"))
+        XCTAssertTrue(css.contains("top: max(14px, env(safe-area-inset-top))"))
+        XCTAssertTrue(css.contains("right: max(14px, env(safe-area-inset-right))"))
+        XCTAssertFalse(css.contains("body { padding: env(safe-area-inset-top)"))
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
