@@ -25,6 +25,10 @@ public struct ForgeArtifactID: RawRepresentable, Codable, Hashable, Sendable, Cu
         self.rawValue = rawValue
     }
 
+    public var isValid: Bool {
+        !rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     public var description: String { rawValue }
 }
 
@@ -88,8 +92,12 @@ public struct ForgeRuntimeEvidence: Codable, Hashable, Sendable {
         self.recordedAt = recordedAt
     }
 
+    public var hasUsableProvenance: Bool {
+        artifactID.isValid && !sourceRevision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     public var isRunnableInsideNovaForge: Bool {
-        runtimeKind == .forgeWeb && verificationLevel != .generated
+        hasUsableProvenance && runtimeKind == .forgeWeb && verificationLevel != .generated
     }
 }
 
@@ -120,7 +128,9 @@ public struct ForgeThumbnailEvidence: Codable, Hashable, Sendable {
     /// actual latest preview. Imported references remain useful inputs but are
     /// not evidence that NovaForge produced or ran the shown result.
     public var isActualRunnablePreview: Bool {
-        kind == .runtimeScreenshot
+        artifactID.isValid &&
+            !sourceRevision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            kind == .runtimeScreenshot
     }
 }
 
@@ -143,10 +153,10 @@ public struct ForgeCreationRecord: Codable, Hashable, Sendable {
         activeMission: ForgeMissionReference? = nil,
         runtimeEvidence: ForgeRuntimeEvidence? = nil,
         thumbnailEvidence: ForgeThumbnailEvidence? = nil,
-        canEditSource: Bool = true,
-        canDuplicate: Bool = true,
-        canRemix: Bool = true,
-        canExportSource: Bool = true
+        canEditSource: Bool = false,
+        canDuplicate: Bool = false,
+        canRemix: Bool = false,
+        canExportSource: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -187,7 +197,7 @@ public struct ForgeCreationCard: Codable, Hashable, Sendable, Identifiable {
     public let activeMission: ForgeMissionReference?
     public let runState: ForgeCreationRunState
     public let actualThumbnail: ForgeThumbnailEvidence?
-    public let actions: Set<ForgeCreationAction>
+    public let actions: [ForgeCreationAction]
 
     public init(
         id: ForgeCreationID,
@@ -196,7 +206,7 @@ public struct ForgeCreationCard: Codable, Hashable, Sendable, Identifiable {
         activeMission: ForgeMissionReference?,
         runState: ForgeCreationRunState,
         actualThumbnail: ForgeThumbnailEvidence?,
-        actions: Set<ForgeCreationAction>
+        actions: [ForgeCreationAction]
     ) {
         self.id = id
         self.name = name
@@ -244,12 +254,13 @@ public enum ForgeHomeProjector {
             thumbnail = nil
         }
 
-        var actions: Set<ForgeCreationAction> = [.details]
-        if runState.isRunnable { actions.insert(.run) }
-        if record.canEditSource { actions.insert(.edit) }
-        if record.canDuplicate { actions.insert(.duplicate) }
-        if record.canRemix { actions.insert(.remix) }
-        if record.canExportSource { actions.insert(.export) }
+        var actions: [ForgeCreationAction] = []
+        if runState.isRunnable { actions.append(.run) }
+        if record.canEditSource { actions.append(.edit) }
+        if record.canDuplicate { actions.append(.duplicate) }
+        if record.canRemix { actions.append(.remix) }
+        if record.canExportSource { actions.append(.export) }
+        actions.append(.details)
 
         return ForgeCreationCard(
             id: record.id,
