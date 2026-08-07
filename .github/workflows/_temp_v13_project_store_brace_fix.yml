@@ -24,18 +24,10 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path('AgentPad/App/AgentPadApp.swift')
           text = path.read_text(encoding='utf-8')
-          broken = '''        }
-
-    private static func openCompatibilityContainer<Container>(
-'''
-          fixed = '''        }
-    }
-
-    private static func openCompatibilityContainer<Container>(
-'''
+          broken = "        }\n\n    private static func openCompatibilityContainer<Container>(\n"
+          fixed = "        }\n    }\n\n    private static func openCompatibilityContainer<Container>(\n"
           if text.count(broken) != 1:
               raise SystemExit(f'unexpected selector closure preimage: {text.count(broken)} matches')
           text = text.replace(broken, fixed, 1)
@@ -51,11 +43,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           text = Path('AgentPad/App/AgentPadApp.swift').read_text(encoding='utf-8')
-          expected = '''        }
-    }
-
-    private static func openCompatibilityContainer<Container>(
-'''
+          expected = "        }\n    }\n\n    private static func openCompatibilityContainer<Container>(\n"
           if text.count(expected) != 1:
               raise SystemExit('selector function closure was not restored exactly')
           PY
