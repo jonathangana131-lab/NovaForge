@@ -4,10 +4,12 @@ import Foundation
 public enum MissionCheckpointIDTag: AgentIdentifierTag {}
 public enum MissionWorkLeaseIDTag: AgentIdentifierTag {}
 public enum MissionDecisionIDTag: AgentIdentifierTag {}
+public enum MissionDecisionRequestIDTag: AgentIdentifierTag {}
 
 public typealias MissionCheckpointID = AgentIdentifier<MissionCheckpointIDTag>
 public typealias MissionWorkLeaseID = AgentIdentifier<MissionWorkLeaseIDTag>
 public typealias MissionDecisionID = AgentIdentifier<MissionDecisionIDTag>
+public typealias MissionDecisionRequestID = AgentIdentifier<MissionDecisionRequestIDTag>
 
 public struct MissionRouteBinding: Codable, Equatable, Sendable {
     public let routeReceiptID: String
@@ -59,17 +61,61 @@ public struct MissionWorkerResult: Codable, Equatable, Sendable {
     public let outcome: MissionWorkerOutcome
     public let summary: String
     public let evidenceReceiptIDs: MissionStringSet
+    public let allowsDecisionDelegation: Bool
 
     public init(
         lease: MissionWorkLease,
         outcome: MissionWorkerOutcome,
         summary: String,
-        evidenceReceiptIDs: MissionStringSet = MissionStringSet([])
+        evidenceReceiptIDs: MissionStringSet = MissionStringSet([]),
+        allowsDecisionDelegation: Bool = false
     ) {
         self.lease = lease
         self.outcome = outcome
         self.summary = summary
         self.evidenceReceiptIDs = evidenceReceiptIDs
+        self.allowsDecisionDelegation = allowsDecisionDelegation
+    }
+}
+
+public enum MissionAcceptedWorkerReceiptKind: String, Codable, Equatable, Sendable {
+    case completed
+    case needsDecision
+    case blockedExternal
+    case failedRecoverably
+    case failedIrrecoverably
+}
+
+public struct MissionAcceptedWorkerReceipt: Codable, Equatable, Sendable {
+    public let leaseID: MissionWorkLeaseID
+    public let missionID: MissionID
+    public let projectID: ProjectID
+    public let stageID: MissionStageID
+    public let kind: MissionAcceptedWorkerReceiptKind
+    public let summary: String
+    public let evidenceReceiptIDs: MissionStringSet
+    public let acceptedAt: AgentInstant
+}
+
+public struct MissionDecisionRequest: Codable, Equatable, Sendable {
+    public let requestID: MissionDecisionRequestID
+    public let stageID: MissionStageID
+    public let prompt: String
+    public let allowsDelegation: Bool
+    public let acceptedAt: AgentInstant
+
+    public init(
+        requestID: MissionDecisionRequestID = MissionDecisionRequestID(),
+        stageID: MissionStageID,
+        prompt: String,
+        allowsDelegation: Bool,
+        acceptedAt: AgentInstant
+    ) {
+        self.requestID = requestID
+        self.stageID = stageID
+        self.prompt = prompt
+        self.allowsDelegation = allowsDelegation
+        self.acceptedAt = acceptedAt
     }
 }
 
@@ -114,6 +160,11 @@ public struct MissionCheckpoint: Codable, Equatable, Sendable, Identifiable {
     public let acceptedProjectStateID: String
     public let evidenceReceiptIDs: MissionStringSet
     public let projectBrainFactIDs: [ProjectBrainFactID]
+    public let stageEvidence: [MissionStageEvidence]
+    public let workerReceipts: [MissionAcceptedWorkerReceipt]
+    public let decisions: [MissionDecisionRecord]
+    public let recoveryRecords: [MissionRecoveryRecord]
+    public let pendingDecision: MissionDecisionRequest?
     public let summary: String
     public let acceptedAt: AgentInstant
 
@@ -131,6 +182,11 @@ public struct MissionCheckpoint: Codable, Equatable, Sendable, Identifiable {
         acceptedProjectStateID: String,
         evidenceReceiptIDs: MissionStringSet,
         projectBrainFactIDs: [ProjectBrainFactID],
+        stageEvidence: [MissionStageEvidence],
+        workerReceipts: [MissionAcceptedWorkerReceipt],
+        decisions: [MissionDecisionRecord],
+        recoveryRecords: [MissionRecoveryRecord],
+        pendingDecision: MissionDecisionRequest?,
         summary: String,
         acceptedAt: AgentInstant
     ) {
@@ -147,6 +203,11 @@ public struct MissionCheckpoint: Codable, Equatable, Sendable, Identifiable {
         self.acceptedProjectStateID = acceptedProjectStateID
         self.evidenceReceiptIDs = evidenceReceiptIDs
         self.projectBrainFactIDs = projectBrainFactIDs.sorted { $0.description < $1.description }
+        self.stageEvidence = stageEvidence
+        self.workerReceipts = workerReceipts
+        self.decisions = decisions
+        self.recoveryRecords = recoveryRecords
+        self.pendingDecision = pendingDecision
         self.summary = summary
         self.acceptedAt = acceptedAt
     }
@@ -218,6 +279,7 @@ public enum ForgeMissionError: Error, Equatable, Sendable {
     case invalidWorkerSummary
     case missingEvidenceReceipt
     case invalidDecision
+    case staleDecisionRequest
     case invalidResolutionReceipt
     case invalidCheckpoint
     case checkpointNotFound(MissionCheckpointID)
@@ -243,8 +305,10 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
     public private(set) var route: MissionRouteBinding
     public private(set) var activeLeases: [MissionWorkLease]
     public private(set) var stageEvidence: [MissionStageEvidence]
+    public private(set) var workerReceipts: [MissionAcceptedWorkerReceipt]
     public private(set) var decisions: [MissionDecisionRecord]
     public private(set) var recoveryRecords: [MissionRecoveryRecord]
+    public private(set) var pendingDecision: MissionDecisionRequest?
     public private(set) var checkpoints: [MissionCheckpoint]
     public private(set) var completionEvidence: MissionCompletionEvidence?
     public private(set) var revision: UInt64
@@ -271,8 +335,10 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         self.route = route
         activeLeases = []
         stageEvidence = []
+        workerReceipts = []
         decisions = []
         recoveryRecords = []
+        pendingDecision = nil
         checkpoints = []
         completionEvidence = nil
         revision = 1
@@ -350,11 +416,16 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             throw ForgeMissionError.stageNotFound(result.lease.stageID)
         }
         guard graph.stages[stageIndex].status == .active else { throw ForgeMissionError.stageNotActive(result.lease.stageID) }
+        guard result.evidenceReceiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty }) else {
+            throw ForgeMissionError.missingEvidenceReceipt
+        }
 
         var stages = graph.stages
         switch result.outcome {
         case .completed:
             guard !result.evidenceReceiptIDs.values.isEmpty else { throw ForgeMissionError.missingEvidenceReceipt }
+            recordAcceptedWorkerReceipt(result, kind: .completed, at: now)
+            pendingDecision = nil
             stages[stageIndex] = stages[stageIndex].withStatus(.completed)
             stageEvidence.append(MissionStageEvidence(
                 stageID: result.lease.stageID,
@@ -370,18 +441,31 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             }
 
         case .needsDecision:
+            recordAcceptedWorkerReceipt(result, kind: .needsDecision, at: now)
+            pendingDecision = MissionDecisionRequest(
+                stageID: result.lease.stageID,
+                prompt: result.summary.trimmed,
+                allowsDelegation: result.allowsDecisionDelegation,
+                acceptedAt: now
+            )
             stages[stageIndex] = stages[stageIndex].withStatus(.waitingForDecision)
             try revokeAllWork(replacing: stages, phase: .needsDecision)
 
         case .blockedExternal:
+            recordAcceptedWorkerReceipt(result, kind: .blockedExternal, at: now)
+            pendingDecision = nil
             stages[stageIndex] = stages[stageIndex].withStatus(.blocked)
             try revokeAllWork(replacing: stages, phase: .blockedExternal)
 
         case .failedRecoverably:
+            recordAcceptedWorkerReceipt(result, kind: .failedRecoverably, at: now)
+            pendingDecision = nil
             stages[stageIndex] = stages[stageIndex].withStatus(.failedRecoverably)
             try revokeAllWork(replacing: stages, phase: .interruptedRecoverable)
 
         case .failedIrrecoverably:
+            recordAcceptedWorkerReceipt(result, kind: .failedIrrecoverably, at: now)
+            pendingDecision = nil
             stages[stageIndex] = stages[stageIndex].withStatus(.failedIrrecoverably)
             try revokeAllWork(replacing: stages, phase: .failedIrrecoverably)
         }
@@ -404,6 +488,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
 
     public mutating func acceptDecision(
         stageID: MissionStageID,
+        decisionRequestID: MissionDecisionRequestID,
         acceptedAnswer: String,
         decisionReceiptID: String,
         at now: AgentInstant
@@ -411,6 +496,9 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         try requireNonTerminal()
         guard phase == .needsDecision else { throw ForgeMissionError.invalidPhase(phase) }
         guard !acceptedAnswer.trimmed.isEmpty, !decisionReceiptID.trimmed.isEmpty else { throw ForgeMissionError.invalidDecision }
+        guard let request = pendingDecision,
+              request.requestID == decisionRequestID,
+              request.stageID == stageID else { throw ForgeMissionError.staleDecisionRequest }
         guard let index = graph.stages.firstIndex(where: { $0.stageID == stageID }) else { throw ForgeMissionError.stageNotFound(stageID) }
         guard graph.stages[index].status == .waitingForDecision else { throw ForgeMissionError.stageNotWaitingForDecision(stageID) }
 
@@ -424,6 +512,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             decisionReceiptID: decisionReceiptID.trimmed,
             acceptedAt: now
         ))
+        pendingDecision = nil
         phase = .ready
         try bumpRevision()
     }
@@ -515,6 +604,11 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
                 throw ForgeMissionError.acceptedCompletedStageWouldBeLost(accepted.stageID)
             }
         }
+        if let pendingDecision {
+            guard newGraph.stages.contains(where: {
+                $0.stageID == pendingDecision.stageID && $0.status == .waitingForDecision
+            }) else { throw ForgeMissionError.invalidDecision }
+        }
         graph = newGraph
         if [.validating, .polishing].contains(phase), !graph.requiredWorkIsSatisfied { phase = .ready }
         try bumpAuthorityEpoch()
@@ -552,6 +646,11 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             acceptedProjectStateID: acceptedProjectStateID.trimmed,
             evidenceReceiptIDs: evidenceReceiptIDs,
             projectBrainFactIDs: projectBrainFactIDs,
+            stageEvidence: stageEvidence,
+            workerReceipts: workerReceipts,
+            decisions: decisions,
+            recoveryRecords: recoveryRecords,
+            pendingDecision: pendingDecision,
             summary: summary.trimmed,
             acceptedAt: now
         )
@@ -604,7 +703,18 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
 
         graph = source.graph
         route = MissionRouteBinding(routeReceiptID: source.routeReceiptID)
-        phase = .pausedByUser
+        stageEvidence = source.stageEvidence
+        workerReceipts = source.workerReceipts
+        decisions = source.decisions
+        recoveryRecords = source.recoveryRecords
+        pendingDecision = source.pendingDecision
+        switch source.phase {
+        case .needsDecision, .blockedExternal, .interruptedRecoverable:
+            phase = source.phase
+        default:
+            phase = .pausedByUser
+            pendingDecision = nil
+        }
         completionEvidence = nil
         try bumpAuthorityEpoch()
         try bumpRevision()
@@ -621,6 +731,11 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             acceptedProjectStateID: source.acceptedProjectStateID,
             evidenceReceiptIDs: MissionStringSet(source.evidenceReceiptIDs.values + [restoreReceiptID.trimmed]),
             projectBrainFactIDs: source.projectBrainFactIDs,
+            stageEvidence: stageEvidence,
+            workerReceipts: workerReceipts,
+            decisions: decisions,
+            recoveryRecords: recoveryRecords,
+            pendingDecision: pendingDecision,
             summary: "Verified restore: \(source.summary)",
             acceptedAt: now
         )
@@ -684,6 +799,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         }
         graph = graph.withStagesPreservingRevision(stages)
         activeLeases.removeAll()
+        pendingDecision = nil
         phase = .cancelled
         try bumpAuthorityEpoch()
         try bumpRevision()
@@ -709,6 +825,23 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         phase = nextPhase
         try bumpAuthorityEpoch()
         try bumpRevision()
+    }
+
+    private mutating func recordAcceptedWorkerReceipt(
+        _ result: MissionWorkerResult,
+        kind: MissionAcceptedWorkerReceiptKind,
+        at now: AgentInstant
+    ) {
+        workerReceipts.append(MissionAcceptedWorkerReceipt(
+            leaseID: result.lease.leaseID,
+            missionID: missionID,
+            projectID: projectID,
+            stageID: result.lease.stageID,
+            kind: kind,
+            summary: result.summary.trimmed,
+            evidenceReceiptIDs: result.evidenceReceiptIDs,
+            acceptedAt: now
+        ))
     }
 
     private func requireNonTerminal() throws {

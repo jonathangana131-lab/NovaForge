@@ -31,8 +31,9 @@ final class ForgeMissionTests: XCTestCase {
         try mission.acceptWorkerResult(.init(lease: lease, outcome: .needsDecision, summary: "Choose camera"), at: instant(3))
         XCTAssertEqual(mission.phase, .needsDecision)
         XCTAssertThrowsError(try mission.resume()) { XCTAssertEqual($0 as? ForgeMissionError, .invalidPhase(.needsDecision)) }
-        XCTAssertThrowsError(try mission.acceptDecision(stageID: stageID, acceptedAnswer: "First person", decisionReceiptID: "", at: instant(4)))
-        try mission.acceptDecision(stageID: stageID, acceptedAnswer: "First person", decisionReceiptID: "decision:camera:1", at: instant(4))
+        let requestID = try XCTUnwrap(mission.pendingDecision?.requestID)
+        XCTAssertThrowsError(try mission.acceptDecision(stageID: stageID, decisionRequestID: requestID, acceptedAnswer: "First person", decisionReceiptID: "", at: instant(4)))
+        try mission.acceptDecision(stageID: stageID, decisionRequestID: requestID, acceptedAnswer: "First person", decisionReceiptID: "decision:camera:1", at: instant(4))
         XCTAssertEqual(mission.phase, .ready)
         XCTAssertEqual(mission.decisions.count, 1)
     }
@@ -262,6 +263,157 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.runnableStageIDs, [newStage.stageID])
         _ = try mission.beginWork(on: [newStage.stageID])
         XCTAssertEqual(mission.phase, .executing)
+    }
+
+
+    func testDecisionRequestAndWorkerReceiptSurviveArchiveRoundTrip() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        let lease = try XCTUnwrap(try mission.beginWork(on: [stageID]).first)
+        try mission.acceptWorkerResult(
+            .init(
+                lease: lease,
+                outcome: .needsDecision,
+                summary: "Choose camera",
+                allowsDecisionDelegation: true
+            ),
+            at: instant(40)
+        )
+
+        let pending = try XCTUnwrap(mission.pendingDecision)
+        XCTAssertEqual(pending.stageID, stageID)
+        XCTAssertEqual(pending.prompt, "Choose camera")
+        XCTAssertTrue(pending.allowsDelegation)
+        XCTAssertEqual(mission.workerReceipts.last?.kind, .needsDecision)
+        XCTAssertEqual(mission.workerReceipts.last?.summary, "Choose camera")
+
+        let data = try JSONEncoder().encode(ForgeMissionArchive(state: mission))
+        var restored = try JSONDecoder().decode(ForgeMissionArchive.self, from: data).state
+        XCTAssertEqual(restored.pendingDecision, pending)
+        XCTAssertEqual(restored.workerReceipts, mission.workerReceipts)
+        XCTAssertThrowsError(try restored.resume())
+        XCTAssertThrowsError(try restored.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: MissionDecisionRequestID(),
+            acceptedAnswer: "First person",
+            decisionReceiptID: "decision:stale",
+            at: instant(41)
+        )) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .staleDecisionRequest)
+        }
+        try restored.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: pending.requestID,
+            acceptedAnswer: "First person",
+            decisionReceiptID: "decision:camera:1",
+            at: instant(41)
+        )
+        XCTAssertNil(restored.pendingDecision)
+    }
+
+    func testRestoreRewindsCurrentAuthorityRecordsToCheckpointBranch() throws {
+        var mission = try makeMission()
+        let first = try mission.checkpoint(
+            acceptedProjectStateID: "state:a",
+            evidenceReceiptIDs: .init(["checkpoint:a"]),
+            summary: "A",
+            at: instant(50)
+        )
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        var lease = try XCTUnwrap(try mission.beginWork(on: [stageID]).first)
+        try mission.acceptWorkerResult(
+            .init(lease: lease, outcome: .needsDecision, summary: "Choose camera"),
+            at: instant(51)
+        )
+        let requestID = try XCTUnwrap(mission.pendingDecision?.requestID)
+        try mission.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: requestID,
+            acceptedAnswer: "Third person",
+            decisionReceiptID: "decision:camera",
+            at: instant(52)
+        )
+        lease = try XCTUnwrap(try mission.beginWork(on: [stageID]).first)
+        try mission.acceptWorkerResult(
+            .init(lease: lease, outcome: .blockedExternal, summary: "Mac unavailable"),
+            at: instant(53)
+        )
+        try mission.resolveExternalBlock(
+            stageID: stageID,
+            resolutionReceiptID: "mac:reverified",
+            at: instant(54)
+        )
+        lease = try XCTUnwrap(try mission.beginWork(on: [stageID]).first)
+        try mission.acceptWorkerResult(
+            .init(
+                lease: lease,
+                outcome: .completed,
+                summary: "Built",
+                evidenceReceiptIDs: .init(["build:receipt"])
+            ),
+            at: instant(55)
+        )
+        _ = try mission.checkpoint(
+            acceptedProjectStateID: "state:b",
+            evidenceReceiptIDs: .init(["checkpoint:b"]),
+            summary: "B",
+            at: instant(56)
+        )
+        XCTAssertFalse(mission.stageEvidence.isEmpty)
+        XCTAssertFalse(mission.workerReceipts.isEmpty)
+        XCTAssertFalse(mission.decisions.isEmpty)
+        XCTAssertFalse(mission.recoveryRecords.isEmpty)
+
+        let request = try mission.prepareRestore(to: first.id)
+        let branched = try mission.acceptVerifiedRestore(
+            request,
+            verifiedProjectStateID: "state:a",
+            restoreReceiptID: "restore:a",
+            at: instant(57)
+        )
+        XCTAssertEqual(branched.parentID, first.id)
+        XCTAssertTrue(mission.stageEvidence.isEmpty)
+        XCTAssertTrue(mission.workerReceipts.isEmpty)
+        XCTAssertTrue(mission.decisions.isEmpty)
+        XCTAssertTrue(mission.recoveryRecords.isEmpty)
+        XCTAssertNil(mission.pendingDecision)
+        XCTAssertEqual(mission.phase, .pausedByUser)
+        XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
+    }
+
+    func testRestoreToDecisionCheckpointRestoresActionablePrompt() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        let lease = try XCTUnwrap(try mission.beginWork(on: [stageID]).first)
+        try mission.acceptWorkerResult(
+            .init(lease: lease, outcome: .needsDecision, summary: "Pick orientation"),
+            at: instant(60)
+        )
+        let pending = try XCTUnwrap(mission.pendingDecision)
+        let decisionCheckpoint = try mission.checkpoint(
+            acceptedProjectStateID: "state:decision",
+            evidenceReceiptIDs: .init(["checkpoint:decision"]),
+            summary: "Waiting for orientation",
+            at: instant(61)
+        )
+        try mission.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: pending.requestID,
+            acceptedAnswer: "Landscape",
+            decisionReceiptID: "decision:orientation",
+            at: instant(62)
+        )
+
+        let request = try mission.prepareRestore(to: decisionCheckpoint.id)
+        _ = try mission.acceptVerifiedRestore(
+            request,
+            verifiedProjectStateID: "state:decision",
+            restoreReceiptID: "restore:decision",
+            at: instant(63)
+        )
+        XCTAssertEqual(mission.phase, .needsDecision)
+        XCTAssertEqual(mission.pendingDecision, pending)
+        XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
     }
 
     func testArchiveRoundTripIsDeterministicAndFailClosedOnSchema() throws {

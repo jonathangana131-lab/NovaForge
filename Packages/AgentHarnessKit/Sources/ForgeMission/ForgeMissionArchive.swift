@@ -41,6 +41,14 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
         guard state.constitution.missionID == state.missionID, state.constitution.projectID == state.projectID else { throw ForgeMissionArchiveError.identityMismatch }
         guard state.graph.missionID == state.missionID, state.graph.validationError == nil else { throw ForgeMissionArchiveError.invalidGraph }
         guard state.route.isValid else { throw ForgeMissionArchiveError.invalidRoute }
+        try validateDurableRecords(
+            stageEvidence: state.stageEvidence,
+            workerReceipts: state.workerReceipts,
+            decisions: state.decisions,
+            recoveryRecords: state.recoveryRecords,
+            missionID: state.missionID,
+            projectID: state.projectID
+        )
 
         let activeStageIDs = Set(state.graph.stages.filter { $0.status == .active }.map(\.stageID))
         let leaseStageIDs = Set(state.activeLeases.map(\.stageID))
@@ -58,7 +66,12 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
         case .executing:
             guard !state.activeLeases.isEmpty else { throw ForgeMissionArchiveError.executingWithoutLease }
         case .needsDecision:
-            guard state.activeLeases.isEmpty, state.graph.stages.contains(where: { $0.status == .waitingForDecision }) else { throw ForgeMissionArchiveError.invalidDecisionGate }
+            guard state.activeLeases.isEmpty,
+                  let pending = state.pendingDecision,
+                  !pending.prompt.trimmed.isEmpty,
+                  state.graph.stages.contains(where: {
+                      $0.stageID == pending.stageID && $0.status == .waitingForDecision
+                  }) else { throw ForgeMissionArchiveError.invalidDecisionGate }
         case .blockedExternal:
             guard state.activeLeases.isEmpty, state.graph.stages.contains(where: { $0.status == .blocked }) else { throw ForgeMissionArchiveError.invalidBlockedState }
         case .interruptedRecoverable:
@@ -69,6 +82,9 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
             guard state.activeLeases.isEmpty, state.graph.requiredWorkIsSatisfied, state.completionEvidence != nil else { throw ForgeMissionArchiveError.invalidCompletion }
         case .draftIntent, .planning, .ready, .pausedByUser, .pausedByPolicy, .validating, .polishing, .cancelled:
             guard state.activeLeases.isEmpty else { throw ForgeMissionArchiveError.nonExecutingStateHasLease }
+        }
+        if state.phase != .needsDecision, state.pendingDecision != nil {
+            throw ForgeMissionArchiveError.invalidDecisionGate
         }
 
         var checkpointIDs = Set<MissionCheckpointID>()
@@ -86,6 +102,23 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
                   !checkpoint.summary.trimmed.isEmpty,
                   !checkpoint.evidenceReceiptIDs.values.isEmpty,
                   checkpoint.evidenceReceiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty }) else { throw ForgeMissionArchiveError.invalidCheckpointEvidence }
+            try validateDurableRecords(
+                stageEvidence: checkpoint.stageEvidence,
+                workerReceipts: checkpoint.workerReceipts,
+                decisions: checkpoint.decisions,
+                recoveryRecords: checkpoint.recoveryRecords,
+                missionID: checkpoint.missionID,
+                projectID: checkpoint.projectID
+            )
+            if checkpoint.phase == .needsDecision {
+                guard let pending = checkpoint.pendingDecision,
+                      !pending.prompt.trimmed.isEmpty,
+                      checkpoint.graph.stages.contains(where: {
+                          $0.stageID == pending.stageID && $0.status == .waitingForDecision
+                      }) else { throw ForgeMissionArchiveError.invalidDecisionGate }
+            } else if checkpoint.pendingDecision != nil {
+                throw ForgeMissionArchiveError.invalidDecisionGate
+            }
             priorMissionRevision = checkpoint.missionRevision
         }
 
@@ -98,6 +131,33 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
             if state.phase == .completedWithKnownLimitations, completion.knownLimitations.values.isEmpty { throw ForgeMissionArchiveError.invalidCompletion }
         } else if [.completedWithEvidence, .completedWithKnownLimitations].contains(state.phase) {
             throw ForgeMissionArchiveError.invalidCompletion
+        }
+    }
+
+    private static func validateDurableRecords(
+        stageEvidence: [MissionStageEvidence],
+        workerReceipts: [MissionAcceptedWorkerReceipt],
+        decisions: [MissionDecisionRecord],
+        recoveryRecords: [MissionRecoveryRecord],
+        missionID: MissionID,
+        projectID: ProjectID
+    ) throws {
+        guard stageEvidence.allSatisfy({
+            !$0.summary.trimmed.isEmpty &&
+            !$0.receiptIDs.values.isEmpty &&
+            $0.receiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty })
+        }) else { throw ForgeMissionArchiveError.invalidStageEvidence }
+        guard workerReceipts.allSatisfy({
+            $0.missionID == missionID &&
+            $0.projectID == projectID &&
+            !$0.summary.trimmed.isEmpty &&
+            $0.evidenceReceiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty })
+        }) else { throw ForgeMissionArchiveError.invalidWorkerReceipt }
+        guard decisions.allSatisfy({
+            !$0.acceptedAnswer.trimmed.isEmpty && !$0.decisionReceiptID.trimmed.isEmpty
+        }) else { throw ForgeMissionArchiveError.invalidDecisionRecord }
+        guard recoveryRecords.allSatisfy({ !$0.resolutionReceiptID.trimmed.isEmpty }) else {
+            throw ForgeMissionArchiveError.invalidRecoveryRecord
         }
     }
 }
@@ -124,6 +184,10 @@ public enum ForgeMissionArchiveError: Error, Equatable, Sendable {
     case duplicateCheckpoint
     case invalidCheckpointParent
     case invalidCheckpointEvidence
+    case invalidStageEvidence
+    case invalidWorkerReceipt
+    case invalidDecisionRecord
+    case invalidRecoveryRecord
 }
 
 private extension String {
