@@ -15,7 +15,7 @@ public enum ForgeHistoryAcceptedProjectionError: Error, Equatable, Sendable {
 /// Boundary input created only after an upstream checkpoint has been accepted. Carrying project
 /// identity per checkpoint prevents a presentation adapter from accidentally mixing two projects
 /// into one otherwise-valid History timeline.
-public struct ForgeHistoryAcceptedCheckpointBinding: Codable, Hashable, Sendable {
+public struct ForgeHistoryAcceptedCheckpointBinding: Hashable, Sendable {
     public let projectID: ForgeHistoryProjectID
     public let acceptedProjectStateID: ForgeHistoryAcceptedProjectStateID
     public let checkpoint: ForgeHistoryCheckpoint
@@ -38,7 +38,7 @@ public struct ForgeHistoryCheckpointProjectStateBinding: Hashable, Sendable {
     public let checkpointID: ForgeHistoryCheckpointID
     public let acceptedProjectStateID: ForgeHistoryAcceptedProjectStateID
 
-    public init(
+    init(
         checkpointID: ForgeHistoryCheckpointID,
         acceptedProjectStateID: ForgeHistoryAcceptedProjectStateID
     ) {
@@ -54,7 +54,7 @@ public struct ForgeHistoryAcceptedTimelineProjection: Hashable, Sendable {
     public let timeline: ForgeHistoryTimeline
     public let acceptedProjectStates: [ForgeHistoryCheckpointProjectStateBinding]
 
-    public init(
+    fileprivate init(
         timeline: ForgeHistoryTimeline,
         acceptedProjectStates: [ForgeHistoryCheckpointProjectStateBinding]
     ) {
