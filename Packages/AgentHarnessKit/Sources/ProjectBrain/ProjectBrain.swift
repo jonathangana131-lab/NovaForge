@@ -42,6 +42,8 @@ public enum ProjectBrainFactStatus: String, Codable, Hashable, Sendable {
     case stale
 }
 
+/// One concise accepted project fact with source provenance. `value` is project truth,
+/// never a storage surface for hidden chain-of-thought or unaccepted model scratch text.
 public struct ProjectBrainFact: Codable, Hashable, Sendable {
     public let id: ProjectBrainFactID
     public let key: String
@@ -103,6 +105,58 @@ public struct ProjectBrainSnapshot: Codable, Hashable, Sendable {
 
     public var currentFacts: [ProjectBrainFact] {
         facts.filter { $0.status == .current }
+    }
+
+    /// Produces a bounded, revision-bound context neighborhood from accepted current facts only.
+    /// Empty key/scope filters mean “all”; stale facts remain stored for provenance but are excluded.
+    public func contextSlice(for request: ProjectBrainContextRequest) -> ProjectBrainContextSlice {
+        let keyFilter = Set(request.keys)
+        let scopeFilter = Set(request.scopes)
+        let matching = currentFacts
+            .filter { keyFilter.isEmpty || keyFilter.contains($0.key) }
+            .filter { scopeFilter.isEmpty || scopeFilter.contains($0.scope) }
+            .sorted { lhs, rhs in
+                if lhs.verifiedAt != rhs.verifiedAt { return lhs.verifiedAt > rhs.verifiedAt }
+                return lhs.id.description < rhs.id.description
+            }
+        let limit = max(0, request.maxFacts)
+        return ProjectBrainContextSlice(
+            projectID: projectID,
+            brainRevision: revision,
+            facts: Array(matching.prefix(limit)),
+            isTruncated: matching.count > limit
+        )
+    }
+}
+
+public struct ProjectBrainContextRequest: Codable, Hashable, Sendable {
+    public let keys: [String]
+    public let scopes: [ProjectBrainScope]
+    public let maxFacts: Int
+
+    public init(keys: [String] = [], scopes: [ProjectBrainScope] = [], maxFacts: Int = 32) {
+        self.keys = keys
+        self.scopes = scopes
+        self.maxFacts = maxFacts
+    }
+}
+
+public struct ProjectBrainContextSlice: Codable, Hashable, Sendable {
+    public let projectID: ProjectID
+    public let brainRevision: ProjectBrainRevision
+    public let facts: [ProjectBrainFact]
+    public let isTruncated: Bool
+
+    public init(
+        projectID: ProjectID,
+        brainRevision: ProjectBrainRevision,
+        facts: [ProjectBrainFact],
+        isTruncated: Bool
+    ) {
+        self.projectID = projectID
+        self.brainRevision = brainRevision
+        self.facts = facts
+        self.isTruncated = isTruncated
     }
 }
 
