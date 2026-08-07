@@ -18,17 +18,28 @@ public enum LocalModelEvidenceKind: String, Codable, Hashable, Sendable {
     case measured
 }
 
+/// Capability truth must preserve the difference between "known unsupported" and
+/// "not yet verified". Treating unknown as false would turn missing metadata into a lie.
+public enum LocalModelCapabilityStatus: String, Codable, Hashable, Sendable {
+    case supported
+    case unsupported
+    case unknown
+}
+
 public enum LocalModelCompatibilityReason: String, Codable, Hashable, Sendable {
     case architectureUnsupported
     case insufficientStorage
     case memoryBudgetExceeded
     case missingMemoryEstimate
     case toolCallingUnavailable
+    case toolCallingUnverified
     case structuredOutputUnavailable
+    case structuredOutputUnverified
     case benchmarkMissing
     case benchmarkNotApplicable
     case benchmarkInsufficient
     case benchmarkUnstable
+    case invalidPolicy
     case measuredPerformance
 }
 
@@ -59,8 +70,8 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     public let architecture: String
     public let fileSizeBytes: UInt64
     public let estimatedPeakMemoryBytes: UInt64?
-    public let supportsToolCalling: Bool
-    public let supportsStructuredOutput: Bool
+    public let toolCalling: LocalModelCapabilityStatus
+    public let structuredOutput: LocalModelCapabilityStatus
     public let source: String
     public let license: String?
 
@@ -70,8 +81,8 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
         architecture: String,
         fileSizeBytes: UInt64,
         estimatedPeakMemoryBytes: UInt64?,
-        supportsToolCalling: Bool,
-        supportsStructuredOutput: Bool,
+        toolCalling: LocalModelCapabilityStatus,
+        structuredOutput: LocalModelCapabilityStatus,
         source: String,
         license: String? = nil
     ) {
@@ -80,8 +91,8 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
         self.architecture = architecture
         self.fileSizeBytes = fileSizeBytes
         self.estimatedPeakMemoryBytes = estimatedPeakMemoryBytes
-        self.supportsToolCalling = supportsToolCalling
-        self.supportsStructuredOutput = supportsStructuredOutput
+        self.toolCalling = toolCalling
+        self.structuredOutput = structuredOutput
         self.source = source
         self.license = license
     }
@@ -176,6 +187,16 @@ public struct LocalModelCompatibilityPolicy: Codable, Equatable, Sendable {
     }
 
     public static let conservativeV1 = LocalModelCompatibilityPolicy()
+
+    public var isValid: Bool {
+        minimumCompletedSmokeRuns > 0
+            && maximumFailureRate.isFinite
+            && (0 ... 1).contains(maximumFailureRate)
+            && excellentTokensPerSecond.isFinite
+            && goodTokensPerSecond.isFinite
+            && excellentTokensPerSecond >= goodTokensPerSecond
+            && goodTokensPerSecond >= 0
+    }
 }
 
 public struct LocalModelCompatibilityResult: Codable, Equatable, Sendable {
@@ -219,30 +240,62 @@ public enum LocalModelCompatibilityEvaluator {
     ) -> LocalModelCompatibilityResult {
         var evidence = sourceEvidence(for: descriptor)
 
-        if requirements.requiresToolCalling && !descriptor.supportsToolCalling {
-            evidence.append(.init(
-                kind: .inferred,
-                code: "capability.tool_calling.missing",
-                detail: "This mission requires tool calling, which the catalog descriptor does not declare."
-            ))
-            return .init(
-                label: .unsupported,
-                reasons: [.toolCallingUnavailable],
-                evidence: evidence
-            )
+        if requirements.requiresToolCalling {
+            switch descriptor.toolCalling {
+            case .supported:
+                break
+            case .unsupported:
+                evidence.append(.init(
+                    kind: .inferred,
+                    code: "capability.tool_calling.unsupported",
+                    detail: "This mission requires tool calling, which the catalog explicitly marks unsupported."
+                ))
+                return .init(
+                    label: .unsupported,
+                    reasons: [.toolCallingUnavailable],
+                    evidence: evidence
+                )
+            case .unknown:
+                evidence.append(.init(
+                    kind: .inferred,
+                    code: "capability.tool_calling.unverified",
+                    detail: "This mission requires tool calling, but catalog support is not verified."
+                ))
+                return .init(
+                    label: .untested,
+                    reasons: [.toolCallingUnverified],
+                    evidence: evidence
+                )
+            }
         }
 
-        if requirements.requiresStructuredOutput && !descriptor.supportsStructuredOutput {
-            evidence.append(.init(
-                kind: .inferred,
-                code: "capability.structured_output.missing",
-                detail: "This mission requires structured output, which the catalog descriptor does not declare."
-            ))
-            return .init(
-                label: .unsupported,
-                reasons: [.structuredOutputUnavailable],
-                evidence: evidence
-            )
+        if requirements.requiresStructuredOutput {
+            switch descriptor.structuredOutput {
+            case .supported:
+                break
+            case .unsupported:
+                evidence.append(.init(
+                    kind: .inferred,
+                    code: "capability.structured_output.unsupported",
+                    detail: "This mission requires structured output, which the catalog explicitly marks unsupported."
+                ))
+                return .init(
+                    label: .unsupported,
+                    reasons: [.structuredOutputUnavailable],
+                    evidence: evidence
+                )
+            case .unknown:
+                evidence.append(.init(
+                    kind: .inferred,
+                    code: "capability.structured_output.unverified",
+                    detail: "This mission requires structured output, but catalog support is not verified."
+                ))
+                return .init(
+                    label: .untested,
+                    reasons: [.structuredOutputUnverified],
+                    evidence: evidence
+                )
+            }
         }
 
         let normalizedArchitecture = descriptor.architecture.lowercased()
@@ -376,7 +429,33 @@ public enum LocalModelCompatibilityEvaluator {
         let failed = UInt64(benchmark.failedSmokeRuns)
         let completed = successful + failed
 
-        guard completed >= UInt64(policy.minimumCompletedSmokeRuns), completed > 0 else {
+        guard completed > 0 else {
+            evidence.append(.init(
+                kind: .inferred,
+                code: "benchmark.no_completed_runs",
+                detail: "The exact-device observation contains no completed smoke runs."
+            ))
+            return .init(
+                label: .untested,
+                reasons: [.benchmarkInsufficient],
+                evidence: evidence
+            )
+        }
+
+        guard policy.isValid else {
+            evidence.append(.init(
+                kind: .inferred,
+                code: "compatibility.policy.invalid",
+                detail: "Compatibility policy thresholds are internally invalid, so NovaForge will not classify measured performance."
+            ))
+            return .init(
+                label: .untested,
+                reasons: [.invalidPolicy],
+                evidence: evidence
+            )
+        }
+
+        guard completed >= UInt64(policy.minimumCompletedSmokeRuns) else {
             evidence.append(.init(
                 kind: .inferred,
                 code: "benchmark.insufficient_runs",
@@ -394,11 +473,11 @@ public enum LocalModelCompatibilityEvaluator {
             evidence.append(.init(
                 kind: .inferred,
                 code: "benchmark.unstable",
-                detail: "Measured smoke-run failure rate exceeds the compatibility policy."
+                detail: "Measured smoke-run failure rate exceeds the compatibility policy; speed is not promoted to a compatibility label."
             ))
             return .init(
-                label: .slow,
-                reasons: [.benchmarkUnstable, .measuredPerformance],
+                label: .untested,
+                reasons: [.benchmarkUnstable],
                 evidence: evidence
             )
         }
@@ -444,13 +523,23 @@ public enum LocalModelCompatibilityEvaluator {
                 code: "catalog.file_size",
                 detail: "\(descriptor.source) reports a model file size of \(descriptor.fileSizeBytes) bytes."
             ),
+            LocalModelEvidence(
+                kind: .sourceReported,
+                code: "catalog.capability.tool_calling",
+                detail: "\(descriptor.source) reports tool-calling capability as \(descriptor.toolCalling.rawValue)."
+            ),
+            LocalModelEvidence(
+                kind: .sourceReported,
+                code: "catalog.capability.structured_output",
+                detail: "\(descriptor.source) reports structured-output capability as \(descriptor.structuredOutput.rawValue)."
+            ),
         ]
 
         if let estimatedPeakMemoryBytes = descriptor.estimatedPeakMemoryBytes {
             evidence.append(.init(
                 kind: .sourceReported,
                 code: "catalog.memory_estimate",
-                detail: "\(descriptor.source) reports/derives an estimated peak memory requirement of \(estimatedPeakMemoryBytes) bytes."
+                detail: "\(descriptor.source) provides an estimated peak memory requirement of \(estimatedPeakMemoryBytes) bytes."
             ))
         }
 
