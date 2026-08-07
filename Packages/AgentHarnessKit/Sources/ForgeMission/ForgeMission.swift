@@ -272,6 +272,7 @@ public enum ForgeMissionError: Error, Equatable, Sendable {
     case stageNotBlocked(MissionStageID)
     case stageNotRecoverable(MissionStageID)
     case requiredStageCannotBeDeferred(MissionStageID)
+    case stageNotDeferrable(MissionStageID)
     case duplicateStageRequest(MissionStageID)
     case noStagesRequested
     case activeWorkExists
@@ -288,8 +289,10 @@ public enum ForgeMissionError: Error, Equatable, Sendable {
     case restoreVerificationMismatch
     case continuationRequiresCompletedMission
     case completionRequiresSatisfiedRequiredWork
+    case completionRequiresSettledStageGraph
     case completionRequiresCheckpoint
     case completionProjectStateMismatch
+    case completionCheckpointAuthorityMismatch
     case completionMissingExpectedEvidence
     case completionMissingReceipt
     case revisionOverflow
@@ -558,6 +561,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         guard activeLeases.isEmpty else { throw ForgeMissionError.activeWorkExists }
         guard let index = graph.stages.firstIndex(where: { $0.stageID == stageID }) else { throw ForgeMissionError.stageNotFound(stageID) }
         guard !graph.stages[index].required else { throw ForgeMissionError.requiredStageCannotBeDeferred(stageID) }
+        guard graph.stages[index].status == .pending else { throw ForgeMissionError.stageNotDeferrable(stageID) }
         var stages = graph.stages
         stages[index] = stages[index].withStatus(.deferred)
         graph = graph.withStagesPreservingRevision(stages)
@@ -602,6 +606,11 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         for accepted in graph.stages where accepted.status == .completed {
             guard newByID[accepted.stageID]?.status == .completed else {
                 throw ForgeMissionError.acceptedCompletedStageWouldBeLost(accepted.stageID)
+            }
+        }
+        for gated in graph.stages where [.waitingForDecision, .blocked, .failedRecoverably].contains(gated.status) {
+            guard newByID[gated.stageID]?.status == gated.status else {
+                throw ForgeMissionError.invalidGraph
             }
         }
         if let pendingDecision {
@@ -779,8 +788,19 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         try requireNonTerminal()
         guard activeLeases.isEmpty else { throw ForgeMissionError.activeWorkExists }
         guard graph.requiredWorkIsSatisfied else { throw ForgeMissionError.completionRequiresSatisfiedRequiredWork }
+        guard pendingDecision == nil,
+              graph.stages.allSatisfy({ [.completed, .deferred].contains($0.status) }) else {
+            throw ForgeMissionError.completionRequiresSettledStageGraph
+        }
         guard let checkpoint = checkpoints.last else { throw ForgeMissionError.completionRequiresCheckpoint }
         guard checkpoint.acceptedProjectStateID == evidence.acceptedProjectStateID.trimmed else { throw ForgeMissionError.completionProjectStateMismatch }
+        guard checkpoint.missionRevision == revision,
+              checkpoint.authorityEpoch == authorityEpoch,
+              checkpoint.constitutionRevision == constitution.revision,
+              checkpoint.graph == graph,
+              checkpoint.routeReceiptID == route.routeReceiptID else {
+            throw ForgeMissionError.completionCheckpointAuthorityMismatch
+        }
         guard !evidence.receiptIDs.values.isEmpty,
               evidence.receiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty }) else { throw ForgeMissionError.completionMissingReceipt }
         guard constitution.expectedEvidence.values.allSatisfy(evidence.evidenceClasses.contains) else {

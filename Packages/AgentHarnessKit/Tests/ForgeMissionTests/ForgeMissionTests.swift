@@ -416,6 +416,92 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
     }
 
+
+    func testDecisionGatedOptionalStageCannotBypassReceiptViaDeferral() throws {
+        let missionID = MissionID(); let projectID = ProjectID(); let optionalID = MissionStageID()
+        var mission = try ForgeMissionState(
+            constitution: constitution(missionID: missionID, projectID: projectID, revision: 1),
+            graph: MissionStageGraph(missionID: missionID, stages: [
+                MissionStage(stageID: optionalID, kind: .plan, title: "Optional choice", order: 1, required: false),
+            ]),
+            route: .init(routeReceiptID: "route:balanced:1")
+        )
+        let lease = try mission.beginWork(on: [optionalID])[0]
+        try mission.acceptWorkerResult(.init(lease: lease, outcome: .needsDecision, summary: "Choose style"), at: instant(70))
+
+        XCTAssertThrowsError(try mission.deferOptionalStage(optionalID)) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .stageNotDeferrable(optionalID))
+        }
+        XCTAssertEqual(mission.phase, .needsDecision)
+        XCTAssertNotNil(mission.pendingDecision)
+        XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
+    }
+
+    func testCompletionRequiresOptionalStagesToBeExplicitlySettled() throws {
+        let missionID = MissionID(); let projectID = ProjectID()
+        let requiredID = MissionStageID(); let optionalID = MissionStageID()
+        var mission = try ForgeMissionState(
+            constitution: constitution(missionID: missionID, projectID: projectID, revision: 1),
+            graph: MissionStageGraph(missionID: missionID, stages: [
+                MissionStage(stageID: requiredID, kind: .implement, title: "Required", order: 1),
+                MissionStage(stageID: optionalID, kind: .polish, title: "Optional", order: 2, required: false, dependencies: [requiredID]),
+            ]),
+            route: .init(routeReceiptID: "route:balanced:1")
+        )
+        let lease = try mission.beginWork(on: [requiredID])[0]
+        try mission.acceptWorkerResult(.init(lease: lease, outcome: .completed, summary: "Required done", evidenceReceiptIDs: .init(["required:r"])), at: instant(71))
+        _ = try mission.checkpoint(acceptedProjectStateID: "state:settled", evidenceReceiptIDs: .init(["checkpoint:settled"]), summary: "Required accepted", at: instant(72))
+
+        XCTAssertThrowsError(try mission.complete(with: completion(state: "state:settled", classes: [.runtimeTested]))) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .completionRequiresSettledStageGraph)
+        }
+        try mission.deferOptionalStage(optionalID)
+        XCTAssertThrowsError(try mission.complete(with: completion(state: "state:settled", classes: [.runtimeTested]))) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .completionCheckpointAuthorityMismatch)
+        }
+        _ = try mission.checkpoint(
+            acceptedProjectStateID: "state:settled",
+            evidenceReceiptIDs: .init(["checkpoint:deferred"]),
+            summary: "Optional work explicitly deferred",
+            at: instant(73)
+        )
+        try mission.complete(with: completion(state: "state:settled", classes: [.runtimeTested]))
+        XCTAssertEqual(mission.phase, .completedWithEvidence)
+    }
+
+    func testGraphReplacementCannotEraseOutstandingBlockGate() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        let lease = try mission.beginWork(on: [stageID])[0]
+        try mission.acceptWorkerResult(.init(lease: lease, outcome: .blockedExternal, summary: "Mac unavailable"), at: instant(73))
+        let replacement = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [])
+
+        XCTAssertThrowsError(try mission.replaceStageGraph(replacement)) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)
+        }
+        XCTAssertEqual(mission.phase, .blockedExternal)
+        XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
+    }
+
+
+    func testCompletionRejectsCheckpointFromStaleMissionAuthority() throws {
+        var mission = try completedReadyMission()
+        try mission.switchRoute(to: .init(routeReceiptID: "route:deep:2"))
+
+        XCTAssertThrowsError(try mission.complete(with: completion(state: "state:1", classes: [.runtimeTested]))) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .completionCheckpointAuthorityMismatch)
+        }
+        _ = try mission.checkpoint(
+            acceptedProjectStateID: "state:1",
+            evidenceReceiptIDs: .init(["checkpoint:route:deep"]),
+            summary: "Accepted current route authority",
+            at: instant(74)
+        )
+        try mission.complete(with: completion(state: "state:1", classes: [.runtimeTested]))
+        XCTAssertEqual(mission.phase, .completedWithEvidence)
+        XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
+    }
+
     func testArchiveRoundTripIsDeterministicAndFailClosedOnSchema() throws {
         let mission = try completedReadyMission()
         let archive = try ForgeMissionArchive(state: mission)

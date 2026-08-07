@@ -71,15 +71,39 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
                   !pending.prompt.trimmed.isEmpty,
                   state.graph.stages.contains(where: {
                       $0.stageID == pending.stageID && $0.status == .waitingForDecision
+                  }),
+                  state.workerReceipts.contains(where: {
+                      $0.stageID == pending.stageID &&
+                      $0.kind == .needsDecision &&
+                      $0.summary == pending.prompt &&
+                      $0.acceptedAt == pending.acceptedAt
                   }) else { throw ForgeMissionArchiveError.invalidDecisionGate }
         case .blockedExternal:
-            guard state.activeLeases.isEmpty, state.graph.stages.contains(where: { $0.status == .blocked }) else { throw ForgeMissionArchiveError.invalidBlockedState }
+            let blocked = state.graph.stages.filter { $0.status == .blocked }
+            guard state.activeLeases.isEmpty,
+                  blocked.count == 1,
+                  state.workerReceipts.contains(where: { $0.stageID == blocked[0].stageID && $0.kind == .blockedExternal }) else {
+                throw ForgeMissionArchiveError.invalidBlockedState
+            }
         case .interruptedRecoverable:
-            guard state.activeLeases.isEmpty, state.graph.stages.contains(where: { $0.status == .failedRecoverably }) else { throw ForgeMissionArchiveError.invalidRecoverableState }
+            let failed = state.graph.stages.filter { $0.status == .failedRecoverably }
+            guard state.activeLeases.isEmpty,
+                  failed.count == 1,
+                  state.workerReceipts.contains(where: { $0.stageID == failed[0].stageID && $0.kind == .failedRecoverably }) else {
+                throw ForgeMissionArchiveError.invalidRecoverableState
+            }
         case .failedIrrecoverably:
-            guard state.activeLeases.isEmpty, state.graph.stages.contains(where: { $0.status == .failedIrrecoverably }) else { throw ForgeMissionArchiveError.invalidFailedState }
+            let failed = state.graph.stages.filter { $0.status == .failedIrrecoverably }
+            guard state.activeLeases.isEmpty,
+                  failed.count == 1,
+                  state.workerReceipts.contains(where: { $0.stageID == failed[0].stageID && $0.kind == .failedIrrecoverably }) else {
+                throw ForgeMissionArchiveError.invalidFailedState
+            }
         case .completedWithEvidence, .completedWithKnownLimitations:
-            guard state.activeLeases.isEmpty, state.graph.requiredWorkIsSatisfied, state.completionEvidence != nil else { throw ForgeMissionArchiveError.invalidCompletion }
+            guard state.activeLeases.isEmpty,
+                  state.graph.requiredWorkIsSatisfied,
+                  state.graph.stages.allSatisfy({ [.completed, .deferred].contains($0.status) }),
+                  state.completionEvidence != nil else { throw ForgeMissionArchiveError.invalidCompletion }
         case .draftIntent, .planning, .ready, .pausedByUser, .pausedByPolicy, .validating, .polishing, .cancelled:
             guard state.activeLeases.isEmpty else { throw ForgeMissionArchiveError.nonExecutingStateHasLease }
         }
@@ -110,21 +134,52 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
                 missionID: checkpoint.missionID,
                 projectID: checkpoint.projectID
             )
-            if checkpoint.phase == .needsDecision {
+            switch checkpoint.phase {
+            case .needsDecision:
                 guard let pending = checkpoint.pendingDecision,
                       !pending.prompt.trimmed.isEmpty,
                       checkpoint.graph.stages.contains(where: {
                           $0.stageID == pending.stageID && $0.status == .waitingForDecision
+                      }),
+                      checkpoint.workerReceipts.contains(where: {
+                          $0.stageID == pending.stageID &&
+                          $0.kind == .needsDecision &&
+                          $0.summary == pending.prompt &&
+                          $0.acceptedAt == pending.acceptedAt
                       }) else { throw ForgeMissionArchiveError.invalidDecisionGate }
-            } else if checkpoint.pendingDecision != nil {
-                throw ForgeMissionArchiveError.invalidDecisionGate
+            case .blockedExternal:
+                let blocked = checkpoint.graph.stages.filter { $0.status == .blocked }
+                guard checkpoint.pendingDecision == nil,
+                      blocked.count == 1,
+                      checkpoint.workerReceipts.contains(where: { $0.stageID == blocked[0].stageID && $0.kind == .blockedExternal }) else {
+                    throw ForgeMissionArchiveError.invalidBlockedState
+                }
+            case .interruptedRecoverable:
+                let failed = checkpoint.graph.stages.filter { $0.status == .failedRecoverably }
+                guard checkpoint.pendingDecision == nil,
+                      failed.count == 1,
+                      checkpoint.workerReceipts.contains(where: { $0.stageID == failed[0].stageID && $0.kind == .failedRecoverably }) else {
+                    throw ForgeMissionArchiveError.invalidRecoverableState
+                }
+            case .executing, .failedIrrecoverably, .completedWithEvidence, .completedWithKnownLimitations, .cancelled:
+                throw ForgeMissionArchiveError.invalidCheckpointPhase
+            case .draftIntent, .planning, .ready, .pausedByUser, .pausedByPolicy, .validating, .polishing:
+                guard checkpoint.pendingDecision == nil else { throw ForgeMissionArchiveError.invalidDecisionGate }
             }
             priorMissionRevision = checkpoint.missionRevision
         }
 
         if let completion = state.completionEvidence {
-            guard let checkpoint = state.checkpoints.last else { throw ForgeMissionArchiveError.invalidCompletion }
+            guard [.completedWithEvidence, .completedWithKnownLimitations].contains(state.phase),
+                  let checkpoint = state.checkpoints.last else { throw ForgeMissionArchiveError.invalidCompletion }
             guard checkpoint.acceptedProjectStateID == completion.acceptedProjectStateID.trimmed,
+                  checkpoint.graph == state.graph,
+                  checkpoint.constitutionRevision == state.constitution.revision,
+                  checkpoint.routeReceiptID == state.route.routeReceiptID,
+                  checkpoint.missionRevision < UInt64.max,
+                  checkpoint.authorityEpoch < UInt64.max,
+                  checkpoint.missionRevision + 1 == state.revision,
+                  checkpoint.authorityEpoch + 1 == state.authorityEpoch,
                   !completion.receiptIDs.values.isEmpty,
                   state.constitution.expectedEvidence.values.allSatisfy(completion.evidenceClasses.contains) else { throw ForgeMissionArchiveError.invalidCompletion }
             if state.phase == .completedWithEvidence, !completion.knownLimitations.values.isEmpty { throw ForgeMissionArchiveError.invalidCompletion }
@@ -184,6 +239,7 @@ public enum ForgeMissionArchiveError: Error, Equatable, Sendable {
     case duplicateCheckpoint
     case invalidCheckpointParent
     case invalidCheckpointEvidence
+    case invalidCheckpointPhase
     case invalidStageEvidence
     case invalidWorkerReceipt
     case invalidDecisionRecord
