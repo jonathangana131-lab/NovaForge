@@ -1,9 +1,7 @@
 import Foundation
 
-/// Host-owned authority derived from a manifest that already passed validation.
-///
-/// Generated code never constructs this value directly. The host derives it from its own support
-/// snapshot so optional unsupported requests disappear rather than becoming ambient authority.
+/// Host-owned authority derived from a manifest that already passed validation and an exact-project
+/// grant that came from outside generated project code.
 public struct ForgeRuntimeLaunchAuthorization: Equatable, Sendable {
     public let projectID: String
     public let runtimeVersion: ForgeRuntimeVersion
@@ -44,6 +42,7 @@ public struct ForgeAuthorizedStoragePolicy: Equatable, Sendable {
 public struct ForgeAuthorizedNetworkPolicy: Equatable, Sendable {
     public let mode: ForgeNetworkMode
     /// Canonical lowercase exact hostnames. Empty when network is denied.
+    /// ForgeRuntimeResourcePolicy additionally restricts external requests to HTTPS port 443.
     public let allowedHosts: [String]
 }
 
@@ -54,32 +53,52 @@ public struct ForgeAuthorizedModule: Equatable, Hashable, Sendable {
 
 public enum ForgeRuntimeLaunchAuthorizationError: Error, Equatable, Sendable {
     case manifestRejected(ForgeRuntimeValidationReport)
+    case invalidProjectGrant(ForgeRuntimeProjectGrantError)
+    case requiredCapabilityNotGranted(String)
+    case networkHostNotGranted(String)
 }
 
 public extension ForgeRuntimeManifestValidator {
-    /// Validates and then derives the exact host-granted launch authority.
+    /// Validates the project request, validates the separately owned exact-project grant, then derives
+    /// only the intersection of requested + supported + granted authority.
     func authorize(
         _ manifest: ForgeProjectManifest,
         expectedProjectID: String,
-        host: ForgeRuntimeHostSupport
+        host: ForgeRuntimeHostSupport,
+        projectGrant: ForgeRuntimeProjectGrant
     ) throws -> ForgeRuntimeLaunchAuthorization {
         let report = validate(manifest, expectedProjectID: expectedProjectID, host: host)
         guard report.isLaunchable else {
             throw ForgeRuntimeLaunchAuthorizationError.manifestRejected(report)
         }
 
-        let grantedCapabilities = Set(
-            manifest.capabilities.lazy
-                .map(\.id)
-                .filter(host.supportedCapabilityIDs.contains)
-        )
+        do {
+            try projectGrant.validate(expectedProjectID: expectedProjectID, host: host)
+        } catch let error as ForgeRuntimeProjectGrantError {
+            throw ForgeRuntimeLaunchAuthorizationError.invalidProjectGrant(error)
+        }
+
+        for request in manifest.capabilities where request.requirement == .required {
+            guard projectGrant.grantedCapabilityIDs.contains(request.id) else {
+                throw ForgeRuntimeLaunchAuthorizationError.requiredCapabilityNotGranted(request.id)
+            }
+        }
+
+        let requestedCapabilityIDs = Set(manifest.capabilities.map(\.id))
+        let grantedCapabilities = requestedCapabilityIDs
+            .intersection(host.supportedCapabilityIDs)
+            .intersection(projectGrant.grantedCapabilityIDs)
 
         let allowedHosts: [String]
         switch manifest.network.mode {
         case .denied:
             allowedHosts = []
         case .allowListedHTTPS:
-            allowedHosts = Array(Set(manifest.network.allowedHosts.map { $0.lowercased() })).sorted()
+            let requestedHosts = Array(Set(manifest.network.allowedHosts.map { $0.lowercased() })).sorted()
+            for hostName in requestedHosts where !projectGrant.allowedHTTPSHosts.contains(hostName) {
+                throw ForgeRuntimeLaunchAuthorizationError.networkHostNotGranted(hostName)
+            }
+            allowedHosts = requestedHosts
         }
 
         let authorizedModules = manifest.modules.compactMap { module -> ForgeAuthorizedModule? in
