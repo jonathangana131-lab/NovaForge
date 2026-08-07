@@ -551,11 +551,15 @@ final class ForgeMissionTests: XCTestCase {
     func testArchiveRoundTripIsDeterministicAndFailClosedOnSchema() throws {
         let mission = try completedReadyMission()
         let archive = try ForgeMissionArchive(state: mission)
+        XCTAssertEqual(ForgeMissionArchive.currentSchemaVersion, 2)
+        XCTAssertEqual(archive.schemaVersion, 2)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(archive)
         XCTAssertEqual(try JSONDecoder().decode(ForgeMissionArchive.self, from: data), archive)
         XCTAssertEqual(try encoder.encode(JSONDecoder().decode(ForgeMissionArchive.self, from: data)), data)
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json["schemaVersion"] = 1
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))
         json["schemaVersion"] = 99
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))
     }

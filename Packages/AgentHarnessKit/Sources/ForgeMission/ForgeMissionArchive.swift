@@ -2,7 +2,7 @@ import AgentDomain
 import Foundation
 
 public struct ForgeMissionArchive: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public let schemaVersion: Int
     public let state: ForgeMissionState
 
