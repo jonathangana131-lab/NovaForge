@@ -12,15 +12,16 @@
 //  mid-word, stat rows of zeros, cross-tab pill buttons). Forge puts the
 //  whole loop on one surface:
 //
-//  - ForgeHeader: one row that can never clip. Chats, the current session
-//    and project scope, Mission Dossier, and New Chat are four stable
-//    controls. Runtime state stays beside the work it describes.
+//  - ForgeHeader: one row that can never clip. Chats, Plan Space, the current
+//    session/project scope, Mission Dossier, and New Chat are stable controls.
+//    Runtime state stays beside the work it describes.
 //  - ForgeMissionStrip: the live project mission rendered as a slim strip
 //    under the header — status, current activity, and the contextual
 //    action (Approve / Reject, Stop, countdown) inline. What used to
 //    require a tab switch is now ambient.
 //
 
+import Foundation
 import SwiftData
 import SwiftUI
 import UIKit
@@ -39,6 +40,8 @@ struct ForgeHeader: View {
     var glassNamespace: Namespace.ID? = nil
 
     @Namespace private var localGlassNamespace
+    @State private var showingPlanSpace = false
+    @State private var planDraft = ForgePlanSpaceDraft()
 
     private var chromeTint: Color { AgentPalette.primaryAccent }
 
@@ -66,6 +69,14 @@ struct ForgeHeader: View {
                 action: openChatDrawer
             )
 
+            chromeButton(
+                symbol: "sparkles",
+                tint: AgentPalette.cyan,
+                label: "Open Plan Space",
+                identifier: "forgePlanSpaceButton",
+                action: openPlanSpace
+            )
+
             scopeMenu
 
             if scopedProject != nil {
@@ -83,6 +94,24 @@ struct ForgeHeader: View {
         .frame(maxWidth: .infinity, minHeight: AgentDesign.minimumTouchTarget)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("forgeTopBar")
+        .sheet(isPresented: $showingPlanSpace) {
+            ForgePlanSpaceView(
+                draft: $planDraft,
+                commit: handoffPlanToComposer,
+                cancel: closePlanSpace
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        #if DEBUG
+        .onAppear {
+            guard ProcessInfo.processInfo.arguments.contains("--forge-plan-space-demo") else {
+                return
+            }
+            planDraft = .debugDemo
+            showingPlanSpace = true
+        }
+        #endif
     }
 
     private var scopeMenu: some View {
@@ -180,13 +209,31 @@ struct ForgeHeader: View {
         return trimmed.isEmpty ? ProjectBootstrap.defaultProjectName : trimmed
     }
 
-
     private var scopeTint: Color {
         scopedProject == nil ? AgentPalette.secondaryText : AgentPalette.cyan
     }
 
     private var resolvedGlassNamespace: Namespace.ID {
         glassNamespace ?? localGlassNamespace
+    }
+
+    private func openPlanSpace() {
+        planDraft = ForgePlanSpaceDraft()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showingPlanSpace = true
+    }
+
+    private func closePlanSpace() {
+        showingPlanSpace = false
+    }
+
+    private func handoffPlanToComposer(_ handoff: String) {
+        showingPlanSpace = false
+        NotificationCenter.default.post(
+            name: NovaForgeIntentSignal.askPrompt,
+            object: nil,
+            userInfo: [NovaForgeIntentSignal.promptKey: handoff]
+        )
     }
 
     private func chromeButton(
