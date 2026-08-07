@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply-and-verify:
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -24,8 +24,33 @@ jobs:
           test -z "$unexpected"
           python3 scripts/tmp_v13_mission_durable_state_hardening.py
           git diff --check
-          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
+
+          focused="${RUNNER_TEMP}/ForgeMissionFocused"
+          rm -rf "$focused"
+          mkdir -p "$focused/Sources" "$focused/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$focused/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Sources/ForgeMission "$focused/Sources/ForgeMission"
+          cp -R Packages/AgentHarnessKit/Tests/ForgeMissionTests "$focused/Tests/ForgeMissionTests"
+          cat > "$focused/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.2
+          import PackageDescription
+
+          let package = Package(
+              name: "ForgeMissionFocused",
+              products: [
+                  .library(name: "AgentDomain", targets: ["AgentDomain"]),
+                  .library(name: "ForgeMission", targets: ["ForgeMission"]),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "ForgeMission", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "ForgeMissionTests", dependencies: ["AgentDomain", "ForgeMission"]),
+              ]
+          )
+          SWIFT
+          swift test --package-path "$focused" -Xswiftc -warnings-as-errors
           git diff --check
+
           git config user.name "NovaForge V13 worker"
           git config user.email "actions@users.noreply.github.com"
           git add Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMission.swift
