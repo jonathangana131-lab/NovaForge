@@ -33,22 +33,14 @@ jobs:
               raise SystemExit('unexpected AgentStore import preimage')
           text = text.replace(import_anchor, 'import AgentStore\n' + import_anchor, 1)
 
-          error_anchor = '''    private enum SelectionError: Error {
-              case compatibilityGuardCommitFailed
-              case compatibilityGuardClearFailed
-              case activeCompatibilityStoreMissing
-          }
-          '''
-          error_replacement = '''    private enum SelectionError: Error {
-              case compatibilityGuardCommitFailed
-              case compatibilityGuardClearFailed
-              case activeCompatibilityStoreMissing
-              case invalidAuthorityDecision
-          }
-          '''
-          if text.count(error_anchor) != 1:
+          error_anchor = '        case activeCompatibilityStoreMissing\n'
+          if text.count(error_anchor) != 1 or 'case invalidAuthorityDecision' in text:
               raise SystemExit('unexpected SelectionError preimage')
-          text = text.replace(error_anchor, error_replacement, 1)
+          text = text.replace(
+              error_anchor,
+              error_anchor + '        case invalidAuthorityDecision\n',
+              1,
+          )
 
           start_token = '        switch primaryResult {\n'
           end_token = '    private static func openCompatibilityContainer<Container>(\n'
@@ -57,140 +49,142 @@ jobs:
           start = text.index(start_token)
           end = text.index(end_token, start)
 
-          replacement = '''        switch primaryResult {
-          case let .success(container):
-              let authorityDecision = ProjectStoreAuthorityPolicy.decide(
-                  ProjectStoreAuthorityProbe(
-                      primary: .readable,
-                      compatibilityWasActive: compatibilityWasActive,
-                      compatibilityStoreExists: durableCompatibilityExists
-                  )
-              )
-              switch authorityDecision {
-              case .resumeCompatibility:
-                  // Opening primary proves only that it is readable. It does
-                  // not prove that the active fallback lacks newer chats,
-                  // receipts, or project state. Keep serving the fallback
-                  // until an explicit identity-aware reconciliation clears
-                  // its active marker.
-                  let fallback = try openCompatibilityContainer(
-                      paths: paths,
-                      migrationStore: migrationStore,
-                      dependencies: dependencies,
-                      requireExistingStore: true
-                  )
-                  return compatibilitySelection(
-                      container: fallback,
-                      paths: paths,
-                      mode: .resumedCompatibility
-                  )
-              case .clearStaleCompatibilityGuardAndServePrimary:
-                  // The active marker is stale only when no fallback store exists.
-                  // Verify its durable removal before selecting primary.
-                  try clearCompatibilityActiveGuard(
-                      paths: paths,
-                      migrationStore: migrationStore,
-                      files: files
-                  )
-              case .servePrimary:
-                  break
-              case .establishCompatibility,
-                   .failClosedMissingActiveCompatibility:
-                  throw SelectionError.invalidAuthorityDecision
-              }
-              return LaunchPersistenceContainerSelection(
-                  container: container,
-                  storeURL: paths.primaryStoreURL,
-                  mode: migratedKnownLegacyPrimary
-                      ? .migratedKnownLegacyPrimary
-                      : .primary
-              )
-          case let .failure(primaryError):
-              let authorityDecision = ProjectStoreAuthorityPolicy.decide(
-                  ProjectStoreAuthorityProbe(
-                      primary: .unreadable,
-                      compatibilityWasActive: compatibilityWasActive,
-                      compatibilityStoreExists: durableCompatibilityExists
-                  )
-              )
-              switch authorityDecision {
-              case .resumeCompatibility:
-                  // An active durable branch is pending reconciliation, not a
-                  // launch pin. Primary was probed and still failed, so resume
-                  // the branch without modifying either store.
-                  let fallback = try openCompatibilityContainer(
-                      paths: paths,
-                      migrationStore: migrationStore,
-                      dependencies: dependencies,
-                      requireExistingStore: true
-                  )
-                  return compatibilitySelection(
-                      container: fallback,
-                      paths: paths,
-                      mode: .resumedCompatibility
-                  )
-              case .failClosedMissingActiveCompatibility:
-                  // Never create an empty replacement when the durable marker
-                  // says a fallback branch owns data but that branch is absent.
-                  throw SelectionError.activeCompatibilityStoreMissing
-              case .establishCompatibility:
-                  break
-              case .servePrimary,
-                   .clearStaleCompatibilityGuardAndServePrimary:
-                  throw SelectionError.invalidAuthorityDecision
-              }
-
-              // A fallback must be open and its active guard visible before the
-              // generic recovery snapshot below. The exact known-legacy path has
-              // already required its own verified snapshot before any migration.
-              // If fallback open fails, this branch does not mutate the primary.
-              let fallback = try openCompatibilityContainer(
-                  paths: paths,
-                  migrationStore: migrationStore,
-                  dependencies: dependencies,
-                  requireExistingStore: false
-              )
-
-              if let knownLegacySnapshotCompleted {
-                  return compatibilitySelection(
-                      container: fallback,
-                      paths: paths,
-                      mode: knownLegacySnapshotCompleted
-                          ? .unknownVersionCompatibility
-                          : .recoverySnapshotFailureCompatibility
-                  )
-              }
-
-              if dependencies.isUnknownModelVersion(primaryError) {
-                  return compatibilitySelection(
-                      container: fallback,
-                      paths: paths,
-                      mode: .unknownVersionCompatibility
-                  )
-              }
-
-              let snapshotCompleted = LaunchPersistenceStoreQuarantine.perform(
-                  paths: paths,
-                  reason: primaryError,
-                  now: dependencies.now(),
-                  recoveryID: dependencies.makeRecoveryID(),
-                  files: files
-              )
-              guard snapshotCompleted else {
-                  return compatibilitySelection(
-                      container: fallback,
-                      paths: paths,
-                      mode: .recoverySnapshotFailureCompatibility
-                  )
-              }
-              return compatibilitySelection(
-                  container: fallback,
-                  paths: paths,
-                  mode: .recoverySnapshotCompatibility
-              )
-          }
-
-          '''
+          replacement = '\n'.join([
+              '        switch primaryResult {',
+              '        case let .success(container):',
+              '            let authorityDecision = ProjectStoreAuthorityPolicy.decide(',
+              '                ProjectStoreAuthorityProbe(',
+              '                    primary: .readable,',
+              '                    compatibilityWasActive: compatibilityWasActive,',
+              '                    compatibilityStoreExists: durableCompatibilityExists',
+              '                )',
+              '            )',
+              '            switch authorityDecision {',
+              '            case .resumeCompatibility:',
+              '                // Opening primary proves only that it is readable. It does',
+              '                // not prove that the active fallback lacks newer chats,',
+              '                // receipts, or project state. Keep serving the fallback',
+              '                // until an explicit identity-aware reconciliation clears',
+              '                // its active marker.',
+              '                let fallback = try openCompatibilityContainer(',
+              '                    paths: paths,',
+              '                    migrationStore: migrationStore,',
+              '                    dependencies: dependencies,',
+              '                    requireExistingStore: true',
+              '                )',
+              '                return compatibilitySelection(',
+              '                    container: fallback,',
+              '                    paths: paths,',
+              '                    mode: .resumedCompatibility',
+              '                )',
+              '            case .clearStaleCompatibilityGuardAndServePrimary:',
+              '                // The active marker is stale only when no fallback store exists.',
+              '                // Verify its durable removal before selecting primary.',
+              '                try clearCompatibilityActiveGuard(',
+              '                    paths: paths,',
+              '                    migrationStore: migrationStore,',
+              '                    files: files',
+              '                )',
+              '            case .servePrimary:',
+              '                break',
+              '            case .establishCompatibility,',
+              '                 .failClosedMissingActiveCompatibility:',
+              '                throw SelectionError.invalidAuthorityDecision',
+              '            }',
+              '            return LaunchPersistenceContainerSelection(',
+              '                container: container,',
+              '                storeURL: paths.primaryStoreURL,',
+              '                mode: migratedKnownLegacyPrimary',
+              '                    ? .migratedKnownLegacyPrimary',
+              '                    : .primary',
+              '            )',
+              '        case let .failure(primaryError):',
+              '            let authorityDecision = ProjectStoreAuthorityPolicy.decide(',
+              '                ProjectStoreAuthorityProbe(',
+              '                    primary: .unreadable,',
+              '                    compatibilityWasActive: compatibilityWasActive,',
+              '                    compatibilityStoreExists: durableCompatibilityExists',
+              '                )',
+              '            )',
+              '            switch authorityDecision {',
+              '            case .resumeCompatibility:',
+              '                // An active durable branch is pending reconciliation, not a',
+              '                // launch pin. Primary was probed and still failed, so resume',
+              '                // the branch without modifying either store.',
+              '                let fallback = try openCompatibilityContainer(',
+              '                    paths: paths,',
+              '                    migrationStore: migrationStore,',
+              '                    dependencies: dependencies,',
+              '                    requireExistingStore: true',
+              '                )',
+              '                return compatibilitySelection(',
+              '                    container: fallback,',
+              '                    paths: paths,',
+              '                    mode: .resumedCompatibility',
+              '                )',
+              '            case .failClosedMissingActiveCompatibility:',
+              '                // Never create an empty replacement when the durable marker',
+              '                // says a fallback branch owns data but that branch is absent.',
+              '                throw SelectionError.activeCompatibilityStoreMissing',
+              '            case .establishCompatibility:',
+              '                break',
+              '            case .servePrimary,',
+              '                 .clearStaleCompatibilityGuardAndServePrimary:',
+              '                throw SelectionError.invalidAuthorityDecision',
+              '            }',
+              '',
+              '            // A fallback must be open and its active guard visible before the',
+              '            // generic recovery snapshot below. The exact known-legacy path has',
+              '            // already required its own verified snapshot before any migration.',
+              '            // If fallback open fails, this branch does not mutate the primary.',
+              '            let fallback = try openCompatibilityContainer(',
+              '                paths: paths,',
+              '                migrationStore: migrationStore,',
+              '                dependencies: dependencies,',
+              '                requireExistingStore: false',
+              '            )',
+              '',
+              '            if let knownLegacySnapshotCompleted {',
+              '                return compatibilitySelection(',
+              '                    container: fallback,',
+              '                    paths: paths,',
+              '                    mode: knownLegacySnapshotCompleted',
+              '                        ? .unknownVersionCompatibility',
+              '                        : .recoverySnapshotFailureCompatibility',
+              '                )',
+              '            }',
+              '',
+              '            if dependencies.isUnknownModelVersion(primaryError) {',
+              '                return compatibilitySelection(',
+              '                    container: fallback,',
+              '                    paths: paths,',
+              '                    mode: .unknownVersionCompatibility',
+              '                )',
+              '            }',
+              '',
+              '            let snapshotCompleted = LaunchPersistenceStoreQuarantine.perform(',
+              '                paths: paths,',
+              '                reason: primaryError,',
+              '                now: dependencies.now(),',
+              '                recoveryID: dependencies.makeRecoveryID(),',
+              '                files: files',
+              '            )',
+              '            guard snapshotCompleted else {',
+              '                return compatibilitySelection(',
+              '                    container: fallback,',
+              '                    paths: paths,',
+              '                    mode: .recoverySnapshotFailureCompatibility',
+              '                )',
+              '            }',
+              '            return compatibilitySelection(',
+              '                container: fallback,',
+              '                paths: paths,',
+              '                mode: .recoverySnapshotCompatibility',
+              '            )',
+              '        }',
+              '',
+              '',
+          ])
           text = text[:start] + replacement + text[end:]
 
           if text.count('ProjectStoreAuthorityPolicy.decide(') != 2:
@@ -207,6 +201,7 @@ jobs:
           test "$(git diff --name-only -- AgentPad/App/AgentPadApp.swift | wc -l | tr -d ' ')" = "1"
           grep -q '^import AgentStore$' AgentPad/App/AgentPadApp.swift
           test "$(grep -c 'ProjectStoreAuthorityPolicy.decide(' AgentPad/App/AgentPadApp.swift)" = "2"
+          test "$(grep -c 'case invalidAuthorityDecision' AgentPad/App/AgentPadApp.swift)" = "1"
       - name: Commit cutover and remove temporary applier
         shell: bash
         run: |
