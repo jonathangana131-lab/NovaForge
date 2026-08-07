@@ -15,6 +15,7 @@ final class ForgeHomeTruthHardeningTests: XCTestCase {
         let record = ForgeCreationRecord(
             name: "Full project",
             lastChangedAt: now,
+            currentSourceRevision: "rev",
             runtimeEvidence: ForgeRuntimeEvidence(
                 artifactID: ForgeArtifactID(rawValue: "runtime-rev"),
                 runtimeKind: .forgeWeb,
@@ -37,6 +38,7 @@ final class ForgeHomeTruthHardeningTests: XCTestCase {
         let record = ForgeCreationRecord(
             name: "Missing provenance",
             lastChangedAt: now,
+            currentSourceRevision: "rev",
             runtimeEvidence: ForgeRuntimeEvidence(
                 artifactID: ForgeArtifactID(rawValue: " "),
                 runtimeKind: .forgeWeb,
@@ -55,5 +57,61 @@ final class ForgeHomeTruthHardeningTests: XCTestCase {
         XCTAssertFalse(card.runState.isRunnable)
         XCTAssertFalse(card.actions.contains(.run))
         XCTAssertNil(card.actualThumbnail)
+    }
+
+    func testStaleEvidenceCannotAuthorizeCurrentCreationRunOrThumbnail() {
+        let record = ForgeCreationRecord(
+            name: "Changed after proof",
+            lastChangedAt: now,
+            currentSourceRevision: "r2",
+            runtimeEvidence: ForgeRuntimeEvidence(
+                artifactID: ForgeArtifactID(rawValue: "runtime-r1"),
+                runtimeKind: .forgeWeb,
+                verificationLevel: .runtimeTested,
+                sourceRevision: "r1",
+                recordedAt: now.addingTimeInterval(-20)
+            ),
+            thumbnailEvidence: ForgeThumbnailEvidence(
+                artifactID: ForgeArtifactID(rawValue: "screenshot-r1"),
+                kind: .runtimeScreenshot,
+                sourceRevision: "r1",
+                recordedAt: now.addingTimeInterval(-20)
+            )
+        )
+
+        let card = ForgeHomeProjector.makeCard(record)
+        XCTAssertFalse(card.runState.isRunnable)
+        XCTAssertFalse(card.actions.contains(.run))
+        XCTAssertNil(card.actualThumbnail)
+    }
+
+    func testMissingOrBlankCurrentRevisionFailsClosed() {
+        let runtime = ForgeRuntimeEvidence(
+            artifactID: ForgeArtifactID(rawValue: "runtime-r1"),
+            runtimeKind: .forgeWeb,
+            verificationLevel: .runtimeTested,
+            sourceRevision: "r1",
+            recordedAt: now
+        )
+        let thumbnail = ForgeThumbnailEvidence(
+            artifactID: ForgeArtifactID(rawValue: "screenshot-r1"),
+            kind: .runtimeScreenshot,
+            sourceRevision: "r1",
+            recordedAt: now
+        )
+
+        for revision in [nil, "", "  \n"] as [String?] {
+            let card = ForgeHomeProjector.makeCard(
+                ForgeCreationRecord(
+                    name: "Unknown current revision",
+                    lastChangedAt: now,
+                    currentSourceRevision: revision,
+                    runtimeEvidence: runtime,
+                    thumbnailEvidence: thumbnail
+                )
+            )
+            XCTAssertFalse(card.runState.isRunnable)
+            XCTAssertNil(card.actualThumbnail)
+        }
     }
 }
