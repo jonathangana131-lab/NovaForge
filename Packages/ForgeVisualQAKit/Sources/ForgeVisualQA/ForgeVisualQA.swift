@@ -152,6 +152,7 @@ public enum VisualQAInvariantError: Error, Equatable, Sendable {
 public enum VisualComparisonMismatch: String, Codable, Equatable, Sendable {
     case insufficientVisualEvidence
     case differentProject
+    case differentEvidenceKind
     case differentViewport
     case differentAccessibilityState
 }
@@ -171,6 +172,9 @@ public enum VisualRegressionComparator {
         }
         guard baseline.project.projectID == candidate.project.projectID else {
             return .notComparable(.differentProject)
+        }
+        guard baseline.evidenceKind == candidate.evidenceKind else {
+            return .notComparable(.differentEvidenceKind)
         }
         guard baseline.viewport == candidate.viewport else {
             return .notComparable(.differentViewport)
@@ -441,6 +445,11 @@ public enum AutoPolishPlanner {
         if dependencyBlocked { return .stop(.dependencyBlocked) }
         guard let latest = passes.last else { return .stop(.insufficientVisualEvidence) }
         guard latest.capture.isRuntimeVisualProof else { return .stop(.insufficientVisualEvidence) }
+        guard passes.dropLast().allSatisfy({ prior in
+            VisualRegressionComparator.compare(baseline: prior.capture, candidate: latest.capture) == .comparable
+        }) else {
+            return .stop(.insufficientVisualEvidence)
+        }
 
         let evidencedFindings = latest.findings.filter { $0.captureID == latest.capture.id }
         if !latest.findings.isEmpty && evidencedFindings.isEmpty {
