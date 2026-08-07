@@ -5,7 +5,7 @@ import XCTest
 final class ForgeRuntimeLaunchAuthorizationTests: XCTestCase {
     private let validator = ForgeRuntimeManifestValidator()
 
-    func testAuthorizationDerivesOnlyHostGrantedAuthority() throws {
+    func testAuthorizationDerivesOnlyRequestedSupportedAndGrantedAuthority() throws {
         let candidate = manifest(
             capabilities: [
                 .init(id: "haptics"),
@@ -21,20 +21,117 @@ final class ForgeRuntimeLaunchAuthorizationTests: XCTestCase {
             ]
         )
         let host = hostSupport(
-            supportedCapabilityIDs: ["haptics"],
+            supportedCapabilityIDs: ["haptics", "share"],
             curatedModuleVersions: ["three": ["0.180.0"]]
+        )
+        let grant = ForgeRuntimeProjectGrant(
+            projectID: "neon-racer",
+            grantedCapabilityIDs: ["haptics", "share"],
+            allowedHTTPSHosts: ["api.example.com", "unused.example.com"]
         )
 
         let authorization = try validator.authorize(
             candidate,
             expectedProjectID: "neon-racer",
-            host: host
+            host: host,
+            projectGrant: grant
         )
 
         XCTAssertEqual(authorization.projectID, "neon-racer")
         XCTAssertEqual(authorization.grantedCapabilityIDs, ["haptics"])
         XCTAssertEqual(authorization.network.allowedHosts, ["api.example.com"])
         XCTAssertEqual(authorization.modules, [.init(id: "three", version: "0.180.0")])
+    }
+
+    func testRequiredSupportedCapabilityStillNeedsProjectGrant() {
+        let candidate = manifest(capabilities: [.init(id: "haptics")])
+
+        XCTAssertThrowsError(
+            try validator.authorize(
+                candidate,
+                expectedProjectID: "neon-racer",
+                host: hostSupport(supportedCapabilityIDs: ["haptics"]),
+                projectGrant: .denyAll(projectID: "neon-racer")
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeLaunchAuthorizationError,
+                .requiredCapabilityNotGranted("haptics")
+            )
+        }
+    }
+
+    func testOptionalSupportedButUngroundedCapabilityDoesNotEnterAuthority() throws {
+        let authorization = try validator.authorize(
+            manifest(capabilities: [.init(id: "share", requirement: .optional)]),
+            expectedProjectID: "neon-racer",
+            host: hostSupport(supportedCapabilityIDs: ["share"]),
+            projectGrant: .denyAll(projectID: "neon-racer")
+        )
+
+        XCTAssertTrue(authorization.grantedCapabilityIDs.isEmpty)
+    }
+
+    func testGrantCannotClaimUnsupportedCapabilityEvenWhenManifestDoesNotRequestIt() {
+        XCTAssertThrowsError(
+            try validator.authorize(
+                manifest(),
+                expectedProjectID: "neon-racer",
+                host: hostSupport(supportedCapabilityIDs: ["haptics"]),
+                projectGrant: .init(
+                    projectID: "neon-racer",
+                    grantedCapabilityIDs: ["camera"]
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeLaunchAuthorizationError,
+                .invalidProjectGrant(.unsupportedGrantedCapability("camera"))
+            )
+        }
+    }
+
+    func testGrantIsBoundToExactProjectIdentity() {
+        XCTAssertThrowsError(
+            try validator.authorize(
+                manifest(),
+                expectedProjectID: "neon-racer",
+                host: hostSupport(),
+                projectGrant: .denyAll(projectID: "other-project")
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeLaunchAuthorizationError,
+                .invalidProjectGrant(.projectIdentityMismatch(
+                    expectedProjectID: "neon-racer",
+                    grantedProjectID: "other-project"
+                ))
+            )
+        }
+    }
+
+    func testManifestCannotWidenProjectNetworkGrant() {
+        let candidate = manifest(network: .init(
+            mode: .allowListedHTTPS,
+            allowedHosts: ["api.example.com", "telemetry.example.com"]
+        ))
+
+        XCTAssertThrowsError(
+            try validator.authorize(
+                candidate,
+                expectedProjectID: "neon-racer",
+                host: hostSupport(),
+                projectGrant: .init(
+                    projectID: "neon-racer",
+                    allowedHTTPSHosts: ["api.example.com"]
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeLaunchAuthorizationError,
+                .networkHostNotGranted("telemetry.example.com")
+            )
+        }
     }
 
     func testAuthorizationRejectsManifestWithRequiredUnsupportedAuthority() {
@@ -44,7 +141,8 @@ final class ForgeRuntimeLaunchAuthorizationTests: XCTestCase {
             try validator.authorize(
                 candidate,
                 expectedProjectID: "neon-racer",
-                host: hostSupport(supportedCapabilityIDs: [])
+                host: hostSupport(supportedCapabilityIDs: []),
+                projectGrant: .denyAll(projectID: "neon-racer")
             )
         ) { error in
             guard case let ForgeRuntimeLaunchAuthorizationError.manifestRejected(report) = error else {
@@ -58,7 +156,11 @@ final class ForgeRuntimeLaunchAuthorizationTests: XCTestCase {
         let authorization = try validator.authorize(
             manifest(network: .init(mode: .denied)),
             expectedProjectID: "neon-racer",
-            host: hostSupport()
+            host: hostSupport(),
+            projectGrant: .init(
+                projectID: "neon-racer",
+                allowedHTTPSHosts: ["unused.example.com"]
+            )
         )
 
         XCTAssertEqual(authorization.network.mode, .denied)
