@@ -40,8 +40,17 @@ public enum LocalModelEstimateProvenance: String, Codable, Hashable, Sendable {
     }
 }
 
+/// A generation rate can only drive a measured performance label when its token
+/// count was actually observed. Character-count heuristics remain useful telemetry,
+/// but NovaForge must not silently promote them into measured tok/s evidence.
+public enum LocalModelGenerationRateProvenance: String, Codable, Hashable, Sendable {
+    case measuredTokenCount
+    case estimatedFromOutput
+}
+
 public enum LocalModelCompatibilityReason: String, Codable, Hashable, Sendable {
     case architectureUnsupported
+    case artifactIdentityUnverified
     case insufficientStorage
     case memoryBudgetExceeded
     case missingMemoryEstimate
@@ -55,6 +64,7 @@ public enum LocalModelCompatibilityReason: String, Codable, Hashable, Sendable {
     case benchmarkNotApplicable
     case benchmarkInsufficient
     case benchmarkUnstable
+    case benchmarkRateEstimated
     case invalidPolicy
     case measuredPerformance
 }
@@ -93,8 +103,10 @@ public struct LocalModelMemoryEstimate: Codable, Equatable, Sendable {
 public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     public let modelID: String
     public let revision: String
-    /// Exact catalog artifact/variant identity. It must change when the measured bytes/variant change.
+    /// Stable catalog variant identity. It is useful for product history but is not a byte identity.
     public let artifactID: String
+    /// Canonical lowercase SHA-256 for the exact model artifact bytes.
+    public let artifactSHA256: String
     public let format: String
     public let architecture: String
     public let quantization: String?
@@ -110,6 +122,7 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
         modelID: String,
         revision: String,
         artifactID: String,
+        artifactSHA256: String,
         format: String,
         architecture: String,
         quantization: String?,
@@ -124,6 +137,7 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
         self.modelID = modelID
         self.revision = revision
         self.artifactID = artifactID
+        self.artifactSHA256 = artifactSHA256
         self.format = format
         self.architecture = architecture
         self.quantization = quantization
@@ -175,16 +189,18 @@ public struct LocalModelMissionRequirements: Codable, Equatable, Sendable {
     }
 }
 
-/// A benchmark observation is eligible to produce `measured` compatibility evidence
-/// only when model ID, revision, exact artifact, quantization, and device profile all match.
+/// A benchmark observation is eligible to produce measured performance evidence
+/// only when model ID, revision, exact artifact bytes, quantization, and device profile all match.
 public struct LocalModelBenchmarkObservation: Codable, Equatable, Sendable {
     public let modelID: String
     public let revision: String
     public let artifactID: String
+    public let artifactSHA256: String
     public let quantization: String?
     public let deviceProfileID: String
     public let measuredAt: AgentInstant
     public let generationTokensPerSecond: Double
+    public let generationRateProvenance: LocalModelGenerationRateProvenance
     public let successfulSmokeRuns: UInt16
     public let failedSmokeRuns: UInt16
     public let peakMemoryBytes: UInt64?
@@ -193,10 +209,12 @@ public struct LocalModelBenchmarkObservation: Codable, Equatable, Sendable {
         modelID: String,
         revision: String,
         artifactID: String,
+        artifactSHA256: String,
         quantization: String?,
         deviceProfileID: String,
         measuredAt: AgentInstant,
         generationTokensPerSecond: Double,
+        generationRateProvenance: LocalModelGenerationRateProvenance,
         successfulSmokeRuns: UInt16,
         failedSmokeRuns: UInt16,
         peakMemoryBytes: UInt64? = nil
@@ -204,10 +222,12 @@ public struct LocalModelBenchmarkObservation: Codable, Equatable, Sendable {
         self.modelID = modelID
         self.revision = revision
         self.artifactID = artifactID
+        self.artifactSHA256 = artifactSHA256
         self.quantization = quantization
         self.deviceProfileID = deviceProfileID
         self.measuredAt = measuredAt
         self.generationTokensPerSecond = generationTokensPerSecond
+        self.generationRateProvenance = generationRateProvenance
         self.successfulSmokeRuns = successfulSmokeRuns
         self.failedSmokeRuns = failedSmokeRuns
         self.peakMemoryBytes = peakMemoryBytes
@@ -288,6 +308,19 @@ public enum LocalModelCompatibilityEvaluator {
         policy: LocalModelCompatibilityPolicy = .conservativeV1
     ) -> LocalModelCompatibilityResult {
         var evidence = sourceEvidence(for: descriptor)
+
+        guard isCanonicalSHA256(descriptor.artifactSHA256) else {
+            evidence.append(.init(
+                kind: .inferred,
+                code: "artifact.sha256.unverified",
+                detail: "The catalog does not provide a canonical lowercase SHA-256 for the exact model artifact bytes."
+            ))
+            return .init(
+                label: .untested,
+                reasons: [.artifactIdentityUnverified],
+                evidence: evidence
+            )
+        }
 
         if requirements.requiresToolCalling {
             switch descriptor.toolCalling {
@@ -445,13 +478,14 @@ public enum LocalModelCompatibilityEvaluator {
         guard benchmark.modelID == descriptor.modelID,
               benchmark.revision == descriptor.revision,
               benchmark.artifactID == descriptor.artifactID,
+              benchmark.artifactSHA256 == descriptor.artifactSHA256,
               benchmark.quantization == descriptor.quantization,
               benchmark.deviceProfileID == device.profileID
         else {
             evidence.append(.init(
                 kind: .inferred,
                 code: "benchmark.not_applicable",
-                detail: "A benchmark exists, but it does not exactly match this model artifact, quantization, revision, and device profile."
+                detail: "A benchmark exists, but it does not exactly match this model artifact checksum, variant, quantization, revision, and device profile."
             ))
             return .init(
                 label: .untested,
@@ -466,7 +500,7 @@ public enum LocalModelCompatibilityEvaluator {
             evidence.append(.init(
                 kind: .inferred,
                 code: "benchmark.invalid",
-                detail: "The exact-device benchmark contains an invalid generation-rate measurement."
+                detail: "The exact-device benchmark contains an invalid generation-rate value."
             ))
             return .init(
                 label: .untested,
@@ -477,8 +511,8 @@ public enum LocalModelCompatibilityEvaluator {
 
         evidence.append(.init(
             kind: .measured,
-            code: "benchmark.exact_device",
-            detail: "Exact artifact/device benchmark measured \(benchmark.generationTokensPerSecond) generation tokens/sec across \(benchmark.successfulSmokeRuns) successful and \(benchmark.failedSmokeRuns) failed smoke runs.",
+            code: "benchmark.exact_device_smoke",
+            detail: "Exact artifact/device benchmark recorded \(benchmark.successfulSmokeRuns) successful and \(benchmark.failedSmokeRuns) failed smoke runs.",
             observedAt: benchmark.measuredAt
         ))
 
@@ -561,6 +595,26 @@ public enum LocalModelCompatibilityEvaluator {
             )
         }
 
+        guard benchmark.generationRateProvenance == .measuredTokenCount else {
+            evidence.append(.init(
+                kind: .inferred,
+                code: "benchmark.generation_rate.estimated",
+                detail: "Generation rate was estimated from output rather than measured token counts, so it cannot mint a measured performance label."
+            ))
+            return .init(
+                label: .untested,
+                reasons: [.benchmarkRateEstimated],
+                evidence: evidence
+            )
+        }
+
+        evidence.append(.init(
+            kind: .measured,
+            code: "benchmark.generation_rate",
+            detail: "Exact artifact/device benchmark measured \(benchmark.generationTokensPerSecond) generation tokens/sec from observed token counts.",
+            observedAt: benchmark.measuredAt
+        ))
+
         let label: LocalModelCompatibilityLabel
         if benchmark.generationTokensPerSecond >= policy.excellentTokensPerSecond {
             label = .excellent
@@ -591,6 +645,11 @@ public enum LocalModelCompatibilityEvaluator {
                 kind: .sourceReported,
                 code: "catalog.identity",
                 detail: "\(descriptor.source) reports model \(descriptor.modelID) revision \(descriptor.revision), artifact \(descriptor.artifactID)."
+            ),
+            LocalModelEvidence(
+                kind: .sourceReported,
+                code: "catalog.artifact_sha256",
+                detail: "\(descriptor.source) reports SHA-256 \(descriptor.artifactSHA256) for the model artifact."
             ),
             LocalModelEvidence(
                 kind: .sourceReported,
@@ -644,5 +703,12 @@ public enum LocalModelCompatibilityEvaluator {
         }
 
         return evidence
+    }
+
+    private static func isCanonicalSHA256(_ value: String) -> Bool {
+        guard value.utf8.count == 64 else { return false }
+        return value.utf8.allSatisfy { byte in
+            (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
+        }
     }
 }
