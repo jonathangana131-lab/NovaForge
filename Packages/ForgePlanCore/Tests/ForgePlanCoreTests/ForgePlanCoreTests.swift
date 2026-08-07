@@ -101,11 +101,11 @@ final class ForgePlanCoreTests: XCTestCase {
     func testNormalizedForgeControlRevalidatesPersistedValuesOnDecode() throws {
         let high = try JSONDecoder().decode(
             NormalizedForgeControl.self,
-            from: Data(#"{\"value\":2.75}"#.utf8)
+            from: Data(#"{"value":2.75}"#.utf8)
         )
         let low = try JSONDecoder().decode(
             NormalizedForgeControl.self,
-            from: Data(#"{\"value\":-1.25}"#.utf8)
+            from: Data(#"{"value":-1.25}"#.utf8)
         )
 
         XCTAssertEqual(high.value, 1)
