@@ -16,7 +16,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
         let request = try ForgeRuntimeProjectLoader().load(
             projectRootURL: fixture.root,
             expectedProjectID: "neon-racer",
-            host: hostSupport()
+            host: hostSupport(),
+            projectGrant: projectGrant(capabilities: ["haptics"])
         )
 
         XCTAssertEqual(request.authorization.projectID, "neon-racer")
@@ -40,7 +41,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try loader.load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: projectGrant()
             )
         ) { error in
             XCTAssertEqual(
@@ -65,7 +67,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: projectGrant()
             )
         ) { error in
             XCTAssertEqual(
@@ -90,7 +93,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: projectGrant()
             )
         ) { error in
             XCTAssertEqual(
@@ -110,7 +114,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: projectGrant()
             )
         ) { error in
             XCTAssertEqual(
@@ -129,7 +134,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: projectGrant()
             )
         ) { error in
             XCTAssertEqual(
@@ -148,7 +154,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport(supportedCapabilityIDs: [])
+                host: hostSupport(supportedCapabilityIDs: []),
+                projectGrant: projectGrant()
             )
         ) { error in
             guard case let ForgeRuntimeProjectLoadingError.authorization(.manifestRejected(report)) = error else {
@@ -176,6 +183,15 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
         supportedCapabilityIDs: Set<String> = ["haptics"]
     ) -> ForgeRuntimeHostSupport {
         .init(supportedCapabilityIDs: supportedCapabilityIDs)
+    }
+
+    private func projectGrant(
+        capabilities: Set<String> = []
+    ) -> ForgeRuntimeProjectGrant {
+        .init(
+            projectID: "neon-racer",
+            grantedCapabilityIDs: capabilities
+        )
     }
 
     private struct ProjectFixture {
