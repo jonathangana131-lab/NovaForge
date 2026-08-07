@@ -125,6 +125,31 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(checkpoint.projectBrainFactIDs, [fact])
     }
 
+    func testOptionalPolishCanContinueAfterRequiredWorkMovesMissionToValidating() throws {
+        let missionID = MissionID(); let projectID = ProjectID()
+        let implementID = MissionStageID(); let polishID = MissionStageID()
+        var mission = try ForgeMissionState(
+            constitution: constitution(missionID: missionID, projectID: projectID, revision: 1),
+            graph: MissionStageGraph(missionID: missionID, stages: [
+                MissionStage(stageID: implementID, kind: .implement, title: "Implement", order: 1),
+                MissionStage(stageID: polishID, kind: .polish, title: "Optional polish", order: 2, required: false, dependencies: [implementID]),
+            ]),
+            route: .init(routeReceiptID: "route:balanced:1")
+        )
+
+        let implementationLease = try mission.beginWork(on: [implementID])[0]
+        try mission.acceptWorkerResult(
+            .init(lease: implementationLease, outcome: .completed, summary: "Required work accepted", evidenceReceiptIDs: .init(["required:r"])),
+            at: instant(12)
+        )
+
+        XCTAssertEqual(mission.phase, .validating)
+        XCTAssertEqual(mission.runnableStageIDs, [polishID])
+        let polishLease = try mission.beginWork(on: [polishID])[0]
+        XCTAssertEqual(polishLease.stageID, polishID)
+        XCTAssertEqual(mission.phase, .executing)
+    }
+
     func testCompletionRequiresRequiredWorkCheckpointAndExpectedEvidence() throws {
         var mission = try makeMission(expectedEvidence: [.runtimeTested, .visuallyInspected])
         XCTAssertThrowsError(try mission.complete(with: completion(state: "s1", classes: [.runtimeTested, .visuallyInspected]))) {
