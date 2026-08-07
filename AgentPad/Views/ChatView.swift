@@ -1,4 +1,5 @@
 import AgentDomain
+import ForgePlanCore
 #if DEBUG
 import AgentPolicy
 #endif
@@ -440,6 +441,9 @@ struct ChatView: View {
     var openMissionDossier: () -> Void = {}
     var createProject: () -> Void = {}
     @State private var prompt = ""
+    @State private var showingPlanSpace = false
+    @State private var planSpaceProposal = ForgePlanSpacePresentation.proposal(intent: "Draft")
+    @State private var planSpaceAnswers: [String: PlanAnswer] = [:]
     @State private var selectedArtifact: WorkspaceArtifact?
     @State private var chatSaveError: String?
     @State private var showingChatDrawer = false
@@ -1810,6 +1814,15 @@ struct ChatView: View {
                     }
                 }
                 #endif
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains(ForgePlanSpacePresentation.debugLaunchArgument) {
+                    prompt = ForgePlanSpacePresentation.debugProposal().intentSummary
+                    planSpaceProposal = ForgePlanSpacePresentation.debugProposal()
+                    planSpaceAnswers = ForgePlanSpacePresentation.debugAnswers
+                    showingPlanSpace = true
+                    composerFocused = false
+                }
+                #endif
                 applyProjectResumeDraftIfNeeded(focusComposer: projectResumeDraftRevision > 0)
                 restorePersistedDraftIfAvailable()
             }
@@ -1841,6 +1854,16 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showingRunDetails) {
             runDetailsSheet
+        }
+        .sheet(isPresented: $showingPlanSpace) {
+            ForgePlanSpaceView(
+                proposal: $planSpaceProposal,
+                answers: $planSpaceAnswers,
+                commit: applyPlanSpaceSummary,
+                cancel: { showingPlanSpace = false }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .overlay(alignment: .leading) {
             if showingChatDrawer {
@@ -1902,6 +1925,8 @@ struct ChatView: View {
             composerFocused = false
             showingChatDrawer = false
             showingRunDetails = false
+            showingPlanSpace = false
+            planSpaceAnswers = [:]
             messageRenderLimit = messageRenderWindowSize
             transient.lastReportedBottomDistance = .infinity
             transient.accessoryResizeFollowUpTask?.cancel()
@@ -2486,6 +2511,10 @@ struct ChatView: View {
                             prepareToPresent: { composerFocused = false }
                         )
                         Spacer(minLength: 6)
+                        ComposerPlanSpaceButton(
+                            isEnabled: planSpaceCanOpen,
+                            action: openPlanSpace
+                        )
                         ComposerReasoningControl(
                             provider: settings.provider,
                             modelID: settings.modelID
@@ -2584,6 +2613,36 @@ struct ChatView: View {
 
     private var trimmedPrompt: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var planSpaceCanOpen: Bool {
+        !trimmedPrompt.isEmpty &&
+            !hasForeignActiveRun &&
+            !hasForeignProjectMission &&
+            !canonicalRunIsActive &&
+            !(ownsActiveRunState && runtime.pendingTool != nil)
+    }
+
+    private func openPlanSpace() {
+        let intent = trimmedPrompt
+        guard !intent.isEmpty, planSpaceCanOpen else {
+            composerFocused = true
+            return
+        }
+        planSpaceProposal = ForgePlanSpacePresentation.proposal(intent: intent)
+        planSpaceAnswers = [:]
+        composerFocused = false
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showingPlanSpace = true
+    }
+
+    private func applyPlanSpaceSummary(_ summary: ReadyToForgeSummary) {
+        prompt = ForgePlanSpaceComposerHandoff.text(for: summary)
+        showingPlanSpace = false
+        planSpaceAnswers = [:]
+        composerFocused = true
+        forceScrollToBottom = conversation.messageCount > 0 || composerOwnsWorkingRun
+        scheduleDraftPersistence(prompt, for: conversation.id)
     }
 
     private func handlePromptChanged() {

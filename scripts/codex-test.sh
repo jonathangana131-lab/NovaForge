@@ -74,6 +74,7 @@ critical_ui_tests=(
   testForgeChatFailedSendShowsTranscriptErrorAndRecoversComposer
   testFourTabDockAndMissionDossierRouteSemantics
   testFirstRunLocalMissingBlocksStarterMissionsAndShowsDownloadsSetup
+  testPlanSpaceUsesCurrentDraftAndPreservesDelegatedDecisions
   testChatGPTSubscriptionSignInReplacesSimulatedTerminal
   testFilesStressListAndSearch
   testToolBearingMarkdownCompletedRunDetachesToLatest
@@ -90,6 +91,7 @@ visual_ui_tests=(
   testLocalModelSettingsScreenshot
   testNativeModelPickerAndChatGPTProviderScreenshot
   testReasoningAndUltraCodePickerUsesExpandableLiquidGlassControl
+  testPlanSpaceUsesCurrentDraftAndPreservesDelegatedDecisions
   testLegacyV1ArtifactPreviewStudioModes
   testGoalMatrixChatReadabilityAndThemeSwitchingScreenshots
   testAccessibilityLayoutTouchTargetsAndCompactLabels
