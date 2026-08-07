@@ -1,0 +1,102 @@
+name: Temporary V13 mission phase coherence
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-CONSOLIDATE-7A8E/mission-stack-main-recovery/e1
+
+permissions:
+  contents: write
+
+jobs:
+  harden-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Harden persisted phase coherence and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=0ba647c3ebfa2691e101ad468855e6fa9ea451a4
+          test "$(git rev-parse HEAD^)" = "$base"
+          test "$(git show --pretty='' --name-only HEAD | sed '/^$/d')" = ".github/workflows/tmp-v13-mission-phase-coherence.yml"
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          def once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f"{label}: expected one match, found {n}")
+              return text.replace(old, new, 1)
+
+          archive_path = Path('Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMissionArchive.swift')
+          tests_path = Path('Packages/AgentHarnessKit/Tests/ForgeMissionTests/ForgeMissionTests.swift')
+
+          a = archive_path.read_text()
+          a = once(a,
+          '''        try validateCompletedStageEvidence(\n            stages: state.graph.stages,\n            stageEvidence: state.stageEvidence,\n            workerReceipts: state.workerReceipts\n        )\n\n        let activeStageIDs''',
+          '''        try validateCompletedStageEvidence(\n            stages: state.graph.stages,\n            stageEvidence: state.stageEvidence,\n            workerReceipts: state.workerReceipts\n        )\n        try validatePhaseStageCoherence(phase: state.phase, stages: state.graph.stages)\n\n        let activeStageIDs''',
+          'current phase-stage validation')
+
+          a = once(a,
+          '''            try validateCompletedStageEvidence(\n                stages: checkpoint.graph.stages,\n                stageEvidence: checkpoint.stageEvidence,\n                workerReceipts: checkpoint.workerReceipts\n            )\n            switch checkpoint.phase {\n''',
+          '''            try validateCompletedStageEvidence(\n                stages: checkpoint.graph.stages,\n                stageEvidence: checkpoint.stageEvidence,\n                workerReceipts: checkpoint.workerReceipts\n            )\n            try validatePhaseStageCoherence(phase: checkpoint.phase, stages: checkpoint.graph.stages)\n            switch checkpoint.phase {\n''',
+          'checkpoint phase-stage validation')
+
+          a = once(a,
+          '''    private static func validateDurableRecords(\n''',
+          '''    private static func validatePhaseStageCoherence(\n        phase: MissionPhase,\n        stages: [MissionStage]\n    ) throws {\n        let ordinary: Set<MissionStageStatus> = [.pending, .deferred, .completed]\n        let executing: Set<MissionStageStatus> = [.pending, .active, .deferred, .completed]\n\n        switch phase {\n        case .executing:\n            guard stages.allSatisfy({ executing.contains($0.status) }),\n                  stages.contains(where: { $0.status == .active }) else {\n                throw ForgeMissionArchiveError.invalidPhaseStageState\n            }\n        case .needsDecision:\n            guard stages.filter({ $0.status == .waitingForDecision }).count == 1,\n                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .waitingForDecision }) else {\n                throw ForgeMissionArchiveError.invalidPhaseStageState\n            }\n        case .blockedExternal:\n            guard stages.filter({ $0.status == .blocked }).count == 1,\n                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .blocked }) else {\n                throw ForgeMissionArchiveError.invalidPhaseStageState\n            }\n        case .interruptedRecoverable:\n            guard stages.filter({ $0.status == .failedRecoverably }).count == 1,\n                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .failedRecoverably }) else {\n                throw ForgeMissionArchiveError.invalidPhaseStageState\n            }\n        case .failedIrrecoverably:\n            guard stages.filter({ $0.status == .failedIrrecoverably }).count == 1,\n                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .failedIrrecoverably }) else {\n                throw ForgeMissionArchiveError.invalidPhaseStageState\n            }\n        case .completedWithEvidence, .completedWithKnownLimitations:\n            guard stages.allSatisfy({ [.completed, .deferred].contains($0.status) }) else {\n                throw ForgeMissionArchiveError.invalidPhaseStageState\n            }\n        case .draftIntent, .planning, .ready, .pausedByUser, .pausedByPolicy, .validating, .polishing:\n            guard stages.allSatisfy({ ordinary.contains($0.status) }) else {\n                throw ForgeMissionArchiveError.invalidPhaseStageState\n            }\n        case .cancelled:\n            // Cancellation preserves the truthful pre-cancel gate when there was\n            // no active lease, or marks one or more active stages cancelled. The\n            // active-lease consistency check above still rejects any live active state.\n            break\n        }\n    }\n\n    private static func validateDurableRecords(\n''',
+          'phase-stage helper')
+
+          a = once(a,
+          '''    case invalidCompletion\n    case checkpointIdentityMismatch\n''',
+          '''    case invalidCompletion\n    case invalidPhaseStageState\n    case checkpointIdentityMismatch\n''',
+          'phase-stage archive error')
+          archive_path.write_text(a)
+
+          t = tests_path.read_text()
+          marker = '''    func testArchiveRejectsCorruptedExecutingStateWithoutLease() throws {\n'''
+          insertion = '''    func testArchiveRejectsReadyPhaseWithManufacturedBlockedStage() throws {\n        let mission = try makeMission()\n        let archive = try ForgeMissionArchive(state: mission)\n        let data = try JSONEncoder().encode(archive)\n        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])\n        var state = try XCTUnwrap(root["state"] as? [String: Any])\n        var graph = try XCTUnwrap(state["graph"] as? [String: Any])\n        var stages = try XCTUnwrap(graph["stages"] as? [[String: Any]])\n        stages[0]["status"] = "blocked"\n        graph["stages"] = stages\n        state["graph"] = graph\n        root["state"] = state\n\n        XCTAssertThrowsError(try JSONDecoder().decode(\n            ForgeMissionArchive.self,\n            from: JSONSerialization.data(withJSONObject: root)\n        ))\n    }\n\n'''
+          if t.count(marker) != 1:
+              raise SystemExit(f'test marker count={t.count(marker)}')
+          tests_path.write_text(t.replace(marker, insertion + marker, 1))
+          PY
+
+          git diff --check
+          focused="${RUNNER_TEMP}/MissionStackFocused"
+          rm -rf "$focused"
+          mkdir -p "$focused/Sources" "$focused/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$focused/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Sources/ForgeMission "$focused/Sources/ForgeMission"
+          cp -R Packages/AgentHarnessKit/Tests/AgentDomainTests "$focused/Tests/AgentDomainTests"
+          cp -R Packages/AgentHarnessKit/Tests/ForgeMissionTests "$focused/Tests/ForgeMissionTests"
+          cat > "$focused/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.2
+          import PackageDescription
+          let package = Package(
+              name: "MissionStackFocused",
+              products: [
+                  .library(name: "AgentDomain", targets: ["AgentDomain"]),
+                  .library(name: "ForgeMission", targets: ["ForgeMission"]),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "ForgeMission", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "AgentDomainTests", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "ForgeMissionTests", dependencies: ["AgentDomain", "ForgeMission"]),
+              ]
+          )
+          SWIFT
+          swift test --package-path "$focused" -Xswiftc -warnings-as-errors
+          git diff --check
+
+          git config user.name "NovaForge V13 recovery"
+          git config user.email "actions@users.noreply.github.com"
+          git add Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMissionArchive.swift
+          git add Packages/AgentHarnessKit/Tests/ForgeMissionTests/ForgeMissionTests.swift
+          git rm .github/workflows/tmp-v13-mission-phase-coherence.yml
+          git commit -m "Reject impossible persisted mission phase states"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
