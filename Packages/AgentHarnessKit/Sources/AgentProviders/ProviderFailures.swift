@@ -88,7 +88,10 @@ public enum ProviderFailureMapper {
             stableCode = "provider_content_filtered"
         } else {
             switch statusCode {
-            case 400, 404, 405, 409, 413, 422:
+            case 413:
+                category = .contextLimit
+                stableCode = "provider_context_limit"
+            case 400, 404, 405, 409, 422:
                 category = .invalidRequest
                 stableCode = "provider_invalid_request"
             case 401:
