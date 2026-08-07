@@ -324,6 +324,9 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
     guard let checkpoint = checkpoints.first(where: { $0.id == request.checkpointID }) else {
       throw ForgeMissionError.checkpointNotFound
     }
+    guard request.evidenceReceiptIDs == checkpoint.evidenceReceiptIDs else {
+      throw ForgeMissionError.restoreReceiptMismatch
+    }
     guard checkpoint.acceptedProjectStateID == verifiedProjectStateID else {
       throw ForgeMissionError.restoreReceiptMismatch
     }
