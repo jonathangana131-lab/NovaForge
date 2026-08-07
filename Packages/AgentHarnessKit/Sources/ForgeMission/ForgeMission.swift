@@ -416,6 +416,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
 
     public mutating func insertStages(_ newStages: [MissionStage], at index: Int? = nil, now: Date = .now) throws {
         guard !newStages.isEmpty else { return }
+        try requireLifecycle([.planning, .running, .paused, .waitingForDecision, .completed])
         var candidates = stages
         let insertionIndex = min(max(index ?? candidates.endIndex, 0), candidates.endIndex)
         candidates.insert(contentsOf: newStages.map { stage in
@@ -426,6 +427,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         }, at: insertionIndex)
         try Self.validateGraph(candidates)
         stages = candidates
+        if lifecycle == .completed { lifecycle = .running }
         bumpRevision()
         refreshReadiness(now: now, activateIfRunning: lifecycle == .running)
         settleTerminalLifecycle()
