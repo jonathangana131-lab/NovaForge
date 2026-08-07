@@ -4,11 +4,18 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 EXPECTED_BUNDLE_ID=${EXPECTED_BUNDLE_ID:-com.joey.NovaForge}
 EXPECTED_TEAM_ID=${EXPECTED_TEAM_ID:-93MYZUV85K}
+EXPECTED_SOURCE_COMMIT=${EXPECTED_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)}
 
 if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
   echo "usage: $0 /absolute/path/to/NovaForge.app" >&2
   exit 2
 fi
+
+if ! printf '%s\n' "$EXPECTED_SOURCE_COMMIT" | grep -Eq '^[0-9A-Fa-f]{40,64}$'; then
+  echo "expected source commit is missing or invalid; set EXPECTED_SOURCE_COMMIT to the exact candidate SHA" >&2
+  exit 2
+fi
+EXPECTED_SOURCE_COMMIT=$(printf '%s' "$EXPECTED_SOURCE_COMMIT" | tr '[:upper:]' '[:lower:]')
 
 APP_PATH=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 INFO_PLIST="$APP_PATH/Info.plist"
@@ -17,6 +24,7 @@ INFO_PLIST="$APP_PATH/Info.plist"
 BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO_PLIST" 2>/dev/null || true)
 EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO_PLIST" 2>/dev/null || true)
 PLATFORM=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$INFO_PLIST" 2>/dev/null || true)
+CANDIDATE_SOURCE_COMMIT=$(/usr/libexec/PlistBuddy -c 'Print :NovaForgeSourceCommit' "$INFO_PLIST" 2>/dev/null || true)
 EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
 
 [ "$BUNDLE_ID" = "$EXPECTED_BUNDLE_ID" ] || {
@@ -32,6 +40,16 @@ EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
   exit 1
 }
 
+if ! printf '%s\n' "$CANDIDATE_SOURCE_COMMIT" | grep -Eq '^[0-9A-Fa-f]{40,64}$'; then
+  echo "candidate source commit is missing or invalid; rebuild with NOVAFORGE_SOURCE_COMMIT=$EXPECTED_SOURCE_COMMIT" >&2
+  exit 1
+fi
+CANDIDATE_SOURCE_COMMIT=$(printf '%s' "$CANDIDATE_SOURCE_COMMIT" | tr '[:upper:]' '[:lower:]')
+[ "$CANDIDATE_SOURCE_COMMIT" = "$EXPECTED_SOURCE_COMMIT" ] || {
+  echo "candidate source commit is $CANDIDATE_SOURCE_COMMIT, expected $EXPECTED_SOURCE_COMMIT" >&2
+  exit 1
+}
+
 SIGNING_TEXT=$(codesign -d --verbose=4 "$APP_PATH" 2>&1 || true)
 TEAM_ID=$(printf '%s\n' "$SIGNING_TEXT" | sed -n 's/^TeamIdentifier=//p' | head -1)
 [ "$TEAM_ID" = "$EXPECTED_TEAM_ID" ] || {
@@ -40,7 +58,7 @@ TEAM_ID=$(printf '%s\n' "$SIGNING_TEXT" | sed -n 's/^TeamIdentifier=//p' | head 
 }
 codesign --verify --deep --strict "$APP_PATH"
 
-/usr/bin/python3 - "$ROOT_DIR" "$APP_PATH" "$EXECUTABLE_PATH" "$BUNDLE_ID" "$TEAM_ID" "$PLATFORM" <<'PY'
+/usr/bin/python3 - "$ROOT_DIR" "$APP_PATH" "$EXECUTABLE_PATH" "$BUNDLE_ID" "$TEAM_ID" "$PLATFORM" "$EXPECTED_SOURCE_COMMIT" "$CANDIDATE_SOURCE_COMMIT" <<'PY'
 import hashlib
 import json
 import os
@@ -51,7 +69,7 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve()
 app = Path(sys.argv[2]).resolve()
 executable = Path(sys.argv[3]).resolve()
-bundle_id, team_id, platform = sys.argv[4:]
+bundle_id, team_id, platform, expected_source_commit, candidate_source_commit = sys.argv[4:]
 
 source_roots = [
     root / "AgentPad",
@@ -118,11 +136,13 @@ for path in sorted(entries, key=lambda item: item.relative_to(app).as_posix()):
     file_count += 1
 
 report = {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "status": "pass" if not stale else "stale",
     "bundleID": bundle_id,
     "teamID": team_id,
     "platform": platform,
+    "expectedSourceCommit": expected_source_commit,
+    "candidateSourceCommit": candidate_source_commit,
     "candidateManifestSHA256": "sha256:" + manifest_hasher.hexdigest(),
     "candidateFileCount": file_count,
     "candidateByteCount": byte_count,
