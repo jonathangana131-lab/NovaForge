@@ -113,9 +113,9 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertTrue(result.evidence.contains { $0.code == "memory.measured_budget_exceeded" })
     }
 
-    func testMissionCapabilityRequirementFailsClosed() {
+    func testKnownUnsupportedMissionCapabilityFailsClosed() {
         let result = LocalModelCompatibilityEvaluator.evaluate(
-            descriptor: descriptor(supportsToolCalling: false),
+            descriptor: descriptor(toolCalling: .unsupported),
             device: device(),
             requirements: .init(requiresToolCalling: true),
             benchmark: benchmark()
@@ -124,6 +124,70 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertEqual(result.label, .unsupported)
         XCTAssertEqual(result.reasons, [.toolCallingUnavailable])
         XCTAssertFalse(result.hasMeasuredEvidence)
+    }
+
+    func testUnknownMissionCapabilityRemainsUntestedRatherThanUnsupported() {
+        let result = LocalModelCompatibilityEvaluator.evaluate(
+            descriptor: descriptor(toolCalling: .unknown),
+            device: device(),
+            requirements: .init(requiresToolCalling: true),
+            benchmark: benchmark()
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.toolCallingUnverified])
+        XCTAssertTrue(result.isPreflightEligible)
+        XCTAssertFalse(result.hasMeasuredEvidence)
+        XCTAssertTrue(result.evidence.contains { $0.code == "capability.tool_calling.unverified" })
+    }
+
+    func testUnknownStructuredOutputRequirementRemainsUntested() {
+        let result = LocalModelCompatibilityEvaluator.evaluate(
+            descriptor: descriptor(structuredOutput: .unknown),
+            device: device(),
+            requirements: .init(requiresStructuredOutput: true),
+            benchmark: benchmark()
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.structuredOutputUnverified])
+        XCTAssertFalse(result.hasMeasuredEvidence)
+    }
+
+    func testUnstableBenchmarkDoesNotMislabelReliabilityAsSlowPerformance() {
+        let result = evaluate(
+            benchmark: benchmark(
+                generationTokensPerSecond: 20,
+                successfulSmokeRuns: 1,
+                failedSmokeRuns: 1
+            )
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.benchmarkUnstable])
+        XCTAssertTrue(result.hasMeasuredEvidence)
+        XCTAssertFalse(result.evidence.contains { $0.code == "performance.policy_classification" })
+    }
+
+    func testInvalidPolicyCannotMintFriendlyMeasuredLabel() {
+        let invalidPolicy = LocalModelCompatibilityPolicy(
+            minimumCompletedSmokeRuns: 2,
+            maximumFailureRate: 0,
+            excellentTokensPerSecond: 2,
+            goodTokensPerSecond: 8
+        )
+
+        let result = LocalModelCompatibilityEvaluator.evaluate(
+            descriptor: descriptor(),
+            device: device(),
+            benchmark: benchmark(),
+            policy: invalidPolicy
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.invalidPolicy])
+        XCTAssertTrue(result.hasMeasuredEvidence)
+        XCTAssertFalse(result.evidence.contains { $0.code == "performance.policy_classification" })
     }
 
     func testResultRoundTripsThroughCodableWithoutLosingEvidenceProvenance() throws {
@@ -153,8 +217,8 @@ final class LocalModelCompatibilityTests: XCTestCase {
         architecture: String = "llama",
         fileSizeBytes: UInt64 = 4_000,
         estimatedPeakMemoryBytes: UInt64? = 5_000,
-        supportsToolCalling: Bool = true,
-        supportsStructuredOutput: Bool = true
+        toolCalling: LocalModelCapabilityStatus = .supported,
+        structuredOutput: LocalModelCapabilityStatus = .supported
     ) -> LocalModelCatalogDescriptor {
         LocalModelCatalogDescriptor(
             modelID: "example/code-model",
@@ -162,8 +226,8 @@ final class LocalModelCompatibilityTests: XCTestCase {
             architecture: architecture,
             fileSizeBytes: fileSizeBytes,
             estimatedPeakMemoryBytes: estimatedPeakMemoryBytes,
-            supportsToolCalling: supportsToolCalling,
-            supportsStructuredOutput: supportsStructuredOutput,
+            toolCalling: toolCalling,
+            structuredOutput: structuredOutput,
             source: "fixture-catalog",
             license: "test-license"
         )
