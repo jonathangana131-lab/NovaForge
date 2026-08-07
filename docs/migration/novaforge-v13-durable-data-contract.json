@@ -244,6 +244,30 @@
       ]
     },
     {
+      "id": "local-model-assets",
+      "durability": "user_value",
+      "migrationMode": "preserve_in_place",
+      "location": "Application Support/LocalModels/{<catalog filename>.gguf,<catalog filename>.gguf.download}",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "explicit_model_management_only",
+      "sourceOwners": [
+        "AgentPad/Services/LocalModelRuntime.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/Services/LocalModelRuntime.swift",
+          "fact": "LocalModelCatalog stores downloaded model files under Application Support/LocalModels; LocalModelDownloader keeps resumable .download partials, validates exact byte size and SHA-256 before promotion, and cancellation preserves resumable data."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Installed complete GGUFs remain byte-identical and rediscoverable after migration when their catalog identity and digest remain supported; an architecture rewrite never deletes them merely because Model Center is replaced.",
+        "Resumable .download partials remain resumable or are removed only after explicit integrity/compatibility evaluation; cancellation or app-architecture migration does not silently discard them.",
+        "A new Model Center may rebuild in-memory verification fingerprints, but it must distinguish rebuildable verification cache from durable model bytes required for offline/local-only operation.",
+        "Catalog evolution is not permission for migration-time deletion; unsupported installed model bytes remain user-manageable until explicit removal or a separately accepted cleanup policy."
+      ]
+    },
+    {
       "id": "keychain-credentials",
       "durability": "secret_authority",
       "migrationMode": "preserve_in_place",

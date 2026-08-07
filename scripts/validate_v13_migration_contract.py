@@ -26,6 +26,7 @@ REQUIRED_STORE_IDS = {
     "approval-signing-authority",
     "workspace-checkpoints",
     "user-workspaces",
+    "local-model-assets",
     "keychain-credentials",
 }
 
@@ -201,6 +202,18 @@ def validate_contract(document: dict[str, Any]) -> None:
     require("AgentPolicy/v1/checkpoints" in checkpoints.get("location", ""),
             "workspace checkpoint location changed without contract update")
 
+    local_models = by_id["local-model-assets"]
+    require(local_models.get("durability") == "user_value",
+            "installed local-model bytes must remain user_value")
+    require(local_models.get("migrationMode") == "preserve_in_place",
+            "installed local-model bytes and resumable partials must be preserved in place")
+    require("Application Support/LocalModels" in local_models.get("location", ""),
+            "local-model asset location changed without contract update")
+    require(".gguf.download" in local_models.get("location", ""),
+            "local-model resumable partial inventory is missing")
+    require("AgentPad/Services/LocalModelRuntime.swift" in local_models.get("sourceOwners", []),
+            "local-model durable assets lost their source owner")
+
     rules = document.get("rewriteRules")
     require(isinstance(rules, list) and len(rules) >= 4, "rewriteRules must preserve the core safety invariants")
 
@@ -241,6 +254,10 @@ def run_self_tests(document: dict[str, Any]) -> None:
     discard_workspace = copy.deepcopy(document)
     next(s for s in discard_workspace["stores"] if s["id"] == "user-workspaces")["migrationMode"] = "discardable"
     cases.append(("user workspaces cannot become discardable", discard_workspace))
+
+    discard_local_models = copy.deepcopy(document)
+    next(s for s in discard_local_models["stores"] if s["id"] == "local-model-assets")["migrationMode"] = "discardable"
+    cases.append(("installed local-model assets cannot become discardable cache", discard_local_models))
 
     legacy_signature_drift = copy.deepcopy(document)
     legacy_signature_drift["legacySwiftDataSignatures"]["preExplicitSchemaV1"]["entities"].pop()

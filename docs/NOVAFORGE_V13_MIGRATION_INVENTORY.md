@@ -63,6 +63,14 @@ Unsigned Simulator builds cannot use the same Security backend, so the implement
 
 V13 consequence: provider credential migration and approval-authority migration are separate checks. A rewrite must read the existing physical-device signing account in place; silently generating a new key could invalidate previously accepted approval evidence or, worse, redefine which UI approvals are trusted.
 
+### 8. Installed local models are offline capability assets, not disposable cache
+
+`LocalModelCatalog.modelDirectory()` places model files under `Application Support/LocalModels`. Completed GGUFs are accepted only at the catalog's exact expected byte count and SHA-256 digest. Interrupted transfers use a sibling `.download` file; cancellation intentionally preserves that partial and later downloads resume with an HTTP byte range. A complete verified partial can be promoted without another network transfer.
+
+`LocalModelArtifactVerifier` does keep a process-local fingerprint cache, but that cache is rebuildable. The durable truth is the installed GGUF or resumable partial itself. V13's local-only/airplane-mode promise therefore depends on preserving those bytes across an architecture rewrite.
+
+V13 consequence: migration must preserve installed GGUFs and resumable partials in place. A future Model Center can revalidate, explicitly uninstall, or apply a separately accepted incompatibility cleanup policy, but changing catalogs or replacing Settings is never permission to silently wipe gigabytes the user already downloaded.
+
 ## Preserve, migrate, replace
 
 | Area | V13 disposition | Why |
@@ -75,6 +83,7 @@ V13 consequence: provider credential migration and approval-authority migration 
 | Approval signing authority | Preserve in place; never export | Physical-device HMAC authority is a separate Data Protection Keychain secret. |
 | Workspace checkpoints | Preserve until equivalent rollback proof | Immutable before-state supports idempotent recovery. |
 | User workspace files/assets | Preserve in place by default | They are the user's actual creations. |
+| Installed local-model GGUFs + resumable partials | Preserve in place | Offline capability and interrupted GB-scale transfer state; integrity can be revalidated. |
 | Keychain credential values | Preserve in place, never plaintext-migrate | Device-bound secret boundary. |
 | Giant views / duplicated presentation state / obsolete navigation | Replace | V13 explicitly authorizes architecture rewrite; internal shape has no user-value claim. |
 | Derived projections/caches | Rebuild from source truth where proven derived | A cache must never become the migration authority. |
@@ -90,8 +99,9 @@ A legacy path is removable only when all applicable checks are true:
 5. In-flight mutation/recovery fixtures prove no duplicate execution and valid rollback.
 6. Security authority is equivalent or stronger; no migration can mint approval.
 7. Provider credentials and approval-signing key material never leave their device-bound secret boundaries.
-8. The accepted replacement has a durable commit/checkpoint before old data is deleted.
-9. Failure at any step leaves the old authoritative data recoverable rather than silently resetting it.
+8. Installed local-model GGUFs and resumable partials are preserved or explicitly dispositioned; a database/settings rewrite never treats them as cache to wipe.
+9. The accepted replacement has a durable commit/checkpoint before old data is deleted.
+10. Failure at any step leaves the old authoritative data recoverable rather than silently resetting it.
 
 ## Validation
 
@@ -101,7 +111,7 @@ Run:
 python3 scripts/validate_v13_migration_contract.py --self-test
 ```
 
-The validator currently guards the released legacy entity signatures, exact source-commit pinning, required durable-store inventory, no-discard rules for protected data, compatibility-store reconciliation, protected ledger locations, and the provider-Keychain and approval-signing no-plaintext/no-export boundaries. Its built-in adversarial cases prove those checks reject representative unsafe edits.
+The validator currently guards the released legacy entity signatures, exact source-commit pinning, required durable-store inventory, no-discard rules for protected data, compatibility-store reconciliation, protected ledger locations, installed local-model/resumable-download preservation, and the provider-Keychain and approval-signing no-plaintext/no-export boundaries. Its built-in adversarial cases prove those checks reject representative unsafe edits.
 
 ## Next controlled seam
 
