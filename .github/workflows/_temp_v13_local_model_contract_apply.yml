@@ -1,0 +1,179 @@
+name: TEMP V13 local-model migration contract apply
+
+on:
+  push:
+    branches:
+      - 'worker/NF-V13-MIG-9A7C/local-model-migration/e5'
+    paths:
+      - '.github/workflows/_temp_v13_local_model_contract_apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/worker/NF-V13-MIG-9A7C/local-model-migration/e5'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply local-model durable-asset correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          contract_path = Path('docs/migration/novaforge-v13-durable-data-contract.json')
+          contract = json.loads(contract_path.read_text(encoding='utf-8'))
+          ids = [store['id'] for store in contract['stores']]
+          if 'local-model-assets' in ids:
+              raise SystemExit('local-model-assets already exists')
+          keychain_index = ids.index('keychain-credentials')
+          contract['stores'].insert(keychain_index, {
+              'id': 'local-model-assets',
+              'durability': 'user_value',
+              'migrationMode': 'preserve_in_place',
+              'location': 'Application Support/LocalModels/{<catalog filename>.gguf,<catalog filename>.gguf.download}',
+              'containsSecrets': False,
+              'plaintextMigration': False,
+              'exportPolicy': 'explicit_model_management_only',
+              'sourceOwners': [
+                  'AgentPad/Services/LocalModelRuntime.swift'
+              ],
+              'sourceEvidence': [
+                  {
+                      'repositoryPath': 'AgentPad/Services/LocalModelRuntime.swift',
+                      'fact': 'LocalModelCatalog stores downloaded model files under Application Support/LocalModels; LocalModelDownloader keeps resumable .download partials, validates exact byte size and SHA-256 before promotion, and cancellation preserves resumable data.'
+                  }
+              ],
+              'requiredBeforeReplacement': [
+                  'Installed complete GGUFs remain byte-identical and rediscoverable after migration when their catalog identity and digest remain supported; an architecture rewrite never deletes them merely because Model Center is replaced.',
+                  'Resumable .download partials remain resumable or are removed only after explicit integrity/compatibility evaluation; cancellation or app-architecture migration does not silently discard them.',
+                  'A new Model Center may rebuild in-memory verification fingerprints, but it must distinguish rebuildable verification cache from durable model bytes required for offline/local-only operation.',
+                  'Catalog evolution is not permission for migration-time deletion; unsupported installed model bytes remain user-manageable until explicit removal or a separately accepted cleanup policy.'
+              ]
+          })
+          contract_path.write_text(json.dumps(contract, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+          validator_path = Path('scripts/validate_v13_migration_contract.py')
+          validator = validator_path.read_text(encoding='utf-8')
+          anchor = '    "user-workspaces",\n    "keychain-credentials",\n'
+          replacement = '    "user-workspaces",\n    "local-model-assets",\n    "keychain-credentials",\n'
+          if validator.count(anchor) != 1:
+              raise SystemExit('unexpected REQUIRED_STORE_IDS preimage')
+          validator = validator.replace(anchor, replacement, 1)
+
+          anchor = '''    checkpoints = by_id["workspace-checkpoints"]
+              require("AgentPolicy/v1/checkpoints" in checkpoints.get("location", ""),
+                      "workspace checkpoint location changed without contract update")
+
+              rules = document.get("rewriteRules")
+          '''.replace('      ', '')
+          replacement = '''    checkpoints = by_id["workspace-checkpoints"]
+              require("AgentPolicy/v1/checkpoints" in checkpoints.get("location", ""),
+                      "workspace checkpoint location changed without contract update")
+
+              local_models = by_id["local-model-assets"]
+              require(local_models.get("durability") == "user_value",
+                      "installed local-model bytes must remain user_value")
+              require(local_models.get("migrationMode") == "preserve_in_place",
+                      "installed local-model bytes and resumable partials must be preserved in place")
+              require("Application Support/LocalModels" in local_models.get("location", ""),
+                      "local-model asset location changed without contract update")
+              require(".gguf.download" in local_models.get("location", ""),
+                      "local-model resumable partial inventory is missing")
+              require("AgentPad/Services/LocalModelRuntime.swift" in local_models.get("sourceOwners", []),
+                      "local-model durable assets lost their source owner")
+
+              rules = document.get("rewriteRules")
+          '''.replace('      ', '')
+          if validator.count(anchor) != 1:
+              raise SystemExit('unexpected checkpoint validation preimage')
+          validator = validator.replace(anchor, replacement, 1)
+
+          anchor = '''    discard_workspace = copy.deepcopy(document)
+              next(s for s in discard_workspace["stores"] if s["id"] == "user-workspaces")["migrationMode"] = "discardable"
+              cases.append(("user workspaces cannot become discardable", discard_workspace))
+
+              legacy_signature_drift = copy.deepcopy(document)
+          '''.replace('      ', '')
+          replacement = '''    discard_workspace = copy.deepcopy(document)
+              next(s for s in discard_workspace["stores"] if s["id"] == "user-workspaces")["migrationMode"] = "discardable"
+              cases.append(("user workspaces cannot become discardable", discard_workspace))
+
+              discard_local_models = copy.deepcopy(document)
+              next(s for s in discard_local_models["stores"] if s["id"] == "local-model-assets")["migrationMode"] = "discardable"
+              cases.append(("installed local-model assets cannot become discardable cache", discard_local_models))
+
+              legacy_signature_drift = copy.deepcopy(document)
+          '''.replace('      ', '')
+          if validator.count(anchor) != 1:
+              raise SystemExit('unexpected self-test preimage')
+          validator = validator.replace(anchor, replacement, 1)
+          validator_path.write_text(validator, encoding='utf-8')
+
+          doc_path = Path('docs/NOVAFORGE_V13_MIGRATION_INVENTORY.md')
+          doc = doc_path.read_text(encoding='utf-8')
+          section_anchor = '## Preserve, migrate, replace\n'
+          section = '''### 8. Installed local models are offline capability assets, not disposable cache
+
+`LocalModelCatalog.modelDirectory()` places model files under `Application Support/LocalModels`. Completed GGUFs are accepted only at the catalog's exact expected byte count and SHA-256 digest. Interrupted transfers use a sibling `.download` file; cancellation intentionally preserves that partial and later downloads resume with an HTTP byte range. A complete verified partial can be promoted without another network transfer.
+
+`LocalModelArtifactVerifier` does keep a process-local fingerprint cache, but that cache is rebuildable. The durable truth is the installed GGUF or resumable partial itself. V13's local-only/airplane-mode promise therefore depends on preserving those bytes across an architecture rewrite.
+
+V13 consequence: migration must preserve installed GGUFs and resumable partials in place. A future Model Center can revalidate, explicitly uninstall, or apply a separately accepted incompatibility cleanup policy, but changing catalogs or replacing Settings is never permission to silently wipe gigabytes the user already downloaded.
+
+## Preserve, migrate, replace
+'''
+          if doc.count(section_anchor) != 1:
+              raise SystemExit('unexpected preserve-section preimage')
+          doc = doc.replace(section_anchor, section, 1)
+
+          table_anchor = '| User workspace files/assets | Preserve in place by default | They are the user\'s actual creations. |\n| Keychain credential values | Preserve in place, never plaintext-migrate | Device-bound secret boundary. |'
+          table_replacement = '| User workspace files/assets | Preserve in place by default | They are the user\'s actual creations. |\n| Installed local-model GGUFs + resumable partials | Preserve in place | Offline capability and interrupted GB-scale transfer state; integrity can be revalidated. |\n| Keychain credential values | Preserve in place, never plaintext-migrate | Device-bound secret boundary. |'
+          if doc.count(table_anchor) != 1:
+              raise SystemExit('unexpected migration table preimage')
+          doc = doc.replace(table_anchor, table_replacement, 1)
+
+          gate_anchor = '''7. Provider credentials and approval-signing key material never leave their device-bound secret boundaries.
+          8. The accepted replacement has a durable commit/checkpoint before old data is deleted.
+          9. Failure at any step leaves the old authoritative data recoverable rather than silently resetting it.'''
+          gate_replacement = '''7. Provider credentials and approval-signing key material never leave their device-bound secret boundaries.
+          8. Installed local-model GGUFs and resumable partials are preserved or explicitly dispositioned; a database/settings rewrite never treats them as cache to wipe.
+          9. The accepted replacement has a durable commit/checkpoint before old data is deleted.
+          10. Failure at any step leaves the old authoritative data recoverable rather than silently resetting it.'''
+          if doc.count(gate_anchor) != 1:
+              raise SystemExit('unexpected deletion-gate preimage')
+          doc = doc.replace(gate_anchor, gate_replacement, 1)
+
+          validation_anchor = 'The validator currently guards the released legacy entity signatures, exact source-commit pinning, required durable-store inventory, no-discard rules for protected data, compatibility-store reconciliation, protected ledger locations, and the provider-Keychain and approval-signing no-plaintext/no-export boundaries.'
+          validation_replacement = 'The validator currently guards the released legacy entity signatures, exact source-commit pinning, required durable-store inventory, no-discard rules for protected data, compatibility-store reconciliation, protected ledger locations, installed local-model/resumable-download preservation, and the provider-Keychain and approval-signing no-plaintext/no-export boundaries.'
+          if doc.count(validation_anchor) != 1:
+              raise SystemExit('unexpected validator-description preimage')
+          doc = doc.replace(validation_anchor, validation_replacement, 1)
+          doc_path.write_text(doc, encoding='utf-8')
+          PY
+      - name: Validate corrected contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/validate_v13_migration_contract.py
+          python3 scripts/validate_v13_migration_contract.py --self-test --repo-root .
+          git diff --check
+          test "$(git diff --name-only | wc -l | tr -d ' ')" = "3"
+          grep -q '"id": "local-model-assets"' docs/migration/novaforge-v13-durable-data-contract.json
+          grep -q 'Application Support/LocalModels' docs/migration/novaforge-v13-durable-data-contract.json
+          grep -q 'installed local-model assets cannot become discardable cache' scripts/validate_v13_migration_contract.py
+      - name: Commit correction and remove temporary applier
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/_temp_v13_local_model_contract_apply.yml
+          git config user.name 'NovaForge V13 Worker'
+          git config user.email 'actions@users.noreply.github.com'
+          git add docs/migration/novaforge-v13-durable-data-contract.json scripts/validate_v13_migration_contract.py docs/NOVAFORGE_V13_MIGRATION_INVENTORY.md .github/workflows/_temp_v13_local_model_contract_apply.yml
+          git commit -m 'Preserve installed local models across V13 rewrite'
+          git push origin HEAD:worker/NF-V13-MIG-9A7C/local-model-migration/e5
