@@ -525,11 +525,13 @@ private actor AuthExchangeGate {
     }
 
     func waitForCallCount(_ expectedCount: Int) async -> Bool {
-        for _ in 0 ..< 10_000 {
-            if callCount >= expectedCount { return true }
-            await Task.yield()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while callCount < expectedCount {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(1))
         }
-        return false
+        return true
     }
 
     func complete(
@@ -561,11 +563,13 @@ private actor AuthRefreshGate {
     }
 
     func waitUntilStarted() async -> Bool {
-        for _ in 0 ..< 10_000 {
-            if started { return true }
-            await Task.yield()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while !started {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(1))
         }
-        return false
+        return true
     }
 
     func complete(_ tokens: OpenAICodexOAuthTokens) {
@@ -584,11 +588,13 @@ private enum AuthFixtureError: Error, Sendable {
 
 @MainActor
 private func authEventually(_ condition: () -> Bool) async -> Bool {
-    for _ in 0 ..< 10_000 {
-        if condition() { return true }
-        await Task.yield()
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(2))
+    while !condition() {
+        guard clock.now < deadline else { return false }
+        try? await Task.sleep(for: .milliseconds(1))
     }
-    return false
+    return true
 }
 
 private func expiredJWT(expiration: Int) -> String {
