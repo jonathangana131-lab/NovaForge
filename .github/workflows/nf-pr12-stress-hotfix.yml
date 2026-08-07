@@ -1,0 +1,75 @@
+name: NF PR12 one-shot stress query hotfix
+
+on:
+  push:
+    branches:
+      - agent/fix-phone-provider-reliability-clean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nf-pr12-stress-hotfix
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.repository == 'jonathangana131-lab/NovaForge'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact Workspace stress-query repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("AgentPadUITests/AgentPadUITests.swift")
+          text = path.read_text(encoding="utf-8")
+          replacements = [
+              (
+                  'XCTAssertTrue(identifiedElement("filesStressFixtureReady", in: app).waitForExistence(timeout: 90), "Stress files should finish every durable mutation before navigation begins.")',
+                  'XCTAssertTrue(app.otherElements["filesStressFixtureReady"].waitForExistence(timeout: 90), "Stress files should finish every durable mutation before navigation begins.")',
+              ),
+              (
+                  'XCTAssertTrue(identifiedElement("filesStressFixtureReady", in: app).waitForExistence(timeout: 90), "Search controls should wait for every durable fixture mutation before opening.")',
+                  'XCTAssertTrue(app.otherElements["filesStressFixtureReady"].waitForExistence(timeout: 90), "Search controls should wait for every durable fixture mutation before opening.")',
+              ),
+          ]
+
+          changed = False
+          for old, new in replacements:
+              old_count = text.count(old)
+              new_count = text.count(new)
+              if old_count == 0 and new_count == 1:
+                  continue
+              if old_count != 1 or new_count != 0:
+                  raise SystemExit(
+                      f"Refusing ambiguous replacement: old={old_count}, new={new_count}, old={old!r}"
+                  )
+              text = text.replace(old, new, 1)
+              changed = True
+
+          if changed:
+              path.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+          git diff -- AgentPadUITests/AgentPadUITests.swift
+
+      - name: Commit repair when needed
+        shell: bash
+        run: |
+          if git diff --quiet -- AgentPadUITests/AgentPadUITests.swift; then
+            echo "Exact repair is already present; nothing to commit."
+            exit 0
+          fi
+          git config user.name "NovaForge CI Sheriff"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPadUITests/AgentPadUITests.swift
+          git commit -m "test: avoid broad stress fixture accessibility query"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
