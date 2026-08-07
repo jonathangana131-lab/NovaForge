@@ -366,18 +366,30 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
     }
 
     public mutating func pause(at now: Date = .now) throws {
-        try requireLifecycle([.running, .waitingForDecision])
+        try requireLifecycle([.running])
         lifecycle = .paused
         bumpRevision()
         touchActiveStage(at: now)
     }
 
     public mutating func resume(at now: Date = .now) throws {
-        try requireLifecycle([.paused, .waitingForDecision])
+        try requireLifecycle([.paused])
+        if stages.contains(where: { $0.status == .blocked }) && !stages.contains(where: { $0.status == .active }) {
+            lifecycle = .waitingForDecision
+            bumpRevision()
+            return
+        }
         lifecycle = .running
         bumpRevision()
         refreshReadiness(now: now, activateIfRunning: true)
         settleTerminalLifecycle()
+    }
+
+    public mutating func cancel(at now: Date = .now) throws {
+        try requireLifecycle([.planning, .running, .paused, .waitingForDecision])
+        lifecycle = .cancelled
+        bumpRevision()
+        touchActiveStage(at: now)
     }
 
     public mutating func steer(_ instruction: String, at now: Date = .now) throws {
@@ -448,8 +460,10 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             throw MissionStateError.stageNotFound(stageID)
         }
         guard stages[index].isOptional else { throw MissionStateError.stageNotSkippable(stageID) }
+        let wasBlockingDecision = lifecycle == .waitingForDecision && stages[index].status == .blocked
         stages[index].status = .skipped
         stages[index].updatedAt = now
+        if wasBlockingDecision { lifecycle = .running }
         bumpRevision()
         refreshReadiness(now: now, activateIfRunning: lifecycle == .running)
         settleTerminalLifecycle()
