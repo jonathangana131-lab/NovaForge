@@ -2,6 +2,21 @@ import XCTest
 @testable import AgentDomain
 
 final class LocalModelCompatibilityTests: XCTestCase {
+    private let artifactSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    func testMalformedArtifactDigestRemainsUntestedBeforeCompatibilityClaims() {
+        let result = evaluate(
+            descriptor: descriptor(artifactSHA256: "not-a-canonical-sha256"),
+            benchmark: benchmark()
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.artifactIdentityUnverified])
+        XCTAssertTrue(result.isPreflightEligible)
+        XCTAssertFalse(result.hasMeasuredEvidence)
+        XCTAssertTrue(result.evidence.contains { $0.code == "artifact.sha256.unverified" })
+    }
+
     func testUnsupportedArchitectureFailsClosedWithoutMeasuredEvidence() {
         let result = evaluate(
             descriptor: descriptor(architecture: "unsupported-arch"),
@@ -84,6 +99,18 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertFalse(result.hasMeasuredEvidence)
     }
 
+    func testDifferentArtifactChecksumCannotMintMeasuredCompatibility() {
+        let result = evaluate(
+            benchmark: benchmark(
+                artifactSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            )
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.benchmarkNotApplicable])
+        XCTAssertFalse(result.hasMeasuredEvidence)
+    }
+
     func testDifferentQuantizationBenchmarkCannotMintMeasuredCompatibility() {
         let result = evaluate(
             benchmark: benchmark(quantization: "Q8_0")
@@ -109,11 +136,36 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertTrue(result.isPreflightEligible)
         XCTAssertTrue(result.hasMeasuredEvidence)
         XCTAssertTrue(result.evidence.contains {
-            $0.kind == .measured && $0.code == "benchmark.exact_device"
+            $0.kind == .measured && $0.code == "benchmark.exact_device_smoke"
+        })
+        XCTAssertTrue(result.evidence.contains {
+            $0.kind == .measured && $0.code == "benchmark.generation_rate"
         })
         XCTAssertTrue(result.evidence.contains {
             $0.kind == .measured && $0.code == "memory.peak_observed"
         })
+    }
+
+    func testEstimatedGenerationRateCannotMintMeasuredPerformanceLabel() {
+        let result = evaluate(
+            benchmark: benchmark(
+                generationTokensPerSecond: 99,
+                generationRateProvenance: .estimatedFromOutput,
+                successfulSmokeRuns: 3,
+                failedSmokeRuns: 0
+            )
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.benchmarkRateEstimated])
+        XCTAssertTrue(result.hasMeasuredEvidence, "Smoke outcomes are still exact-device measured evidence")
+        XCTAssertTrue(result.evidence.contains {
+            $0.kind == .inferred && $0.code == "benchmark.generation_rate.estimated"
+        })
+        XCTAssertFalse(result.evidence.contains {
+            $0.kind == .measured && $0.code == "benchmark.generation_rate"
+        })
+        XCTAssertFalse(result.evidence.contains { $0.code == "performance.policy_classification" })
     }
 
     func testExactBenchmarkBelowGoodThresholdIsMeasuredSlow() {
@@ -276,9 +328,10 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertFalse(result.evidence.contains { $0.code == "performance.policy_classification" })
     }
 
-    func testDescriptorCarriesCatalogFormatQuantizationAndContextEvidence() {
+    func testDescriptorCarriesCatalogArtifactFormatQuantizationAndContextEvidence() {
         let result = evaluate(benchmark: nil)
 
+        XCTAssertTrue(result.evidence.contains { $0.code == "catalog.artifact_sha256" })
         XCTAssertTrue(result.evidence.contains { $0.code == "catalog.format" })
         XCTAssertTrue(result.evidence.contains { $0.code == "catalog.quantization" })
         XCTAssertTrue(result.evidence.contains { $0.code == "catalog.context_window" })
@@ -310,6 +363,7 @@ final class LocalModelCompatibilityTests: XCTestCase {
 
     private func descriptor(
         artifactID: String = "artifact-q4",
+        artifactSHA256: String? = nil,
         architecture: String = "llama",
         quantization: String? = "Q4_K_M",
         contextWindowTokens: UInt64? = 32_768,
@@ -323,6 +377,7 @@ final class LocalModelCompatibilityTests: XCTestCase {
             modelID: "example/code-model",
             revision: "rev-2",
             artifactID: artifactID,
+            artifactSHA256: artifactSHA256 ?? self.artifactSHA256,
             format: "gguf",
             architecture: architecture,
             quantization: quantization,
@@ -356,8 +411,10 @@ final class LocalModelCompatibilityTests: XCTestCase {
     private func benchmark(
         revision: String = "rev-2",
         artifactID: String = "artifact-q4",
+        artifactSHA256: String? = nil,
         quantization: String? = "Q4_K_M",
         generationTokensPerSecond: Double = 8.25,
+        generationRateProvenance: LocalModelGenerationRateProvenance = .measuredTokenCount,
         successfulSmokeRuns: UInt16 = 2,
         failedSmokeRuns: UInt16 = 0,
         peakMemoryBytes: UInt64? = 4_000
@@ -366,10 +423,12 @@ final class LocalModelCompatibilityTests: XCTestCase {
             modelID: "example/code-model",
             revision: revision,
             artifactID: artifactID,
+            artifactSHA256: artifactSHA256 ?? self.artifactSHA256,
             quantization: quantization,
             deviceProfileID: "iphone12-test-profile",
             measuredAt: AgentInstant(rawValue: 1_784_000_000_000),
             generationTokensPerSecond: generationTokensPerSecond,
+            generationRateProvenance: generationRateProvenance,
             successfulSmokeRuns: successfulSmokeRuns,
             failedSmokeRuns: failedSmokeRuns,
             peakMemoryBytes: peakMemoryBytes
