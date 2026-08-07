@@ -1,0 +1,21 @@
+name: V13 Forge Runtime grant check
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-RTG1/runtime-project-grants/e1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forge-runtime-kit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift toolchain
+        run: swift --version
+      - name: ForgeRuntimeKit warnings-as-errors
+        run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
