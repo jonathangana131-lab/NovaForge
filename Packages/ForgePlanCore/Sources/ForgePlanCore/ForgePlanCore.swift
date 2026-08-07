@@ -177,7 +177,10 @@ public struct PlanRangeSpec: Hashable, Codable, Sendable {
     public var isValid: Bool {
         guard minimum.isFinite, maximum.isFinite, minimum < maximum else { return false }
         guard let step else { return true }
-        return step.isFinite && step > 0 && step <= (maximum - minimum)
+        let span = maximum - minimum
+        guard step.isFinite, step > 0, step <= span else { return false }
+        let stepsAcrossRange = span / step
+        return abs(stepsAcrossRange - stepsAcrossRange.rounded()) < 1e-9
     }
 
     public func contains(_ value: Double) -> Bool {
@@ -238,6 +241,12 @@ public struct PlanQuestion: Identifiable, Hashable, Codable, Sendable {
         let optionIDs = options.map(\.id)
         if Set(optionIDs).count != optionIDs.count {
             issues.append(.invalidQuestion(questionID: id, reason: "Question option ids must be unique."))
+        }
+        if options.contains(where: { $0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            issues.append(.invalidQuestion(questionID: id, reason: "Question option ids must not be empty."))
+        }
+        if options.contains(where: { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            issues.append(.invalidQuestion(questionID: id, reason: "Question option labels must not be empty."))
         }
 
         if controlKind.usesChoices {
@@ -362,6 +371,7 @@ public enum PlanAnswer: Hashable, Codable, Sendable {
 }
 
 public enum PlanValidationIssue: Hashable, Codable, Sendable {
+    case invalidProposal(reason: String)
     case duplicateQuestionID(String)
     case invalidQuestion(questionID: String, reason: String)
     case missingAnswer(questionID: String)
@@ -422,6 +432,9 @@ public struct PlanSpaceProposal: Hashable, Codable, Sendable {
 
     public var schemaValidationIssues: [PlanValidationIssue] {
         var issues = questions.flatMap(\.validationIssues)
+        if intentSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append(.invalidProposal(reason: "Intent summary must not be empty."))
+        }
         let ids = questions.map(\.id)
         let duplicateIDs = Dictionary(grouping: ids, by: { $0 })
             .filter { $0.value.count > 1 }
