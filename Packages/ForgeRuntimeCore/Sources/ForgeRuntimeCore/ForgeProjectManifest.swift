@@ -127,8 +127,9 @@ public struct ForgeViewportPolicy: Codable, Equatable, Sendable {
     }
 }
 
-/// Bridge capabilities implemented by Forge Runtime v1.
+/// Capability identifiers recognized by the Forge Runtime v1 manifest contract.
 ///
+/// Declaring one is only a request; it does not prove the host bridge exists or grant authority.
 /// Absence means no access. Unknown values fail decoding instead of silently degrading.
 public enum ForgeCapability: String, Codable, CaseIterable, Sendable {
     case localStorage
@@ -188,6 +189,8 @@ public struct ForgeRuntimeVersion: Codable, Equatable, Hashable, Comparable, Sen
     public var description: String { "\(major).\(minor).\(patch)" }
 }
 
+/// Version numbers understood by this manifest-domain package.
+/// This is contract support, not evidence that an app-host runtime has executed a project.
 public enum ForgeRuntimeSupport {
     public static let currentManifestSchema = 1
     public static let currentRuntime = ForgeRuntimeVersion(1, 0, 0)
