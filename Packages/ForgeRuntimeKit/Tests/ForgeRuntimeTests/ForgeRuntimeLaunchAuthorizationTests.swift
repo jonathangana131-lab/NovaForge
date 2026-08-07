@@ -102,7 +102,41 @@ final class ForgeRuntimeLaunchAuthorizationTests: XCTestCase {
             try ForgeProjectSandbox(rootURL: fixture.root)
                 .resolveExistingFile(relativePath: "escape.txt")
         ) { error in
-            XCTAssertEqual(error as? ForgeProjectSandboxError, .escapedSandbox)
+            XCTAssertEqual(error as? ForgeProjectSandboxError, .symbolicLinkNotAllowed)
+        }
+    }
+
+    func testSandboxRejectsSymlinkAliasEvenWhenDestinationStaysInsideRoot() throws {
+        let fixture = try SandboxFixture()
+        defer { fixture.remove() }
+        try fixture.write("assets/index.html", contents: "<html></html>")
+        try FileManager.default.createSymbolicLink(
+            at: fixture.root.appendingPathComponent("alias.html"),
+            withDestinationURL: fixture.root.appendingPathComponent("assets/index.html")
+        )
+
+        XCTAssertThrowsError(
+            try ForgeProjectSandbox(rootURL: fixture.root)
+                .resolveExistingFile(relativePath: "alias.html")
+        ) { error in
+            XCTAssertEqual(error as? ForgeProjectSandboxError, .symbolicLinkNotAllowed)
+        }
+    }
+
+    func testSandboxRejectsIntermediateSymlinkAliasInsideRoot() throws {
+        let fixture = try SandboxFixture()
+        defer { fixture.remove() }
+        try fixture.write("assets/index.html", contents: "<html></html>")
+        try FileManager.default.createSymbolicLink(
+            at: fixture.root.appendingPathComponent("linked-assets", isDirectory: true),
+            withDestinationURL: fixture.root.appendingPathComponent("assets", isDirectory: true)
+        )
+
+        XCTAssertThrowsError(
+            try ForgeProjectSandbox(rootURL: fixture.root)
+                .resolveExistingFile(relativePath: "linked-assets/index.html")
+        ) { error in
+            XCTAssertEqual(error as? ForgeProjectSandboxError, .symbolicLinkNotAllowed)
         }
     }
 
