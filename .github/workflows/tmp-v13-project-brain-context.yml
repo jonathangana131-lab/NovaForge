@@ -1,0 +1,99 @@
+name: Temporary V13 Project Brain context virtualization
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-CONSOLIDATE-7A8E/project-brain-context-virtualization/e1
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Normalize keys and verify exact AgentDomain contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=7abe074265a701f555b6c5b901dac21937e08f4e
+          git merge-base --is-ancestor "$base" HEAD
+          unexpected="$(git diff --name-only "$base" HEAD | grep -Ev '^(.github/workflows/tmp-v13-project-brain-context.yml|Packages/AgentHarnessKit/Sources/AgentDomain/ProjectBrainContext.swift|Packages/AgentHarnessKit/Tests/AgentDomainTests/ProjectBrainContextTests.swift)$' || true)"
+          test -z "$unexpected"
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          source = Path('Packages/AgentHarnessKit/Sources/AgentDomain/ProjectBrainContext.swift')
+          text = source.read_text()
+          replacements = [
+              (
+                  'guard Set(preferredKinds).count == preferredKinds.count else {',
+                  'guard Set(preferredKinds.map(\\.rawValue)).count == preferredKinds.count else {'
+              ),
+              (
+                  'uniqueKeysWithValues: request.preferredKinds.enumerated().map { ($1, $0) }',
+                  'uniqueKeysWithValues: request.preferredKinds.enumerated().map { ($1.rawValue, $0) }'
+              ),
+              (
+                  'let kindRank = preferredKindRank[fact.kind] ?? request.preferredKinds.count',
+                  'let kindRank = preferredKindRank[fact.kind.rawValue] ?? request.preferredKinds.count'
+              ),
+              (
+                  '''private struct ProjectBrainContextScopeKey: Hashable {\n    let kind: ProjectBrainScopeKind\n    let reference: String?\n\n    init(_ scope: ProjectBrainScope) {\n        kind = scope.kind\n        reference = scope.reference\n    }\n}''',
+                  '''private struct ProjectBrainContextScopeKey: Hashable {\n    let kindRawValue: String\n    let reference: String?\n\n    init(_ scope: ProjectBrainScope) {\n        kindRawValue = scope.kind.rawValue\n        reference = scope.reference\n    }\n}'''
+              ),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count == 1:
+                  text = text.replace(old, new, 1)
+              elif count == 0 and new in text:
+                  pass
+              else:
+                  raise SystemExit(f'ProjectBrainContext preimage mismatch: {old[:60]!r} count={count}')
+          source.write_text(text)
+
+          tests = Path('Packages/AgentHarnessKit/Tests/AgentDomainTests/ProjectBrainContextTests.swift')
+          test_text = tests.read_text()
+          old = 'let reversed = try ProjectBrainContextSelector.select(from: facts.reversed(), request: request)'
+          new = 'let reversed = try ProjectBrainContextSelector.select(from: Array(facts.reversed()), request: request)'
+          if old in test_text:
+              test_text = test_text.replace(old, new, 1)
+          elif new not in test_text:
+              raise SystemExit('ProjectBrainContextTests reverse input preimage mismatch')
+          tests.write_text(test_text)
+          PY
+
+          git diff --check
+
+          focused="${RUNNER_TEMP}/ProjectBrainContextFocused"
+          rm -rf "$focused"
+          mkdir -p "$focused/Sources" "$focused/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$focused/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Tests/AgentDomainTests "$focused/Tests/AgentDomainTests"
+          cat > "$focused/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.2
+          import PackageDescription
+          let package = Package(
+              name: "ProjectBrainContextFocused",
+              products: [.library(name: "AgentDomain", targets: ["AgentDomain"])],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .testTarget(name: "AgentDomainTests", dependencies: ["AgentDomain"]),
+              ]
+          )
+          SWIFT
+          swift test --package-path "$focused" -Xswiftc -warnings-as-errors
+          git diff --check
+
+          git config user.name "NovaForge V13 worker"
+          git config user.email "actions@users.noreply.github.com"
+          git add Packages/AgentHarnessKit/Sources/AgentDomain/ProjectBrainContext.swift
+          git add Packages/AgentHarnessKit/Tests/AgentDomainTests/ProjectBrainContextTests.swift
+          git rm .github/workflows/tmp-v13-project-brain-context.yml
+          git commit -m "Verify bounded Project Brain context retrieval"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
