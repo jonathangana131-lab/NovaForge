@@ -152,6 +152,25 @@ public struct MissionCheckpoint: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+public struct MissionRestoreRequest: Codable, Equatable, Sendable {
+    public let checkpointID: MissionCheckpointID
+    public let missionID: MissionID
+    public let projectID: ProjectID
+    public let acceptedProjectStateID: String
+
+    public init(
+        checkpointID: MissionCheckpointID,
+        missionID: MissionID,
+        projectID: ProjectID,
+        acceptedProjectStateID: String
+    ) {
+        self.checkpointID = checkpointID
+        self.missionID = missionID
+        self.projectID = projectID
+        self.acceptedProjectStateID = acceptedProjectStateID
+    }
+}
+
 public struct MissionCompletionEvidence: Codable, Equatable, Sendable {
     public let acceptedProjectStateID: String
     public let evidenceClasses: MissionEvidenceSet
@@ -204,6 +223,8 @@ public enum ForgeMissionError: Error, Equatable, Sendable {
     case checkpointNotFound(MissionCheckpointID)
     case checkpointIdentityMismatch
     case checkpointRevisionRegression
+    case restoreVerificationMismatch
+    case continuationRequiresCompletedMission
     case completionRequiresSatisfiedRequiredWork
     case completionRequiresCheckpoint
     case completionProjectStateMismatch
@@ -538,17 +559,48 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         return value
     }
 
+    public func prepareRestore(to checkpointID: MissionCheckpointID) throws -> MissionRestoreRequest {
+        guard activeLeases.isEmpty else { throw ForgeMissionError.activeWorkExists }
+        guard phase != .cancelled, phase != .failedIrrecoverably else { throw ForgeMissionError.missionTerminal }
+        guard let source = checkpoints.first(where: { $0.id == checkpointID }) else {
+            throw ForgeMissionError.checkpointNotFound(checkpointID)
+        }
+        guard source.missionID == missionID, source.projectID == projectID else {
+            throw ForgeMissionError.checkpointIdentityMismatch
+        }
+        return MissionRestoreRequest(
+            checkpointID: source.id,
+            missionID: missionID,
+            projectID: projectID,
+            acceptedProjectStateID: source.acceptedProjectStateID
+        )
+    }
+
     @discardableResult
-    public mutating func restore(
-        to checkpointID: MissionCheckpointID,
+    public mutating func acceptVerifiedRestore(
+        _ request: MissionRestoreRequest,
+        verifiedProjectStateID: String,
         restoreReceiptID: String,
         at now: AgentInstant
     ) throws -> MissionCheckpoint {
-        try requireNonTerminal()
         guard activeLeases.isEmpty else { throw ForgeMissionError.activeWorkExists }
+        guard phase != .cancelled, phase != .failedIrrecoverably else { throw ForgeMissionError.missionTerminal }
+        guard request.missionID == missionID, request.projectID == projectID else {
+            throw ForgeMissionError.checkpointIdentityMismatch
+        }
         guard !restoreReceiptID.trimmed.isEmpty else { throw ForgeMissionError.invalidResolutionReceipt }
-        guard let source = checkpoints.first(where: { $0.id == checkpointID }) else { throw ForgeMissionError.checkpointNotFound(checkpointID) }
-        guard source.missionID == missionID, source.projectID == projectID else { throw ForgeMissionError.checkpointIdentityMismatch }
+        guard let source = checkpoints.first(where: { $0.id == request.checkpointID }) else {
+            throw ForgeMissionError.checkpointNotFound(request.checkpointID)
+        }
+        guard source.missionID == missionID, source.projectID == projectID else {
+            throw ForgeMissionError.checkpointIdentityMismatch
+        }
+        let verified = verifiedProjectStateID.trimmed
+        guard !verified.isEmpty,
+              request.acceptedProjectStateID == source.acceptedProjectStateID,
+              verified == source.acceptedProjectStateID else {
+            throw ForgeMissionError.restoreVerificationMismatch
+        }
 
         graph = source.graph
         route = MissionRouteBinding(routeReceiptID: source.routeReceiptID)
@@ -569,11 +621,43 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             acceptedProjectStateID: source.acceptedProjectStateID,
             evidenceReceiptIDs: MissionStringSet(source.evidenceReceiptIDs.values + [restoreReceiptID.trimmed]),
             projectBrainFactIDs: source.projectBrainFactIDs,
-            summary: "Restored: \(source.summary)",
+            summary: "Verified restore: \(source.summary)",
             acceptedAt: now
         )
         checkpoints.append(restored)
         return restored
+    }
+
+    public mutating func beginContinuation(with newStages: [MissionStage]) throws {
+        guard [.completedWithEvidence, .completedWithKnownLimitations].contains(phase) else {
+            throw ForgeMissionError.continuationRequiresCompletedMission
+        }
+        guard activeLeases.isEmpty else { throw ForgeMissionError.activeWorkExists }
+        guard !newStages.isEmpty else { throw ForgeMissionError.noStagesRequested }
+        guard graph.revision < UInt64.max else { throw ForgeMissionError.revisionOverflow }
+
+        let normalized = newStages.map { stage in
+            MissionStage(
+                stageID: stage.stageID,
+                kind: stage.kind,
+                title: stage.title,
+                order: stage.order,
+                required: stage.required,
+                dependencies: stage.dependencies,
+                status: .pending
+            )
+        }
+        let candidate = MissionStageGraph(
+            missionID: missionID,
+            revision: graph.revision + 1,
+            stages: graph.stages + normalized
+        )
+        guard candidate.validationError == nil else { throw ForgeMissionError.invalidGraph }
+        graph = candidate
+        completionEvidence = nil
+        phase = .ready
+        try bumpAuthorityEpoch()
+        try bumpRevision()
     }
 
     public mutating func complete(with evidence: MissionCompletionEvidence) throws {
