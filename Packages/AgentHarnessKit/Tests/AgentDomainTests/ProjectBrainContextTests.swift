@@ -296,7 +296,7 @@ final class ProjectBrainContextTests: XCTestCase {
         )
 
         let forward = try ProjectBrainContextSelector.select(from: facts, request: request)
-        let reversed = try ProjectBrainContextSelector.select(from: facts.reversed(), request: request)
+        let reversed = try ProjectBrainContextSelector.select(from: Array(facts.reversed()), request: request)
         XCTAssertEqual(forward, reversed)
     }
 

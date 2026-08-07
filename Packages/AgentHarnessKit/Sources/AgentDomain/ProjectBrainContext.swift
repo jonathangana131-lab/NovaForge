@@ -57,7 +57,7 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
     public var validationError: ProjectBrainContextRequestValidationError? {
         guard maxFacts > 0 else { return .emptyFactBudget }
         guard maxCharacters > 0 else { return .emptyCharacterBudget }
-        guard Set(preferredKinds).count == preferredKinds.count else {
+        guard Set(preferredKinds.map(\.rawValue)).count == preferredKinds.count else {
             return .duplicatePreferredKind
         }
         guard Set(scopes.map(ProjectBrainContextScopeKey.init)).count == scopes.count else {
@@ -131,7 +131,7 @@ public enum ProjectBrainContextSelector {
         candidates.reserveCapacity(facts.count)
 
         let preferredKindRank = Dictionary(
-            uniqueKeysWithValues: request.preferredKinds.enumerated().map { ($1, $0) }
+            uniqueKeysWithValues: request.preferredKinds.enumerated().map { ($1.rawValue, $0) }
         )
         let requestedScopeKeys = Set(request.scopes.map(ProjectBrainContextScopeKey.init))
 
@@ -166,7 +166,7 @@ public enum ProjectBrainContextSelector {
                 missionRank = 0
             }
 
-            let kindRank = preferredKindRank[fact.kind] ?? request.preferredKinds.count
+            let kindRank = preferredKindRank[fact.kind.rawValue] ?? request.preferredKinds.count
             candidates.append(RankedFact(
                 fact: fact,
                 scopeRank: scopeRank,
@@ -272,11 +272,11 @@ public enum ProjectBrainContextSelector {
 }
 
 private struct ProjectBrainContextScopeKey: Hashable {
-    let kind: ProjectBrainScopeKind
+    let kindRawValue: String
     let reference: String?
 
     init(_ scope: ProjectBrainScope) {
-        kind = scope.kind
+        kindRawValue = scope.kind.rawValue
         reference = scope.reference
     }
 }
