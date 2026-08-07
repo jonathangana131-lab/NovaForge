@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "neon-racer",
+    "version": 1,
+    "displayName": "Neon Racer",
+    "iconPath": "assets/icon.png"
+  },
+  "runtime": {
+    "version": { "major": 1, "minor": 0, "patch": 0 },
+    "kind": "web",
+    "entryPoint": "web/index.html",
+    "orientation": "landscape",
+    "viewport": {
+      "layout": "edgeToEdge",
+      "allowsUserScaling": false
+    },
+    "requestedCapabilities": ["localStorage", "haptics"],
+    "network": {
+      "mode": "offlineOnly",
+      "allowedOrigins": []
+    },
+    "storage": {
+      "namespace": "neon-racer",
+      "schemaVersion": 1
+    }
+  },
+  "assets": ["assets/icon.png", "web/game.js"],
+  "modules": [],
+  "launch": {
+    "title": "Neon Racer",
+    "subtitle": "Ready"
+  }
+}
