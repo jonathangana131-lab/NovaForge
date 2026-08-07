@@ -75,16 +75,6 @@ struct ForgePlanSpaceView: View {
 
     private var intro: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 13, weight: .black))
-                    .foregroundStyle(AgentPalette.cyan)
-                Text("PLAN SPACE")
-                    .font(.system(size: 11, weight: .black, design: AgentPalette.interfaceFontDesign))
-                    .tracking(1.2)
-                    .foregroundStyle(AgentPalette.cyan)
-            }
-
             Text("Shape the build before NovaForge starts.")
                 .font(.system(size: 27, weight: .heavy, design: AgentPalette.interfaceFontDesign))
                 .foregroundStyle(AgentPalette.ink)
@@ -150,7 +140,7 @@ struct ForgePlanSpaceView: View {
             questionHeader(
                 index: 2,
                 title: "How far should the build go?",
-                detail: "This changes the verification and polish loop, not the provider's hidden reasoning."
+                detail: "Choose how much building, testing, and polish NovaForge should do."
             )
 
             choiceLayout {
@@ -298,24 +288,24 @@ struct ForgePlanSpaceView: View {
                 }
                 .frame(minHeight: AgentDesign.minimumTouchTarget)
                 .accessibilityLabel("\(draft.answeredDecisionCount) of 2 build decisions answered")
-            }
 
-            Button {
-                applyRecommendedPlan()
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "wand.and.stars")
-                    Text("Decide for me")
-                        .fontWeight(.bold)
+                Button {
+                    applyRecommendedPlan()
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "wand.and.stars")
+                        Text("Decide for me")
+                            .fontWeight(.bold)
+                    }
+                    .foregroundStyle(AgentPalette.cyan)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: AgentDesign.minimumTouchTarget)
+                    .contentShape(Rectangle())
                 }
-                .foregroundStyle(AgentPalette.cyan)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: AgentDesign.minimumTouchTarget)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityHint("Chooses the balanced Polished and Faithful defaults")
+                .accessibilityIdentifier("planSpaceDecideForMe")
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Chooses the balanced Polished and Faithful defaults")
-            .accessibilityIdentifier("planSpaceDecideForMe")
         }
         .animation(allowsMotion ? .snappy(duration: 0.32) : nil, value: draft.isReady)
     }
@@ -375,16 +365,11 @@ struct ForgePlanSpaceView: View {
                             .font(.system(size: 13, weight: .bold))
                     }
                 }
-                Text(detail)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(selected ? AgentPalette.ink.opacity(0.82) : AgentPalette.secondaryText)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 3)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(selected ? tint : AgentPalette.ink)
             .padding(.horizontal, 11)
             .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .center)
             .background(
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
                     .fill(
