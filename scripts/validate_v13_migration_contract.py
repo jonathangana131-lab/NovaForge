@@ -191,6 +191,24 @@ def validate_contract(document: dict[str, Any]) -> None:
     require(isinstance(rules, list) and len(rules) >= 4, "rewriteRules must preserve the core safety invariants")
 
 
+def validate_source_files(document: dict[str, Any], repo_root: Path) -> None:
+    require(repo_root.is_dir(), f"repo root is not a directory: {repo_root}")
+    required_paths: set[str] = set()
+    signatures = document["legacySwiftDataSignatures"]
+    required_paths.add(signatures["preExplicitSchemaV1"]["classifierOwner"])
+    required_paths.add(signatures["explicitSchemaV1"]["classifierOwner"])
+    for store in document["stores"]:
+        required_paths.update(store["sourceOwners"])
+        required_paths.update(
+            item["repositoryPath"] for item in store["sourceEvidence"]
+        )
+
+    missing = sorted(
+        path for path in required_paths if not (repo_root / path).is_file()
+    )
+    require(not missing, f"source evidence paths do not exist: {missing}")
+
+
 def run_self_tests(document: dict[str, Any]) -> None:
     cases: list[tuple[str, Any]] = []
 
@@ -248,11 +266,18 @@ def main() -> int:
         default=Path("docs/migration/novaforge-v13-durable-data-contract.json"),
     )
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        help="also verify every source-owner/evidence path exists under this checkout",
+    )
     args = parser.parse_args()
 
     try:
         document = load(args.contract)
         validate_contract(document)
+        if args.repo_root is not None:
+            validate_source_files(document, args.repo_root)
         if args.self_test:
             run_self_tests(document)
     except ContractError as error:
