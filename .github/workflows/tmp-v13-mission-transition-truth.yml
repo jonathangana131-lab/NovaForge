@@ -1,0 +1,66 @@
+name: Temporary V13 mission transition truth hardening
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-CONSOLIDATE-7A8E/mission-durable-state-hardening/e1
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply and verify exact stacked hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=517c6b6c06794e184c383f2ec795125ff53ecfab
+          git merge-base --is-ancestor "$base" HEAD
+          unexpected="$(git diff --name-only "$base" HEAD | grep -Ev '^(.github/workflows/tmp-v13-mission-transition-truth.yml|scripts/tmp_v13_mission_transition_truth.py|scripts/tmp_v13_completion_checkpoint_truth.py)$' || true)"
+          test -z "$unexpected"
+
+          python3 scripts/tmp_v13_mission_transition_truth.py
+          python3 scripts/tmp_v13_completion_checkpoint_truth.py
+          git diff --check
+
+          focused="${RUNNER_TEMP}/ForgeMissionFocused"
+          rm -rf "$focused"
+          mkdir -p "$focused/Sources" "$focused/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$focused/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Sources/ForgeMission "$focused/Sources/ForgeMission"
+          cp -R Packages/AgentHarnessKit/Tests/ForgeMissionTests "$focused/Tests/ForgeMissionTests"
+          cat > "$focused/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.2
+          import PackageDescription
+
+          let package = Package(
+              name: "ForgeMissionFocused",
+              products: [
+                  .library(name: "AgentDomain", targets: ["AgentDomain"]),
+                  .library(name: "ForgeMission", targets: ["ForgeMission"]),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "ForgeMission", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "ForgeMissionTests", dependencies: ["AgentDomain", "ForgeMission"]),
+              ]
+          )
+          SWIFT
+          swift test --package-path "$focused" -Xswiftc -warnings-as-errors
+          git diff --check
+
+          git config user.name "NovaForge V13 worker"
+          git config user.email "actions@users.noreply.github.com"
+          git add Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMission.swift
+          git add Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMissionArchive.swift
+          git add Packages/AgentHarnessKit/Tests/ForgeMissionTests/ForgeMissionTests.swift
+          git rm .github/workflows/tmp-v13-mission-transition-truth.yml
+          git rm scripts/tmp_v13_mission_transition_truth.py
+          git rm scripts/tmp_v13_completion_checkpoint_truth.py
+          git commit -m "Close mission transition and completion truth gaps"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
