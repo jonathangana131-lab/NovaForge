@@ -27,7 +27,7 @@ For every ordinary SUPPORTED route:
 - streaming;
 - cancel/retry;
 - app relaunch;
-- actionable 401/402/403/404/408/422/429/5xx;
+- actionable 401/402/403/404/408/413/422/429/5xx, with 413 classified as context-limit rather than generic invalid request;
 - exact route/model receipt.
 
 At least one supported hosted route must pass end-to-end before release.
