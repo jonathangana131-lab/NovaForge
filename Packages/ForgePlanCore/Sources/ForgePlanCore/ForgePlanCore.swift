@@ -79,8 +79,22 @@ public enum ForgeAutonomy: String, CaseIterable, Codable, Sendable {
 public struct NormalizedForgeControl: Hashable, Codable, Sendable {
     public let value: Double
 
+    private enum CodingKeys: String, CodingKey {
+        case value
+    }
+
     public init(_ value: Double) {
         self.value = value.isFinite ? min(max(value, 0), 1) : 0.5
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(try container.decode(Double.self, forKey: .value))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(value, forKey: .value)
     }
 }
 
@@ -408,6 +422,19 @@ public struct ReadyToForgeSummary: Hashable, Codable, Sendable {
         self.decisions = decisions
         self.controls = controls
     }
+
+    /// Delegation makes Plan Space complete, but it does not invent the delegated
+    /// semantic choice. The authoritative Mission Engine must resolve and receipt
+    /// each of these decisions before execution can rely on it.
+    public var delegatedDecisionIDs: [String] {
+        decisions.compactMap { decision in
+            decision.value == .delegatedToNovaForge ? decision.id : nil
+        }
+    }
+
+    public var requiresMissionResolution: Bool {
+        !delegatedDecisionIDs.isEmpty
+    }
 }
 
 public struct PlanSpaceProposal: Hashable, Codable, Sendable {
@@ -469,6 +496,9 @@ public struct PlanSpaceProposal: Hashable, Codable, Sendable {
         }
     }
 
+    /// Ready means the user's Plan Space interaction can hand off to the durable
+    /// Mission Engine. It is not execution authorization; delegated decisions may
+    /// still require a concrete, receipted Mission Constitution choice.
     public func isReadyToForge(answers: [String: PlanAnswer]) -> Bool {
         schemaValidationIssues.isEmpty && unresolvedQuestionIDs(answers: answers).isEmpty
     }
