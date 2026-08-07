@@ -21,11 +21,13 @@ final class ForgeHomeCoreTests: XCTestCase {
         let generated = ForgeCreationRecord(
             name: "Generated only",
             lastChangedAt: now,
+            currentSourceRevision: "rev",
             runtimeEvidence: runtimeEvidence(level: .generated)
         )
         let authorized = ForgeCreationRecord(
             name: "Runnable",
             lastChangedAt: now,
+            currentSourceRevision: "rev",
             runtimeEvidence: runtimeEvidence(level: .launchAuthorized)
         )
 
@@ -37,6 +39,7 @@ final class ForgeHomeCoreTests: XCTestCase {
         let record = ForgeCreationRecord(
             name: "Native project",
             lastChangedAt: now,
+            currentSourceRevision: "abc",
             runtimeEvidence: ForgeRuntimeEvidence(
                 artifactID: ForgeArtifactID(rawValue: "native-app"),
                 runtimeKind: .externalNative,
@@ -55,6 +58,7 @@ final class ForgeHomeCoreTests: XCTestCase {
         let record = ForgeCreationRecord(
             name: "Reference-backed",
             lastChangedAt: now,
+            currentSourceRevision: "r1",
             runtimeEvidence: runtimeEvidence(level: .runtimeTested, revision: "r1"),
             thumbnailEvidence: ForgeThumbnailEvidence(
                 artifactID: ForgeArtifactID(rawValue: "reference-image"),
@@ -71,12 +75,14 @@ final class ForgeHomeCoreTests: XCTestCase {
         let stale = ForgeCreationRecord(
             name: "Stale preview",
             lastChangedAt: now,
+            currentSourceRevision: "r2",
             runtimeEvidence: runtimeEvidence(level: .runtimeTested, revision: "r2"),
             thumbnailEvidence: screenshot(revision: "r1")
         )
         let current = ForgeCreationRecord(
             name: "Current preview",
             lastChangedAt: now,
+            currentSourceRevision: "r2",
             runtimeEvidence: runtimeEvidence(level: .runtimeTested, revision: "r2"),
             thumbnailEvidence: screenshot(revision: "r2")
         )
@@ -89,6 +95,7 @@ final class ForgeHomeCoreTests: XCTestCase {
         let record = ForgeCreationRecord(
             name: "Not launched",
             lastChangedAt: now,
+            currentSourceRevision: "r1",
             runtimeEvidence: runtimeEvidence(level: .generated, revision: "r1"),
             thumbnailEvidence: screenshot(revision: "r1")
         )
@@ -100,6 +107,7 @@ final class ForgeHomeCoreTests: XCTestCase {
         let record = ForgeCreationRecord(
             name: "Read only",
             lastChangedAt: now,
+            currentSourceRevision: "rev",
             runtimeEvidence: runtimeEvidence(level: .runtimeTested),
             canEditSource: false,
             canDuplicate: false,
@@ -167,6 +175,7 @@ final class ForgeHomeCoreTests: XCTestCase {
         let record = ForgeCreationRecord(
             name: "Neon Racer",
             lastChangedAt: now,
+            currentSourceRevision: "rev-42",
             activeMission: mission(updatedAt: now),
             runtimeEvidence: runtimeEvidence(level: .simulatorVerified, revision: "rev-42"),
             thumbnailEvidence: screenshot(revision: "rev-42")

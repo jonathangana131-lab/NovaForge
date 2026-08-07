@@ -138,6 +138,10 @@ public struct ForgeCreationRecord: Codable, Hashable, Sendable {
     public let id: ForgeCreationID
     public var name: String
     public var lastChangedAt: Date
+    /// The accepted source/project-state revision currently represented by this
+    /// creation. Runtime and thumbnail evidence are presentation-authoritative
+    /// only when they were produced from this exact revision.
+    public var currentSourceRevision: String?
     public var activeMission: ForgeMissionReference?
     public var runtimeEvidence: ForgeRuntimeEvidence?
     public var thumbnailEvidence: ForgeThumbnailEvidence?
@@ -150,6 +154,7 @@ public struct ForgeCreationRecord: Codable, Hashable, Sendable {
         id: ForgeCreationID = ForgeCreationID(),
         name: String,
         lastChangedAt: Date,
+        currentSourceRevision: String? = nil,
         activeMission: ForgeMissionReference? = nil,
         runtimeEvidence: ForgeRuntimeEvidence? = nil,
         thumbnailEvidence: ForgeThumbnailEvidence? = nil,
@@ -161,6 +166,7 @@ public struct ForgeCreationRecord: Codable, Hashable, Sendable {
         self.id = id
         self.name = name
         self.lastChangedAt = lastChangedAt
+        self.currentSourceRevision = currentSourceRevision
         self.activeMission = activeMission
         self.runtimeEvidence = runtimeEvidence
         self.thumbnailEvidence = thumbnailEvidence
@@ -236,19 +242,26 @@ public enum ForgeHomeProjector {
     }
 
     public static func makeCard(_ record: ForgeCreationRecord) -> ForgeCreationCard {
-        let runState: ForgeCreationRunState
-        if let evidence = record.runtimeEvidence, evidence.isRunnableInsideNovaForge {
-            runState = .available(evidence)
+        let currentRevision = normalizedRevision(record.currentSourceRevision)
+
+        let acceptedRuntime: ForgeRuntimeEvidence?
+        if let evidence = record.runtimeEvidence,
+           evidence.isRunnableInsideNovaForge,
+           let currentRevision,
+           normalizedRevision(evidence.sourceRevision) == currentRevision {
+            acceptedRuntime = evidence
         } else {
-            runState = .unavailable
+            acceptedRuntime = nil
         }
+
+        let runState: ForgeCreationRunState = acceptedRuntime.map(ForgeCreationRunState.available) ?? .unavailable
 
         let thumbnail: ForgeThumbnailEvidence?
         if let candidate = record.thumbnailEvidence,
            candidate.isActualRunnablePreview,
-           let runtime = record.runtimeEvidence,
-           runtime.isRunnableInsideNovaForge,
-           candidate.sourceRevision == runtime.sourceRevision {
+           acceptedRuntime != nil,
+           let currentRevision,
+           normalizedRevision(candidate.sourceRevision) == currentRevision {
             thumbnail = candidate
         } else {
             thumbnail = nil
@@ -292,6 +305,12 @@ public enum ForgeHomeProjector {
     private static func normalizedProjectName(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Creation" : trimmed
+    }
+
+    private static func normalizedRevision(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
