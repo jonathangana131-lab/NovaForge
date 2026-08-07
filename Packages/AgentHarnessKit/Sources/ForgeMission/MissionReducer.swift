@@ -12,7 +12,9 @@ public enum MissionMutationError: Error, Equatable, Sendable {
     case stageNotFound(MissionStageID)
     case stageNotRunnable(MissionStageID)
     case activeStageMismatch(expected: MissionStageID?, actual: MissionStageID?)
+    case missingActiveStage
     case invalidMissionIdentity
+    case invalidCheckpoint
     case projectMismatch
     case staleWorkerResult
     case missionNotResumable(MissionStatus)
@@ -151,7 +153,7 @@ public enum MissionReducer {
         }
         guard let stageID = snapshot.activeStageID,
               let index = snapshot.stages.firstIndex(where: { $0.id == stageID }) else {
-            throw MissionMutationError.activeStageMismatch(expected: snapshot.activeStageID, actual: nil)
+            throw MissionMutationError.missingActiveStage
         }
         let stage = snapshot.stages[index]
         guard stage.state == .running else {
@@ -226,7 +228,7 @@ public enum MissionReducer {
             throw MissionMutationError.invalidStatusTransition(from: snapshot.status, to: .pausedByUser)
         }
         guard snapshot.activeStageID != nil else {
-            throw MissionMutationError.activeStageMismatch(expected: nil, actual: snapshot.activeStageID)
+            throw MissionMutationError.missingActiveStage
         }
         let stages = invalidateActiveLease(in: snapshot.stages, activeStageID: snapshot.activeStageID)
         return try copy(snapshot, status: .pausedByUser, stages: stages, at: instant)
@@ -240,6 +242,9 @@ public enum MissionReducer {
         try requireRevision(expectedRevision, in: snapshot)
         guard !isTerminal(snapshot.status) else {
             throw MissionMutationError.invalidStatusTransition(from: snapshot.status, to: .interruptedRecoverable)
+        }
+        guard snapshot.activeStageID != nil else {
+            return try copy(snapshot, at: instant)
         }
         let stages = invalidateActiveLease(in: snapshot.stages, activeStageID: snapshot.activeStageID)
         return try copy(snapshot, status: .interruptedRecoverable, stages: stages, at: instant)
@@ -258,7 +263,7 @@ public enum MissionReducer {
         }
         guard let stageID = snapshot.activeStageID,
               let index = snapshot.stages.firstIndex(where: { $0.id == stageID }) else {
-            throw MissionMutationError.activeStageMismatch(expected: snapshot.activeStageID, actual: nil)
+            throw MissionMutationError.missingActiveStage
         }
         let stage = snapshot.stages[index]
         guard stage.state == .running || stage.state == .failedRecoverable else {
@@ -361,6 +366,17 @@ public enum MissionReducer {
               snapshot.missionID == expectedMissionID,
               snapshot.projectID == expectedProjectID else {
             throw MissionMutationError.invalidMissionIdentity
+        }
+        guard snapshot.brain.projectID == snapshot.projectID else {
+            throw MissionMutationError.invalidCheckpoint
+        }
+        try validateStageGraph(snapshot.stages)
+        if let activeStageID = snapshot.activeStageID,
+           !snapshot.stages.contains(where: { $0.id == activeStageID }) {
+            throw MissionMutationError.invalidCheckpoint
+        }
+        guard snapshot.activeStageID != nil else {
+            return try copy(snapshot, at: instant)
         }
         let stages = invalidateActiveLease(in: snapshot.stages, activeStageID: snapshot.activeStageID)
         return try copy(
