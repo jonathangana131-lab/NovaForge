@@ -114,4 +114,26 @@ final class ForgeHomeTruthHardeningTests: XCTestCase {
             XCTAssertNil(card.actualThumbnail)
         }
     }
+
+    func testMissingRevisionFieldRoundTripsAsNilAndFailsClosed() throws {
+        let record = ForgeCreationRecord(
+            name: "Pre-revision record",
+            lastChangedAt: now,
+            runtimeEvidence: ForgeRuntimeEvidence(
+                artifactID: ForgeArtifactID(rawValue: "runtime-r1"),
+                runtimeKind: .forgeWeb,
+                verificationLevel: .runtimeTested,
+                sourceRevision: "r1",
+                recordedAt: now
+            )
+        )
+
+        let data = try JSONEncoder().encode(record)
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertFalse(json.contains("currentSourceRevision"))
+
+        let decoded = try JSONDecoder().decode(ForgeCreationRecord.self, from: data)
+        XCTAssertNil(decoded.currentSourceRevision)
+        XCTAssertFalse(ForgeHomeProjector.makeCard(decoded).runState.isRunnable)
+    }
 }
