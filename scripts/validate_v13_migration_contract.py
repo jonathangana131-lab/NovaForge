@@ -23,6 +23,7 @@ REQUIRED_STORE_IDS = {
     "swiftdata-recovery-snapshots",
     "agent-engine-run-index",
     "agent-policy-ledgers",
+    "approval-signing-authority",
     "workspace-checkpoints",
     "user-workspaces",
     "keychain-credentials",
@@ -153,14 +154,27 @@ def validate_contract(document: dict[str, Any]) -> None:
     missing = REQUIRED_STORE_IDS - set(ids)
     require(not missing, f"required durable stores silently dropped: {sorted(missing)}")
 
+    for store in stores:
+        if store.get("containsSecrets") is True:
+            store_id = store["id"]
+            require(store.get("durability") == "secret_authority",
+                    f"{store_id}: secret-bearing storage must be secret_authority")
+            require(store.get("plaintextMigration") is False,
+                    f"{store_id}: plaintextMigration must be false")
+            require(store.get("migrationMode") == "preserve_in_place",
+                    f"{store_id}: secret material must stay in place")
+            require(store.get("exportPolicy") == "never",
+                    f"{store_id}: secret material exportPolicy must be never")
+
     secret = by_id["keychain-credentials"]
-    require(secret.get("durability") == "secret_authority", "keychain must remain secret_authority")
-    require(secret.get("containsSecrets") is True, "keychain must declare containsSecrets=true")
-    require(secret.get("plaintextMigration") is False, "keychain plaintextMigration must be false")
-    require(secret.get("migrationMode") == "preserve_in_place", "keychain secret values must stay in place")
-    require(secret.get("exportPolicy") == "never", "keychain exportPolicy must be never")
     require(secret.get("encryptionBoundary") == "keychain_this_device_only",
-            "keychain encryption boundary must remain this-device-only")
+            "provider credential boundary must remain this-device-only Keychain")
+
+    signing = by_id["approval-signing-authority"]
+    require(signing.get("encryptionBoundary") == "data_protection_keychain_this_device_only",
+            "approval signing authority must remain in the physical-device Data Protection Keychain")
+    require("agent-policy.approval-ui-hmac.v1" in signing.get("location", ""),
+            "approval signing account identity changed without contract update")
 
     primary = by_id["swiftdata-primary"]
     require(primary.get("migrationMode") == "migrate_losslessly", "primary SwiftData store must migrate losslessly")
@@ -219,6 +233,10 @@ def run_self_tests(document: dict[str, Any]) -> None:
     plaintext_secret = copy.deepcopy(document)
     next(s for s in plaintext_secret["stores"] if s["id"] == "keychain-credentials")["plaintextMigration"] = True
     cases.append(("plaintext credential migration is rejected", plaintext_secret))
+
+    exported_signing_key = copy.deepcopy(document)
+    next(s for s in exported_signing_key["stores"] if s["id"] == "approval-signing-authority")["exportPolicy"] = "diagnostic_only"
+    cases.append(("approval signing authority cannot become exportable", exported_signing_key))
 
     discard_workspace = copy.deepcopy(document)
     next(s for s in discard_workspace["stores"] if s["id"] == "user-workspaces")["migrationMode"] = "discardable"
