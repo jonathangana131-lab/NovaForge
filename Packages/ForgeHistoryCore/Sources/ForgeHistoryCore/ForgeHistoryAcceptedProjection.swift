@@ -1,12 +1,24 @@
 import Foundation
 
 /// Opaque identity of the accepted project state that an upstream Mission/ProjectStore checkpoint
-/// proves. History preserves this identity for future restore/fork adapters but never interprets it
-/// as a filesystem path, provider receipt, or permission grant.
-public enum ForgeHistoryAcceptedProjectStateIDTag: ForgeHistoryIdentifierTag {}
-public typealias ForgeHistoryAcceptedProjectStateID = ForgeHistoryIdentifier<ForgeHistoryAcceptedProjectStateIDTag>
+/// proves. History preserves the upstream string after whitespace normalization but deliberately
+/// does not apply filesystem/path grammar or reinterpret it as a provider receipt or permission.
+public struct ForgeHistoryAcceptedProjectStateID: Hashable, Sendable, CustomStringConvertible {
+    public let rawValue: String
+
+    public init(_ rawValue: String) throws {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            throw ForgeHistoryAcceptedProjectionError.invalidAcceptedProjectStateID
+        }
+        self.rawValue = normalized
+    }
+
+    public var description: String { rawValue }
+}
 
 public enum ForgeHistoryAcceptedProjectionError: Error, Equatable, Sendable {
+    case invalidAcceptedProjectStateID
     case projectMismatch(checkpointID: String, expectedProjectID: String, actualProjectID: String)
     case duplicateCheckpointBinding(String)
     case acceptedProjectStateBindingLost(String)
