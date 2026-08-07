@@ -33,7 +33,7 @@ public enum MissionLocalityPreference: String, Codable, CaseIterable, Sendable {
 }
 
 /// Evidence classes are claims the mission expects before completion can be accepted.
-public enum MissionEvidenceClass: String, Codable, CaseIterable, Sendable {
+public enum MissionEvidenceClass: String, Codable, CaseIterable, Hashable, Sendable {
     case generated
     case compiled
     case runtimeTested
@@ -185,7 +185,10 @@ public struct MissionConstitution: Codable, Equatable, Sendable {
             accessibilityTarget,
             persistenceExpectations,
         ]
-        if textFields.contains(where: { $0 != nil && !$0!.hasMissionContent }) {
+        if textFields.contains(where: { value in
+            guard let value else { return false }
+            return !value.hasMissionContent
+        }) {
             return .blankOptionalField
         }
 
