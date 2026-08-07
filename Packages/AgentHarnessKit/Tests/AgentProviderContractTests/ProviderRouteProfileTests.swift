@@ -127,8 +127,6 @@ final class ProviderRouteProfileTests: XCTestCase {
             descriptor: descriptor,
             authorityID: "public-openai-api",
             authenticationMode: .apiKeyBearer,
-            requestSerializerID: .openAIResponses,
-            streamParserID: .openAIResponses,
             replayPolicy: .responsesContinuationItems,
             supportState: .supported,
             revision: "routes-2026-08-07"
@@ -147,6 +145,20 @@ final class ProviderRouteProfileTests: XCTestCase {
         XCTAssertEqual(receipt.replayPolicy, .responsesContinuationItems)
         XCTAssertEqual(receipt.supportState, .supported)
         XCTAssertEqual(receipt.supportRevision, "routes-2026-08-07")
+    }
+
+    func testSerializerAndParserIdentityAreDerivedFromExecutableDescriptor() throws {
+        let responses = try makeProfile(
+            descriptor: OpenAIResponsesAdapter(model: .init(rawValue: "responses-codec")).descriptor
+        )
+        XCTAssertEqual(responses.requestSerializerID, .openAIResponses)
+        XCTAssertEqual(responses.streamParserID, .openAIResponses)
+
+        let chat = try makeProfile(
+            descriptor: OpenAIChatCompletionsAdapter(model: .init(rawValue: "chat-codec")).descriptor
+        )
+        XCTAssertEqual(chat.requestSerializerID, .openAIChatCompletions)
+        XCTAssertEqual(chat.streamParserID, .openAIChatCompletions)
     }
 
     func testReceiptRecoveryRejectsSupportRevisionDrift() throws {
@@ -177,9 +189,7 @@ final class ProviderRouteProfileTests: XCTestCase {
         )
         let second = try makeProfile(
             descriptor: secondDescriptor,
-            endpointPath: "/v1/responses",
-            requestSerializerID: .openAIResponses,
-            streamParserID: .openAIResponses
+            endpointPath: "/v1/responses"
         )
 
         XCTAssertThrowsError(try ProviderRouteRegistry([first, second])) { error in
@@ -195,8 +205,6 @@ final class ProviderRouteProfileTests: XCTestCase {
         authorityID: String = "fixture-origin",
         endpointPath: String? = nil,
         authenticationMode: ProviderAuthenticationMode = .apiKeyBearer,
-        requestSerializerID: ProviderRequestSerializerID = .openAIChatCompletions,
-        streamParserID: ProviderStreamParserID = .openAIChatCompletions,
         replayPolicy: ProviderReplayPolicy = .none,
         supportState: ProviderProductSupportState = .supported,
         revision: String = "fixture-r1"
@@ -208,8 +216,6 @@ final class ProviderRouteProfileTests: XCTestCase {
                 relativePath: endpointPath ?? descriptor.requestPath
             ),
             authenticationMode: authenticationMode,
-            requestSerializerID: requestSerializerID,
-            streamParserID: streamParserID,
             replayPolicy: replayPolicy,
             retryBehavior: .transientSameRoute,
             cancellationBehavior: .cooperativeTransportAbort,

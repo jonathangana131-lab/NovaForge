@@ -71,7 +71,17 @@ public struct ProviderRequestSerializerID: RawRepresentable, Codable, Hashable, 
 
     public static let openAIChatCompletions = Self(rawValue: "openai-chat-completions-json-v1")
     public static let openAIResponses = Self(rawValue: "openai-responses-json-v1")
-    public static let localNative = Self(rawValue: "local-native-v1")
+
+    /// Derived from the executable adapter dialect so a caller cannot attach a
+    /// contradictory serializer label to an accepted route profile.
+    public init(descriptor: ProviderAdapterDescriptor) {
+        switch descriptor.dialect {
+        case .openAIChatCompletions, .openAICompatibleChat:
+            self = .openAIChatCompletions
+        case .openAIResponses:
+            self = .openAIResponses
+        }
+    }
 }
 
 public struct ProviderStreamParserID: RawRepresentable, Codable, Hashable, Sendable {
@@ -84,6 +94,21 @@ public struct ProviderStreamParserID: RawRepresentable, Codable, Hashable, Senda
     public static let openAIChatCompletions = Self(rawValue: "openai-chat-completions-stream-v1")
     public static let openAIResponses = Self(rawValue: "openai-responses-stream-v1")
     public static let localNative = Self(rawValue: "local-native-stream-v1")
+
+    /// Hosted/caller-managed compatible-chat routes use the provider stream
+    /// parser, while the on-device adapter is translated by LocalModelWireSession.
+    public init(descriptor: ProviderAdapterDescriptor) {
+        if descriptor.route.deployment == .onDevice {
+            self = .localNative
+            return
+        }
+        switch descriptor.dialect {
+        case .openAIChatCompletions, .openAICompatibleChat:
+            self = .openAIChatCompletions
+        case .openAIResponses:
+            self = .openAIResponses
+        }
+    }
 }
 
 /// Opaque protocol replay requirements. This is transport continuity metadata,
@@ -123,8 +148,6 @@ public struct ProviderRouteEvidence: Codable, Equatable, Sendable {
 
 public enum ProviderRouteProfileValidationError: Error, Equatable, Sendable {
     case emptyEndpointAuthority
-    case emptySerializerID
-    case emptyStreamParserID
     case emptyEvidenceRevision
     case descriptorPathMismatch(descriptorPath: String, profilePath: String)
     case cancellationCapabilityMismatch
@@ -133,7 +156,10 @@ public enum ProviderRouteProfileValidationError: Error, Equatable, Sendable {
 /// One immutable, credential-free product routing snapshot. The concrete
 /// adapter remains the executable serializer/parser authority; this profile
 /// makes that exact choice visible to selection, dispatch, and receipts.
-public struct ProviderRouteProfile: Codable, Equatable, Sendable {
+/// Profiles are intentionally not Codable: durable state stores only the receipt
+/// projection, then recovery re-resolves package-owned route authority. Decoding
+/// arbitrary bytes must never manufacture a current supported route.
+public struct ProviderRouteProfile: Equatable, Sendable {
     public let descriptor: ProviderAdapterDescriptor
     public let endpoint: ProviderEndpointAuthority
     public let authenticationMode: ProviderAuthenticationMode
@@ -149,8 +175,6 @@ public struct ProviderRouteProfile: Codable, Equatable, Sendable {
         descriptor: ProviderAdapterDescriptor,
         endpoint: ProviderEndpointAuthority,
         authenticationMode: ProviderAuthenticationMode,
-        requestSerializerID: ProviderRequestSerializerID,
-        streamParserID: ProviderStreamParserID,
         replayPolicy: ProviderReplayPolicy,
         retryBehavior: ProviderRetryBehavior,
         cancellationBehavior: ProviderCancellationBehavior,
@@ -159,12 +183,6 @@ public struct ProviderRouteProfile: Codable, Equatable, Sendable {
     ) throws {
         guard !endpoint.authorityID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderRouteProfileValidationError.emptyEndpointAuthority
-        }
-        guard !requestSerializerID.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ProviderRouteProfileValidationError.emptySerializerID
-        }
-        guard !streamParserID.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ProviderRouteProfileValidationError.emptyStreamParserID
         }
         guard !evidence.revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderRouteProfileValidationError.emptyEvidenceRevision
@@ -183,8 +201,8 @@ public struct ProviderRouteProfile: Codable, Equatable, Sendable {
         self.descriptor = descriptor
         self.endpoint = endpoint
         self.authenticationMode = authenticationMode
-        self.requestSerializerID = requestSerializerID
-        self.streamParserID = streamParserID
+        requestSerializerID = ProviderRequestSerializerID(descriptor: descriptor)
+        streamParserID = ProviderStreamParserID(descriptor: descriptor)
         self.replayPolicy = replayPolicy
         self.retryBehavior = retryBehavior
         self.cancellationBehavior = cancellationBehavior
