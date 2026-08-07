@@ -36,6 +36,12 @@ public enum Forge3DGenerator {
             <div id="joystick" class="joystick" role="group" tabindex="0" aria-label="Drive joystick. Drag up or down for throttle and left or right to steer.">
               <div id="joystick-knob" class="joystick-knob" aria-hidden="true"></div>
             </div>
+            <div class="assistive-driving">
+              <label for="accessible-throttle">Throttle</label>
+              <input id="accessible-throttle" type="range" min="-1" max="1" step="0.1" value="0">
+              <label for="accessible-steer">Steering</label>
+              <input id="accessible-steer" type="range" min="-1" max="1" step="0.1" value="0">
+            </div>
           </main>
           <script src="game.js" defer></script>
         </body>
