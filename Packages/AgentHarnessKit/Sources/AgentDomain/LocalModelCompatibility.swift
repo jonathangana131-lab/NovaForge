@@ -35,6 +35,8 @@ public enum LocalModelCompatibilityReason: String, Codable, Hashable, Sendable {
     case toolCallingUnverified
     case structuredOutputUnavailable
     case structuredOutputUnverified
+    case contextWindowInsufficient
+    case contextWindowUnverified
     case benchmarkMissing
     case benchmarkNotApplicable
     case benchmarkInsufficient
@@ -67,7 +69,10 @@ public struct LocalModelEvidence: Codable, Equatable, Sendable {
 public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     public let modelID: String
     public let revision: String
+    public let format: String
     public let architecture: String
+    public let quantization: String?
+    public let contextWindowTokens: UInt64?
     public let fileSizeBytes: UInt64
     public let estimatedPeakMemoryBytes: UInt64?
     public let toolCalling: LocalModelCapabilityStatus
@@ -78,7 +83,10 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     public init(
         modelID: String,
         revision: String,
+        format: String,
         architecture: String,
+        quantization: String?,
+        contextWindowTokens: UInt64?,
         fileSizeBytes: UInt64,
         estimatedPeakMemoryBytes: UInt64?,
         toolCalling: LocalModelCapabilityStatus,
@@ -88,7 +96,10 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     ) {
         self.modelID = modelID
         self.revision = revision
+        self.format = format
         self.architecture = architecture
+        self.quantization = quantization
+        self.contextWindowTokens = contextWindowTokens
         self.fileSizeBytes = fileSizeBytes
         self.estimatedPeakMemoryBytes = estimatedPeakMemoryBytes
         self.toolCalling = toolCalling
@@ -123,13 +134,16 @@ public struct LocalModelDeviceProfile: Codable, Equatable, Sendable {
 public struct LocalModelMissionRequirements: Codable, Equatable, Sendable {
     public let requiresToolCalling: Bool
     public let requiresStructuredOutput: Bool
+    public let minimumContextTokens: UInt64?
 
     public init(
         requiresToolCalling: Bool = false,
-        requiresStructuredOutput: Bool = false
+        requiresStructuredOutput: Bool = false,
+        minimumContextTokens: UInt64? = nil
     ) {
         self.requiresToolCalling = requiresToolCalling
         self.requiresStructuredOutput = requiresStructuredOutput
+        self.minimumContextTokens = minimumContextTokens
     }
 }
 
@@ -191,7 +205,8 @@ public struct LocalModelCompatibilityPolicy: Codable, Equatable, Sendable {
     public var isValid: Bool {
         minimumCompletedSmokeRuns > 0
             && maximumFailureRate.isFinite
-            && (0 ... 1).contains(maximumFailureRate)
+            && maximumFailureRate >= 0
+            && maximumFailureRate <= 1
             && excellentTokensPerSecond.isFinite
             && goodTokensPerSecond.isFinite
             && excellentTokensPerSecond >= goodTokensPerSecond
@@ -293,6 +308,34 @@ public enum LocalModelCompatibilityEvaluator {
                 return .init(
                     label: .untested,
                     reasons: [.structuredOutputUnverified],
+                    evidence: evidence
+                )
+            }
+        }
+
+        if let minimumContextTokens = requirements.minimumContextTokens {
+            guard let contextWindowTokens = descriptor.contextWindowTokens else {
+                evidence.append(.init(
+                    kind: .inferred,
+                    code: "context.window.unverified",
+                    detail: "This mission requires at least \(minimumContextTokens) context tokens, but the catalog has no verified context-window value."
+                ))
+                return .init(
+                    label: .untested,
+                    reasons: [.contextWindowUnverified],
+                    evidence: evidence
+                )
+            }
+
+            guard contextWindowTokens >= minimumContextTokens else {
+                evidence.append(.init(
+                    kind: .inferred,
+                    code: "context.window.insufficient",
+                    detail: "The catalog reports \(contextWindowTokens) context tokens, below this mission's \(minimumContextTokens)-token requirement."
+                ))
+                return .init(
+                    label: .unsupported,
+                    reasons: [.contextWindowInsufficient],
                     evidence: evidence
                 )
             }
@@ -515,6 +558,11 @@ public enum LocalModelCompatibilityEvaluator {
             ),
             LocalModelEvidence(
                 kind: .sourceReported,
+                code: "catalog.format",
+                detail: "\(descriptor.source) reports model format \(descriptor.format)."
+            ),
+            LocalModelEvidence(
+                kind: .sourceReported,
                 code: "catalog.architecture",
                 detail: "\(descriptor.source) reports architecture \(descriptor.architecture)."
             ),
@@ -534,6 +582,22 @@ public enum LocalModelCompatibilityEvaluator {
                 detail: "\(descriptor.source) reports structured-output capability as \(descriptor.structuredOutput.rawValue)."
             ),
         ]
+
+        if let quantization = descriptor.quantization {
+            evidence.append(.init(
+                kind: .sourceReported,
+                code: "catalog.quantization",
+                detail: "\(descriptor.source) reports quantization \(quantization)."
+            ))
+        }
+
+        if let contextWindowTokens = descriptor.contextWindowTokens {
+            evidence.append(.init(
+                kind: .sourceReported,
+                code: "catalog.context_window",
+                detail: "\(descriptor.source) reports a \(contextWindowTokens)-token context window."
+            ))
+        }
 
         if let estimatedPeakMemoryBytes = descriptor.estimatedPeakMemoryBytes {
             evidence.append(.init(
