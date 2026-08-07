@@ -23,8 +23,34 @@ jobs:
       - uses: actions/checkout@v4
       - name: Swift toolchain
         run: swift --version
+      - name: Stage isolated authority-policy package
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/project-store-authority"
+          mkdir -p "$fixture/Sources/AgentStore" "$fixture/Tests/AgentStoreTests"
+          cp Packages/AgentHarnessKit/Sources/AgentStore/ProjectStoreAuthorityPolicy.swift \
+             "$fixture/Sources/AgentStore/"
+          cp Packages/AgentHarnessKit/Tests/AgentStoreTests/ProjectStoreAuthorityPolicyTests.swift \
+             "$fixture/Tests/AgentStoreTests/"
+          cat > "$fixture/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+
+          let package = Package(
+              name: "ProjectStoreAuthorityFixture",
+              products: [
+                  .library(name: "AgentStore", targets: ["AgentStore"]),
+              ],
+              targets: [
+                  .target(name: "AgentStore"),
+                  .testTarget(name: "AgentStoreTests", dependencies: ["AgentStore"]),
+              ]
+          )
+          SWIFT
       - name: Run ProjectStore authority policy tests
+        shell: bash
         run: >-
           swift test
-          --package-path Packages/AgentHarnessKit
+          --package-path "$RUNNER_TEMP/project-store-authority"
           --filter ProjectStoreAuthorityPolicyTests
