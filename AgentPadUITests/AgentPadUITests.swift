@@ -1166,7 +1166,7 @@ final class AgentPadUITests: XCTestCase {
         filesTab.tap()
 
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
-        XCTAssertTrue(identifiedElement("filesStressFixtureReady", in: app).waitForExistence(timeout: 90), "Stress files should finish every durable mutation before navigation begins.")
+        XCTAssertTrue(app.otherElements["filesStressFixtureReady"].waitForExistence(timeout: 90), "Stress files should finish every durable mutation before navigation begins.")
         XCTAssertTrue(app.staticTexts["Sources"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.buttons["filesGoUpButton"].exists, "Workspace root should not waste a primary toolbar slot on a disabled Go up action.")
         XCTAssertFalse(app.buttons["filesBreadcrumb-home"].exists, "Workspace root should not repeat Home as a redundant breadcrumb.")
@@ -1252,7 +1252,7 @@ final class AgentPadUITests: XCTestCase {
         filesTab.tap()
 
         XCTAssertTrue(app.otherElements["filesProjectOverview"].waitForExistence(timeout: 5))
-        XCTAssertTrue(identifiedElement("filesStressFixtureReady", in: app).waitForExistence(timeout: 90), "Search controls should wait for every durable fixture mutation before opening.")
+        XCTAssertTrue(app.otherElements["filesStressFixtureReady"].waitForExistence(timeout: 90), "Search controls should wait for every durable fixture mutation before opening.")
         XCTAssertFalse(app.buttons["filesBreadcrumb-home"].exists, "Workspace root should not repeat Home as a redundant breadcrumb.")
         app.buttons["Search files"].tap()
 
