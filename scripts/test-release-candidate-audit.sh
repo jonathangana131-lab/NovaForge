@@ -15,6 +15,14 @@ plutil -create xml1 "$APP/Info.plist"
 plutil -insert CFBundleIdentifier -string com.joey.NovaForge "$APP/Info.plist"
 plutil -insert CFBundleExecutable -string NovaForge "$APP/Info.plist"
 plutil -insert CFBundleSupportedPlatforms -json '["iPhoneOS"]' "$APP/Info.plist"
+
+set +e
+EXPECTED_TEAM_ID='not set' "$AUDIT" "$APP" >"$TMP_DIR/missing-source.out" 2>"$TMP_DIR/missing-source.err"
+command_status=$?
+set -e
+[ "$command_status" -eq 1 ]
+grep -q 'candidate source commit is missing or invalid' "$TMP_DIR/missing-source.err"
+
 plutil -insert NovaForgeSourceCommit -string "$SOURCE_COMMIT" "$APP/Info.plist"
 codesign --force --sign - "$APP" >/dev/null 2>&1
 
