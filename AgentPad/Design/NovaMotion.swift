@@ -175,3 +175,128 @@ struct LivePhraseDustGeometry {
         return value ^ (value >> 31)
     }
 }
+
+// MARK: - Forge Plan Space
+
+/// Build depth is deliberately separate from provider reasoning effort. These
+/// values describe the product work NovaForge should perform around a mission;
+/// they never pretend that a model exposes a native reasoning parameter.
+enum ForgeBuildDepth: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case prototype
+    case polished
+    case obsessive
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .prototype: "Prototype"
+        case .polished: "Polished"
+        case .obsessive: "Go Crazy"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .prototype: "bolt.fill"
+        case .polished: "checkmark.seal.fill"
+        case .obsessive: "sparkles"
+        }
+    }
+
+    var impact: String {
+        switch self {
+        case .prototype:
+            "Build, basic test, and get to a runnable result quickly."
+        case .polished:
+            "Build, test, run, inspect, repair, and cover accessibility basics."
+        case .obsessive:
+            "Deep architecture, adversarial tests, runtime inspection, performance, accessibility, and repeated polish."
+        }
+    }
+}
+
+/// Creativity changes how freely NovaForge may reinterpret the user's intent.
+/// It is a planning choice, not permission to ignore product or safety rules.
+enum ForgeCreativity: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case faithful
+    case inventive
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .faithful: "Faithful"
+        case .inventive: "Inventive"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .faithful: "scope"
+        case .inventive: "wand.and.stars"
+        }
+    }
+
+    var impact: String {
+        switch self {
+        case .faithful:
+            "Stay close to the request and make conservative product choices."
+        case .inventive:
+            "Protect the goal, but explore stronger original product and visual ideas."
+        }
+    }
+}
+
+/// A small, truthful first-generation Plan Space contract. The draft remains
+/// editable until the user explicitly hands it back to the normal Forge
+/// composer; this layer does not create a run or mutate a workspace itself.
+struct ForgePlanSpaceDraft: Equatable, Sendable {
+    var intent = ""
+    var buildDepth: ForgeBuildDepth?
+    var creativity: ForgeCreativity?
+
+    var trimmedIntent: String {
+        intent.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var answeredDecisionCount: Int {
+        (buildDepth == nil ? 0 : 1) + (creativity == nil ? 0 : 1)
+    }
+
+    var isReady: Bool {
+        !trimmedIntent.isEmpty && buildDepth != nil && creativity != nil
+    }
+
+    var compactSummary: String {
+        let depth = buildDepth?.title ?? "Choose depth"
+        let creativity = creativity?.title ?? "Choose creativity"
+        return "\(depth) · \(creativity)"
+    }
+
+    mutating func decideForMe() {
+        buildDepth = .polished
+        creativity = .faithful
+    }
+
+    var composerHandoff: String? {
+        guard let buildDepth, let creativity, !trimmedIntent.isEmpty else {
+            return nil
+        }
+        return [
+            trimmedIntent,
+            "",
+            "NovaForge build preferences:",
+            "- Build depth: \(buildDepth.title) — \(buildDepth.impact)",
+            "- Creativity: \(creativity.title) — \(creativity.impact)",
+        ].joined(separator: "\n")
+    }
+
+    static var debugDemo: ForgePlanSpaceDraft {
+        ForgePlanSpaceDraft(
+            intent: "Build a touch-first driving game that feels excellent on iPhone.",
+            buildDepth: .polished,
+            creativity: .inventive
+        )
+    }
+}
