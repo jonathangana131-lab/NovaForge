@@ -11,7 +11,7 @@ if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
   exit 2
 fi
 
-if ! printf '%s\n' "$EXPECTED_SOURCE_COMMIT" | grep -Eq '^[0-9A-Fa-f]{40,64}$'; then
+if ! printf '%s\n' "$EXPECTED_SOURCE_COMMIT" | grep -Eq '^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$'; then
   echo "expected source commit is missing or invalid; set EXPECTED_SOURCE_COMMIT to the exact candidate SHA" >&2
   exit 2
 fi
@@ -40,7 +40,7 @@ EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
   exit 1
 }
 
-if ! printf '%s\n' "$CANDIDATE_SOURCE_COMMIT" | grep -Eq '^[0-9A-Fa-f]{40,64}$'; then
+if ! printf '%s\n' "$CANDIDATE_SOURCE_COMMIT" | grep -Eq '^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$'; then
   echo "candidate source commit is missing or invalid; rebuild with NOVAFORGE_SOURCE_COMMIT=$EXPECTED_SOURCE_COMMIT" >&2
   exit 1
 fi
