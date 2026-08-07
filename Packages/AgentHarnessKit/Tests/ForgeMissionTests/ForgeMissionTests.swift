@@ -31,8 +31,8 @@ final class ForgeMissionTests: XCTestCase {
     func testSteeringInvalidatesOutstandingWorkerLease() throws {
         var mission = try makeMission()
         try mission.start(at: t0)
-        let activeID = try XCTUnwrap(mission.activeStage?.id)
-        let issued = try mission.makeWorkLease(for: activeID)
+        let lease = try XCTUnwrap(mission.activeStage).id
+        let issued = try mission.makeWorkLease(for: lease)
 
         try mission.steer("Make the runtime landscape-first", at: t0.addingTimeInterval(1))
 
@@ -193,6 +193,63 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.lifecycle, .running)
         XCTAssertEqual(mission.activeStage?.id, active.id)
         XCTAssertEqual(mission.steeringNotes.last?.instruction, "Choose the simpler safe implementation")
+    }
+
+    func testWaitingForDecisionCannotResumeIntoRunningWithoutResolution() throws {
+        var mission = try makeMission()
+        try mission.start(at: t0)
+        let active = try XCTUnwrap(mission.activeStage)
+        let lease = try mission.makeWorkLease(for: active.id)
+        try mission.acceptWorkerResult(
+            MissionWorkerResult(lease: lease, outcome: .needsDecision, evidenceSummary: "Choose A or B"),
+            at: t0.addingTimeInterval(1)
+        )
+
+        XCTAssertEqual(mission.lifecycle, .waitingForDecision)
+        XCTAssertThrowsError(try mission.resume(at: t0.addingTimeInterval(2)))
+        XCTAssertThrowsError(try mission.pause(at: t0.addingTimeInterval(2)))
+        XCTAssertEqual(mission.lifecycle, .waitingForDecision)
+        XCTAssertNil(mission.activeStage)
+    }
+
+    func testCancelInvalidatesOutstandingWorkAndRoundTripsThroughArchive() throws {
+        var mission = try makeMission()
+        try mission.start(at: t0)
+        let activeID = try XCTUnwrap(mission.activeStage?.id)
+        let lease = try mission.makeWorkLease(for: activeID)
+
+        try mission.cancel(at: t0.addingTimeInterval(1))
+
+        XCTAssertEqual(mission.lifecycle, .cancelled)
+        XCTAssertTrue(mission.isTerminal)
+        XCTAssertThrowsError(
+            try mission.acceptWorkerResult(
+                MissionWorkerResult(lease: lease, outcome: .completed, evidenceSummary: "Late result")
+            )
+        )
+        let data = try JSONEncoder().encode(ForgeMissionArchive(state: mission))
+        XCTAssertEqual(try JSONDecoder().decode(ForgeMissionArchive.self, from: data).state, mission)
+    }
+
+    func testSkippingBlockedOptionalDecisionStageContinuesMission() throws {
+        let optionalID = MissionStageID()
+        let nextID = MissionStageID()
+        var mission = try makeMission(stages: [
+            MissionStage(id: optionalID, kind: .visualCritique, title: "Optional review", isOptional: true, updatedAt: t0),
+            MissionStage(id: nextID, kind: .polish, title: "Polish", dependencies: [optionalID], updatedAt: t0),
+        ])
+        try mission.start(at: t0)
+        let lease = try mission.makeWorkLease(for: optionalID)
+        try mission.acceptWorkerResult(
+            MissionWorkerResult(lease: lease, outcome: .needsDecision, evidenceSummary: "Optional choice"),
+            at: t0.addingTimeInterval(1)
+        )
+
+        try mission.skipOptionalStage(optionalID, at: t0.addingTimeInterval(2))
+
+        XCTAssertEqual(mission.lifecycle, .running)
+        XCTAssertEqual(mission.activeStage?.id, nextID)
+        XCTAssertEqual(mission.stages.first(where: { $0.id == optionalID })?.status, .skipped)
     }
 
     private func completeActive(_ mission: inout ForgeMissionState, at date: Date) throws {
