@@ -9,11 +9,10 @@ enum Forge2DTemplate {
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; background: #090b0e; }
-    body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
     #game-shell { position: relative; width: 100%; height: 100%; min-height: 100dvh; overflow: hidden; touch-action: none; }
     #game { width: 100%; height: 100%; display: block; background: #0c1118; }
-    .status { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); min-height: 44px; padding: 10px 14px; border-radius: 16px; background: rgba(10, 13, 18, .78); color: #f6f7f9; font-weight: 650; letter-spacing: .01em; backdrop-filter: blur(18px); }
-    .pause { position: absolute; top: 14px; right: 14px; width: 48px; height: 48px; border-radius: 16px; border: 1px solid rgba(255,255,255,.18); background: rgba(10,13,18,.82); color: #fff; font: inherit; font-size: 20px; }
+    .status { position: absolute; top: max(14px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); min-height: 44px; padding: 10px 14px; border-radius: 16px; background: rgba(10, 13, 18, .78); color: #f6f7f9; font-weight: 650; letter-spacing: .01em; backdrop-filter: blur(18px); }
+    .pause { position: absolute; top: max(14px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); width: 48px; height: 48px; border-radius: 16px; border: 1px solid rgba(255,255,255,.18); background: rgba(10,13,18,.82); color: #fff; font: inherit; font-size: 20px; }
     .controls { position: absolute; bottom: max(18px, env(safe-area-inset-bottom)); display: flex; gap: 12px; }
     .controls-left { left: max(18px, env(safe-area-inset-left)); }
     .controls-right { right: max(18px, env(safe-area-inset-right)); }
