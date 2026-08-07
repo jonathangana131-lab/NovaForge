@@ -70,7 +70,7 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? ForgeRuntimeProjectLoadingError,
-                .manifestFile(.escapedSandbox)
+                .manifestFile(.symbolicLinkNotAllowed)
             )
         }
     }
@@ -95,7 +95,7 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? ForgeRuntimeProjectLoadingError,
-                .entryPoint(.escapedSandbox)
+                .entryPoint(.symbolicLinkNotAllowed)
             )
         }
     }
