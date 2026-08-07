@@ -226,6 +226,42 @@ final class ForgeHistoryCoreTests: XCTestCase {
         }
     }
 
+    func testEnvironmentVerificationRequiresExecutionReceiptNotJustAnArtifact() throws {
+        let screenshot = ForgeHistoryArtifactReference(kind: .screenshot, id: try artifactID("device-shot"))
+        let simulatorClaim = try evidence(
+            .simulatorVerified,
+            environment: .simulator,
+            artifact: screenshot
+        )
+
+        XCTAssertThrowsError(
+            try checkpoint(
+                "c1",
+                sequence: 1,
+                acceptedAt: 100,
+                artifacts: [screenshot],
+                evidence: [simulatorClaim]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeHistoryError,
+                .environmentVerificationRequiresReceipt(.simulatorVerified)
+            )
+        }
+
+        XCTAssertNoThrow(
+            try ForgeHistoryCheckpoint(
+                id: checkpointID("c1"),
+                sequence: 1,
+                acceptedAtMilliseconds: 100,
+                title: "Simulator proof",
+                acceptedExecutionReceiptReference: receiptID("sim-receipt"),
+                artifacts: [screenshot],
+                evidence: [simulatorClaim]
+            )
+        )
+    }
+
     func testSimulatorAndPhysicalDeviceEvidenceCannotBeMislabelled() throws {
         XCTAssertNoThrow(
             try evidence(.simulatorVerified, environment: .simulator, receipt: receiptID("sim-proof"))
