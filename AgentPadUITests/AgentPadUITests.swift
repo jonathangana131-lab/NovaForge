@@ -90,6 +90,69 @@ final class AgentPadUITests: XCTestCase {
         capture("goal-ready-first-mission-starter-prefilled", app: app)
     }
 
+    func testPlanSpaceUsesCurrentDraftAndPreservesDelegatedDecisions() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--debug-provider-list-ready", "--open-chat"]
+        app.launch()
+
+        XCRAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        let composer = chatComposerInput(in: app)
+        XCRAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        let intent = "Build a tiny touch-first driving game"
+        composer.typeText(intent)
+
+        let planButton = app.buttons["composerPlanSpaceButton"]
+        XCTAssertTrue(planButton.waitForExistence(timeout: 3), "A non-empty Forge draft should expose Plan Space.")
+        XCRAssertTrue(planButton.isEnabled, "Plan Space should be actionable before the draft is sent.")
+        planButton.tap()
+
+        let planSpace = identifiedElement("forgePlanSpace", in: app)
+        XCTAssertTrue(planSpace.waitForExistence(timeout: 5), "Plan Space should open from the active composer.")
+        XCTAssertTrue(app.staticTexts[intent].waitForExistence(timeout: 3), "The exact unsent composer intent must flow into Plan Space.")
+        XCRAssertTrue(identifiedElement("planSpaceNoQuestions", in: app).exists, "The normal path must not fabricate material questions before a planner supplies them.")
+
+        let extreme = app.buttons["planSpaceIntelligence-extreme"]
+        XCTAssertTrue(extreme.waitForExistence(timeout: 3))
+        extreme.tap()
+        let goCrazy = app.buttons["planSpaceDepth-obsessive"]
+        XCTAssertTrue(goCrazy.waitForExistence(timeout: 3))
+        goCrazy.tap()
+
+        let usePlan = app.buttons["planSpaceReadyToForge"]
+        XCTAssertTrue(usePlan.waitForExistence(timeout: 3), "A valid no-question proposal should still have a truthful ready handoff.")
+        usePlan.tap()
+        XCTAssertTrue(planSpace.waitForNonExistence(timeout: 5), "Using a plan should return to Forge instead of starting execution behind the sheet.")
+
+        let plannedDraft = (composer.value as? String) ?? composer.label
+        XCTAssertTrue(plannedDraft.contains(intent), "The original intent must survive the Plan Space round trip.")
+        XCTAssertTrue(plannedDraft.contains("Intelligence: Extreme"), "Changed Forge Intelligence should be visible in the editable handoff.")
+        XCRAssertTrue(plannedDraft.contains("Build depth: Go Crazy"), "Changed Build Depth should be visible in the editable handoff.")
+        XCTAssertTrue(app.buttons["sendMessageButton"].isEnabled, "Using a plan should leave an editable, unsent composer draft.")
+        XCRAssertFalse(app.otherElements["chatAssistantResponse"].exists, "Plan Space must not auto-run the mission when the user accepts the plan.")
+
+        app.terminate()
+        app.launchArguments = [
+            "--reset-ui",
+            "--debug-provider-list-ready",
+            "--open-chat",
+            "--forge-plan-space-demo"
+        ]
+        app.launch()
+
+        XCTAssertTrue(identifiedElement("forgePlanSpace", in: app).waitForExistence(timeout: 8))
+        XCTAssertTrue(identifiedElement("planSpaceQuestion-world-feel", in: app).waitForExistence(timeout: 3))
+        XCTAssertTrue(identifiedElement("planSpaceQuestion-camera", in: app).exists)
+        XCRAssertTrue(identifiedElement("planSpaceQuestion-orientation", in: app).exists)
+        XCRAssertTrue(app.staticTexts["Delegated"].waitForExistence(timeout: 3), "The fixture's Decide for me answer must remain visibly delegated.")
+        let delegatedNotice = app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS[c] %@", "delegated decision")
+        ).firstMatch
+        XCTAssertTrue(delegatedNotice.waitForExistence(timeout: 3), "Ready state should disclose that delegated choices remain unresolved for the Mission Engine.")
+        XCRAssertTrue(app.buttons["planSpaceReadyToForge"].exists)
+        capture("v13-plan-space-material-decisions", app: app)
+    }
+
     func testLaunchRestoresCompletedSelectedChatButNotInterruptedDraft() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--debug-provider-list-ready", "--open-chat"]
