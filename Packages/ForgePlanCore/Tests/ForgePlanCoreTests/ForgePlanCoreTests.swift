@@ -183,6 +183,48 @@ final class ForgePlanCoreTests: XCTestCase {
         XCTAssertNil(proposal.readySummary(answers: [:]))
     }
 
+    func testChoiceOptionsRequireNonemptyIDsAndLabels() {
+        let question = PlanQuestion(
+            id: "camera",
+            prompt: "Camera",
+            controlKind: .segmentedChoice,
+            options: [
+                .init(id: "", label: "First person"),
+                .init(id: "third", label: "   ")
+            ]
+        )
+
+        XCTAssertTrue(question.validationIssues.contains(.invalidQuestion(
+            questionID: "camera",
+            reason: "Question option ids must not be empty."
+        )))
+        XCTAssertTrue(question.validationIssues.contains(.invalidQuestion(
+            questionID: "camera",
+            reason: "Question option labels must not be empty."
+        )))
+    }
+
+    func testNumericRangeRequiresStepToLandOnMaximum() {
+        let malformed = PlanQuestion(
+            id: "detail",
+            prompt: "Detail",
+            controlKind: .slider,
+            range: .init(minimum: 0, maximum: 1, step: 0.3)
+        )
+
+        XCTAssertFalse(malformed.validationIssues.isEmpty)
+    }
+
+    func testEmptyIntentSummaryCannotBecomeReadyToForge() {
+        let proposal = PlanSpaceProposal(intentSummary: "   ", questions: [])
+
+        XCTAssertTrue(proposal.schemaValidationIssues.contains(.invalidProposal(
+            reason: "Intent summary must not be empty."
+        )))
+        XCTAssertFalse(proposal.isReadyToForge(answers: [:]))
+        XCTAssertNil(proposal.readySummary(answers: [:]))
+    }
+
     func testDuplicateQuestionIDsFailClosed() {
         let first = PlanQuestion(id: "camera", prompt: "Camera", controlKind: .freeText)
         let second = PlanQuestion(id: "camera", prompt: "Camera style", controlKind: .freeText)
