@@ -372,6 +372,58 @@ final class ForgeHistoryCoreTests: XCTestCase {
         XCTAssertEqual(try encoder.encode(left), try encoder.encode(right))
     }
 
+    func testProjectTimelineCanCrossMissionsWhileMissionScopedTimelineFailsClosed() throws {
+        let missionA = try missionID("mission-a")
+        let missionB = try missionID("mission-b")
+        let first = try checkpoint(
+            "c1",
+            mission: missionA,
+            sequence: 1,
+            acceptedAt: 100
+        )
+        let second = try checkpoint(
+            "c2",
+            parent: "c1",
+            mission: missionB,
+            sequence: 2,
+            acceptedAt: 200
+        )
+
+        let projectTimeline = try ForgeHistoryTimeline(
+            projectID: projectID("project-1"),
+            checkpoints: [second, first]
+        )
+        XCTAssertEqual(
+            projectTimeline.visualTimeMachineItems.map { $0.originatingMissionID?.rawValue },
+            ["mission-a", "mission-b"]
+        )
+
+        XCTAssertThrowsError(
+            try ForgeHistoryTimeline(
+                projectID: projectID("project-1"),
+                missionID: missionA,
+                checkpoints: [first, second]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeHistoryError,
+                .missionScopeMismatch(
+                    checkpointID: "c2",
+                    expectedMissionID: "mission-a",
+                    actualMissionID: "mission-b"
+                )
+            )
+        }
+
+        XCTAssertNoThrow(
+            try ForgeHistoryTimeline(
+                projectID: projectID("project-1"),
+                missionID: missionA,
+                checkpoints: [first]
+            )
+        )
+    }
+
     func testEmptyTimelineIsValidAndMakesNoCurrentStateClaim() throws {
         let timeline = try makeTimeline([])
         XCTAssertNil(timeline.latestCheckpoint)
@@ -381,7 +433,6 @@ final class ForgeHistoryCoreTests: XCTestCase {
     private func makeTimeline(_ checkpoints: [ForgeHistoryCheckpoint]) throws -> ForgeHistoryTimeline {
         try ForgeHistoryTimeline(
             projectID: projectID("project-1"),
-            missionID: missionID("mission-1"),
             checkpoints: checkpoints
         )
     }
@@ -389,6 +440,7 @@ final class ForgeHistoryCoreTests: XCTestCase {
     private func checkpoint(
         _ value: String,
         parent: String? = nil,
+        mission: ForgeHistoryMissionID? = nil,
         sequence: UInt64,
         acceptedAt: Int64,
         artifacts: [ForgeHistoryArtifactReference] = [],
@@ -398,6 +450,7 @@ final class ForgeHistoryCoreTests: XCTestCase {
         try ForgeHistoryCheckpoint(
             id: checkpointID(value),
             parentID: try parent.map(checkpointID),
+            originatingMissionID: mission,
             sequence: sequence,
             acceptedAtMilliseconds: acceptedAt,
             title: value,
