@@ -36,7 +36,9 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(js.contains("localStorage.setItem"))
         XCTAssertTrue(js.contains("webglcontextlost"))
         XCTAssertTrue(js.contains("maximumMarkers: 40"))
-        XCTAssertTrue(js.contains("input.keyThrottle + input.touchThrottle + input.padThrottle"))
+        XCTAssertTrue(js.contains("input.keyThrottle + input.touchThrottle + input.accessibleThrottle + input.padThrottle"))
+        XCTAssertTrue(js.contains("accessible-throttle"))
+        XCTAssertTrue(js.contains("accessible-steer"))
         XCTAssertFalse(js.contains("powerPreference: \"high-performance\""))
         XCTAssertFalse(js.contains("Math.random"))
     }
@@ -48,9 +50,12 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(html.contains("aria-live=\"polite\""))
         XCTAssertTrue(html.contains("aria-label=\"Drive joystick."))
         XCTAssertTrue(html.contains("aria-label=\"Pause scene\""))
+        XCTAssertTrue(html.contains("id=\"accessible-throttle\" type=\"range\""))
+        XCTAssertTrue(html.contains("id=\"accessible-steer\" type=\"range\""))
         XCTAssertTrue(css.contains("env(safe-area-inset-left)"))
         XCTAssertTrue(css.contains("env(safe-area-inset-bottom)"))
         XCTAssertTrue(css.contains("prefers-reduced-transparency"))
+        XCTAssertTrue(css.contains(".assistive-driving"))
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
