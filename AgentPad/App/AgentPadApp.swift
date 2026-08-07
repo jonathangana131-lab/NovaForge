@@ -1305,6 +1305,7 @@ enum LaunchPersistenceContainerSelector {
                 mode: .recoverySnapshotCompatibility
             )
         }
+    }
 
     private static func openCompatibilityContainer<Container>(
         paths: LaunchPersistenceStorePaths,
