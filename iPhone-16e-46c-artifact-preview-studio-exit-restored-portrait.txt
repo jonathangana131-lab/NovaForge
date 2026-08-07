@@ -1,0 +1,7 @@
+app.frame=(0.0, 0.0, 390.0, 844.0)
+firstWindow.frame=(0.0, 0.0, 390.0, 844.0)
+artifactGameFullScreen.exists=false
+artifactGameFullScreen.frame=missing
+artifactExitFullScreenButton.exists=false
+artifactExitFullScreenButton.frame=missingorientation=0
+screen=(390.0, 844.0)

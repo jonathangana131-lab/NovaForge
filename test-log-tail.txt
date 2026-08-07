@@ -1,0 +1,400 @@
+    t =    66.23s Waiting 5.0s for "artifactFullScreenButton" Button to exist
+    t =    67.24s     Checking `Expect predicate `existsNoRetry == 1` for object "artifactFullScreenButton" Button`
+    t =    67.25s         Checking existence of `"artifactFullScreenButton" Button`
+    t =    68.65s Tap "artifactFullScreenButton" Button
+    t =    68.65s     Wait for com.joey.NovaForge to idle
+    t =    68.73s     Find the "artifactFullScreenButton" Button
+    t =    69.29s     Check for interrupting elements affecting "artifactFullScreenButton" Button
+    t =    69.62s     Synthesize event
+    t =    70.02s     Wait for com.joey.NovaForge to idle
+    t =    71.13s         Interface orientation changed to Landscape Right
+    t =    71.13s Waiting 12.0s for "artifactGameFullScreen" Any to exist
+    t =    71.41s     Interface orientation changed to Portrait
+    t =    71.41s     Interface orientation changed to Landscape Right
+    t =    72.20s     Checking `Expect predicate `existsNoRetry == 1` for object "artifactGameFullScreen" Any`
+    t =    72.23s         Checking existence of `"artifactGameFullScreen" Any`
+    t =    72.60s Setting device orientation to Landscape Right
+    t =    72.63s     Device orientation changed to Landscape Right
+    t =    72.64s     Wait for com.joey.NovaForge to idle
+    t =    73.81s Find the "artifactGameFullScreen" Any
+    t =    73.91s Find the Target Application 'com.joey.NovaForge'
+    t =    75.03s Checking `Expect predicate `value == "ready"` for object "artifactGameFullScreen" Other`
+    t =    75.03s     Find the "artifactGameFullScreen" Other
+    t =    75.44s Checking existence of `"artifactGameFullScreen" Other`
+    t =    75.51s Checking existence of `"artifactGameFullScreen" Other`
+    t =    75.60s Find the "artifactGameFullScreen" Other
+    t =    75.70s Checking existence of `"artifactExitFullScreenButton" Button`
+    t =    75.74s Checking existence of `"artifactExitFullScreenButton" Button`
+    t =    75.78s Find the "artifactExitFullScreenButton" Button
+    t =    75.86s Find the Target Application 'com.joey.NovaForge'
+    t =    75.88s Find the Window (First Match)
+    t =    75.94s Waiting 1.0s for "artifactFullScreenButton" Button to exist
+    t =    76.94s     Checking `Expect predicate `existsNoRetry == 1` for object "artifactFullScreenButton" Button`
+    t =    76.94s         Checking existence of `"artifactFullScreenButton" Button`
+    t =    76.97s         Capturing element debug description
+    t =    76.97s     Checking existence of `"artifactFullScreenButton" Button`
+    t =    77.01s Collecting debug information to assist test failure triage
+    t =    77.01s     Requesting snapshot of accessibility hierarchy for app with pid 20306
+    t =    77.06s Checking existence of `"artifactViewportFit" Button`
+    t =    77.09s Checking existence of `"artifactExitFullScreenButton" Button`
+    t =    77.12s Waiting 3.0s for "artifactExitFullScreenButton" Button to exist
+    t =    78.13s     Checking `Expect predicate `existsNoRetry == 1` for object "artifactExitFullScreenButton" Button`
+    t =    78.13s         Checking existence of `"artifactExitFullScreenButton" Button`
+    t =    78.16s Find the "artifactExitFullScreenButton" Button
+    t =    78.22s Get number of matches for: Elements matching predicate '"artifactExitFullScreenButton" IN identifiers'
+    t =    78.25s Tap "artifactExitFullScreenButton" Button
+    t =    78.25s     Wait for com.joey.NovaForge to idle
+    t =    78.26s     Find the "artifactExitFullScreenButton" Button
+    t =    78.28s     Check for interrupting elements affecting "artifactExitFullScreenButton" Button
+    t =    78.32s     Synthesize event
+    t =    78.62s     Wait for com.joey.NovaForge to idle
+    t =    79.03s         Interface orientation changed to Portrait
+    t =    80.75s Setting device orientation to Portrait
+    t =    80.77s     Device orientation changed to Portrait
+    t =    80.78s     Wait for com.joey.NovaForge to idle
+[timeout-runner] HEARTBEAT NovaForge-visual: 663s elapsed (cap 3600s).
+    t =    81.82s Waiting 8.0s for "currentChatTitle" StaticText to exist
+    t =    82.88s     Checking `Expect predicate `existsNoRetry == 1` for object "currentChatTitle" StaticText`
+    t =    82.88s         Checking existence of `"currentChatTitle" StaticText`
+    t =    83.13s Find the Target Application 'com.joey.NovaForge'
+    t =    83.22s Find the Target Application 'com.joey.NovaForge'
+    t =    83.32s Waiting 1.0s for "artifactGameFullScreen" Any to exist
+    t =    84.32s     Checking `Expect predicate `existsNoRetry == 1` for object "artifactGameFullScreen" Any`
+    t =    84.32s         Checking existence of `"artifactGameFullScreen" Any`
+    t =    84.63s         Capturing element debug description
+    t =    84.63s     Checking existence of `"artifactGameFullScreen" Any`
+    t =    90.21s Collecting debug information to assist test failure triage
+    t =    90.21s     Requesting snapshot of accessibility hierarchy for app with pid 20306
+    t =    91.04s Checking existence of `"artifactGameFullScreen" Other`
+    t =    91.24s Checking existence of `"artifactGameFullScreen" Other`
+    t =    91.48s Checking existence of `"artifactExitFullScreenButton" Button`
+    t =    91.66s Checking existence of `"artifactExitFullScreenButton" Button`
+    t =    91.85s Find the Target Application 'com.joey.NovaForge'
+    t =    91.97s Find the Window (First Match)
+    t =    92.19s Terminate com.joey.NovaForge:20306
+    t =    93.24s Tear Down
+Test Case '-[AgentPadUITests.AgentPadUITests testLegacyV1ArtifactPreviewStudioModes]' passed (93.892 seconds).
+Test Case '-[AgentPadUITests.AgentPadUITests testLocalModelSettingsScreenshot]' started.
+    t =     0.00s Start Test at 2026-08-07 23:42:26.201
+    t =     0.09s Set Up
+    t =     0.10s Open com.joey.NovaForge
+    t =     0.10s     Launch com.joey.NovaForge
+2026-08-07 23:42:26.514 xcodebuild[6054:22612] [MT] IDELaunchParametersSnapshot: The operation couldn’t be completed. (DebuggerLLDB.DebuggerVersionStore.StoreError error 0.)
+2026-08-07 23:42:26.514 xcodebuild[6054:22612] [MT] IDELaunchParametersSnapshot: no debugger version
+    t =     1.04s         Setting up automation session
+    t =     3.15s         Wait for com.joey.NovaForge to idle
+    t =     6.36s Waiting 8.0s for "currentChatTitle" StaticText to exist
+    t =     7.42s     Checking `Expect predicate `existsNoRetry == 1` for object "currentChatTitle" StaticText`
+    t =     7.42s         Checking existence of `"currentChatTitle" StaticText`
+    t =     7.73s Waiting 5.0s for "Control" Button to exist
+    t =     8.76s     Checking `Expect predicate `existsNoRetry == 1` for object "Control" Button`
+    t =     8.76s         Checking existence of `"Control" Button`
+    t =     8.94s Tap "Control" Button
+    t =     8.95s     Wait for com.joey.NovaForge to idle
+    t =     8.99s     Find the "Control" Button
+    t =     9.22s     Check for interrupting elements affecting "Control" Button
+    t =     9.49s     Synthesize event
+    t =    10.07s     Wait for com.joey.NovaForge to idle
+    t =    12.33s Waiting 2.0s for "On-Device Models" StaticText to exist
+    t =    13.37s     Checking `Expect predicate `existsNoRetry == 1` for object "On-Device Models" StaticText`
+    t =    13.37s         Checking existence of `"On-Device Models" StaticText`
+    t =    14.62s         Capturing element debug description
+    t =    14.62s     Checking existence of `"On-Device Models" StaticText`
+[timeout-runner] HEARTBEAT NovaForge-visual: 693s elapsed (cap 3600s).
+    t =    18.83s Collecting debug information to assist test failure triage
+    t =    18.83s     Requesting snapshot of accessibility hierarchy for app with pid 23424
+    t =    19.05s Swipe up Target Application 'com.joey.NovaForge'
+    t =    19.05s     Wait for com.joey.NovaForge to idle
+    t =    19.10s     Find the Target Application 'com.joey.NovaForge'
+    t =    20.02s     Check for interrupting elements affecting "NovaForge" Application
+    t =    20.76s     Synthesize event
+    t =    21.35s     Wait for com.joey.NovaForge to idle
+    t =    23.67s Waiting 5.0s for "On-Device Models" StaticText to exist
+    t =    24.72s     Checking `Expect predicate `existsNoRetry == 1` for object "On-Device Models" StaticText`
+    t =    24.72s         Checking existence of `"On-Device Models" StaticText`
+    t =    25.40s Waiting 5.0s for "Qwen Coder 1.5B — iPhone 12" StaticText to exist
+    t =    26.42s     Checking `Expect predicate `existsNoRetry == 1` for object "Qwen Coder 1.5B — iPhone 12" StaticText`
+    t =    26.42s         Checking existence of `"Qwen Coder 1.5B — iPhone 12" StaticText`
+    t =    27.09s Waiting 5.0s for "modelPickerButton" Button to exist
+    t =    28.13s     Checking `Expect predicate `existsNoRetry == 1` for object "modelPickerButton" Button`
+    t =    28.14s         Checking existence of `"modelPickerButton" Button`
+    t =    28.55s Tap "modelPickerButton" Button
+    t =    28.55s     Wait for com.joey.NovaForge to idle
+    t =    28.60s     Find the "modelPickerButton" Button
+    t =    29.08s     Check for interrupting elements affecting "modelPickerButton" Button
+    t =    29.64s     Synthesize event
+    t =    30.04s     Wait for com.joey.NovaForge to idle
+    t =    30.14s Waiting 5.0s for "Choose On-Device Model" StaticText to exist
+    t =    31.17s     Checking `Expect predicate `existsNoRetry == 1` for object "Choose On-Device Model" StaticText`
+    t =    31.17s         Checking existence of `"Choose On-Device Model" StaticText`
+    t =    31.54s Checking existence of `"localModelSafetyCard" Any`
+    t =    32.02s Get all elements bound by index for: Elements matching predicate '"localModelSafetyCard" IN identifiers'
+    t =    32.42s Find the "localModelSafetyCard" Any
+    t =    32.88s Find the Target Application 'com.joey.NovaForge'
+    t =    33.02s Find the "localModelSafetyCard" Any
+    t =    33.34s Find the Target Application 'com.joey.NovaForge'
+    t =    33.62s Find the "localModelSafetyCard" Any
+    t =    34.03s Find the Target Application 'com.joey.NovaForge'
+    t =    34.23s Find the "localModelSafetyCard" Any
+    t =    34.59s Find the Target Application 'com.joey.NovaForge'
+    t =    34.79s Find the "localModelSafetyCard" Any
+    t =    35.35s Find the Target Application 'com.joey.NovaForge'
+    t =    35.60s Waiting 5.0s for "localModelSafetyCard" StaticText to exist
+    t =    36.63s     Checking `Expect predicate `existsNoRetry == 1` for object "localModelSafetyCard" StaticText`
+    t =    36.64s         Checking existence of `"localModelSafetyCard" StaticText`
+    t =    36.94s Waiting 5.0s for "Atlas 2" StaticText to exist
+    t =    37.96s     Checking `Expect predicate `existsNoRetry == 1` for object "Atlas 2" StaticText`
+    t =    37.96s         Checking existence of `"Atlas 2" StaticText`
+    t =    38.21s Waiting 5.0s for StaticText (First Match) to exist
+    t =    39.27s     Checking `Expect predicate `existsNoRetry == 1` for object StaticText (First Match)`
+    t =    39.27s         Checking existence of `StaticText (First Match)`
+    t =    40.18s Find the Target Application 'com.joey.NovaForge'
+    t =    40.44s Find the Window (First Match)
+    t =    40.48s Tear Down
+Test Case '-[AgentPadUITests.AgentPadUITests testLocalModelSettingsScreenshot]' passed (40.857 seconds).
+Test Case '-[AgentPadUITests.AgentPadUITests testNativeModelPickerAndChatGPTProviderScreenshot]' started.
+    t =     0.00s Start Test at 2026-08-07 23:43:07.055
+    t =     0.05s Set Up
+    t =     0.06s Open com.joey.NovaForge
+    t =     0.06s     Launch com.joey.NovaForge
+    t =     0.06s         Terminate com.joey.NovaForge:23424
+2026-08-07 23:43:08.150 xcodebuild[6054:22612] [MT] IDELaunchParametersSnapshot: The operation couldn’t be completed. (DebuggerLLDB.DebuggerVersionStore.StoreError error 0.)
+2026-08-07 23:43:08.150 xcodebuild[6054:22612] [MT] IDELaunchParametersSnapshot: no debugger version
+    t =     2.14s         Setting up automation session
+    t =     3.78s         Wait for com.joey.NovaForge to idle
+[timeout-runner] HEARTBEAT NovaForge-visual: 723s elapsed (cap 3600s).
+    t =     6.58s Waiting 8.0s for "currentChatTitle" StaticText to exist
+    t =     7.61s     Checking `Expect predicate `existsNoRetry == 1` for object "currentChatTitle" StaticText`
+    t =     7.61s         Checking existence of `"currentChatTitle" StaticText`
+    t =     7.88s Waiting 5.0s for "Control" Button to exist
+    t =     8.89s     Checking `Expect predicate `existsNoRetry == 1` for object "Control" Button`
+    t =     8.89s         Checking existence of `"Control" Button`
+    t =     9.01s Waiting 2.0s for "Control" Button to exist
+    t =    10.01s     Checking `Expect predicate `existsNoRetry == 1` for object "Control" Button`
+    t =    10.01s         Checking existence of `"Control" Button`
+    t =    10.20s Find the "Control" Button
+    t =    10.47s Tap "slider.horizontal.3" Button
+    t =    10.47s     Wait for com.joey.NovaForge to idle
+    t =    10.47s     Find the "slider.horizontal.3" Button
+    t =    10.83s     Check for interrupting elements affecting "slider.horizontal.3" Button
+    t =    11.10s     Synthesize event
+    t =    11.46s     Wait for com.joey.NovaForge to idle
+    t =    13.49s Waiting 5.0s for "settingsProvider-openAICodex" Button to exist
+    t =    14.53s     Checking `Expect predicate `existsNoRetry == 1` for object "settingsProvider-openAICodex" Button`
+    t =    14.53s         Checking existence of `"settingsProvider-openAICodex" Button`
+    t =    14.67s Tap "settingsProvider-openAICodex" Button
+    t =    14.67s     Wait for com.joey.NovaForge to idle
+    t =    14.67s     Find the "settingsProvider-openAICodex" Button
+    t =    14.81s     Check for interrupting elements affecting "settingsProvider-openAICodex" Button
+    t =    14.99s     Synthesize event
+    t =    15.03s         Scroll element to visible
+    t =    15.04s         Find the "settingsProvider-openAICodex" Button
+    t =    15.31s         Computed hit point {103.50000303983688, 398.33333283662813} after scrolling to visible
+    t =    15.62s     Wait for com.joey.NovaForge to idle
+    t =    16.31s Waiting 2.0s for "modelPickerButton" Button to exist
+    t =    17.36s     Checking `Expect predicate `existsNoRetry == 1` for object "modelPickerButton" Button`
+    t =    17.36s         Checking existence of `"modelPickerButton" Button`
+    t =    17.57s Waiting 5.0s for "modelPickerButton" Button to exist
+    t =    18.61s     Checking `Expect predicate `existsNoRetry == 1` for object "modelPickerButton" Button`
+    t =    18.61s         Checking existence of `"modelPickerButton" Button`
+    t =    18.74s Tap "modelPickerButton" Button
+    t =    18.74s     Wait for com.joey.NovaForge to idle
+    t =    18.75s     Find the "modelPickerButton" Button
+    t =    18.92s     Check for interrupting elements affecting "modelPickerButton" Button
+    t =    19.11s     Synthesize event
+    t =    19.43s     Wait for com.joey.NovaForge to idle
+    t =    19.54s Waiting 5.0s for "Choose Model" StaticText to exist
+    t =    20.58s     Checking `Expect predicate `existsNoRetry == 1` for object "Choose Model" StaticText`
+    t =    20.58s         Checking existence of `"Choose Model" StaticText`
+    t =    20.80s Waiting 5.0s for "GPT-5.5" StaticText to exist
+    t =    21.84s     Checking `Expect predicate `existsNoRetry == 1` for object "GPT-5.5" StaticText`
+    t =    21.84s         Checking existence of `"GPT-5.5" StaticText`
+    t =    22.11s Waiting 5.0s for "Search models" TextField to exist
+    t =    23.16s     Checking `Expect predicate `existsNoRetry == 1` for object "Search models" TextField`
+    t =    23.16s         Checking existence of `"Search models" TextField`
+    t =    23.59s Tap "Search models" TextField
+    t =    23.59s     Wait for com.joey.NovaForge to idle
+    t =    23.61s     Find the "Search models" TextField
+    t =    23.87s     Check for interrupting elements affecting "Search models" TextField
+    t =    24.67s     Synthesize event
+    t =    25.11s     Wait for com.joey.NovaForge to idle
+    t =    26.36s Type '5.5' into "Search models" TextField
+    t =    26.36s     Wait for com.joey.NovaForge to idle
+    t =    26.79s     Find the "Search models" TextField
+    t =    29.47s     Check for interrupting elements affecting "Search models" TextField
+    t =    31.05s     Synthesize event
+    t =    31.73s     Wait for com.joey.NovaForge to idle
+    t =    31.87s Waiting 5.0s for "settingsModelSearchClearButton" Button to exist
+    t =    32.94s     Checking `Expect predicate `existsNoRetry == 1` for object "settingsModelSearchClearButton" Button`
+    t =    32.94s         Checking existence of `"settingsModelSearchClearButton" Button`
+    t =    34.06s Waiting 3.0s for "settingsModelSearchClearButton" Button to exist
+    t =    35.10s     Checking `Expect predicate `existsNoRetry == 1` for object "settingsModelSearchClearButton" Button`
+    t =    35.10s         Checking existence of `"settingsModelSearchClearButton" Button`
+[timeout-runner] HEARTBEAT NovaForge-visual: 753s elapsed (cap 3600s).
+    t =    37.28s     Checking existence of `"settingsModelSearchClearButton" Button`
+    t =    38.70s Find the "settingsModelSearchClearButton" Button
+    t =    40.04s Waiting 3.0s for "settingsAPIKeyRevealButton" Button to exist
+    t =    41.10s     Checking `Expect predicate `existsNoRetry == 1` for object "settingsAPIKeyRevealButton" Button`
+    t =    41.10s         Checking existence of `"settingsAPIKeyRevealButton" Button`
+    t =    42.64s         Capturing element debug description
+    t =    43.04s     Checking `Expect predicate `existsNoRetry == 1` for object "settingsAPIKeyRevealButton" Button`
+    t =    43.04s         Checking existence of `"settingsAPIKeyRevealButton" Button`
+    t =    43.35s         Capturing element debug description
+    t =    43.35s     Checking existence of `"settingsAPIKeyRevealButton" Button`
+    t =    44.61s Collecting debug information to assist test failure triage
+    t =    44.61s     Requesting snapshot of accessibility hierarchy for app with pid 24097
+    t =    44.86s Waiting 3.0s for "modelPickerDone" Button to exist
+    t =    45.88s     Checking `Expect predicate `existsNoRetry == 1` for object "modelPickerDone" Button`
+    t =    45.88s         Checking existence of `"modelPickerDone" Button`
+    t =    47.55s Find the "modelPickerDone" Button
+    t =    48.89s Waiting 2.0s for "modelRefreshButton" Button to exist
+    t =    49.91s     Checking `Expect predicate `existsNoRetry == 1` for object "modelRefreshButton" Button`
+    t =    49.91s         Checking existence of `"modelRefreshButton" Button`
+    t =    51.16s         Capturing element debug description
+    t =    51.17s     Checking existence of `"modelRefreshButton" Button`
+    t =    53.76s Waiting 3.0s for "modelRefreshButton" Button to exist
+    t =    54.81s     Checking `Expect predicate `existsNoRetry == 1` for object "modelRefreshButton" Button`
+    t =    54.81s         Checking existence of `"modelRefreshButton" Button`
+    t =    56.20s Find the "modelRefreshButton" Button
+    t =    56.70s Waiting 5.0s for "Live ChatGPT models" StaticText to exist
+    t =    57.74s     Checking `Expect predicate `existsNoRetry == 1` for object "Live ChatGPT models" StaticText`
+    t =    57.74s         Checking existence of `"Live ChatGPT models" StaticText`
+    t =    58.03s Checking existence of `StaticText (First Match)`
+    t =    59.23s Find the Target Application 'com.joey.NovaForge'
+    t =    59.39s Find the Window (First Match)
+    t =    59.49s Tap "Done" Button
+    t =    59.49s     Wait for com.joey.NovaForge to idle
+    t =    59.50s     Find the "Done" Button
+    t =    59.97s     Check for interrupting elements affecting "modelPickerDone" Button
+    t =    60.33s     Synthesize event
+    t =    60.71s     Wait for com.joey.NovaForge to idle
+    t =    60.81s Tear Down
+Test Case '-[AgentPadUITests.AgentPadUITests testNativeModelPickerAndChatGPTProviderScreenshot]' passed (62.333 seconds).
+Test Case '-[AgentPadUITests.AgentPadUITests testReasoningAndUltraCodePickerUsesExpandableLiquidGlassControl]' started.
+    t =     0.00s Start Test at 2026-08-07 23:44:09.390
+    t =     0.06s Set Up
+    t =     0.07s Open com.joey.NovaForge
+    t =     0.07s     Launch com.joey.NovaForge
+    t =     0.07s         Terminate com.joey.NovaForge:24097
+2026-08-07 23:44:10.571 xcodebuild[6054:22612] [MT] IDELaunchParametersSnapshot: The operation couldn’t be completed. (DebuggerLLDB.DebuggerVersionStore.StoreError error 0.)
+2026-08-07 23:44:10.571 xcodebuild[6054:22612] [MT] IDELaunchParametersSnapshot: no debugger version
+    t =     2.32s         Setting up automation session
+    t =     3.94s         Wait for com.joey.NovaForge to idle
+[timeout-runner] HEARTBEAT NovaForge-visual: 784s elapsed (cap 3600s).
+    t =     6.55s Waiting 8.0s for "currentChatTitle" StaticText to exist
+    t =     7.58s     Checking `Expect predicate `existsNoRetry == 1` for object "currentChatTitle" StaticText`
+    t =     7.58s         Checking existence of `"currentChatTitle" StaticText`
+    t =     7.94s Checking existence of `"composerModelNativeMenu" Any`
+    t =     8.58s Get all elements bound by index for: Elements matching predicate '"composerModelNativeMenu" IN identifiers'
+    t =     8.71s Find the "composerModelNativeMenu" Any
+    t =     9.01s Find the Target Application 'com.joey.NovaForge'
+    t =     9.15s Waiting 5.0s for "composerModelNativeMenu" Button to exist
+    t =    10.21s     Checking `Expect predicate `existsNoRetry == 1` for object "composerModelNativeMenu" Button`
+    t =    10.21s         Checking existence of `"composerModelNativeMenu" Button`
+    t =    10.45s Tap "composerModelNativeMenu" Button
+    t =    10.45s     Wait for com.joey.NovaForge to idle
+    t =    10.45s     Find the "composerModelNativeMenu" Button
+    t =    10.72s     Check for interrupting elements affecting "composerModelNativeMenu" Button
+    t =    10.89s     Synthesize event
+    t =    11.39s     Wait for com.joey.NovaForge to idle
+    t =    12.37s Waiting 5.0s for "composerProvider-openAICodex" Button to exist
+    t =    13.41s     Checking `Expect predicate `existsNoRetry == 1` for object "composerProvider-openAICodex" Button`
+    t =    13.41s         Checking existence of `"composerProvider-openAICodex" Button`
+    t =    13.63s Tap "composerProvider-openAICodex" Button
+    t =    13.63s     Wait for com.joey.NovaForge to idle
+    t =    13.64s     Find the "composerProvider-openAICodex" Button
+    t =    14.03s     Check for interrupting elements affecting "composerProvider-openAICodex" Button
+    t =    14.32s     Synthesize event
+    t =    14.71s     Wait for com.joey.NovaForge to idle
+    t =    15.79s Waiting 5.0s for "composerModel-gpt-5.5" Button to exist
+    t =    16.80s     Checking `Expect predicate `existsNoRetry == 1` for object "composerModel-gpt-5.5" Button`
+    t =    16.80s         Checking existence of `"composerModel-gpt-5.5" Button`
+    t =    17.00s Tap "Done" Button
+    t =    17.00s     Wait for com.joey.NovaForge to idle
+    t =    17.01s     Find the "Done" Button
+    t =    17.24s     Check for interrupting elements affecting "Done" Button
+    t =    17.44s     Synthesize event
+    t =    17.82s     Wait for com.joey.NovaForge to idle
+    t =    18.50s Waiting 5.0s for "composerReasoningPickerButton" Button to exist
+    t =    19.54s     Checking `Expect predicate `existsNoRetry == 1` for object "composerReasoningPickerButton" Button`
+    t =    19.54s         Checking existence of `"composerReasoningPickerButton" Button`
+    t =    19.68s Waiting 3.0s for "composerReasoningPickerButton" Button to exist
+    t =    20.72s     Checking `Expect predicate `existsNoRetry == 1` for object "composerReasoningPickerButton" Button`
+    t =    20.73s         Checking existence of `"composerReasoningPickerButton" Button`
+    t =    20.90s Find the "composerReasoningPickerButton" Button
+    t =    21.17s Tap "composerReasoningPickerButton" Button
+    t =    21.17s     Wait for com.joey.NovaForge to idle
+    t =    21.18s     Find the "composerReasoningPickerButton" Button
+    t =    21.54s     Check for interrupting elements affecting "composerReasoningPickerButton" Button
+    t =    21.80s     Synthesize event
+    t =    22.26s     Wait for com.joey.NovaForge to idle
+    t =    23.53s Waiting 5.0s for "composerReasoningPicker" Any to exist
+    t =    24.54s     Checking `Expect predicate `existsNoRetry == 1` for object "composerReasoningPicker" Any`
+    t =    24.55s         Checking existence of `"composerReasoningPicker" Any`
+    t =    25.02s Waiting 5.0s for "reasoningEffortSlider" Any to exist
+    t =    26.06s     Checking `Expect predicate `existsNoRetry == 1` for object "reasoningEffortSlider" Any`
+    t =    26.06s         Checking existence of `"reasoningEffortSlider" Any`
+    t =    27.01s Waiting 3.0s for "reasoningEffortSlider" Any to exist
+    t =    28.04s     Checking `Expect predicate `existsNoRetry == 1` for object "reasoningEffortSlider" Any`
+    t =    28.05s         Checking existence of `"reasoningEffortSlider" Any`
+    t =    28.67s Find the "reasoningEffortSlider" Any
+    t =    29.52s Checking existence of `"Agent mode" StaticText`
+    t =    29.75s Press "reasoningEffortSlider" Other[0.14, 0.34] for 0.1 seconds, then drag to "reasoningEffortSlider" Other[0.50, 0.34] with velocity of 500.00 pixels per second, and then hold for 0.0 seconds 
+    t =    29.75s     Wait for com.joey.NovaForge to idle
+    t =    29.77s     Find the "reasoningEffortSlider" Other
+    t =    30.55s     Check for interrupting elements affecting "reasoningEffortSlider" Other
+    t =    31.23s     Synthesize event
+    t =    31.25s         Find the "reasoningEffortSlider" Other
+    t =    32.36s         Find the "reasoningEffortSlider" Other
+    t =    33.44s         Find the "reasoningEffortSlider" Other
+    t =    34.37s         Find the "reasoningEffortSlider" Other
+[timeout-runner] HEARTBEAT NovaForge-visual: 814s elapsed (cap 3600s).
+    t =    35.15s         Find the "reasoningEffortSlider" Other
+    t =    36.56s     Wait for com.joey.NovaForge to idle
+    t =    37.32s Find the "reasoningEffortSlider" Other
+    t =    37.55s Tap "reasoningEffortSlider" Other[0.90, 0.34]
+    t =    37.55s     Wait for com.joey.NovaForge to idle
+    t =    37.57s     Find the "reasoningEffortSlider" Other
+    t =    37.92s     Check for interrupting elements affecting "reasoningEffortSlider" Other
+    t =    38.51s     Synthesize event
+    t =    38.52s         Find the "reasoningEffortSlider" Other
+    t =    38.90s         Find the "reasoningEffortSlider" Other
+    t =    39.35s         Find the "reasoningEffortSlider" Other
+    t =    40.00s     Wait for com.joey.NovaForge to idle
+    t =    40.10s Waiting 5.0s for StaticText (First Match) to exist
+    t =    41.13s     Checking `Expect predicate `existsNoRetry == 1` for object StaticText (First Match)`
+    t =    41.13s         Checking existence of `StaticText (First Match)`
+    t =    41.98s Find the Target Application 'com.joey.NovaForge'
+    t =    42.08s Find the Window (First Match)
+    t =    42.12s Tap Target Application 'com.joey.NovaForge'[0.95, 0.08]
+    t =    42.12s     Wait for com.joey.NovaForge to idle
+    t =    42.12s     Find the Target Application 'com.joey.NovaForge'
+    t =    42.22s     Check for interrupting elements affecting "NovaForge" Application
+    t =    42.39s     Synthesize event
+    t =    42.43s         Find the Target Application 'com.joey.NovaForge'
+    t =    42.61s         Find the Target Application 'com.joey.NovaForge'
+    t =    42.79s         Find the Target Application 'com.joey.NovaForge'
+    t =    43.25s     Wait for com.joey.NovaForge to idle
+    t =    43.28s Waiting 5.0s for "composerReasoningPickerButton" Button to exist
+    t =    44.34s     Checking `Expect predicate `existsNoRetry == 1` for object "composerReasoningPickerButton" Button`
+    t =    44.34s         Checking existence of `"composerReasoningPickerButton" Button`
+    t =    44.49s Find the "composerReasoningPickerButton" Button
+    t =    44.66s Tear Down
+Test Case '-[AgentPadUITests.AgentPadUITests testReasoningAndUltraCodePickerUsesExpandableLiquidGlassControl]' passed (45.012 seconds).
+Test Suite 'AgentPadUITests' passed at 2026-08-07 23:44:54.403.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 730.737 (730.752) seconds
+Test Suite 'AgentPadUITests.xctest' passed at 2026-08-07 23:44:54.407.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 730.737 (730.756) seconds
+Test Suite 'Selected tests' passed at 2026-08-07 23:44:54.408.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 730.737 (730.758) seconds
+[timeout-runner] HEARTBEAT NovaForge-visual: 844s elapsed (cap 3600s).
+2026-08-07 23:45:17.603 xcodebuild[6054:22612] [MT] IDETestOperationsObserverDebug: 783.206 elapsed -- Testing started completed.
+2026-08-07 23:45:17.604 xcodebuild[6054:22612] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-07 23:45:17.604 xcodebuild[6054:22612] [MT] IDETestOperationsObserverDebug: 783.206 sec, +783.206 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/runner/Library/Developer/Xcode/DerivedData/AgentPad-baxzovtdoktvcngceniygkexxiwv/Logs/Test/Test-AgentPad-2026.08.07_23-32-07-+0000.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started
