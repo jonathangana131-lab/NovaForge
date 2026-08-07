@@ -1,0 +1,101 @@
+name: Temporary V13 mission topology truth
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-CONSOLIDATE-7A8E/mission-stack-main-recovery/e1
+
+permissions:
+  contents: write
+
+jobs:
+  harden-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Harden topology truth and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=588f1d6ea13a29569f6fc7eda7a20a3e240d481c
+          test "$(git rev-parse HEAD^)" = "$base"
+          test "$(git show --pretty='' --name-only HEAD | sed '/^$/d')" = ".github/workflows/tmp-v13-mission-topology-truth.yml"
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          def once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f"{label}: expected one match, found {n}")
+              return text.replace(old, new, 1)
+
+          mission_path = Path('Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMission.swift')
+          archive_path = Path('Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMissionArchive.swift')
+          tests_path = Path('Packages/AgentHarnessKit/Tests/ForgeMissionTests/ForgeMissionTests.swift')
+
+          s = mission_path.read_text()
+          s = once(s,
+          '''        guard route.isValid else { throw ForgeMissionError.invalidRouteReceipt }\n        guard !graph.stages.contains(where: { $0.status == .active }) else { throw ForgeMissionError.invalidGraph }\n\n        missionID = constitution.missionID\n''',
+          '''        guard route.isValid else { throw ForgeMissionError.invalidRouteReceipt }\n        // A new mission graph describes work to do. Execution state can only be\n        // minted by reducer transitions that also record the matching receipts.\n        guard graph.stages.allSatisfy({ $0.status == .pending }) else { throw ForgeMissionError.invalidGraph }\n\n        missionID = constitution.missionID\n''',
+          'fresh mission status truth')
+
+          s = once(s,
+          '''        let newByID = Dictionary(uniqueKeysWithValues: newGraph.stages.map { ($0.stageID, $0) })\n        for accepted in graph.stages where accepted.status == .completed {\n''',
+          '''        let currentByID = Dictionary(uniqueKeysWithValues: graph.stages.map { ($0.stageID, $0) })\n        let newByID = Dictionary(uniqueKeysWithValues: newGraph.stages.map { ($0.stageID, $0) })\n\n        // Topology revisions may add/reorder/redescribe work, but they do not\n        // have authority to manufacture execution outcomes. Surviving stages\n        // preserve status; newly introduced stages always begin pending.\n        for proposed in newGraph.stages {\n            if let current = currentByID[proposed.stageID] {\n                guard proposed.status == current.status else { throw ForgeMissionError.invalidGraph }\n            } else {\n                guard proposed.status == .pending else { throw ForgeMissionError.invalidGraph }\n            }\n        }\n        for current in graph.stages where newByID[current.stageID] == nil {\n            if current.status == .completed {\n                throw ForgeMissionError.acceptedCompletedStageWouldBeLost(current.stageID)\n            }\n            guard current.status == .pending else { throw ForgeMissionError.invalidGraph }\n        }\n\n        for accepted in graph.stages where accepted.status == .completed {\n''',
+          'replacement status truth')
+          mission_path.write_text(s)
+
+          a = archive_path.read_text()
+          a = once(a,
+          '''        let completedStageIDs = Set(stages.lazy.filter { $0.status == .completed }.map(\\.stageID))\n        let evidencedStageIDs = Set(stageEvidence.map(\\.stageID))\n        guard evidencedStageIDs == completedStageIDs else {\n            throw ForgeMissionArchiveError.invalidStageEvidence\n        }\n        guard completedStageIDs.allSatisfy({ stageID in\n            workerReceipts.contains(where: { $0.stageID == stageID && $0.kind == .completed })\n        }), workerReceipts.lazy.filter({ $0.kind == .completed }).allSatisfy({ completedStageIDs.contains($0.stageID) }) else {\n            throw ForgeMissionArchiveError.invalidWorkerReceipt\n        }\n''',
+          '''        let completedStageIDs = Set(stages.lazy.filter { $0.status == .completed }.map(\\.stageID))\n        let evidencedStageIDs = Set(stageEvidence.map(\\.stageID))\n        guard evidencedStageIDs == completedStageIDs,\n              stageEvidence.count == completedStageIDs.count else {\n            throw ForgeMissionArchiveError.invalidStageEvidence\n        }\n        let completedReceipts = workerReceipts.filter { $0.kind == .completed }\n        guard Set(completedReceipts.map(\\.stageID)) == completedStageIDs,\n              completedReceipts.count == completedStageIDs.count else {\n            throw ForgeMissionArchiveError.invalidWorkerReceipt\n        }\n''',
+          'exact completed evidence cardinality')
+          archive_path.write_text(a)
+
+          t = tests_path.read_text()
+          marker = '''    func testGraphReplacementCannotDropStageWithAcceptedDecisionHistory() throws {\n'''
+          insertion = '''    func testNewMissionCannotBeginWithManufacturedExecutionStatus() throws {\n        let missionID = MissionID(); let projectID = ProjectID(); let stageID = MissionStageID()\n        let completedGraph = MissionStageGraph(missionID: missionID, stages: [\n            MissionStage(stageID: stageID, kind: .implement, title: "Pretend done", order: 1, status: .completed),\n        ])\n\n        XCTAssertThrowsError(try ForgeMissionState(\n            constitution: constitution(missionID: missionID, projectID: projectID, revision: 1),\n            graph: completedGraph,\n            route: .init(routeReceiptID: "route:fresh")\n        )) { error in\n            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)\n        }\n    }\n\n    func testGraphReplacementCannotManufactureExecutionStatus() throws {\n        var mission = try makeMission()\n        let stageID = try XCTUnwrap(mission.graph.stages.first?.stageID)\n        let forged = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [\n            MissionStage(stageID: stageID, kind: .implement, title: "Implementation", order: 1, status: .completed),\n        ])\n\n        XCTAssertThrowsError(try mission.replaceStageGraph(forged)) { error in\n            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)\n        }\n\n        let insertedID = MissionStageID()\n        let insertedAsBlocked = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [\n            mission.graph.stages[0],\n            MissionStage(stageID: insertedID, kind: .test, title: "New test", order: 2, required: false, status: .blocked),\n        ])\n        XCTAssertThrowsError(try mission.replaceStageGraph(insertedAsBlocked)) { error in\n            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)\n        }\n    }\n\n    func testGraphReplacementCanStillEvolveUntouchedPendingTopology() throws {\n        var mission = try makeMission()\n        let originalID = try XCTUnwrap(mission.graph.stages.first?.stageID)\n        let replacementID = MissionStageID()\n        let evolved = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [\n            MissionStage(stageID: replacementID, kind: .test, title: "Replanned verification", order: 1),\n        ])\n\n        XCTAssertNoThrow(try mission.replaceStageGraph(evolved))\n        XCTAssertNil(mission.graph.stages.first(where: { $0.stageID == originalID }))\n        XCTAssertEqual(mission.graph.stages.first?.stageID, replacementID)\n        XCTAssertEqual(mission.graph.stages.first?.status, .pending)\n    }\n\n    func testArchiveRejectsDuplicateAcceptedCompletionEvidence() throws {\n        var mission = try makeMission()\n        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)\n        let lease = try mission.beginWork(on: [stageID])[0]\n        try mission.acceptWorkerResult(\n            .init(lease: lease, outcome: .completed, summary: "Built", evidenceReceiptIDs: .init(["build:one"])),\n            at: instant(81)\n        )\n        let archive = try ForgeMissionArchive(state: mission)\n        let data = try JSONEncoder().encode(archive)\n        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])\n        var state = try XCTUnwrap(root["state"] as? [String: Any])\n        var evidence = try XCTUnwrap(state["stageEvidence"] as? [[String: Any]])\n        evidence.append(try XCTUnwrap(evidence.first))\n        state["stageEvidence"] = evidence\n        root["state"] = state\n\n        XCTAssertThrowsError(try JSONDecoder().decode(\n            ForgeMissionArchive.self,\n            from: JSONSerialization.data(withJSONObject: root)\n        ))\n    }\n\n'''
+          if t.count(marker) != 1:
+              raise SystemExit(f'test marker count={t.count(marker)}')
+          tests_path.write_text(t.replace(marker, insertion + marker, 1))
+          PY
+
+          git diff --check
+          focused="${RUNNER_TEMP}/MissionStackFocused"
+          rm -rf "$focused"
+          mkdir -p "$focused/Sources" "$focused/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$focused/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Sources/ForgeMission "$focused/Sources/ForgeMission"
+          cp -R Packages/AgentHarnessKit/Tests/AgentDomainTests "$focused/Tests/AgentDomainTests"
+          cp -R Packages/AgentHarnessKit/Tests/ForgeMissionTests "$focused/Tests/ForgeMissionTests"
+          cat > "$focused/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.2
+          import PackageDescription
+          let package = Package(
+              name: "MissionStackFocused",
+              products: [
+                  .library(name: "AgentDomain", targets: ["AgentDomain"]),
+                  .library(name: "ForgeMission", targets: ["ForgeMission"]),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "ForgeMission", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "AgentDomainTests", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "ForgeMissionTests", dependencies: ["AgentDomain", "ForgeMission"]),
+              ]
+          )
+          SWIFT
+          swift test --package-path "$focused" -Xswiftc -warnings-as-errors
+          git diff --check
+
+          git config user.name "NovaForge V13 recovery"
+          git config user.email "actions@users.noreply.github.com"
+          git add Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMission.swift
+          git add Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMissionArchive.swift
+          git add Packages/AgentHarnessKit/Tests/ForgeMissionTests/ForgeMissionTests.swift
+          git rm .github/workflows/tmp-v13-mission-topology-truth.yml
+          git commit -m "Prevent topology updates from minting mission outcomes"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
