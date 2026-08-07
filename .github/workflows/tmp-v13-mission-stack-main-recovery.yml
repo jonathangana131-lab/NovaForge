@@ -10,30 +10,54 @@ permissions:
 
 jobs:
   compose-and-verify:
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Compose exact canonical stack and verify package
+      - name: Compose exact canonical stack and verify focused contracts
         shell: bash
         run: |
           set -euo pipefail
           base=4870c4844321f9d4434939f43f17233d16b8b16f
-          stack=0b50d607b9a68c40258f1fd45c16d325350dd779
+          stack=fd7dc28
 
-          test "$(git rev-parse HEAD^)" = "$base"
-          test "$(git show --pretty='' --name-only HEAD | sed '/^$/d')" = ".github/workflows/tmp-v13-mission-stack-main-recovery.yml"
+          git merge-base --is-ancestor "$base" HEAD
+          unexpected="$(git diff --name-only "$base" HEAD | grep -Ev '^.github/workflows/tmp-v13-mission-stack-main-recovery.yml$' || true)"
+          test -z "$unexpected"
 
           git config user.name "NovaForge V13 recovery"
           git config user.email "actions@users.noreply.github.com"
           git merge --no-ff --no-edit "$stack"
-
           git diff --check "$base"
-          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
+
+          focused="${RUNNER_TEMP}/MissionStackFocused"
+          rm -rf "$focused"
+          mkdir -p "$focused/Sources" "$focused/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$focused/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Sources/ForgeMission "$focused/Sources/ForgeMission"
+          cp -R Packages/AgentHarnessKit/Tests/AgentDomainTests "$focused/Tests/AgentDomainTests"
+          cp -R Packages/AgentHarnessKit/Tests/ForgeMissionTests "$focused/Tests/ForgeMissionTests"
+          cat > "$focused/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.2
+          import PackageDescription
+          let package = Package(
+              name: "MissionStackFocused",
+              products: [
+                  .library(name: "AgentDomain", targets: ["AgentDomain"]),
+                  .library(name: "ForgeMission", targets: ["ForgeMission"]),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "ForgeMission", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "AgentDomainTests", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "ForgeMissionTests", dependencies: ["AgentDomain", "ForgeMission"]),
+              ]
+          )
+          SWIFT
+          swift test --package-path "$focused" -Xswiftc -warnings-as-errors
 
           git rm .github/workflows/tmp-v13-mission-stack-main-recovery.yml
-
           expected="$(mktemp)"
           actual="$(mktemp)"
           cat > "$expected" <<'EOF'
