@@ -222,7 +222,7 @@ public struct ForgeRuntimeManifestValidator: Sendable {
         host _: ForgeRuntimeHostSupport,
         issues: inout [ForgeRuntimeValidationIssue]
     ) {
-        guard Self.isValidSandboxRelativePath(manifest.entryPoint),
+        guard ForgeRuntimePathPolicy.isValidRelativePath(manifest.entryPoint),
               Self.pathExtension(of: manifest.entryPoint).lowercased() == "html" else {
             issues.append(.error(
                 .invalidEntryPoint,
@@ -249,7 +249,7 @@ public struct ForgeRuntimeManifestValidator: Sendable {
         }
 
         if let iconPath = manifest.display.iconPath,
-           !Self.isValidSandboxRelativePath(iconPath) {
+           !ForgeRuntimePathPolicy.isValidRelativePath(iconPath) {
             issues.append(.error(
                 .invalidIconPath,
                 field: "display.iconPath",
@@ -427,7 +427,7 @@ public struct ForgeRuntimeManifestValidator: Sendable {
 
         var seen: Set<String> = []
         for (index, path) in manifest.bundledAssets.enumerated() {
-            if !Self.isValidSandboxRelativePath(path) {
+            if !ForgeRuntimePathPolicy.isValidRelativePath(path) {
                 issues.append(.error(
                     .invalidAssetPath,
                     field: "bundledAssets[\(index)]",
@@ -532,20 +532,6 @@ public struct ForgeRuntimeManifestValidator: Sendable {
         guard !value.isEmpty, value.utf8.count <= 64 else { return false }
         return value.unicodeScalars.allSatisfy { scalar in
             isASCIIAlphaNumeric(scalar) || scalar == "." || scalar == "-" || scalar == "_" || scalar == "+"
-        }
-    }
-
-    private static func isValidSandboxRelativePath(_ value: String) -> Bool {
-        guard !value.isEmpty, value.utf8.count <= 1_024 else { return false }
-        guard !value.hasPrefix("/"), !value.hasPrefix("~"), !value.contains("\\"), !value.contains("\0"),
-              !value.contains("%"), !value.contains("?"), !value.contains("#") else {
-            return false
-        }
-
-        let components = value.split(separator: "/", omittingEmptySubsequences: false)
-        guard !components.isEmpty else { return false }
-        return components.allSatisfy { component in
-            !component.isEmpty && component != "." && component != ".."
         }
     }
 
