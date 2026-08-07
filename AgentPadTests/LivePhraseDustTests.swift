@@ -119,4 +119,76 @@ final class LivePhraseDustTests: XCTestCase {
             .none
         )
     }
+
+    func testSemanticMotionPolicyFailsTowardLessMotion() {
+        XCTAssertEqual(
+            NovaMotionPolicy.mode(
+                reduceMotion: false,
+                prefersReducedVisualEffects: false,
+                allowsDecorativeMotion: true
+            ),
+            .full
+        )
+        XCTAssertEqual(
+            NovaMotionPolicy.mode(
+                reduceMotion: true,
+                prefersReducedVisualEffects: false,
+                allowsDecorativeMotion: true
+            ),
+            .reduced
+        )
+        XCTAssertEqual(
+            NovaMotionPolicy.mode(
+                reduceMotion: false,
+                prefersReducedVisualEffects: true,
+                allowsDecorativeMotion: true
+            ),
+            .staticOnly
+        )
+        XCTAssertEqual(
+            NovaMotionPolicy.mode(
+                reduceMotion: false,
+                prefersReducedVisualEffects: false,
+                allowsDecorativeMotion: false
+            ),
+            .staticOnly
+        )
+    }
+
+    func testReducedAndStaticModesSuppressEveryCustomMotionRole() {
+        for role in NovaMotionRole.allCases {
+            XCTAssertFalse(
+                NovaMotionPolicy.allows(role, mode: .reduced),
+                "Reduce Motion must suppress custom NovaForge motion for \(role.rawValue)"
+            )
+            XCTAssertFalse(
+                NovaMotionPolicy.allows(role, mode: .staticOnly),
+                "Conservative rendering must suppress custom NovaForge motion for \(role.rawValue)"
+            )
+        }
+    }
+
+    func testInactiveSceneSuppressesOnlyContinuousAmbientMotion() {
+        for role in NovaMotionRole.allCases {
+            let allowed = NovaMotionPolicy.allows(
+                role,
+                mode: .full,
+                sceneIsActive: false
+            )
+            if role == .continuousAmbient {
+                XCTAssertFalse(allowed)
+            } else {
+                XCTAssertTrue(allowed)
+            }
+        }
+    }
+
+    func testOneShotMotionBudgetStaysImmediate() {
+        XCTAssertLessThanOrEqual(NovaMotion.directResponseDuration, 0.20)
+        XCTAssertLessThanOrEqual(NovaMotion.contentSettleDuration, 0.30)
+        XCTAssertLessThanOrEqual(NovaMotion.spatialResponse, 0.40)
+        XCTAssertLessThanOrEqual(NovaMotion.glassArrivalDuration, 0.40)
+        XCTAssertLessThanOrEqual(NovaMotion.completionResponse, 0.50)
+        XCTAssertLessThan(NovaMotion.phraseArrivalDuration, 0.11)
+    }
 }

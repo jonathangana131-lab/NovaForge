@@ -1,17 +1,87 @@
 import SwiftUI
 
-/// Shared motion tokens for NovaForge's native-feeling Liquid Glass surfaces.
+/// Semantic motion roles for NovaForge 2.0.
 ///
-/// Keep animation timing centralized so live chat, glass chrome, and proof gates
-/// can stay consistent while still respecting accessibility and performance
-/// modes. The values lean smooth/subtle rather than flashy: the UI should feel
-/// like it condenses into place, never like a cursor/progress-line gimmick.
+/// Views should choose the *meaning* of a transition rather than inventing
+/// arbitrary timings. This keeps Forge, glass chrome, completion, and ambient
+/// activity physically coherent while leaving one accessibility/performance
+/// policy in charge of whether custom motion may run at all.
+enum NovaMotionRole: String, CaseIterable, Sendable {
+    /// Immediate acknowledgement after a direct user action.
+    case directResponse
+    /// Spatial continuity between related surfaces or control states.
+    case spatialTransition
+    /// Small layout/content reconciliation after state changes.
+    case contentSettle
+    /// A real accepted completion resolving into its resting state.
+    case completion
+    /// Nonessential repeating ambience such as a slow energy trace.
+    case continuousAmbient
+
+    var isContinuous: Bool {
+        self == .continuousAmbient
+    }
+}
+
+enum NovaMotionAccessibilityMode: Equatable, Sendable {
+    /// Full semantic motion is allowed, subject to scene/activity policy.
+    case full
+    /// The user requested Reduce Motion. Custom NovaForge motion is removed;
+    /// state remains legible through layout, text, symbols, and causal haptics.
+    case reduced
+    /// NovaForge is in a conservative rendering/performance condition.
+    case staticOnly
+}
+
+/// Pure policy so accessibility/performance decisions can be tested without a
+/// SwiftUI renderer. This intentionally fails toward less motion.
+enum NovaMotionPolicy {
+    static func mode(
+        reduceMotion: Bool,
+        prefersReducedVisualEffects: Bool,
+        allowsDecorativeMotion: Bool
+    ) -> NovaMotionAccessibilityMode {
+        if prefersReducedVisualEffects || !allowsDecorativeMotion {
+            return .staticOnly
+        }
+        if reduceMotion {
+            return .reduced
+        }
+        return .full
+    }
+
+    static func allows(
+        _ role: NovaMotionRole,
+        mode: NovaMotionAccessibilityMode,
+        sceneIsActive: Bool = true
+    ) -> Bool {
+        guard mode == .full else { return false }
+        if role.isContinuous && !sceneIsActive { return false }
+        return true
+    }
+}
+
+/// Shared motion tokens for NovaForge's native-feeling surfaces.
+///
+/// These are intentionally quick: every tap should acknowledge immediately,
+/// spatial changes should settle rather than drift, and completion should
+/// resolve without a long cinematic pause. Existing call sites keep their
+/// compatibility names while new work can ask for a semantic role directly.
 enum NovaMotion {
-    static let glassArrivalDuration: TimeInterval = 0.54
+    static let directResponseDuration: TimeInterval = 0.16
+    static let glassArrivalDuration: TimeInterval = 0.38
+    static let contentSettleDuration: TimeInterval = 0.24
+    static let spatialResponse: TimeInterval = 0.34
+    static let completionResponse: TimeInterval = 0.46
+
     // Keep the one-shot phrase resolve shorter than the normal 110 ms
     // publication cadence so consecutive phrases never stack animations.
     static let phraseArrivalDuration: TimeInterval = 0.095
     static let sheenDuration: TimeInterval = 1.35
+
+    static var directResponse: Animation {
+        .smooth(duration: directResponseDuration)
+    }
 
     static var glassArrival: Animation {
         .smooth(duration: glassArrivalDuration)
@@ -21,14 +91,77 @@ enum NovaMotion {
         .smooth(duration: phraseArrivalDuration)
     }
 
-    static var softSettleSpring: Animation {
-        .spring(response: 0.42, dampingFraction: 0.86, blendDuration: 0.10)
+    static var contentSettle: Animation {
+        .smooth(duration: contentSettleDuration)
     }
 
+    static var spatialTransition: Animation {
+        .spring(
+            response: spatialResponse,
+            dampingFraction: 0.88,
+            blendDuration: 0.06
+        )
+    }
+
+    static var completionSettle: Animation {
+        .spring(
+            response: completionResponse,
+            dampingFraction: 0.90,
+            blendDuration: 0.08
+        )
+    }
+
+    /// Compatibility token used by existing Forge/glass call sites.
+    static var softSettleSpring: Animation {
+        spatialTransition
+    }
+
+    static func accessibilityMode(reduceMotion: Bool) -> NovaMotionAccessibilityMode {
+        NovaMotionPolicy.mode(
+            reduceMotion: reduceMotion,
+            prefersReducedVisualEffects: AgentPerformance.prefersReducedVisualEffects,
+            allowsDecorativeMotion: AgentPerformance.allowsDecorativeMotion
+        )
+    }
+
+    /// Compatibility gate for existing custom transitions. Under Reduce Motion
+    /// NovaForge does not substitute another spatial animation; the state change
+    /// still happens immediately and remains understandable without motion.
     static func enabled(reduceMotion: Bool) -> Bool {
-        AgentPerformance.allowsDecorativeMotion &&
-            !AgentPerformance.prefersReducedVisualEffects &&
-            !reduceMotion
+        NovaMotionPolicy.allows(
+            .spatialTransition,
+            mode: accessibilityMode(reduceMotion: reduceMotion)
+        )
+    }
+
+    /// Preferred API for new V13 surfaces. Continuous ambience additionally
+    /// stops when the scene is inactive so it cannot burn frames in background.
+    static func animation(
+        for role: NovaMotionRole,
+        reduceMotion: Bool,
+        sceneIsActive: Bool = true
+    ) -> Animation? {
+        let mode = accessibilityMode(reduceMotion: reduceMotion)
+        guard NovaMotionPolicy.allows(
+            role,
+            mode: mode,
+            sceneIsActive: sceneIsActive
+        ) else {
+            return nil
+        }
+
+        switch role {
+        case .directResponse:
+            return directResponse
+        case .spatialTransition:
+            return spatialTransition
+        case .contentSettle:
+            return contentSettle
+        case .completion:
+            return completionSettle
+        case .continuousAmbient:
+            return .linear(duration: sheenDuration).repeatForever(autoreverses: false)
+        }
     }
 }
 
