@@ -4,6 +4,7 @@ import ProjectBrain
 
 public enum MissionMutationError: Error, Equatable, Sendable {
     case staleRevision(expected: MissionRevision, actual: MissionRevision)
+    case invalidStatusTransition(from: MissionStatus, to: MissionStatus)
     case revisionOverflow
     case duplicateStage(MissionStageID)
     case missingDependency(stageID: MissionStageID, dependencyID: MissionStageID)
@@ -48,13 +49,16 @@ public enum MissionReducer {
         )
     }
 
-    public static func setStatus(
-        _ status: MissionStatus,
+    public static func transition(
+        to status: MissionStatus,
         expectedRevision: MissionRevision,
         at instant: AgentInstant,
         in snapshot: MissionSnapshot
     ) throws -> MissionSnapshot {
         try requireRevision(expectedRevision, in: snapshot)
+        guard canTransition(from: snapshot.status, to: status) else {
+            throw MissionMutationError.invalidStatusTransition(from: snapshot.status, to: status)
+        }
         return try copy(snapshot, status: status, at: instant)
     }
 
@@ -83,6 +87,9 @@ public enum MissionReducer {
         in snapshot: MissionSnapshot
     ) throws -> (MissionSnapshot, MissionWorkToken) {
         try requireRevision(expectedRevision, in: snapshot)
+        guard snapshot.status == .ready else {
+            throw MissionMutationError.invalidStatusTransition(from: snapshot.status, to: .executing)
+        }
         guard snapshot.activeStageID == nil else {
             throw MissionMutationError.activeStageMismatch(expected: nil, actual: snapshot.activeStageID)
         }
@@ -375,6 +382,29 @@ public enum MissionReducer {
         }
         for stage in stages {
             try visit(stage.id)
+        }
+    }
+
+    private static func canTransition(from: MissionStatus, to: MissionStatus) -> Bool {
+        switch (from, to) {
+        case (.draftIntent, .planning),
+             (.draftIntent, .needsDecision),
+             (.draftIntent, .cancelled),
+             (.planning, .needsDecision),
+             (.planning, .ready),
+             (.planning, .cancelled),
+             (.needsDecision, .planning),
+             (.needsDecision, .ready),
+             (.needsDecision, .cancelled),
+             (.ready, .planning),
+             (.ready, .cancelled),
+             (.pausedByPolicy, .cancelled),
+             (.blockedExternal, .cancelled),
+             (.interruptedRecoverable, .cancelled),
+             (.failedIrrecoverably, .cancelled):
+            return true
+        default:
+            return false
         }
     }
 
