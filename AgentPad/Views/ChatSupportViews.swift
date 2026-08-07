@@ -151,7 +151,7 @@ struct CleanChatEmptyState: View {
                 }
             }
 
-            Text("Recent creations are shown from real project state. Switch projects from the project control above; Run appears only when a supported runnable result exists.")
+            Text("Recent creations are shown from real project state. Switch projects from the project control above to continue building.")
                 .font(NovaType.caption)
                 .foregroundStyle(AgentPalette.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -219,9 +219,9 @@ private struct HomeProjectRow: View {
     private var presentation: (title: String, symbol: String, tint: Color) {
         switch project.status {
         case .active:
-            return ("READY", "square.stack.3d.up.fill", AgentPalette.cyan)
+            return ("ACTIVE", "square.stack.3d.up.fill", AgentPalette.cyan)
         case .running:
-            return ("BUILDING", "waveform", AgentPalette.cyan)
+            return ("RUNNING", "waveform", AgentPalette.cyan)
         case .needsReview:
             return ("REVIEW", "exclamationmark.bubble.fill", AgentPalette.warning)
         case .blocked:
