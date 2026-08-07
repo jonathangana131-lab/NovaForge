@@ -104,10 +104,12 @@ final class ForgeRuntimeBridgeAuthorizationTests: XCTestCase {
             storage: .init(namespace: "neon-racer", quotaBytes: 1_048_576),
             capabilities: capabilities
         )
+        let requested = Set(capabilities.map(\.id))
         return try ForgeRuntimeManifestValidator().authorize(
             manifest,
             expectedProjectID: "neon-racer",
-            host: .init(supportedCapabilityIDs: ["haptics", "share", "storage", "controller"])
+            host: .init(supportedCapabilityIDs: ["haptics", "share", "storage", "controller"]),
+            projectGrant: .init(projectID: "neon-racer", grantedCapabilityIDs: requested)
         )
     }
 }
