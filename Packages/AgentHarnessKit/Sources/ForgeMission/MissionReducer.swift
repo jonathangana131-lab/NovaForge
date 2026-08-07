@@ -146,6 +146,9 @@ public enum MissionReducer {
         in snapshot: MissionSnapshot
     ) throws -> (MissionSnapshot, MissionWorkToken) {
         try requireRevision(expectedRevision, in: snapshot)
+        guard snapshot.status == .executing else {
+            throw MissionMutationError.invalidStatusTransition(from: snapshot.status, to: .executing)
+        }
         guard let stageID = snapshot.activeStageID,
               let index = snapshot.stages.firstIndex(where: { $0.id == stageID }) else {
             throw MissionMutationError.activeStageMismatch(expected: snapshot.activeStageID, actual: nil)
@@ -201,6 +204,7 @@ public enum MissionReducer {
         stages[index] = stage.replacing(
             state: .completed,
             workerLeaseID: .some(nil),
+            acceptedSummary: .some(result.summary),
             acceptedEvidenceIDs: result.evidenceIDs
         )
         return try copy(
@@ -218,6 +222,12 @@ public enum MissionReducer {
         in snapshot: MissionSnapshot
     ) throws -> MissionSnapshot {
         try requireRevision(expectedRevision, in: snapshot)
+        guard snapshot.status == .executing else {
+            throw MissionMutationError.invalidStatusTransition(from: snapshot.status, to: .pausedByUser)
+        }
+        guard snapshot.activeStageID != nil else {
+            throw MissionMutationError.activeStageMismatch(expected: nil, actual: snapshot.activeStageID)
+        }
         let stages = invalidateActiveLease(in: snapshot.stages, activeStageID: snapshot.activeStageID)
         return try copy(snapshot, status: .pausedByUser, stages: stages, at: instant)
     }
@@ -228,6 +238,9 @@ public enum MissionReducer {
         in snapshot: MissionSnapshot
     ) throws -> MissionSnapshot {
         try requireRevision(expectedRevision, in: snapshot)
+        guard !isTerminal(snapshot.status) else {
+            throw MissionMutationError.invalidStatusTransition(from: snapshot.status, to: .interruptedRecoverable)
+        }
         let stages = invalidateActiveLease(in: snapshot.stages, activeStageID: snapshot.activeStageID)
         return try copy(snapshot, status: .interruptedRecoverable, stages: stages, at: instant)
     }
@@ -339,10 +352,14 @@ public enum MissionReducer {
 
     public static func recover(
         from checkpoint: MissionCheckpoint,
+        expectedMissionID: MissionID,
+        expectedProjectID: ProjectID,
         at instant: AgentInstant
     ) throws -> MissionSnapshot {
         let snapshot = checkpoint.snapshot
-        guard checkpoint.id == snapshot.latestCheckpointID else {
+        guard checkpoint.id == snapshot.latestCheckpointID,
+              snapshot.missionID == expectedMissionID,
+              snapshot.projectID == expectedProjectID else {
             throw MissionMutationError.invalidMissionIdentity
         }
         let stages = invalidateActiveLease(in: snapshot.stages, activeStageID: snapshot.activeStageID)
@@ -382,6 +399,15 @@ public enum MissionReducer {
         }
         for stage in stages {
             try visit(stage.id)
+        }
+    }
+
+    private static func isTerminal(_ status: MissionStatus) -> Bool {
+        switch status {
+        case .completedWithEvidence, .completedWithKnownLimitations, .cancelled, .failedIrrecoverably:
+            return true
+        default:
+            return false
         }
     }
 
