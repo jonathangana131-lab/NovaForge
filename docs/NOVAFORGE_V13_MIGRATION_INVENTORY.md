@@ -49,11 +49,19 @@ The debug persistence reset explicitly leaves user workspaces untouched while re
 
 V13 consequence: project source/assets are first-class user value. Missing/rebuilt metadata is never permission to delete a workspace.
 
-### 6. Credentials are a preserve-in-place Keychain boundary
+### 6. Provider/OAuth credentials are a preserve-in-place Keychain boundary
 
 `KeychainStore` uses generic-password items under service `com.joey.NovaForge` and writes secret data as `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
 
 The rewrite should migrate **references and account semantics**, not secret values. Credentials must never pass through a plaintext JSON migration payload, SwiftData bridge record, Project Brain, History receipt, log, or project export. If an account cannot be mapped safely, the correct fallback is explicit re-authentication.
+
+### 7. Approval signing authority is a separate secret boundary
+
+`AgentApprovalSigningKeyStore` owns account `agent-policy.approval-ui-hmac.v1`. On physical devices it is a non-synchronizable Data Protection Keychain generic-password item with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. The store deliberately refuses to manufacture replacement authority when an existing item is missing/corrupt on the read-existing path, and it validates the persisted winner after a concurrent create race.
+
+Unsigned Simulator builds cannot use the same Security backend, so the implementation has a simulator-only protected file at `Application Support/AgentPolicy/v1/simulator-approval-signing-key`. That is test authority, not evidence that physical-device signing material is file-backed or migratable.
+
+V13 consequence: provider credential migration and approval-authority migration are separate checks. A rewrite must read the existing physical-device signing account in place; silently generating a new key could invalidate previously accepted approval evidence or, worse, redefine which UI approvals are trusted.
 
 ## Preserve, migrate, replace
 
@@ -64,6 +72,7 @@ The rewrite should migrate **references and account semantics**, not secret valu
 | Recovery snapshots | Preserve in place | They are verified preimages/evidence for unresolved migration. |
 | AgentEngine ownership ledger | Migrate only with recovery proof | Mission continuity must not duplicate or lose accepted execution. |
 | AgentPolicy ledgers | Preserve until equivalent authority is proven | Security/replay truth, not presentation. |
+| Approval signing authority | Preserve in place; never export | Physical-device HMAC authority is a separate Data Protection Keychain secret. |
 | Workspace checkpoints | Preserve until equivalent rollback proof | Immutable before-state supports idempotent recovery. |
 | User workspace files/assets | Preserve in place by default | They are the user's actual creations. |
 | Keychain credential values | Preserve in place, never plaintext-migrate | Device-bound secret boundary. |
@@ -80,7 +89,7 @@ A legacy path is removable only when all applicable checks are true:
 4. User-value identity/lineage and accepted receipts compare as expected.
 5. In-flight mutation/recovery fixtures prove no duplicate execution and valid rollback.
 6. Security authority is equivalent or stronger; no migration can mint approval.
-7. Credentials never leave Keychain plaintext boundaries.
+7. Provider credentials and approval-signing key material never leave their device-bound secret boundaries.
 8. The accepted replacement has a durable commit/checkpoint before old data is deleted.
 9. Failure at any step leaves the old authoritative data recoverable rather than silently resetting it.
 
@@ -92,7 +101,7 @@ Run:
 python3 scripts/validate_v13_migration_contract.py --self-test
 ```
 
-The validator currently guards the released legacy entity signatures, exact source-commit pinning, required durable-store inventory, no-discard rules for protected data, compatibility-store reconciliation, protected ledger locations, and the Keychain no-plaintext/no-export boundary. Its built-in adversarial cases prove those checks reject representative unsafe edits.
+The validator currently guards the released legacy entity signatures, exact source-commit pinning, required durable-store inventory, no-discard rules for protected data, compatibility-store reconciliation, protected ledger locations, and the provider-Keychain and approval-signing no-plaintext/no-export boundaries. Its built-in adversarial cases prove those checks reject representative unsafe edits.
 
 ## Next controlled seam
 
