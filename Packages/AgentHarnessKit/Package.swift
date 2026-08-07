@@ -17,6 +17,7 @@ let package = Package(
         .library(name: "AgentShadow", targets: ["AgentShadow"]),
         .library(name: "AgentPolicy", targets: ["AgentPolicy"]),
         .library(name: "AgentTransport", targets: ["AgentTransport"]),
+        .library(name: "ForgeMission", targets: ["ForgeMission"]),
     ],
     targets: [
         .target(name: "AgentDomain"),
@@ -64,6 +65,10 @@ let package = Package(
             name: "AgentTransport",
             dependencies: ["AgentDomain"]
         ),
+        .target(
+            name: "ForgeMission",
+            dependencies: ["AgentDomain"]
+        ),
         .testTarget(
             name: "AgentDomainTests",
             dependencies: ["AgentDomain"]
@@ -109,6 +114,10 @@ let package = Package(
         .testTarget(
             name: "AgentTransportTests",
             dependencies: ["AgentDomain", "AgentTransport"]
+        ),
+        .testTarget(
+            name: "ForgeMissionTests",
+            dependencies: ["AgentDomain", "ForgeMission"]
         ),
     ]
 )
