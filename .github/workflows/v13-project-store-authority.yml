@@ -1,0 +1,30 @@
+name: V13 ProjectStore authority
+
+on:
+  pull_request:
+    paths:
+      - 'Packages/AgentHarnessKit/Sources/AgentStore/ProjectStoreAuthorityPolicy.swift'
+      - 'Packages/AgentHarnessKit/Tests/AgentStoreTests/ProjectStoreAuthorityPolicyTests.swift'
+      - '.github/workflows/v13-project-store-authority.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Packages/AgentHarnessKit/Sources/AgentStore/ProjectStoreAuthorityPolicy.swift'
+      - 'Packages/AgentHarnessKit/Tests/AgentStoreTests/ProjectStoreAuthorityPolicyTests.swift'
+      - '.github/workflows/v13-project-store-authority.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  authority-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift toolchain
+        run: swift --version
+      - name: Run ProjectStore authority policy tests
+        run: >-
+          swift test
+          --package-path Packages/AgentHarnessKit
+          --filter ProjectStoreAuthorityPolicyTests
