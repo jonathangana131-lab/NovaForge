@@ -2,6 +2,11 @@ import Foundation
 
 extension Forge3DTemplate {
     static let scriptCoreB = #"""
+const accessibleThrottle = document.getElementById("accessible-throttle");
+const accessibleSteer = document.getElementById("accessible-steer");
+accessibleThrottle.addEventListener("input", () => { input.accessibleThrottle = clamp(Number(accessibleThrottle.value) || 0, -1, 1); });
+accessibleSteer.addEventListener("input", () => { input.accessibleSteer = clamp(Number(accessibleSteer.value) || 0, -1, 1); });
+
 function updateKeyboard() {
   input.keyThrottle = (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
   input.keySteer = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
@@ -58,8 +63,8 @@ function pollGamepad() {
 
 function update(dt) {
   pollGamepad();
-  const throttle = clamp(input.keyThrottle + input.touchThrottle + input.padThrottle, -1, 1);
-  const steer = clamp(input.keySteer + input.touchSteer + input.padSteer, -1, 1);
+  const throttle = clamp(input.keyThrottle + input.touchThrottle + input.accessibleThrottle + input.padThrottle, -1, 1);
+  const steer = clamp(input.keySteer + input.touchSteer + input.accessibleSteer + input.padSteer, -1, 1);
   const targetSpeed = throttle >= 0 ? throttle * CONFIG.topSpeed : throttle * CONFIG.topSpeed * 0.38;
   vehicle.speed = approach(vehicle.speed, targetSpeed, CONFIG.acceleration * dt);
   if (Math.abs(throttle) < 0.02) vehicle.speed = approach(vehicle.speed, 0, CONFIG.acceleration * 0.48 * dt);
