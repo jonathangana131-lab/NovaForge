@@ -119,4 +119,50 @@ final class LivePhraseDustTests: XCTestCase {
             .none
         )
     }
+
+    func testPlanSpaceRequiresIntentAndBothMaterialDecisions() {
+        var draft = ForgePlanSpaceDraft()
+        XCTAssertFalse(draft.isReady)
+        XCTAssertNil(draft.composerHandoff)
+        XCTAssertEqual(draft.answeredDecisionCount, 0)
+
+        draft.intent = "Build a driving game"
+        draft.buildDepth = .polished
+        XCTAssertFalse(draft.isReady)
+        XCTAssertEqual(draft.answeredDecisionCount, 1)
+
+        draft.creativity = .inventive
+        XCTAssertTrue(draft.isReady)
+        XCTAssertEqual(draft.answeredDecisionCount, 2)
+        XCTAssertEqual(draft.compactSummary, "Polished · Inventive")
+    }
+
+    func testPlanSpaceDecideForMeUsesBalancedDefaults() {
+        var draft = ForgePlanSpaceDraft(intent: "Build a utility app")
+        draft.decideForMe()
+
+        XCTAssertEqual(draft.buildDepth, .polished)
+        XCTAssertEqual(draft.creativity, .faithful)
+        XCTAssertTrue(draft.isReady)
+        XCTAssertEqual(draft.compactSummary, "Polished · Faithful")
+    }
+
+    func testPlanSpaceComposerHandoffIsVisibleStableAndEditable() {
+        let draft = ForgePlanSpaceDraft(
+            intent: "  Build a tiny dashboard  ",
+            buildDepth: .prototype,
+            creativity: .faithful
+        )
+
+        XCTAssertEqual(
+            draft.composerHandoff,
+            """
+            Build a tiny dashboard
+
+            NovaForge build preferences:
+            - Build depth: Prototype — Build, basic test, and get to a runnable result quickly.
+            - Creativity: Faithful — Stay close to the request and make conservative product choices.
+            """
+        )
+    }
 }
