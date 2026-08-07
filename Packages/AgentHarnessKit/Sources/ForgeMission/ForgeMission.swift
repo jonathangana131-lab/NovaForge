@@ -329,7 +329,9 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         guard graph.validationError == nil else { throw ForgeMissionError.invalidGraph }
         guard graph.missionID == constitution.missionID else { throw ForgeMissionError.graphMissionMismatch }
         guard route.isValid else { throw ForgeMissionError.invalidRouteReceipt }
-        guard !graph.stages.contains(where: { $0.status == .active }) else { throw ForgeMissionError.invalidGraph }
+        // A new mission graph describes work to do. Execution state can only be
+        // minted by reducer transitions that also record the matching receipts.
+        guard graph.stages.allSatisfy({ $0.status == .pending }) else { throw ForgeMissionError.invalidGraph }
 
         missionID = constitution.missionID
         projectID = constitution.projectID
@@ -606,7 +608,26 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         guard newGraph.validationError == nil else { throw ForgeMissionError.invalidGraph }
         guard newGraph.revision > graph.revision else { throw ForgeMissionError.graphRevisionNotAdvanced }
 
+        let currentByID = Dictionary(uniqueKeysWithValues: graph.stages.map { ($0.stageID, $0) })
         let newByID = Dictionary(uniqueKeysWithValues: newGraph.stages.map { ($0.stageID, $0) })
+
+        // Topology revisions may add/reorder/redescribe work, but they do not
+        // have authority to manufacture execution outcomes. Surviving stages
+        // preserve status; newly introduced stages always begin pending.
+        for proposed in newGraph.stages {
+            if let current = currentByID[proposed.stageID] {
+                guard proposed.status == current.status else { throw ForgeMissionError.invalidGraph }
+            } else {
+                guard proposed.status == .pending else { throw ForgeMissionError.invalidGraph }
+            }
+        }
+        for current in graph.stages where newByID[current.stageID] == nil {
+            if current.status == .completed {
+                throw ForgeMissionError.acceptedCompletedStageWouldBeLost(current.stageID)
+            }
+            guard current.status == .pending else { throw ForgeMissionError.invalidGraph }
+        }
+
         for accepted in graph.stages where accepted.status == .completed {
             guard newByID[accepted.stageID]?.status == .completed else {
                 throw ForgeMissionError.acceptedCompletedStageWouldBeLost(accepted.stageID)

@@ -249,12 +249,13 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
     ) throws {
         let completedStageIDs = Set(stages.lazy.filter { $0.status == .completed }.map(\.stageID))
         let evidencedStageIDs = Set(stageEvidence.map(\.stageID))
-        guard evidencedStageIDs == completedStageIDs else {
+        guard evidencedStageIDs == completedStageIDs,
+              stageEvidence.count == completedStageIDs.count else {
             throw ForgeMissionArchiveError.invalidStageEvidence
         }
-        guard completedStageIDs.allSatisfy({ stageID in
-            workerReceipts.contains(where: { $0.stageID == stageID && $0.kind == .completed })
-        }), workerReceipts.lazy.filter({ $0.kind == .completed }).allSatisfy({ completedStageIDs.contains($0.stageID) }) else {
+        let completedReceipts = workerReceipts.filter { $0.kind == .completed }
+        guard Set(completedReceipts.map(\.stageID)) == completedStageIDs,
+              completedReceipts.count == completedStageIDs.count else {
             throw ForgeMissionArchiveError.invalidWorkerReceipt
         }
     }

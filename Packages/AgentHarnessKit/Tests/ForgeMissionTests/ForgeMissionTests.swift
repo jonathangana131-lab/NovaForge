@@ -515,6 +515,79 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.phase, .completedWithEvidence)
     }
 
+    func testNewMissionCannotBeginWithManufacturedExecutionStatus() throws {
+        let missionID = MissionID(); let projectID = ProjectID(); let stageID = MissionStageID()
+        let completedGraph = MissionStageGraph(missionID: missionID, stages: [
+            MissionStage(stageID: stageID, kind: .implement, title: "Pretend done", order: 1, status: .completed),
+        ])
+
+        XCTAssertThrowsError(try ForgeMissionState(
+            constitution: constitution(missionID: missionID, projectID: projectID, revision: 1),
+            graph: completedGraph,
+            route: .init(routeReceiptID: "route:fresh")
+        )) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)
+        }
+    }
+
+    func testGraphReplacementCannotManufactureExecutionStatus() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.graph.stages.first?.stageID)
+        let forged = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [
+            MissionStage(stageID: stageID, kind: .implement, title: "Implementation", order: 1, status: .completed),
+        ])
+
+        XCTAssertThrowsError(try mission.replaceStageGraph(forged)) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)
+        }
+
+        let insertedID = MissionStageID()
+        let insertedAsBlocked = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [
+            mission.graph.stages[0],
+            MissionStage(stageID: insertedID, kind: .test, title: "New test", order: 2, required: false, status: .blocked),
+        ])
+        XCTAssertThrowsError(try mission.replaceStageGraph(insertedAsBlocked)) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)
+        }
+    }
+
+    func testGraphReplacementCanStillEvolveUntouchedPendingTopology() throws {
+        var mission = try makeMission()
+        let originalID = try XCTUnwrap(mission.graph.stages.first?.stageID)
+        let replacementID = MissionStageID()
+        let evolved = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [
+            MissionStage(stageID: replacementID, kind: .test, title: "Replanned verification", order: 1),
+        ])
+
+        XCTAssertNoThrow(try mission.replaceStageGraph(evolved))
+        XCTAssertNil(mission.graph.stages.first(where: { $0.stageID == originalID }))
+        XCTAssertEqual(mission.graph.stages.first?.stageID, replacementID)
+        XCTAssertEqual(mission.graph.stages.first?.status, .pending)
+    }
+
+    func testArchiveRejectsDuplicateAcceptedCompletionEvidence() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        let lease = try mission.beginWork(on: [stageID])[0]
+        try mission.acceptWorkerResult(
+            .init(lease: lease, outcome: .completed, summary: "Built", evidenceReceiptIDs: .init(["build:one"])),
+            at: instant(81)
+        )
+        let archive = try ForgeMissionArchive(state: mission)
+        let data = try JSONEncoder().encode(archive)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var state = try XCTUnwrap(root["state"] as? [String: Any])
+        var evidence = try XCTUnwrap(state["stageEvidence"] as? [[String: Any]])
+        evidence.append(try XCTUnwrap(evidence.first))
+        state["stageEvidence"] = evidence
+        root["state"] = state
+
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            ForgeMissionArchive.self,
+            from: JSONSerialization.data(withJSONObject: root)
+        ))
+    }
+
     func testGraphReplacementCannotDropStageWithAcceptedDecisionHistory() throws {
         var mission = try makeMission()
         let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
