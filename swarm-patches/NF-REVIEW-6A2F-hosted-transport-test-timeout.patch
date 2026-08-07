@@ -1,0 +1,21 @@
+diff --git a/AgentPadTests/AgentHostedProviderTransportTests.swift b/AgentPadTests/AgentHostedProviderTransportTests.swift
+--- a/AgentPadTests/AgentHostedProviderTransportTests.swift
++++ b/AgentPadTests/AgentHostedProviderTransportTests.swift
+@@
+ private func makeHostedTransportTestSession() -> URLSession {
+     let configuration = URLSessionConfiguration.ephemeral
+     configuration.protocolClasses = [HostedTransportURLProtocol.self]
+     configuration.urlCache = nil
+     configuration.httpCookieStorage = nil
+     configuration.httpShouldSetCookies = false
+-    configuration.timeoutIntervalForRequest = 2
+-    configuration.timeoutIntervalForResource = 2
++    // This session is backed entirely by HostedTransportURLProtocol; the
++    // deadline protects a wedged test, not a real provider request. Loaded
++    // Simulator runners can spend several seconds parsing/validating a fully
++    // in-process SSE fixture, so keep the harness bounded without turning
++    // scheduler pressure into a synthetic provider timeout.
++    configuration.timeoutIntervalForRequest = 10
++    configuration.timeoutIntervalForResource = 10
+     return URLSession(configuration: configuration)
+ }
