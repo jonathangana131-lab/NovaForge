@@ -12,6 +12,7 @@ enum Forge3DTemplate {
     .joystick { position: absolute; left: max(20px, env(safe-area-inset-left)); bottom: max(20px, env(safe-area-inset-bottom)); width: 132px; height: 132px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); background: rgba(12,18,25,.68); backdrop-filter: blur(18px); touch-action: none; outline: none; }
     .joystick:focus-visible { box-shadow: 0 0 0 3px rgba(255,255,255,.82); }
     .joystick-knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px; border-radius: 50%; background: rgba(229,242,252,.92); box-shadow: 0 4px 18px rgba(0,0,0,.28); transform: translate3d(0,0,0); }
+    .assistive-driving { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); clip-path: inset(50%); white-space: nowrap; border: 0; }
     @media (prefers-reduced-transparency: reduce) { .status, .pause, .joystick { backdrop-filter: none; background: #151c25; } }
     @media (max-width: 500px) and (orientation: portrait) { .joystick { width: 116px; height: 116px; } }
     """#
