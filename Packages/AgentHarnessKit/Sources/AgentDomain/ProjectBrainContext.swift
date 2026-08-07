@@ -114,8 +114,8 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
 /// Selection order is stable across launches and model/provider changes:
 /// 1. exact requested scope before project fallback;
 /// 2. requested mission facts before project-wide facts;
-/// 3. caller preferred fact kinds;
-/// 4. current before unknown before explicitly included stale facts;
+/// 3. current before unknown before explicitly included stale facts;
+/// 4. caller preferred fact kinds;
 /// 5. most recently verified source evidence;
 /// 6. stable FactID tie-break.
 public enum ProjectBrainContextSelector {
@@ -139,6 +139,10 @@ public enum ProjectBrainContextSelector {
             guard fact.projectID == request.projectID else { continue }
             if let missionID = request.missionID {
                 guard fact.missionID == nil || fact.missionID == missionID else { continue }
+            } else {
+                // Project-wide context must not silently merge facts from unrelated historical
+                // missions. Mission-scoped facts require an explicit mission neighborhood.
+                guard fact.missionID == nil else { continue }
             }
 
             if let error = fact.validationError {
@@ -209,18 +213,24 @@ public enum ProjectBrainContextSelector {
         )
     }
 
-    /// Deterministic conservative character accounting for the full truth-bearing payload a
-    /// caller must preserve when serializing a fact into model context. This is deliberately not
-    /// presented as a token count; provider-specific token budgeting belongs above this layer.
+    /// Deterministic model-independent character estimate for the complete fact identity, scope,
+    /// freshness, statement, and provenance payload. Provider-specific serialization overhead and
+    /// tokenization belong above this domain layer.
     public static func estimatedCharacterCount(of fact: ProjectBrainFact) -> Int {
         var count = fact.statement.count
+        count += fact.factID.description.count
+        count += fact.projectID.description.count
+        count += fact.missionID?.description.count ?? 0
         count += fact.kind.rawValue.count
         count += fact.scope.kind.rawValue.count
         count += fact.scope.reference?.count ?? 0
+        count += fact.freshness.rawValue.count
+        count += String(fact.lastVerifiedAt.rawValue).count
         count += fact.staleReason?.count ?? 0
         for provenance in fact.provenance {
             count += provenance.kind.rawValue.count
             count += provenance.reference.count
+            count += String(provenance.capturedAt.rawValue).count
             count += provenance.contentDigest?.count ?? 0
         }
         return count
@@ -251,10 +261,10 @@ public enum ProjectBrainContextSelector {
     private static func rankedBefore(_ lhs: RankedFact, _ rhs: RankedFact) -> Bool {
         if lhs.scopeRank != rhs.scopeRank { return lhs.scopeRank < rhs.scopeRank }
         if lhs.missionRank != rhs.missionRank { return lhs.missionRank < rhs.missionRank }
-        if lhs.kindRank != rhs.kindRank { return lhs.kindRank < rhs.kindRank }
         if lhs.freshnessRank != rhs.freshnessRank {
             return lhs.freshnessRank < rhs.freshnessRank
         }
+        if lhs.kindRank != rhs.kindRank { return lhs.kindRank < rhs.kindRank }
         if lhs.fact.lastVerifiedAt != rhs.fact.lastVerifiedAt {
             return lhs.fact.lastVerifiedAt > rhs.fact.lastVerifiedAt
         }

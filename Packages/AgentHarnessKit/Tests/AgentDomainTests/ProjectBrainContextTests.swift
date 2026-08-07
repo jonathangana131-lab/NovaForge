@@ -69,6 +69,40 @@ final class ProjectBrainContextTests: XCTestCase {
         XCTAssertFalse(slice.facts.contains(where: { $0.factID == other.factID }))
     }
 
+    func testProjectLevelRequestDoesNotMixMissionSpecificFacts() throws {
+        let projectID = ProjectID()
+        let firstMissionID = MissionID()
+        let secondMissionID = MissionID()
+        let project = fact(
+            projectID: projectID,
+            statement: "Project-wide design DNA",
+            scope: .init(kind: .project),
+            verifiedAt: 1
+        )
+        let firstMission = fact(
+            projectID: projectID,
+            missionID: firstMissionID,
+            statement: "First mission choice",
+            scope: .init(kind: .mission, reference: "first"),
+            verifiedAt: 100
+        )
+        let secondMission = fact(
+            projectID: projectID,
+            missionID: secondMissionID,
+            statement: "Second mission choice",
+            scope: .init(kind: .mission, reference: "second"),
+            verifiedAt: 200
+        )
+
+        let slice = try ProjectBrainContextSelector.select(
+            from: [firstMission, project, secondMission],
+            request: .init(projectID: projectID)
+        )
+
+        XCTAssertEqual(slice.facts, [project])
+        XCTAssertEqual(slice.matchedFactCount, 1)
+    }
+
     func testFreshnessPolicyIsExplicitAndIncludedStaleFactsRankLast() throws {
         let projectID = ProjectID()
         let current = fact(
@@ -112,6 +146,38 @@ final class ProjectBrainContextTests: XCTestCase {
         )
         XCTAssertEqual(all.facts.map(\.factID), [current.factID, unknown.factID, stale.factID])
         XCTAssertEqual(all.facts.last?.staleReason, "Source changed")
+    }
+
+    func testIncludedStalePreferredKindStillRanksAfterCurrentFact() throws {
+        let projectID = ProjectID()
+        let stalePreferred = fact(
+            projectID: projectID,
+            kind: .architecture,
+            statement: "Old architecture",
+            scope: .init(kind: .project),
+            verifiedAt: 999,
+            freshness: .stale,
+            staleReason: "Architecture changed"
+        )
+        let currentOther = fact(
+            projectID: projectID,
+            kind: .feature,
+            statement: "Current feature",
+            scope: .init(kind: .project),
+            verifiedAt: 1,
+            freshness: .current
+        )
+
+        let slice = try ProjectBrainContextSelector.select(
+            from: [stalePreferred, currentOther],
+            request: .init(
+                projectID: projectID,
+                preferredKinds: [.architecture],
+                freshnessPolicy: .includeStale
+            )
+        )
+
+        XCTAssertEqual(slice.facts.map(\.factID), [currentOther.factID, stalePreferred.factID])
     }
 
     func testPreferredKindOrderingIsDeterministic() throws {
