@@ -1,0 +1,30 @@
+name: V13 source ownership
+
+on:
+  pull_request:
+    paths:
+      - 'docs/architecture/novaforge-v13-source-ownership-map.json'
+      - 'docs/NOVAFORGE_V13_SOURCE_OWNERSHIP.md'
+      - 'scripts/validate_v13_source_ownership.py'
+      - '.github/workflows/v13-source-ownership.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/architecture/novaforge-v13-source-ownership-map.json'
+      - 'docs/NOVAFORGE_V13_SOURCE_OWNERSHIP.md'
+      - 'scripts/validate_v13_source_ownership.py'
+      - '.github/workflows/v13-source-ownership.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate V13 source ownership
+        run: >-
+          python3 scripts/validate_v13_source_ownership.py
+          --self-test
+          --repo-root .
