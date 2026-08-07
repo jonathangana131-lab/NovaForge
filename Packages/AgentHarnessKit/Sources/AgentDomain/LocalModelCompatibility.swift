@@ -14,7 +14,7 @@ public enum LocalModelEvidenceKind: String, Codable, Hashable, Sendable {
     case sourceReported
     /// A deterministic conclusion NovaForge derives from source metadata + device/policy inputs.
     case inferred
-    /// An observation produced for this exact model revision on this exact device profile.
+    /// An observation produced for this exact model artifact on this exact device profile.
     case measured
 }
 
@@ -24,6 +24,20 @@ public enum LocalModelCapabilityStatus: String, Codable, Hashable, Sendable {
     case supported
     case unsupported
     case unknown
+}
+
+/// Resource estimates can come from a model publisher/catalog or from NovaForge's own
+/// deterministic preflight. The two are deliberately not collapsed into one evidence class.
+public enum LocalModelEstimateProvenance: String, Codable, Hashable, Sendable {
+    case sourceReported
+    case inferred
+
+    var evidenceKind: LocalModelEvidenceKind {
+        switch self {
+        case .sourceReported: .sourceReported
+        case .inferred: .inferred
+        }
+    }
 }
 
 public enum LocalModelCompatibilityReason: String, Codable, Hashable, Sendable {
@@ -64,17 +78,29 @@ public struct LocalModelEvidence: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalModelMemoryEstimate: Codable, Equatable, Sendable {
+    public let peakBytes: UInt64
+    public let provenance: LocalModelEstimateProvenance
+
+    public init(peakBytes: UInt64, provenance: LocalModelEstimateProvenance) {
+        self.peakBytes = peakBytes
+        self.provenance = provenance
+    }
+}
+
 /// Catalog metadata used by compatibility preflight. None of these values are
 /// treated as physical-device measurements merely because they came from a catalog.
 public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     public let modelID: String
     public let revision: String
+    /// Exact catalog artifact/variant identity. It must change when the measured bytes/variant change.
+    public let artifactID: String
     public let format: String
     public let architecture: String
     public let quantization: String?
     public let contextWindowTokens: UInt64?
     public let fileSizeBytes: UInt64
-    public let estimatedPeakMemoryBytes: UInt64?
+    public let estimatedPeakMemory: LocalModelMemoryEstimate?
     public let toolCalling: LocalModelCapabilityStatus
     public let structuredOutput: LocalModelCapabilityStatus
     public let source: String
@@ -83,12 +109,13 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     public init(
         modelID: String,
         revision: String,
+        artifactID: String,
         format: String,
         architecture: String,
         quantization: String?,
         contextWindowTokens: UInt64?,
         fileSizeBytes: UInt64,
-        estimatedPeakMemoryBytes: UInt64?,
+        estimatedPeakMemory: LocalModelMemoryEstimate?,
         toolCalling: LocalModelCapabilityStatus,
         structuredOutput: LocalModelCapabilityStatus,
         source: String,
@@ -96,12 +123,13 @@ public struct LocalModelCatalogDescriptor: Codable, Equatable, Sendable {
     ) {
         self.modelID = modelID
         self.revision = revision
+        self.artifactID = artifactID
         self.format = format
         self.architecture = architecture
         self.quantization = quantization
         self.contextWindowTokens = contextWindowTokens
         self.fileSizeBytes = fileSizeBytes
-        self.estimatedPeakMemoryBytes = estimatedPeakMemoryBytes
+        self.estimatedPeakMemory = estimatedPeakMemory
         self.toolCalling = toolCalling
         self.structuredOutput = structuredOutput
         self.source = source
@@ -148,10 +176,12 @@ public struct LocalModelMissionRequirements: Codable, Equatable, Sendable {
 }
 
 /// A benchmark observation is eligible to produce `measured` compatibility evidence
-/// only when model ID, revision, and device profile all exactly match the evaluation.
+/// only when model ID, revision, exact artifact, quantization, and device profile all match.
 public struct LocalModelBenchmarkObservation: Codable, Equatable, Sendable {
     public let modelID: String
     public let revision: String
+    public let artifactID: String
+    public let quantization: String?
     public let deviceProfileID: String
     public let measuredAt: AgentInstant
     public let generationTokensPerSecond: Double
@@ -162,6 +192,8 @@ public struct LocalModelBenchmarkObservation: Codable, Equatable, Sendable {
     public init(
         modelID: String,
         revision: String,
+        artifactID: String,
+        quantization: String?,
         deviceProfileID: String,
         measuredAt: AgentInstant,
         generationTokensPerSecond: Double,
@@ -171,6 +203,8 @@ public struct LocalModelBenchmarkObservation: Codable, Equatable, Sendable {
     ) {
         self.modelID = modelID
         self.revision = revision
+        self.artifactID = artifactID
+        self.quantization = quantization
         self.deviceProfileID = deviceProfileID
         self.measuredAt = measuredAt
         self.generationTokensPerSecond = generationTokensPerSecond
@@ -183,18 +217,18 @@ public struct LocalModelBenchmarkObservation: Codable, Equatable, Sendable {
 /// Product policy for translating exact-device measurements into friendly labels.
 /// Thresholds are explicit inputs so labels remain explainable and versionable.
 public struct LocalModelCompatibilityPolicy: Codable, Equatable, Sendable {
-    public let minimumCompletedSmokeRuns: UInt16
+    public let minimumSuccessfulSmokeRuns: UInt16
     public let maximumFailureRate: Double
     public let excellentTokensPerSecond: Double
     public let goodTokensPerSecond: Double
 
     public init(
-        minimumCompletedSmokeRuns: UInt16 = 2,
+        minimumSuccessfulSmokeRuns: UInt16 = 2,
         maximumFailureRate: Double = 0,
         excellentTokensPerSecond: Double = 8,
         goodTokensPerSecond: Double = 3
     ) {
-        self.minimumCompletedSmokeRuns = minimumCompletedSmokeRuns
+        self.minimumSuccessfulSmokeRuns = minimumSuccessfulSmokeRuns
         self.maximumFailureRate = maximumFailureRate
         self.excellentTokensPerSecond = excellentTokensPerSecond
         self.goodTokensPerSecond = goodTokensPerSecond
@@ -203,7 +237,7 @@ public struct LocalModelCompatibilityPolicy: Codable, Equatable, Sendable {
     public static let conservativeV1 = LocalModelCompatibilityPolicy()
 
     public var isValid: Bool {
-        minimumCompletedSmokeRuns > 0
+        minimumSuccessfulSmokeRuns > 0
             && maximumFailureRate.isFinite
             && maximumFailureRate >= 0
             && maximumFailureRate <= 1
@@ -369,7 +403,7 @@ public enum LocalModelCompatibilityEvaluator {
             )
         }
 
-        guard let estimatedPeakMemoryBytes = descriptor.estimatedPeakMemoryBytes else {
+        guard let estimatedPeakMemory = descriptor.estimatedPeakMemory else {
             evidence.append(.init(
                 kind: .inferred,
                 code: "memory.estimate_missing",
@@ -382,7 +416,7 @@ public enum LocalModelCompatibilityEvaluator {
             )
         }
 
-        guard estimatedPeakMemoryBytes <= device.memoryBudgetBytes else {
+        guard estimatedPeakMemory.peakBytes <= device.memoryBudgetBytes else {
             evidence.append(.init(
                 kind: .inferred,
                 code: "memory.budget_exceeded",
@@ -410,12 +444,14 @@ public enum LocalModelCompatibilityEvaluator {
 
         guard benchmark.modelID == descriptor.modelID,
               benchmark.revision == descriptor.revision,
+              benchmark.artifactID == descriptor.artifactID,
+              benchmark.quantization == descriptor.quantization,
               benchmark.deviceProfileID == device.profileID
         else {
             evidence.append(.init(
                 kind: .inferred,
                 code: "benchmark.not_applicable",
-                detail: "A benchmark exists, but it does not exactly match this model revision and device profile."
+                detail: "A benchmark exists, but it does not exactly match this model artifact, quantization, revision, and device profile."
             ))
             return .init(
                 label: .untested,
@@ -442,7 +478,7 @@ public enum LocalModelCompatibilityEvaluator {
         evidence.append(.init(
             kind: .measured,
             code: "benchmark.exact_device",
-            detail: "Exact revision/device benchmark measured \(benchmark.generationTokensPerSecond) generation tokens/sec across \(benchmark.successfulSmokeRuns) successful and \(benchmark.failedSmokeRuns) failed smoke runs.",
+            detail: "Exact artifact/device benchmark measured \(benchmark.generationTokensPerSecond) generation tokens/sec across \(benchmark.successfulSmokeRuns) successful and \(benchmark.failedSmokeRuns) failed smoke runs.",
             observedAt: benchmark.measuredAt
         ))
 
@@ -498,11 +534,11 @@ public enum LocalModelCompatibilityEvaluator {
             )
         }
 
-        guard completed >= UInt64(policy.minimumCompletedSmokeRuns) else {
+        guard successful >= UInt64(policy.minimumSuccessfulSmokeRuns) else {
             evidence.append(.init(
                 kind: .inferred,
-                code: "benchmark.insufficient_runs",
-                detail: "The benchmark has too few completed smoke runs for a verified performance label."
+                code: "benchmark.insufficient_successful_runs",
+                detail: "The benchmark has too few successful smoke runs for a verified performance label."
             ))
             return .init(
                 label: .untested,
@@ -554,7 +590,7 @@ public enum LocalModelCompatibilityEvaluator {
             LocalModelEvidence(
                 kind: .sourceReported,
                 code: "catalog.identity",
-                detail: "\(descriptor.source) reports model \(descriptor.modelID) revision \(descriptor.revision)."
+                detail: "\(descriptor.source) reports model \(descriptor.modelID) revision \(descriptor.revision), artifact \(descriptor.artifactID)."
             ),
             LocalModelEvidence(
                 kind: .sourceReported,
@@ -599,11 +635,11 @@ public enum LocalModelCompatibilityEvaluator {
             ))
         }
 
-        if let estimatedPeakMemoryBytes = descriptor.estimatedPeakMemoryBytes {
+        if let estimatedPeakMemory = descriptor.estimatedPeakMemory {
             evidence.append(.init(
-                kind: .sourceReported,
+                kind: estimatedPeakMemory.provenance.evidenceKind,
                 code: "catalog.memory_estimate",
-                detail: "\(descriptor.source) provides an estimated peak memory requirement of \(estimatedPeakMemoryBytes) bytes."
+                detail: "Peak memory preflight estimate is \(estimatedPeakMemory.peakBytes) bytes (\(estimatedPeakMemory.provenance.rawValue))."
             ))
         }
 
