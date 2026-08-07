@@ -40,6 +40,20 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertFalse(result.hasMeasuredEvidence)
     }
 
+    func testInferredMemoryEstimatePreservesInferredProvenance() {
+        let result = evaluate(
+            descriptor: descriptor(memoryEstimateProvenance: .inferred),
+            benchmark: nil
+        )
+
+        XCTAssertTrue(result.evidence.contains {
+            $0.code == "catalog.memory_estimate" && $0.kind == .inferred
+        })
+        XCTAssertFalse(result.evidence.contains {
+            $0.code == "catalog.memory_estimate" && $0.kind == .sourceReported
+        })
+    }
+
     func testSafePreflightWithoutBenchmarkRemainsUntested() {
         let result = evaluate(benchmark: nil)
 
@@ -58,6 +72,26 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertEqual(result.reasons, [.benchmarkNotApplicable])
         XCTAssertFalse(result.hasMeasuredEvidence)
         XCTAssertTrue(result.evidence.contains { $0.code == "benchmark.not_applicable" })
+    }
+
+    func testDifferentArtifactBenchmarkCannotMintMeasuredCompatibility() {
+        let result = evaluate(
+            benchmark: benchmark(artifactID: "artifact-q8")
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.benchmarkNotApplicable])
+        XCTAssertFalse(result.hasMeasuredEvidence)
+    }
+
+    func testDifferentQuantizationBenchmarkCannotMintMeasuredCompatibility() {
+        let result = evaluate(
+            benchmark: benchmark(quantization: "Q8_0")
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.benchmarkNotApplicable])
+        XCTAssertFalse(result.hasMeasuredEvidence)
     }
 
     func testExactDeviceBenchmarkProducesMeasuredExcellentLabel() {
@@ -186,7 +220,7 @@ final class LocalModelCompatibilityTests: XCTestCase {
         let result = evaluate(
             benchmark: benchmark(
                 generationTokensPerSecond: 20,
-                successfulSmokeRuns: 1,
+                successfulSmokeRuns: 2,
                 failedSmokeRuns: 1
             )
         )
@@ -197,9 +231,33 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertFalse(result.evidence.contains { $0.code == "performance.policy_classification" })
     }
 
+    func testAllFailedBenchmarkCannotMintPerformanceEvenWithPermissiveFailurePolicy() {
+        let permissivePolicy = LocalModelCompatibilityPolicy(
+            minimumSuccessfulSmokeRuns: 1,
+            maximumFailureRate: 1,
+            excellentTokensPerSecond: 8,
+            goodTokensPerSecond: 3
+        )
+        let result = LocalModelCompatibilityEvaluator.evaluate(
+            descriptor: descriptor(),
+            device: device(),
+            benchmark: benchmark(
+                generationTokensPerSecond: 100,
+                successfulSmokeRuns: 0,
+                failedSmokeRuns: 4
+            ),
+            policy: permissivePolicy
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.benchmarkInsufficient])
+        XCTAssertTrue(result.hasMeasuredEvidence)
+        XCTAssertFalse(result.evidence.contains { $0.code == "performance.policy_classification" })
+    }
+
     func testInvalidPolicyCannotMintFriendlyMeasuredLabel() {
         let invalidPolicy = LocalModelCompatibilityPolicy(
-            minimumCompletedSmokeRuns: 2,
+            minimumSuccessfulSmokeRuns: 2,
             maximumFailureRate: 0,
             excellentTokensPerSecond: 2,
             goodTokensPerSecond: 8
@@ -224,6 +282,7 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertTrue(result.evidence.contains { $0.code == "catalog.format" })
         XCTAssertTrue(result.evidence.contains { $0.code == "catalog.quantization" })
         XCTAssertTrue(result.evidence.contains { $0.code == "catalog.context_window" })
+        XCTAssertTrue(result.evidence.contains { $0.code == "catalog.identity" && $0.detail.contains("artifact-q4") })
     }
 
     func testResultRoundTripsThroughCodableWithoutLosingEvidenceProvenance() throws {
@@ -250,23 +309,31 @@ final class LocalModelCompatibilityTests: XCTestCase {
     }
 
     private func descriptor(
+        artifactID: String = "artifact-q4",
         architecture: String = "llama",
         quantization: String? = "Q4_K_M",
         contextWindowTokens: UInt64? = 32_768,
         fileSizeBytes: UInt64 = 4_000,
         estimatedPeakMemoryBytes: UInt64? = 5_000,
+        memoryEstimateProvenance: LocalModelEstimateProvenance = .sourceReported,
         toolCalling: LocalModelCapabilityStatus = .supported,
         structuredOutput: LocalModelCapabilityStatus = .supported
     ) -> LocalModelCatalogDescriptor {
         LocalModelCatalogDescriptor(
             modelID: "example/code-model",
             revision: "rev-2",
+            artifactID: artifactID,
             format: "gguf",
             architecture: architecture,
             quantization: quantization,
             contextWindowTokens: contextWindowTokens,
             fileSizeBytes: fileSizeBytes,
-            estimatedPeakMemoryBytes: estimatedPeakMemoryBytes,
+            estimatedPeakMemory: estimatedPeakMemoryBytes.map {
+                LocalModelMemoryEstimate(
+                    peakBytes: $0,
+                    provenance: memoryEstimateProvenance
+                )
+            },
             toolCalling: toolCalling,
             structuredOutput: structuredOutput,
             source: "fixture-catalog",
@@ -288,6 +355,8 @@ final class LocalModelCompatibilityTests: XCTestCase {
 
     private func benchmark(
         revision: String = "rev-2",
+        artifactID: String = "artifact-q4",
+        quantization: String? = "Q4_K_M",
         generationTokensPerSecond: Double = 8.25,
         successfulSmokeRuns: UInt16 = 2,
         failedSmokeRuns: UInt16 = 0,
@@ -296,6 +365,8 @@ final class LocalModelCompatibilityTests: XCTestCase {
         LocalModelBenchmarkObservation(
             modelID: "example/code-model",
             revision: revision,
+            artifactID: artifactID,
+            quantization: quantization,
             deviceProfileID: "iphone12-test-profile",
             measuredAt: AgentInstant(rawValue: 1_784_000_000_000),
             generationTokensPerSecond: generationTokensPerSecond,
