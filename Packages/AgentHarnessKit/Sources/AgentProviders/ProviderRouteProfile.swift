@@ -42,12 +42,45 @@ public enum ProviderProductSupportState: String, Codable, CaseIterable, Hashable
 /// Credential *kind* required by a route. No token, session, key, or account
 /// identifier belongs in this descriptor or its receipt projection.
 public enum ProviderAuthenticationMode: String, Codable, Hashable, Sendable {
-    case none
     case apiKeyBearer
     case oauthBearer
     case subscriptionSession
     case callerManaged
     case local
+    case noneDocumented
+    case unverified
+}
+
+/// Bounded data-handling semantics for one exact route/model. Provider catalog
+/// text and price labels never mint this classification.
+public enum ProviderDataHandlingClassification: String, Codable, Hashable, Sendable {
+    case onDeviceOnly
+    case standardHosted
+    case providerMayUseContentForImprovement
+    case trialNoConfidentialData
+    case unverified
+}
+
+public struct ProviderDataHandlingPolicy: Codable, Equatable, Sendable {
+    public let policyID: String
+    public let classification: ProviderDataHandlingClassification
+    public let requiresPreUseDisclosure: Bool
+    public let sourceID: String
+    public let verifiedAtISO8601: String
+
+    public init(
+        policyID: String,
+        classification: ProviderDataHandlingClassification,
+        requiresPreUseDisclosure: Bool,
+        sourceID: String,
+        verifiedAtISO8601: String
+    ) {
+        self.policyID = policyID
+        self.classification = classification
+        self.requiresPreUseDisclosure = requiresPreUseDisclosure
+        self.sourceID = sourceID
+        self.verifiedAtISO8601 = verifiedAtISO8601
+    }
 }
 
 /// Stable, credential-free authority for the transport origin. The transport
@@ -149,8 +182,16 @@ public struct ProviderRouteEvidence: Codable, Equatable, Sendable {
 public enum ProviderRouteProfileValidationError: Error, Equatable, Sendable {
     case emptyEndpointAuthority
     case emptyEvidenceRevision
+    case emptyDataHandlingPolicyID
+    case emptyDataHandlingSourceID
+    case emptyDataHandlingVerifiedAt
     case descriptorPathMismatch(descriptorPath: String, profilePath: String)
     case cancellationCapabilityMismatch
+    case supportedRouteHasUnverifiedAuthentication
+    case supportedRouteHasUnverifiedDataHandling
+    case localRouteAuthenticationMismatch
+    case localRouteDataHandlingMismatch
+    case hostedRouteUsesLocalAuthentication
 }
 
 /// One immutable, credential-free product routing snapshot. The concrete
@@ -163,6 +204,7 @@ public struct ProviderRouteProfile: Equatable, Sendable {
     public let descriptor: ProviderAdapterDescriptor
     public let endpoint: ProviderEndpointAuthority
     public let authenticationMode: ProviderAuthenticationMode
+    public let dataHandling: ProviderDataHandlingPolicy
     public let requestSerializerID: ProviderRequestSerializerID
     public let streamParserID: ProviderStreamParserID
     public let replayPolicy: ProviderReplayPolicy
@@ -175,6 +217,7 @@ public struct ProviderRouteProfile: Equatable, Sendable {
         descriptor: ProviderAdapterDescriptor,
         endpoint: ProviderEndpointAuthority,
         authenticationMode: ProviderAuthenticationMode,
+        dataHandling: ProviderDataHandlingPolicy,
         replayPolicy: ProviderReplayPolicy,
         retryBehavior: ProviderRetryBehavior,
         cancellationBehavior: ProviderCancellationBehavior,
@@ -187,6 +230,15 @@ public struct ProviderRouteProfile: Equatable, Sendable {
         guard !evidence.revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderRouteProfileValidationError.emptyEvidenceRevision
         }
+        guard !dataHandling.policyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProviderRouteProfileValidationError.emptyDataHandlingPolicyID
+        }
+        guard !dataHandling.sourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProviderRouteProfileValidationError.emptyDataHandlingSourceID
+        }
+        guard !dataHandling.verifiedAtISO8601.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProviderRouteProfileValidationError.emptyDataHandlingVerifiedAt
+        }
         guard descriptor.requestPath == endpoint.relativePath else {
             throw ProviderRouteProfileValidationError.descriptorPathMismatch(
                 descriptorPath: descriptor.requestPath,
@@ -197,10 +249,27 @@ public struct ProviderRouteProfile: Equatable, Sendable {
            !descriptor.route.capabilities.features.contains(.cancellation) {
             throw ProviderRouteProfileValidationError.cancellationCapabilityMismatch
         }
+        if supportState == .supported, authenticationMode == .unverified {
+            throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedAuthentication
+        }
+        if supportState == .supported, dataHandling.classification == .unverified {
+            throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedDataHandling
+        }
+        if descriptor.route.deployment == .onDevice {
+            guard authenticationMode == .local else {
+                throw ProviderRouteProfileValidationError.localRouteAuthenticationMismatch
+            }
+            guard dataHandling.classification == .onDeviceOnly else {
+                throw ProviderRouteProfileValidationError.localRouteDataHandlingMismatch
+            }
+        } else if authenticationMode == .local {
+            throw ProviderRouteProfileValidationError.hostedRouteUsesLocalAuthentication
+        }
 
         self.descriptor = descriptor
         self.endpoint = endpoint
         self.authenticationMode = authenticationMode
+        self.dataHandling = dataHandling
         requestSerializerID = ProviderRequestSerializerID(descriptor: descriptor)
         streamParserID = ProviderStreamParserID(descriptor: descriptor)
         self.replayPolicy = replayPolicy
@@ -330,6 +399,11 @@ public struct ProviderRouteReceiptProjection: Codable, Equatable, Sendable {
     public let endpointAuthorityID: String
     public let requestPath: String
     public let authenticationMode: ProviderAuthenticationMode
+    public let dataHandlingPolicyID: String
+    public let dataHandlingClassification: ProviderDataHandlingClassification
+    public let dataHandlingRequiresPreUseDisclosure: Bool
+    public let dataHandlingSourceID: String
+    public let dataHandlingVerifiedAtISO8601: String
     public let requestSerializerID: ProviderRequestSerializerID
     public let streamParserID: ProviderStreamParserID
     public let replayPolicy: ProviderReplayPolicy
@@ -348,6 +422,11 @@ public struct ProviderRouteReceiptProjection: Codable, Equatable, Sendable {
         endpointAuthorityID = profile.endpoint.authorityID
         requestPath = profile.descriptor.requestPath
         authenticationMode = profile.authenticationMode
+        dataHandlingPolicyID = profile.dataHandling.policyID
+        dataHandlingClassification = profile.dataHandling.classification
+        dataHandlingRequiresPreUseDisclosure = profile.dataHandling.requiresPreUseDisclosure
+        dataHandlingSourceID = profile.dataHandling.sourceID
+        dataHandlingVerifiedAtISO8601 = profile.dataHandling.verifiedAtISO8601
         requestSerializerID = profile.requestSerializerID
         streamParserID = profile.streamParserID
         replayPolicy = profile.replayPolicy

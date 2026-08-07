@@ -140,6 +140,11 @@ final class ProviderRouteProfileTests: XCTestCase {
         XCTAssertEqual(receipt.endpointAuthorityID, "public-openai-api")
         XCTAssertEqual(receipt.requestPath, "/v1/responses")
         XCTAssertEqual(receipt.authenticationMode, .apiKeyBearer)
+        XCTAssertEqual(receipt.dataHandlingPolicyID, "fixture-standard-hosted")
+        XCTAssertEqual(receipt.dataHandlingClassification, .standardHosted)
+        XCTAssertFalse(receipt.dataHandlingRequiresPreUseDisclosure)
+        XCTAssertEqual(receipt.dataHandlingSourceID, "fixture-privacy-source")
+        XCTAssertEqual(receipt.dataHandlingVerifiedAtISO8601, "2026-08-07T00:00:00Z")
         XCTAssertEqual(receipt.requestSerializerID, .openAIResponses)
         XCTAssertEqual(receipt.streamParserID, .openAIResponses)
         XCTAssertEqual(receipt.replayPolicy, .responsesContinuationItems)
@@ -159,6 +164,79 @@ final class ProviderRouteProfileTests: XCTestCase {
         )
         XCTAssertEqual(chat.requestSerializerID, .openAIChatCompletions)
         XCTAssertEqual(chat.streamParserID, .openAIChatCompletions)
+    }
+
+    func testSupportedRouteRejectsUnverifiedAuthOrDataHandling() throws {
+        let descriptor = OpenAIChatCompletionsAdapter(
+            model: ProviderModelID(rawValue: "support-truth")
+        ).descriptor
+
+        XCTAssertThrowsError(
+            try makeProfile(
+                descriptor: descriptor,
+                authenticationMode: .unverified
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProviderRouteProfileValidationError,
+                .supportedRouteHasUnverifiedAuthentication
+            )
+        }
+
+        XCTAssertThrowsError(
+            try makeProfile(
+                descriptor: descriptor,
+                dataHandling: ProviderDataHandlingPolicy(
+                    policyID: "unknown-policy",
+                    classification: .unverified,
+                    requiresPreUseDisclosure: true,
+                    sourceID: "fixture-privacy-source",
+                    verifiedAtISO8601: "2026-08-07T00:00:00Z"
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProviderRouteProfileValidationError,
+                .supportedRouteHasUnverifiedDataHandling
+            )
+        }
+    }
+
+    func testLocalRouteRequiresLocalAuthAndOnDeviceDataHandling() throws {
+        let localDescriptor = ProviderAdapterDescriptor(
+            route: ProviderRoute(
+                providerID: ProviderID(rawValue: "novaforge-local"),
+                modelID: ProviderModelID(rawValue: "fixture-local"),
+                adapterID: ProviderAdapterID(rawValue: "local-fixture"),
+                capabilities: .openAICompatibleBaseline,
+                deployment: .onDevice,
+                provenance: .builtInLocalModel
+            ),
+            dialect: .openAICompatibleChat,
+            requestPath: "/v1/local/chat/completions"
+        )
+
+        XCTAssertThrowsError(try makeProfile(descriptor: localDescriptor)) { error in
+            XCTAssertEqual(
+                error as? ProviderRouteProfileValidationError,
+                .localRouteAuthenticationMismatch
+            )
+        }
+
+        let local = try makeProfile(
+            descriptor: localDescriptor,
+            authenticationMode: .local,
+            dataHandling: ProviderDataHandlingPolicy(
+                policyID: "local-on-device",
+                classification: .onDeviceOnly,
+                requiresPreUseDisclosure: false,
+                sourceID: "novaforge-local-runtime",
+                verifiedAtISO8601: "2026-08-07T00:00:00Z"
+            )
+        )
+        XCTAssertEqual(local.authenticationMode, .local)
+        XCTAssertEqual(local.dataHandling.classification, .onDeviceOnly)
+        XCTAssertEqual(local.streamParserID, .localNative)
     }
 
     func testReceiptRecoveryRejectsSupportRevisionDrift() throws {
@@ -205,6 +283,13 @@ final class ProviderRouteProfileTests: XCTestCase {
         authorityID: String = "fixture-origin",
         endpointPath: String? = nil,
         authenticationMode: ProviderAuthenticationMode = .apiKeyBearer,
+        dataHandling: ProviderDataHandlingPolicy = ProviderDataHandlingPolicy(
+            policyID: "fixture-standard-hosted",
+            classification: .standardHosted,
+            requiresPreUseDisclosure: false,
+            sourceID: "fixture-privacy-source",
+            verifiedAtISO8601: "2026-08-07T00:00:00Z"
+        ),
         replayPolicy: ProviderReplayPolicy = .none,
         supportState: ProviderProductSupportState = .supported,
         revision: String = "fixture-r1"
@@ -216,6 +301,7 @@ final class ProviderRouteProfileTests: XCTestCase {
                 relativePath: endpointPath ?? descriptor.requestPath
             ),
             authenticationMode: authenticationMode,
+            dataHandling: dataHandling,
             replayPolicy: replayPolicy,
             retryBehavior: .transientSameRoute,
             cancellationBehavior: .cooperativeTransportAbort,
