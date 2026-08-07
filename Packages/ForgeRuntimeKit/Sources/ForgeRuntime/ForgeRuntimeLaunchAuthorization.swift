@@ -129,14 +129,17 @@ public enum ForgeProjectSandboxError: Error, Equatable, Sendable {
     case invalidRelativePath
     case fileNotFound
     case directoryNotAllowed
+    case symbolicLinkNotAllowed
+    case nonRegularFile
     case escapedSandbox
 }
 
 /// Resolves project-owned files while defending against lexical traversal and symlink escape.
 ///
-/// The root is canonicalized when the sandbox is created. Each existing file is canonicalized again
-/// before use and must remain a descendant of that exact root. The eventual WebKit/runtime host
-/// should still avoid writable attacker-controlled symlink races while a project is running.
+/// The host-selected root is canonicalized when the sandbox is created. Project-owned symbolic-link
+/// components are rejected rather than followed, then the existing regular file is canonicalized and
+/// checked against the exact root path components. The eventual runtime host should still avoid
+/// mutable validation-to-open races while a project is running.
 public struct ForgeProjectSandbox: Sendable {
     public let rootURL: URL
 
@@ -152,7 +155,16 @@ public struct ForgeProjectSandbox: Sendable {
             throw ForgeProjectSandboxError.invalidRelativePath
         }
 
-        let candidate = rootURL.appendingPathComponent(relativePath, isDirectory: false)
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+        var candidate = rootURL
+        for component in components {
+            candidate.appendPathComponent(String(component), isDirectory: false)
+            let values = try? candidate.resourceValues(forKeys: [.isSymbolicLinkKey])
+            if values?.isSymbolicLink == true {
+                throw ForgeProjectSandboxError.symbolicLinkNotAllowed
+            }
+        }
+
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory) else {
             throw ForgeProjectSandboxError.fileNotFound
@@ -162,10 +174,16 @@ public struct ForgeProjectSandbox: Sendable {
         }
 
         let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
-        let rootPath = rootURL.path
-        let resolvedPath = resolved.path
-        guard resolvedPath.hasPrefix(rootPath + "/") else {
+        let rootComponents = rootURL.pathComponents
+        let resolvedComponents = resolved.pathComponents
+        guard resolvedComponents.count > rootComponents.count,
+              Array(resolvedComponents.prefix(rootComponents.count)) == rootComponents else {
             throw ForgeProjectSandboxError.escapedSandbox
+        }
+
+        let values = try resolved.resourceValues(forKeys: [.isRegularFileKey])
+        guard values.isRegularFile == true else {
+            throw ForgeProjectSandboxError.nonRegularFile
         }
 
         return resolved
