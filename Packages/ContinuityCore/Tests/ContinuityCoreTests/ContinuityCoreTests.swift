@@ -147,6 +147,50 @@ final class ContinuityCoreTests: XCTestCase {
         }
     }
 
+    func testCheckpointAdvancePreservesDecisionProjection() throws {
+        let base = ready()
+        let decision = ContinuitySnapshot(
+            identity: base.identity,
+            state: .needsDecision,
+            activeLease: nil,
+            epoch: 9
+        )
+        let newer = ContinuityIdentity(
+            missionID: decision.identity.missionID,
+            projectID: decision.identity.projectID,
+            checkpointID: "checkpoint-decision-2",
+            missionRevision: decision.identity.missionRevision + 1
+        )
+
+        let advanced = try ContinuityReducer.advanceCheckpoint(to: newer, in: decision)
+        XCTAssertEqual(advanced.identity, newer)
+        XCTAssertEqual(advanced.state, .needsDecision)
+        XCTAssertNil(advanced.activeLease)
+    }
+
+    func testCompletionIsOnlyReflectedFromExactAuthoritativeMissionIdentity() throws {
+        let snapshot = ready()
+        let completed = try ContinuityReducer.reflectMissionCompletion(
+            authoritativeIdentity: snapshot.identity,
+            in: snapshot
+        )
+        XCTAssertEqual(completed.state, .completed)
+        XCTAssertEqual(try ContinuityPresentation.activity(for: completed).state, .complete)
+
+        let wrongIdentity = ContinuityIdentity(
+            missionID: snapshot.identity.missionID,
+            projectID: snapshot.identity.projectID,
+            checkpointID: "other-checkpoint",
+            missionRevision: snapshot.identity.missionRevision
+        )
+        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(
+            authoritativeIdentity: wrongIdentity,
+            in: snapshot
+        )) { error in
+            XCTAssertEqual(error as? ContinuityMutationError, .missionCompletionIdentityMismatch)
+        }
+    }
+
     func testAcceptedOutcomeClearsLeaseAndProjectsDecisionTruthfully() throws {
         let (running, lease) = try ContinuityReducer.startForeground(from: ready())
         let (decision, receipt) = try ContinuityReducer.accept(
