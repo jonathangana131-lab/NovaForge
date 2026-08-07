@@ -274,7 +274,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
     @discardableResult
     public mutating func beginWork(on requestedStageIDs: [MissionStageID]) throws -> [MissionWorkLease] {
         try requireNonTerminal()
-        guard [.ready, .executing].contains(phase) else { throw ForgeMissionError.invalidPhase(phase) }
+        guard [.ready, .executing, .validating, .polishing].contains(phase) else { throw ForgeMissionError.invalidPhase(phase) }
         guard !requestedStageIDs.isEmpty else { throw ForgeMissionError.noStagesRequested }
 
         var requested = Set<MissionStageID>()
