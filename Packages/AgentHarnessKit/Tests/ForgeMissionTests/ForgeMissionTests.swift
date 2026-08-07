@@ -139,14 +139,14 @@ final class ForgeMissionTests: XCTestCase {
 
     func testStaleMissionMutationCannotReplaceNewerState() throws {
         let fixture = try makeFixture()
-        let planning = try MissionReducer.setStatus(
-            .planning,
+        let planning = try MissionReducer.transition(
+            to: .planning,
             expectedRevision: fixture.snapshot.revision,
             at: instant(2),
             in: fixture.snapshot
         )
-        XCTAssertThrowsError(try MissionReducer.setStatus(
-            .ready,
+        XCTAssertThrowsError(try MissionReducer.transition(
+            to: .cancelled,
             expectedRevision: fixture.snapshot.revision,
             at: instant(3),
             in: planning
@@ -179,7 +179,7 @@ final class ForgeMissionTests: XCTestCase {
             acceptanceJourneys: ["launch -> interact -> relaunch"],
             expectedEvidenceClasses: ["runtime", "tests"]
         )
-        let snapshot = try MissionReducer.create(
+        let draft = try MissionReducer.create(
             missionID: missionID,
             projectID: projectID,
             constitution: constitution,
@@ -187,7 +187,19 @@ final class ForgeMissionTests: XCTestCase {
             brain: brain,
             at: instant(1)
         )
-        return (snapshot, implementID)
+        let planning = try MissionReducer.transition(
+            to: .planning,
+            expectedRevision: draft.revision,
+            at: instant(1),
+            in: draft
+        )
+        let ready = try MissionReducer.transition(
+            to: .ready,
+            expectedRevision: planning.revision,
+            at: instant(1),
+            in: planning
+        )
+        return (ready, implementID)
     }
 
     private func uuid(_ suffix: Int) -> UUID {
