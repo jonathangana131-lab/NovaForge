@@ -36,9 +36,14 @@ expected=(
 )
 
 check_tour_manifest() {
+  if [[ ! -f "$TOUR_SCRIPT" ]]; then
+    echo "Tour runner not found: $TOUR_SCRIPT" >&2
+    exit 1
+  fi
+
   local runner_names
   local verifier_names
-  runner_names="$(grep -E 'run_step "[0-9]{2}-[^" ]+"' "$TOUR_SCRIPT" | sed -E 's/.*run_step "([0-9]{2}-[^"]+)".*/\1.png/')"
+  runner_names="$(grep -E 'run_step "[0-9]{2}-[^" ]+"' "$TOUR_SCRIPT" | sed -E 's/.*run_step "([0-9]{2}-[^"]+)".*/\1.png/' || true)"
   verifier_names="$(printf '%s\n' "${expected[@]}")"
 
   local mismatch=0
@@ -65,8 +70,8 @@ check_tour_manifest() {
   echo "Tour manifest check passed (${#expected[@]} frames)."
 }
 
+check_tour_manifest
 if [[ "$TOUR_MANIFEST_CHECK" == "1" ]]; then
-  check_tour_manifest
   exit 0
 fi
 
