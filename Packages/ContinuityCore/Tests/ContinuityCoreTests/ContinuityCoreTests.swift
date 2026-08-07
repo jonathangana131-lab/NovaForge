@@ -51,6 +51,19 @@ final class ContinuityCoreTests: XCTestCase {
         XCTAssertFalse(ContinuityReducer.accepts(active, in: expired))
     }
 
+    func testExecutionEnvironmentLossRevokesRemoteLeaseAndStopsWorkingProjection() throws {
+        let (cloud, lease) = try ContinuityReducer.handoffToCloud(
+            from: ready(),
+            capabilities: ContinuityCapabilities(cloud: .verifiedAuthorized)
+        )
+        let lost = try ContinuityReducer.executionEnvironmentLost(in: cloud)
+
+        XCTAssertEqual(lost.state, .suspended(.executionEnvironmentLost))
+        XCTAssertNil(lost.activeLease)
+        XCTAssertFalse(ContinuityReducer.accepts(lease, in: lost))
+        XCTAssertFalse(try ContinuityPresentation.activity(for: lost).isActivelyExecuting)
+    }
+
     func testForegroundResumeMintsFreshLeaseAfterSuspension() throws {
         let (running, oldLease) = try ContinuityReducer.startForeground(from: ready())
         let paused = try ContinuityReducer.pauseByUser(running)
