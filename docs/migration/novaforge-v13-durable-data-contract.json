@@ -5,7 +5,9 @@
   "purpose": "Fail-closed inventory for preserving user value, execution truth, and security authority during the NovaForge 2.0 controlled generational rewrite.",
   "legacySwiftDataSignatures": {
     "preExplicitSchemaV1": {
-      "versionIdentifiers": ["1.0.0"],
+      "versionIdentifiers": [
+        "1.0.0"
+      ],
       "entities": [
         "AgentSettings",
         "ChatMessage",
@@ -22,7 +24,9 @@
       "classifierOwner": "AgentPad/App/AgentPadApp.swift"
     },
     "explicitSchemaV1": {
-      "versionIdentifiers": ["1.0.0"],
+      "versionIdentifiers": [
+        "1.0.0"
+      ],
       "entities": [
         "AgentRunRecord",
         "AgentSettings",
@@ -150,7 +154,6 @@
       "exportPolicy": "never_implicit",
       "sourceOwners": [
         "AgentPad/Infrastructure/Policy/AgentPolicyStorePaths.swift",
-        "AgentPad/Infrastructure/Policy/AgentApprovalSigningKeyStore.swift",
         "AgentPad/Services/AgentPolicySystem.swift"
       ],
       "sourceEvidence": [
@@ -163,6 +166,30 @@
         "A new policy authority proves equivalent or stronger approval binding and mutation replay protection before old ledgers are retired.",
         "No model output or migrated record can mint authority that was not previously accepted.",
         "Policy/checkpoint storage remains symlink-safe, contained, and fail-closed."
+      ]
+    },
+    {
+      "id": "approval-signing-authority",
+      "durability": "secret_authority",
+      "migrationMode": "preserve_in_place",
+      "location": "Physical device: Data Protection Keychain service com.joey.NovaForge / account agent-policy.approval-ui-hmac.v1; Simulator-only fallback: Application Support/AgentPolicy/v1/simulator-approval-signing-key",
+      "containsSecrets": true,
+      "plaintextMigration": false,
+      "exportPolicy": "never",
+      "encryptionBoundary": "data_protection_keychain_this_device_only",
+      "sourceOwners": [
+        "AgentPad/Infrastructure/Policy/AgentApprovalSigningKeyStore.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/Infrastructure/Policy/AgentApprovalSigningKeyStore.swift",
+          "fact": "Physical devices persist the approval HMAC key as a non-synchronizable Data Protection Keychain generic-password item with when-unlocked-this-device-only accessibility; unsigned Simulator uses a protected AgentPolicy file only for simulator test authority."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Physical-device signing key material is never exported or plaintext-migrated; a replacement policy authority reads the existing Keychain account in place.",
+        "Missing or corrupt existing signing authority never causes silent replacement authority to be minted during migration.",
+        "Simulator-only key reset is permitted only together with the simulator/test policy authority it authenticates; simulator behavior is never evidence for physical-device key migration."
       ]
     },
     {
