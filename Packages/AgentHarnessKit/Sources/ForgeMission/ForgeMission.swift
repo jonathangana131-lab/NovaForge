@@ -296,6 +296,7 @@ public enum ForgeMissionError: Error, Equatable, Sendable {
     case completionCheckpointAuthorityMismatch
     case completionMissingExpectedEvidence
     case completionMissingReceipt
+    case completionInvalidKnownLimitation
     case revisionOverflow
     case authorityEpochOverflow
 }
@@ -837,6 +838,9 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         }
         guard !evidence.receiptIDs.values.isEmpty,
               evidence.receiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty }) else { throw ForgeMissionError.completionMissingReceipt }
+        guard evidence.knownLimitations.values.allSatisfy({ !$0.trimmed.isEmpty }) else {
+            throw ForgeMissionError.completionInvalidKnownLimitation
+        }
         guard constitution.expectedEvidence.values.allSatisfy(evidence.evidenceClasses.contains) else {
             throw ForgeMissionError.completionMissingExpectedEvidence
         }

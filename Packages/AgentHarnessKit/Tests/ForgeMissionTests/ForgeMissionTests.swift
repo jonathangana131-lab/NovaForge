@@ -218,6 +218,15 @@ final class ForgeMissionTests: XCTestCase {
 
     func testKnownLimitationsProduceDistinctTerminalTruth() throws {
         var mission = try completedReadyMission()
+        XCTAssertThrowsError(try mission.complete(with: MissionCompletionEvidence(
+            acceptedProjectStateID: "state:1",
+            evidenceClasses: .init([.runtimeTested]),
+            receiptIDs: .init(["completion:r"]),
+            knownLimitations: .init(["   "]),
+            acceptedAt: instant(29)
+        ))) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .completionInvalidKnownLimitation)
+        }
         try mission.complete(with: MissionCompletionEvidence(
             acceptedProjectStateID: "state:1",
             evidenceClasses: .init([.runtimeTested]),
@@ -677,6 +686,24 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))
         json["schemaVersion"] = 99
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))
+    }
+
+    func testArchiveRejectsBlankCompletionReceiptEvidence() throws {
+        var mission = try completedReadyMission()
+        try mission.complete(with: completion(state: "state:1", classes: [.runtimeTested]))
+        let archive = try ForgeMissionArchive(state: mission)
+        let data = try JSONEncoder().encode(archive)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var state = try XCTUnwrap(root["state"] as? [String: Any])
+        var completion = try XCTUnwrap(state["completionEvidence"] as? [String: Any])
+        completion["receiptIDs"] = ["values": ["   "]]
+        state["completionEvidence"] = completion
+        root["state"] = state
+
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            ForgeMissionArchive.self,
+            from: JSONSerialization.data(withJSONObject: root)
+        ))
     }
 
     func testArchiveRejectsReadyPhaseWithManufacturedBlockedStage() throws {

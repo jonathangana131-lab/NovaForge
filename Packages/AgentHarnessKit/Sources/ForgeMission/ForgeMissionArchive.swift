@@ -195,6 +195,8 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
                   checkpoint.missionRevision + 1 == state.revision,
                   checkpoint.authorityEpoch + 1 == state.authorityEpoch,
                   !completion.receiptIDs.values.isEmpty,
+                  completion.receiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty }),
+                  completion.knownLimitations.values.allSatisfy({ !$0.trimmed.isEmpty }),
                   state.constitution.expectedEvidence.values.allSatisfy(completion.evidenceClasses.contains) else { throw ForgeMissionArchiveError.invalidCompletion }
             if state.phase == .completedWithEvidence, !completion.knownLimitations.values.isEmpty { throw ForgeMissionArchiveError.invalidCompletion }
             if state.phase == .completedWithKnownLimitations, completion.knownLimitations.values.isEmpty { throw ForgeMissionArchiveError.invalidCompletion }
