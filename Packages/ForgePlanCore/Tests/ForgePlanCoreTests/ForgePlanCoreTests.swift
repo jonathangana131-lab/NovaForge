@@ -98,6 +98,20 @@ final class ForgePlanCoreTests: XCTestCase {
         XCTAssertEqual(NormalizedForgeControl(.nan).value, 0.5)
     }
 
+    func testNormalizedForgeControlRevalidatesPersistedValuesOnDecode() throws {
+        let high = try JSONDecoder().decode(
+            NormalizedForgeControl.self,
+            from: Data(#"{\"value\":2.75}"#.utf8)
+        )
+        let low = try JSONDecoder().decode(
+            NormalizedForgeControl.self,
+            from: Data(#"{\"value\":-1.25}"#.utf8)
+        )
+
+        XCTAssertEqual(high.value, 1)
+        XCTAssertEqual(low.value, 0)
+    }
+
     func testIntelligenceNeverClaimsNativeReasoningWhenProviderDoesNotSupportIt() {
         let unsupported = ForgeIntelligence.extreme.resolve(
             providerCapabilities: .init(supportsNativeReasoning: false)
@@ -170,6 +184,21 @@ final class ForgePlanCoreTests: XCTestCase {
         XCTAssertEqual(summary.intentSummary, "Open-world scooter game")
         XCTAssertEqual(summary.decisions[0].value, .selected(optionID: "first", label: "First person"))
         XCTAssertEqual(summary.decisions[1].value, .delegatedToNovaForge)
+        XCTAssertEqual(summary.delegatedDecisionIDs, ["world-feel"])
+        XCTAssertTrue(summary.requiresMissionResolution)
+    }
+
+    func testConcreteReadySummaryNeedsNoMissionDecisionResolution() throws {
+        let proposal = PlanSpaceProposal(
+            intentSummary: "Utility",
+            questions: [
+                PlanQuestion(id: "name", prompt: "Name", controlKind: .freeText)
+            ]
+        )
+
+        let summary = try XCTUnwrap(proposal.readySummary(answers: ["name": .text("Pulse")]))
+        XCTAssertEqual(summary.delegatedDecisionIDs, [])
+        XCTAssertFalse(summary.requiresMissionResolution)
     }
 
     func testReadySummaryDoesNotExistWhileMaterialDecisionIsUnresolved() {
