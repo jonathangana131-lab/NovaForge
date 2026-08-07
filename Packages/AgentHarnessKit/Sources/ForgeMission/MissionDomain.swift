@@ -148,6 +148,7 @@ public struct MissionStage: Codable, Hashable, Sendable {
     public let state: MissionStageState
     public let attempt: UInt32
     public let workerLeaseID: MissionWorkerLeaseID?
+    public let acceptedSummary: String?
     public let acceptedEvidenceIDs: [String]
 
     public init(
@@ -159,6 +160,7 @@ public struct MissionStage: Codable, Hashable, Sendable {
         state: MissionStageState = .queued,
         attempt: UInt32 = 0,
         workerLeaseID: MissionWorkerLeaseID? = nil,
+        acceptedSummary: String? = nil,
         acceptedEvidenceIDs: [String] = []
     ) {
         self.id = id
@@ -169,6 +171,7 @@ public struct MissionStage: Codable, Hashable, Sendable {
         self.state = state
         self.attempt = attempt
         self.workerLeaseID = workerLeaseID
+        self.acceptedSummary = acceptedSummary
         self.acceptedEvidenceIDs = acceptedEvidenceIDs
     }
 
@@ -176,6 +179,7 @@ public struct MissionStage: Codable, Hashable, Sendable {
         state: MissionStageState? = nil,
         attempt: UInt32? = nil,
         workerLeaseID: MissionWorkerLeaseID?? = nil,
+        acceptedSummary: String?? = nil,
         acceptedEvidenceIDs: [String]? = nil
     ) -> Self {
         Self(
@@ -187,6 +191,7 @@ public struct MissionStage: Codable, Hashable, Sendable {
             state: state ?? self.state,
             attempt: attempt ?? self.attempt,
             workerLeaseID: workerLeaseID ?? self.workerLeaseID,
+            acceptedSummary: acceptedSummary ?? self.acceptedSummary,
             acceptedEvidenceIDs: acceptedEvidenceIDs ?? self.acceptedEvidenceIDs
         )
     }
@@ -235,6 +240,8 @@ public struct MissionWorkToken: Codable, Hashable, Sendable {
     }
 }
 
+/// A bounded acceptance candidate from a worker. `summary` is a concise durable work summary,
+/// never hidden chain-of-thought. The reducer still requires a live work lease before acceptance.
 public struct MissionWorkerResult: Codable, Hashable, Sendable {
     public let summary: String
     public let evidenceIDs: [String]
