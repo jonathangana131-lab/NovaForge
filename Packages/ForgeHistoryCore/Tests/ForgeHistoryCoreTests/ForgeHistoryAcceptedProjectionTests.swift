@@ -122,17 +122,30 @@ final class ForgeHistoryAcceptedProjectionTests: XCTestCase {
         }
     }
 
-    func testAcceptedCheckpointBindingRoundTripRetainsProjectAndStateIdentity() throws {
+    func testProjectorPreservesCanonicalDuplicateSequenceValidation() throws {
         let project = try ForgeHistoryProjectID("project-a")
-        let binding = ForgeHistoryAcceptedCheckpointBinding(
-            projectID: project,
-            acceptedProjectStateID: try .init("state-1"),
-            checkpoint: try makeCheckpoint("c1", sequence: 1)
-        )
+        let first = try makeCheckpoint("c1", sequence: 1)
+        let second = try makeCheckpoint("c2", sequence: 1)
 
-        let data = try JSONEncoder().encode(binding)
-        let decoded = try JSONDecoder().decode(ForgeHistoryAcceptedCheckpointBinding.self, from: data)
-        XCTAssertEqual(decoded, binding)
+        XCTAssertThrowsError(
+            try ForgeHistoryAcceptedTimelineProjector.project(
+                projectID: project,
+                acceptedCheckpoints: [
+                    .init(
+                        projectID: project,
+                        acceptedProjectStateID: try .init("state-1"),
+                        checkpoint: first
+                    ),
+                    .init(
+                        projectID: project,
+                        acceptedProjectStateID: try .init("state-2"),
+                        checkpoint: second
+                    ),
+                ]
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeHistoryError, .duplicateSequence(1))
+        }
     }
 
     func testAcceptedProjectStateIdentifierFailsClosedOnPathLikeValue() throws {
