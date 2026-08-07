@@ -1,0 +1,56 @@
+name: Temporary V13 mission stack current-main recovery
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-CONSOLIDATE-7A8E/mission-stack-main-recovery/e1
+
+permissions:
+  contents: write
+
+jobs:
+  compose-and-verify:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Compose exact canonical stack and verify package
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=4870c4844321f9d4434939f43f17233d16b8b16f
+          stack=0b50d607b9a68c40258f1fd45c16d325350dd779
+
+          test "$(git rev-parse HEAD^)" = "$base"
+          test "$(git show --pretty='' --name-only HEAD | sed '/^$/d')" = ".github/workflows/tmp-v13-mission-stack-main-recovery.yml"
+
+          git config user.name "NovaForge V13 recovery"
+          git config user.email "actions@users.noreply.github.com"
+          git merge --no-ff --no-edit "$stack"
+
+          git diff --check "$base"
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
+
+          git rm .github/workflows/tmp-v13-mission-stack-main-recovery.yml
+
+          expected="$(mktemp)"
+          actual="$(mktemp)"
+          cat > "$expected" <<'EOF'
+          Packages/AgentHarnessKit/Package.swift
+          Packages/AgentHarnessKit/Sources/AgentDomain/MissionConstitution.swift
+          Packages/AgentHarnessKit/Sources/AgentDomain/MissionState.swift
+          Packages/AgentHarnessKit/Sources/AgentDomain/ProjectBrain.swift
+          Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMission.swift
+          Packages/AgentHarnessKit/Sources/ForgeMission/ForgeMissionArchive.swift
+          Packages/AgentHarnessKit/Tests/AgentDomainTests/MissionProjectBrainDomainTests.swift
+          Packages/AgentHarnessKit/Tests/AgentDomainTests/MissionStateDomainTests.swift
+          Packages/AgentHarnessKit/Tests/ForgeMissionTests/ForgeMissionTests.swift
+          EOF
+          git diff --name-only "$base" | sort > "$actual"
+          sort -o "$expected" "$expected"
+          diff -u "$expected" "$actual"
+          git diff --check "$base"
+
+          git commit -am "Remove temporary mission stack recovery runner"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
