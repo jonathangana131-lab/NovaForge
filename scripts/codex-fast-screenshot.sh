@@ -185,7 +185,6 @@ record_launched_app_pid() {
   while IFS= read -r line; do
     [[ "$line" == "${BUNDLE_ID}: "* ]] || continue
     candidate="${line#${BUNDLE_ID}: }"
-    candidate="${candidate//[[:space:]]/}"
     if [[ "$candidate" == <-> ]] && (( candidate > 0 )); then
       LAUNCHED_APP_PID="$candidate"
     fi
