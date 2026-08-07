@@ -15,6 +15,7 @@ public enum ForgeHistoryError: Error, Equatable, Sendable {
     case identicalComparisonEndpoints(String)
     case invalidEvidenceEnvironment(kind: ForgeHistoryEvidenceKind, environment: ForgeHistoryEvidenceEnvironment)
     case environmentVerificationRequiresReceipt(ForgeHistoryEvidenceKind)
+    case missionScopeMismatch(checkpointID: String, expectedMissionID: String, actualMissionID: String?)
 }
 
 public protocol ForgeHistoryIdentifierTag: Sendable {}
@@ -181,6 +182,7 @@ public struct ForgeHistoryEvidenceClaim: Codable, Hashable, Sendable {
 public struct ForgeHistoryCheckpoint: Codable, Hashable, Sendable {
     public let id: ForgeHistoryCheckpointID
     public let parentID: ForgeHistoryCheckpointID?
+    public let originatingMissionID: ForgeHistoryMissionID?
     public let sequence: UInt64
     public let acceptedAtMilliseconds: Int64
     public let title: String
@@ -193,6 +195,7 @@ public struct ForgeHistoryCheckpoint: Codable, Hashable, Sendable {
     public init(
         id: ForgeHistoryCheckpointID,
         parentID: ForgeHistoryCheckpointID? = nil,
+        originatingMissionID: ForgeHistoryMissionID? = nil,
         sequence: UInt64,
         acceptedAtMilliseconds: Int64,
         title: String,
@@ -232,6 +235,7 @@ public struct ForgeHistoryCheckpoint: Codable, Hashable, Sendable {
 
         self.id = id
         self.parentID = parentID
+        self.originatingMissionID = originatingMissionID
         self.sequence = sequence
         self.acceptedAtMilliseconds = acceptedAtMilliseconds
         self.title = normalizedTitle
@@ -270,7 +274,7 @@ public struct ForgeHistoryCheckpoint: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, parentID, sequence, acceptedAtMilliseconds, title, summary
+        case id, parentID, originatingMissionID, sequence, acceptedAtMilliseconds, title, summary
         case acceptedExecutionReceiptReference, artifacts, evidence, knownLimitations
     }
 
@@ -279,6 +283,7 @@ public struct ForgeHistoryCheckpoint: Codable, Hashable, Sendable {
         try self.init(
             id: container.decode(ForgeHistoryCheckpointID.self, forKey: .id),
             parentID: container.decodeIfPresent(ForgeHistoryCheckpointID.self, forKey: .parentID),
+            originatingMissionID: container.decodeIfPresent(ForgeHistoryMissionID.self, forKey: .originatingMissionID),
             sequence: container.decode(UInt64.self, forKey: .sequence),
             acceptedAtMilliseconds: container.decode(Int64.self, forKey: .acceptedAtMilliseconds),
             title: container.decode(String.self, forKey: .title),
@@ -293,6 +298,7 @@ public struct ForgeHistoryCheckpoint: Codable, Hashable, Sendable {
 
 public struct ForgeVisualTimeMachineItem: Codable, Hashable, Sendable {
     public let checkpointID: ForgeHistoryCheckpointID
+    public let originatingMissionID: ForgeHistoryMissionID?
     public let sequence: UInt64
     public let acceptedAtMilliseconds: Int64
     public let title: String
@@ -355,6 +361,13 @@ public struct ForgeHistoryTimeline: Codable, Hashable, Sendable {
             guard sequences.insert(checkpoint.sequence).inserted else {
                 throw ForgeHistoryError.duplicateSequence(checkpoint.sequence)
             }
+            if let missionID, checkpoint.originatingMissionID != missionID {
+                throw ForgeHistoryError.missionScopeMismatch(
+                    checkpointID: checkpoint.id.rawValue,
+                    expectedMissionID: missionID.rawValue,
+                    actualMissionID: checkpoint.originatingMissionID?.rawValue
+                )
+            }
         }
 
         let ordered = checkpoints.sorted { lhs, rhs in
@@ -399,6 +412,7 @@ public struct ForgeHistoryTimeline: Codable, Hashable, Sendable {
         checkpoints.map { checkpoint in
             ForgeVisualTimeMachineItem(
                 checkpointID: checkpoint.id,
+                originatingMissionID: checkpoint.originatingMissionID,
                 sequence: checkpoint.sequence,
                 acceptedAtMilliseconds: checkpoint.acceptedAtMilliseconds,
                 title: checkpoint.title,
