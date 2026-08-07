@@ -1,0 +1,277 @@
+{
+  "formatVersion": 1,
+  "protocol": "NF-SWARM-v13",
+  "sourceCommit": "df1740f12f5e0b26780868c1cd906ee8cae497ae",
+  "purpose": "Fail-closed inventory for preserving user value, execution truth, and security authority during the NovaForge 2.0 controlled generational rewrite.",
+  "legacySwiftDataSignatures": {
+    "preExplicitSchemaV1": {
+      "versionIdentifiers": [
+        "1.0.0"
+      ],
+      "entities": [
+        "AgentSettings",
+        "ChatMessage",
+        "Conversation",
+        "Project",
+        "ProjectArtifact",
+        "ProjectEvent",
+        "ProjectFileChange",
+        "ProjectOSRun",
+        "ProjectOSStep",
+        "TerminalCommandRecord",
+        "ToolRun"
+      ],
+      "classifierOwner": "AgentPad/App/AgentPadApp.swift"
+    },
+    "explicitSchemaV1": {
+      "versionIdentifiers": [
+        "1.0.0"
+      ],
+      "entities": [
+        "AgentRunRecord",
+        "AgentSettings",
+        "ChatMessage",
+        "Conversation",
+        "Project",
+        "ProjectArtifact",
+        "ProjectEvent",
+        "ProjectFileChange",
+        "ProjectOSRun",
+        "ProjectOSStep",
+        "TerminalCommandRecord",
+        "ToolOperationRecord",
+        "ToolRun"
+      ],
+      "classifierOwner": "AgentPad/App/AgentPadApp.swift"
+    }
+  },
+  "stores": [
+    {
+      "id": "swiftdata-primary",
+      "durability": "user_value",
+      "migrationMode": "migrate_losslessly",
+      "location": "Application Support/NovaForge.store (+ SQLite -wal/-shm companions when present)",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "bounded_user_export_only",
+      "sourceOwners": [
+        "AgentPad/App/AgentPadApp.swift",
+        "AgentPad/Models/Models.swift",
+        "AgentPad/Models/AppLaunchPersistence.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/App/AgentPadApp.swift",
+          "fact": "LaunchPersistenceStorePaths names NovaForge.store as the primary durable SwiftData store and treats main/WAL/SHM as one recovery set."
+        },
+        {
+          "repositoryPath": "AgentPad/Models/AppLaunchPersistence.swift",
+          "fact": "Launch repair reads persisted settings, conversations, and project records before mutation; AgentSettingsRecordSelection establishes one canonical durable settings row."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Representative legacy-store migration fixtures pass without project, conversation, history, artifact, settings, or accepted-run loss.",
+        "The replacement store can be opened after relaunch and preserves stable record identity/lineage where identity is meaningful.",
+        "The old store remains recoverable until the replacement has a durable accepted commit marker."
+      ]
+    },
+    {
+      "id": "swiftdata-compatibility",
+      "durability": "user_value",
+      "migrationMode": "preserve_until_reconciled",
+      "location": "Application Support/CompatibilityRecovery/NovaForge-Compatibility.store",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "never_implicit",
+      "sourceOwners": [
+        "AgentPad/App/AgentPadApp.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/App/AgentPadApp.swift",
+          "fact": "LaunchPersistenceContainerSelector keeps serving an active durable compatibility branch even when primary becomes readable, until explicit identity-aware reconciliation clears it."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Identity-aware reconciliation proves the compatibility branch contains no newer unique user state than the selected replacement.",
+        "The active compatibility guard is cleared durably only after reconciliation succeeds."
+      ]
+    },
+    {
+      "id": "swiftdata-recovery-snapshots",
+      "durability": "continuation_evidence",
+      "migrationMode": "preserve_in_place",
+      "location": "Application Support/RecoveredStores/<recovery-id>/",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "diagnostic_only",
+      "sourceOwners": [
+        "AgentPad/App/AgentPadApp.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/App/AgentPadApp.swift",
+          "fact": "LaunchPersistenceStoreQuarantine copies and fingerprints the exact SQLite main/WAL/SHM preimage, writes a durable manifest and verified commit, and deliberately leaves the source store intact."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "A documented retention policy exists that never deletes the only verified recovery preimage for an unresolved migration.",
+        "Recovery manifest and verified-commit validation remain fail-closed."
+      ]
+    },
+    {
+      "id": "agent-engine-run-index",
+      "durability": "continuation_evidence",
+      "migrationMode": "migrate_losslessly",
+      "location": "Application Support/AgentEngine/v1/run-ownership-index.ledger",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "receipt_projection_only",
+      "sourceOwners": [
+        "AgentPad/Infrastructure/Persistence/AgentEngineRunIndexStorePaths.swift",
+        "AgentPad/Infrastructure/Persistence/DurableAgentEngineRunIndex.swift",
+        "AgentPad/Infrastructure/Persistence/AgentRunRecoveryReconciler.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/Infrastructure/Persistence/AgentEngineRunIndexStorePaths.swift",
+          "fact": "AgentEngineRunIndexStorePaths defines the protected process-safe v1 run ownership ledger under AgentEngine/v1 with strict containment, symlink rejection, complete data protection, and backup exclusion."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Accepted run ownership/recovery identity can be round-tripped into the new Mission Engine without duplicate execution.",
+        "Crash/relaunch recovery rejects stale or conflicting ownership after migration.",
+        "The replacement preserves evidence needed to distinguish accepted, interrupted, and terminal execution state."
+      ]
+    },
+    {
+      "id": "agent-policy-ledgers",
+      "durability": "security_authority",
+      "migrationMode": "preserve_in_place",
+      "location": "Application Support/AgentPolicy/v1/{policy-authority.ledger,mutation-effect-lifecycle.ledger}",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "never_implicit",
+      "sourceOwners": [
+        "AgentPad/Infrastructure/Policy/AgentPolicyStorePaths.swift",
+        "AgentPad/Services/AgentPolicySystem.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/Infrastructure/Policy/AgentPolicyStorePaths.swift",
+          "fact": "AgentPolicyStorePaths is the canonical protected composition boundary for policy-authority and mutation-effect-lifecycle ledgers and requires complete data protection plus backup exclusion."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "A new policy authority proves equivalent or stronger approval binding and mutation replay protection before old ledgers are retired.",
+        "No model output or migrated record can mint authority that was not previously accepted.",
+        "Policy/checkpoint storage remains symlink-safe, contained, and fail-closed."
+      ]
+    },
+    {
+      "id": "approval-signing-authority",
+      "durability": "secret_authority",
+      "migrationMode": "preserve_in_place",
+      "location": "Physical device: Data Protection Keychain service com.joey.NovaForge / account agent-policy.approval-ui-hmac.v1; Simulator-only fallback: Application Support/AgentPolicy/v1/simulator-approval-signing-key",
+      "containsSecrets": true,
+      "plaintextMigration": false,
+      "exportPolicy": "never",
+      "encryptionBoundary": "data_protection_keychain_this_device_only",
+      "sourceOwners": [
+        "AgentPad/Infrastructure/Policy/AgentApprovalSigningKeyStore.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/Infrastructure/Policy/AgentApprovalSigningKeyStore.swift",
+          "fact": "Physical devices persist the approval HMAC key as a non-synchronizable Data Protection Keychain generic-password item with when-unlocked-this-device-only accessibility; unsigned Simulator uses a protected AgentPolicy file only for simulator test authority."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Physical-device signing key material is never exported or plaintext-migrated; a replacement policy authority reads the existing Keychain account in place.",
+        "Missing or corrupt existing signing authority never causes silent replacement authority to be minted during migration.",
+        "Simulator-only key reset is permitted only together with the simulator/test policy authority it authenticates; simulator behavior is never evidence for physical-device key migration."
+      ]
+    },
+    {
+      "id": "workspace-checkpoints",
+      "durability": "continuation_evidence",
+      "migrationMode": "preserve_in_place",
+      "location": "Application Support/AgentPolicy/v1/checkpoints/<content-addressed checkpoint>/",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "never_implicit",
+      "sourceOwners": [
+        "AgentPad/Infrastructure/Workspace/POSIXWorkspaceCheckpointStore.swift",
+        "AgentPad/Infrastructure/Policy/AgentPolicyStorePaths.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/Infrastructure/Workspace/POSIXWorkspaceCheckpointStore.swift",
+          "fact": "POSIXWorkspaceCheckpointStore publishes immutable content-addressed whole-workspace before-state snapshots and exposes idempotent restore for interrupted mutation recovery."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Every accepted in-flight mutation that requires rollback retains a valid restore checkpoint or an equivalent verified replacement.",
+        "Checkpoint identity remains bound to workspace, revision, effect key, operation payload, and before-state digest."
+      ]
+    },
+    {
+      "id": "user-workspaces",
+      "durability": "user_value",
+      "migrationMode": "preserve_in_place",
+      "location": "Resolved by AgentWorkspaceRootProviding; deliberately not coupled to the SwiftData database path.",
+      "containsSecrets": false,
+      "plaintextMigration": false,
+      "exportPolicy": "explicit_project_export_only",
+      "sourceOwners": [
+        "AgentPad/Infrastructure/Workspace/POSIXWorkspaceCheckpointStore.swift",
+        "AgentPad/App/AgentPadApp.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/App/AgentPadApp.swift",
+          "fact": "The debug persistence reset explicitly leaves user workspaces untouched while resetting engine/policy/SwiftData test authority."
+        },
+        {
+          "repositoryPath": "AgentPad/Infrastructure/Workspace/POSIXWorkspaceCheckpointStore.swift",
+          "fact": "Workspace mutation checkpoints resolve a workspace root through AgentWorkspaceRootProviding and verify root/containment identity before restore."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "All project source/assets remain byte-equivalent unless an accepted migration explicitly transforms a format.",
+        "Workspace identity and project binding survive relaunch and migration.",
+        "No rewrite path treats missing workspace metadata as permission to delete filesystem content."
+      ]
+    },
+    {
+      "id": "keychain-credentials",
+      "durability": "secret_authority",
+      "migrationMode": "preserve_in_place",
+      "location": "iOS Keychain generic-password service com.joey.NovaForge",
+      "containsSecrets": true,
+      "plaintextMigration": false,
+      "exportPolicy": "never",
+      "encryptionBoundary": "keychain_this_device_only",
+      "sourceOwners": [
+        "AgentPad/Services/KeychainStore.swift"
+      ],
+      "sourceEvidence": [
+        {
+          "repositoryPath": "AgentPad/Services/KeychainStore.swift",
+          "fact": "KeychainStore saves generic-password credential data under service com.joey.NovaForge with kSecAttrAccessibleWhenUnlockedThisDeviceOnly."
+        }
+      ],
+      "requiredBeforeReplacement": [
+        "Credential references may be remapped, but secret values are never serialized through SwiftData, JSON migration manifests, logs, History, Project Brain, or export packages.",
+        "A replacement credential API reads existing accounts in place or requires an explicit user re-authentication; migration never silently copies plaintext secrets."
+      ]
+    }
+  ],
+  "rewriteRules": [
+    "Presentation architecture, giant views, duplicated UI state, and legacy navigation may be replaced without preserving their internal shape.",
+    "Durable user value, accepted execution evidence, rollback checkpoints, policy authority, and credentials must not be deleted because a new module has been introduced.",
+    "A new architecture becomes authoritative only after an exact accepted migration/reconciliation checkpoint exists; creation of an empty replacement is never proof of migration.",
+    "Derived presentation caches and transcript projections may be rebuilt only from durable source truth; raw chat transcript is not promoted into the NovaForge 2.0 project database.",
+    "No migration may weaken path containment, symlink rejection, data protection, approval authority, replay protection, or evidence provenance."
+  ]
+}

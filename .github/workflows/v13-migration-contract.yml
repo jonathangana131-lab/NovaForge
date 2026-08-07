@@ -1,0 +1,30 @@
+name: V13 migration contract
+
+on:
+  pull_request:
+    paths:
+      - 'docs/migration/novaforge-v13-durable-data-contract.json'
+      - 'docs/NOVAFORGE_V13_MIGRATION_INVENTORY.md'
+      - 'scripts/validate_v13_migration_contract.py'
+      - '.github/workflows/v13-migration-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/migration/novaforge-v13-durable-data-contract.json'
+      - 'docs/NOVAFORGE_V13_MIGRATION_INVENTORY.md'
+      - 'scripts/validate_v13_migration_contract.py'
+      - '.github/workflows/v13-migration-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate durable-data rewrite contract
+        run: >-
+          python3 scripts/validate_v13_migration_contract.py
+          --self-test
+          --repo-root .
