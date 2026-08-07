@@ -154,6 +154,34 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertFalse(result.hasMeasuredEvidence)
     }
 
+    func testKnownInsufficientContextWindowFailsMissionRequirement() {
+        let result = LocalModelCompatibilityEvaluator.evaluate(
+            descriptor: descriptor(contextWindowTokens: 8_192),
+            device: device(),
+            requirements: .init(minimumContextTokens: 16_384),
+            benchmark: benchmark()
+        )
+
+        XCTAssertEqual(result.label, .unsupported)
+        XCTAssertEqual(result.reasons, [.contextWindowInsufficient])
+        XCTAssertFalse(result.hasMeasuredEvidence)
+        XCTAssertTrue(result.evidence.contains { $0.code == "context.window.insufficient" })
+    }
+
+    func testUnknownContextWindowRemainsUntestedForContextSensitiveMission() {
+        let result = LocalModelCompatibilityEvaluator.evaluate(
+            descriptor: descriptor(contextWindowTokens: nil),
+            device: device(),
+            requirements: .init(minimumContextTokens: 16_384),
+            benchmark: benchmark()
+        )
+
+        XCTAssertEqual(result.label, .untested)
+        XCTAssertEqual(result.reasons, [.contextWindowUnverified])
+        XCTAssertTrue(result.isPreflightEligible)
+        XCTAssertFalse(result.hasMeasuredEvidence)
+    }
+
     func testUnstableBenchmarkDoesNotMislabelReliabilityAsSlowPerformance() {
         let result = evaluate(
             benchmark: benchmark(
@@ -190,6 +218,14 @@ final class LocalModelCompatibilityTests: XCTestCase {
         XCTAssertFalse(result.evidence.contains { $0.code == "performance.policy_classification" })
     }
 
+    func testDescriptorCarriesCatalogFormatQuantizationAndContextEvidence() {
+        let result = evaluate(benchmark: nil)
+
+        XCTAssertTrue(result.evidence.contains { $0.code == "catalog.format" })
+        XCTAssertTrue(result.evidence.contains { $0.code == "catalog.quantization" })
+        XCTAssertTrue(result.evidence.contains { $0.code == "catalog.context_window" })
+    }
+
     func testResultRoundTripsThroughCodableWithoutLosingEvidenceProvenance() throws {
         let result = evaluate(benchmark: benchmark())
         let data = try JSONEncoder().encode(result)
@@ -215,6 +251,8 @@ final class LocalModelCompatibilityTests: XCTestCase {
 
     private func descriptor(
         architecture: String = "llama",
+        quantization: String? = "Q4_K_M",
+        contextWindowTokens: UInt64? = 32_768,
         fileSizeBytes: UInt64 = 4_000,
         estimatedPeakMemoryBytes: UInt64? = 5_000,
         toolCalling: LocalModelCapabilityStatus = .supported,
@@ -223,7 +261,10 @@ final class LocalModelCompatibilityTests: XCTestCase {
         LocalModelCatalogDescriptor(
             modelID: "example/code-model",
             revision: "rev-2",
+            format: "gguf",
             architecture: architecture,
+            quantization: quantization,
+            contextWindowTokens: contextWindowTokens,
             fileSizeBytes: fileSizeBytes,
             estimatedPeakMemoryBytes: estimatedPeakMemoryBytes,
             toolCalling: toolCalling,
