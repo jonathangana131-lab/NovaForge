@@ -27,6 +27,7 @@ public enum MissionRefactorRisk: String, Codable, CaseIterable, Sendable {
 /// Desired execution locality recorded by the mission contract.
 /// Authorization and actual route eligibility remain policy/runtime concerns.
 public enum MissionLocalityPreference: String, Codable, CaseIterable, Sendable {
+    case unspecified
     case localOnly
     case hybrid
     case hostedAllowed
@@ -143,7 +144,7 @@ public struct MissionConstitution: Codable, Equatable, Sendable {
         buildDepth: MissionBuildDepth = .polished,
         creativity: MissionCreativity = .balanced,
         refactorRisk: MissionRefactorRisk = .balanced,
-        localityPreference: MissionLocalityPreference = .hybrid,
+        localityPreference: MissionLocalityPreference = .unspecified,
         performanceTarget: String? = nil,
         accessibilityTarget: String? = nil,
         persistenceExpectations: String? = nil,
