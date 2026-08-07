@@ -20,8 +20,9 @@ jobs:
         run: |
           set -euo pipefail
           base=0b50d607b9a68c40258f1fd45c16d325350dd779
-          test "$(git rev-parse HEAD^)" = "$base"
-          test "$(git show --pretty='' --name-only HEAD | sed '/^$/d')" = ".github/workflows/tmp-v13-archive-schema-truth.yml"
+          git merge-base --is-ancestor "$base" HEAD
+          unexpected="$(git diff --name-only "$base" HEAD | grep -Ev '^.github/workflows/tmp-v13-archive-schema-truth.yml$' || true)"
+          test -z "$unexpected"
 
           python3 - <<'PY'
           from pathlib import Path
@@ -31,15 +32,20 @@ jobs:
           old = 'public static let currentSchemaVersion = 1'
           assert a.count(old) == 1
           archive.write_text(a.replace(old, 'public static let currentSchemaVersion = 2', 1))
+
           t = tests.read_text()
+          start = t.index('    func testArchiveRoundTripIsDeterministicAndFailClosedOnSchema() throws {')
+          end = t.index('\n    func testArchiveRejectsCorruptedExecutingStateWithoutLease()', start)
+          block = t[start:end]
           old = '''        let archive = try ForgeMissionArchive(state: mission)\n        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]\n'''
           new = '''        let archive = try ForgeMissionArchive(state: mission)\n        XCTAssertEqual(ForgeMissionArchive.currentSchemaVersion, 2)\n        XCTAssertEqual(archive.schemaVersion, 2)\n        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]\n'''
-          assert t.count(old) == 1
-          t = t.replace(old, new, 1)
+          assert block.count(old) == 1
+          block = block.replace(old, new, 1)
           old = '''        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])\n        json["schemaVersion"] = 99\n        XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))\n'''
           new = '''        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])\n        json["schemaVersion"] = 1\n        XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))\n        json["schemaVersion"] = 99\n        XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))\n'''
-          assert t.count(old) == 1
-          tests.write_text(t.replace(old, new, 1))
+          assert block.count(old) == 1
+          block = block.replace(old, new, 1)
+          tests.write_text(t[:start] + block + t[end:])
           PY
 
           git diff --check
