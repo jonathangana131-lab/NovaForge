@@ -14,6 +14,7 @@ public enum ForgeHistoryError: Error, Equatable, Sendable {
     case unknownCheckpoint(String)
     case identicalComparisonEndpoints(String)
     case invalidEvidenceEnvironment(kind: ForgeHistoryEvidenceKind, environment: ForgeHistoryEvidenceEnvironment)
+    case environmentVerificationRequiresReceipt(ForgeHistoryEvidenceKind)
 }
 
 public protocol ForgeHistoryIdentifierTag: Sendable {}
@@ -214,8 +215,18 @@ public struct ForgeHistoryCheckpoint: Codable, Hashable, Sendable {
             if let artifact = claim.artifact, !artifactSet.contains(artifact) {
                 throw ForgeHistoryError.evidenceArtifactNotAttached(artifact.id.rawValue)
             }
-            guard claim.artifact != nil || claim.receiptReference != nil || acceptedExecutionReceiptReference != nil else {
-                throw ForgeHistoryError.unprovenEvidence(claim.kind)
+
+            let hasExecutionReceipt =
+                claim.receiptReference != nil || acceptedExecutionReceiptReference != nil
+            switch claim.kind {
+            case .simulatorVerified, .physicalDeviceVerified:
+                guard hasExecutionReceipt else {
+                    throw ForgeHistoryError.environmentVerificationRequiresReceipt(claim.kind)
+                }
+            case .generated, .compiled, .runtimeTested, .visuallyInspected:
+                guard claim.artifact != nil || hasExecutionReceipt else {
+                    throw ForgeHistoryError.unprovenEvidence(claim.kind)
+                }
             }
         }
 
