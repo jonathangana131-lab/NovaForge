@@ -21,11 +21,12 @@ jobs:
           set -euo pipefail
           base=517c6b6c06794e184c383f2ec795125ff53ecfab
           git merge-base --is-ancestor "$base" HEAD
-          unexpected="$(git diff --name-only "$base" HEAD | grep -Ev '^(.github/workflows/tmp-v13-mission-transition-truth.yml|scripts/tmp_v13_mission_transition_truth.py|scripts/tmp_v13_completion_checkpoint_truth.py)$' || true)"
+          unexpected="$(git diff --name-only "$base" HEAD | grep -Ev '^(.github/workflows/tmp-v13-mission-transition-truth.yml|scripts/tmp_v13_mission_transition_truth.py|scripts/tmp_v13_completion_checkpoint_truth.py|scripts/tmp_v13_transition_test_fix.py)$' || true)"
           test -z "$unexpected"
 
           python3 scripts/tmp_v13_mission_transition_truth.py
           python3 scripts/tmp_v13_completion_checkpoint_truth.py
+          python3 scripts/tmp_v13_transition_test_fix.py
           git diff --check
 
           focused="${RUNNER_TEMP}/ForgeMissionFocused"
@@ -62,5 +63,6 @@ jobs:
           git rm .github/workflows/tmp-v13-mission-transition-truth.yml
           git rm scripts/tmp_v13_mission_transition_truth.py
           git rm scripts/tmp_v13_completion_checkpoint_truth.py
+          git rm scripts/tmp_v13_transition_test_fix.py
           git commit -m "Close mission transition and completion truth gaps"
           git push origin "HEAD:${GITHUB_REF_NAME}"
