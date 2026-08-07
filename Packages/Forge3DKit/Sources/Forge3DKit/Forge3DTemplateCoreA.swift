@@ -145,7 +145,7 @@ function approach(value, target, maxDelta) {
   return Math.max(target, value - maxDelta);
 }
 
-const input = { keyThrottle: 0, keySteer: 0, touchThrottle: 0, touchSteer: 0, padThrottle: 0, padSteer: 0, padPauseWasDown: false };
+const input = { keyThrottle: 0, keySteer: 0, touchThrottle: 0, touchSteer: 0, accessibleThrottle: 0, accessibleSteer: 0, padThrottle: 0, padSteer: 0, padPauseWasDown: false };
 const vehicle = { x: 0, z: 0, yaw: 0, speed: 0 };
 const camera = { x: 0, y: 5.2, z: -8.5 };
 const state = { paused: false, lastTime: 0, accumulator: 0, saveAccumulator: 0, contextLost: false };
