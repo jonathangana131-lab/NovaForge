@@ -65,6 +65,9 @@ public enum ContinuitySuspensionReason: String, Codable, Hashable, Sendable {
     case executionEnvironmentLost
 }
 
+/// A continuity projection of canonical Mission Engine state. This module does not own mission
+/// completion, decisions, or blockers; adapters reflect those states here so background/system UI
+/// cannot drift from the authoritative mission.
 public enum ContinuityRunState: Codable, Hashable, Sendable {
     case ready
     case executing(ContinuityExecutionMode)
@@ -165,6 +168,7 @@ public enum ContinuityMutationError: Error, Equatable, Sendable {
     case staleWorkerResult
     case checkpointRegression
     case checkpointIdentityMismatch
+    case missionCompletionIdentityMismatch
 }
 
 public enum ContinuityReducer {
@@ -290,7 +294,18 @@ public enum ContinuityReducer {
             throw ContinuityMutationError.invalidIdentity
         }
         let epoch = try successor(snapshot.epoch)
-        return ContinuitySnapshot(identity: identity, state: .ready, activeLease: nil, epoch: epoch)
+        let nextState: ContinuityRunState
+        switch snapshot.state {
+        case .executing:
+            // A checkpoint boundary revokes the old worker lease. Mission Engine decides what
+            // executes next, so continuity returns to ready rather than keeping stale activity.
+            nextState = .ready
+        case .ready, .suspended, .needsDecision, .blocked, .completed:
+            // Checkpoint movement must never silently clear a decision, blocker, suspension, or
+            // terminal projection owned by Mission Engine.
+            nextState = snapshot.state
+        }
+        return ContinuitySnapshot(identity: identity, state: nextState, activeLease: nil, epoch: epoch)
     }
 
     public static func accepts(
@@ -339,10 +354,16 @@ public enum ContinuityReducer {
         )
     }
 
-    public static func markCompleted(
-        _ snapshot: ContinuitySnapshot
+    /// Reflects a terminal state only after the canonical Mission Engine supplies the exact accepted
+    /// mission/checkpoint identity. Continuity cannot independently decide that a mission is done.
+    public static func reflectMissionCompletion(
+        authoritativeIdentity: ContinuityIdentity,
+        in snapshot: ContinuitySnapshot
     ) throws -> ContinuitySnapshot {
         try validate(snapshot)
+        guard authoritativeIdentity == snapshot.identity else {
+            throw ContinuityMutationError.missionCompletionIdentityMismatch
+        }
         guard snapshot.activeLease == nil else {
             throw ContinuityMutationError.unsupportedTransition
         }
