@@ -51,6 +51,7 @@ final class ForgeMissionTests: XCTestCase {
         )
         XCTAssertEqual(accepted.status, .ready)
         XCTAssertNil(accepted.activeStageID)
+        XCTAssertEqual(accepted.stages.first(where: { $0.id == fixture.implementID })?.acceptedSummary, "accepted")
         XCTAssertEqual(accepted.stages.first(where: { $0.id == fixture.implementID })?.acceptedEvidenceIDs, ["test:green"])
     }
 
@@ -79,7 +80,12 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(decoded, checkpoint)
         XCTAssertEqual(checkpointed.latestCheckpointID, checkpoint.id)
 
-        let recovered = try MissionReducer.recover(from: decoded, at: instant(4))
+        let recovered = try MissionReducer.recover(
+            from: decoded,
+            expectedMissionID: fixture.snapshot.missionID,
+            expectedProjectID: fixture.snapshot.projectID,
+            at: instant(4)
+        )
         XCTAssertEqual(recovered.status, .interruptedRecoverable)
         XCTAssertNil(recovered.stages.first(where: { $0.id == fixture.implementID })?.workerLeaseID)
 
@@ -101,6 +107,42 @@ final class ForgeMissionTests: XCTestCase {
         )
         XCTAssertGreaterThan(tokenAfter.attempt, tokenBefore.attempt)
         XCTAssertEqual(resumed.missionID, fixture.snapshot.missionID)
+    }
+
+    func testRecoveryRejectsCheckpointFromAnotherMissionIdentity() throws {
+        let fixture = try makeFixture()
+        let (checkpointed, checkpoint) = try MissionReducer.checkpoint(
+            checkpointID: MissionCheckpointID(rawValue: uuid(30)),
+            acceptedProjectStateID: "project-state-identity",
+            evidenceIDs: [],
+            expectedRevision: fixture.snapshot.revision,
+            at: instant(2),
+            in: fixture.snapshot
+        )
+        XCTAssertEqual(checkpointed.latestCheckpointID, checkpoint.id)
+
+        XCTAssertThrowsError(try MissionReducer.recover(
+            from: checkpoint,
+            expectedMissionID: MissionID(rawValue: uuid(31)),
+            expectedProjectID: fixture.snapshot.projectID,
+            at: instant(3)
+        )) { error in
+            XCTAssertEqual(error as? MissionMutationError, .invalidMissionIdentity)
+        }
+    }
+
+    func testReadyMissionCannotPauseWithoutActiveExecution() throws {
+        let fixture = try makeFixture()
+        XCTAssertThrowsError(try MissionReducer.pauseByUser(
+            expectedRevision: fixture.snapshot.revision,
+            at: instant(2),
+            in: fixture.snapshot
+        )) { error in
+            XCTAssertEqual(
+                error as? MissionMutationError,
+                .invalidStatusTransition(from: .ready, to: .pausedByUser)
+            )
+        }
     }
 
     func testDynamicRepairStageCanBeInsertedAndCycleIsRejected() throws {
