@@ -1,3 +1,4 @@
+import AgentStore
 import CryptoKit
 import CoreData
 import Darwin
@@ -1105,6 +1106,7 @@ enum LaunchPersistenceContainerSelector {
         case compatibilityGuardCommitFailed
         case compatibilityGuardClearFailed
         case activeCompatibilityStoreMissing
+        case invalidAuthorityDecision
     }
 
     private static let compatibilityGuardData = Data(
@@ -1173,45 +1175,20 @@ enum LaunchPersistenceContainerSelector {
 
         switch primaryResult {
         case let .success(container):
-            if compatibilityWasActive {
-                if durableCompatibilityExists {
-                    // Opening primary proves only that it is readable. It does
-                    // not prove that the active fallback lacks newer chats,
-                    // receipts, or project state. Keep serving the fallback
-                    // until an explicit identity-aware reconciliation clears
-                    // its active marker.
-                    let fallback = try openCompatibilityContainer(
-                        paths: paths,
-                        migrationStore: migrationStore,
-                        dependencies: dependencies,
-                        requireExistingStore: true
-                    )
-                    return compatibilitySelection(
-                        container: fallback,
-                        paths: paths,
-                        mode: .resumedCompatibility
-                    )
-                }
-                // The active marker is stale only when no fallback store exists.
-                // Verify its durable removal before selecting primary.
-                try clearCompatibilityActiveGuard(
-                    paths: paths,
-                    migrationStore: migrationStore,
-                    files: files
+            let authorityDecision = ProjectStoreAuthorityPolicy.decide(
+                ProjectStoreAuthorityProbe(
+                    primary: .readable,
+                    compatibilityWasActive: compatibilityWasActive,
+                    compatibilityStoreExists: durableCompatibilityExists
                 )
-            }
-            return LaunchPersistenceContainerSelection(
-                container: container,
-                storeURL: paths.primaryStoreURL,
-                mode: migratedKnownLegacyPrimary
-                    ? .migratedKnownLegacyPrimary
-                    : .primary
             )
-        case let .failure(primaryError):
-            // An active durable branch is pending reconciliation, not a launch
-            // pin. Probe primary on every launch; if it still fails, resume the
-            // branch without modifying either store.
-            if compatibilityWasActive, durableCompatibilityExists {
+            switch authorityDecision {
+            case .resumeCompatibility:
+                // Opening primary proves only that it is readable. It does
+                // not prove that the active fallback lacks newer chats,
+                // receipts, or project state. Keep serving the fallback
+                // until an explicit identity-aware reconciliation clears
+                // its active marker.
                 let fallback = try openCompatibilityContainer(
                     paths: paths,
                     migrationStore: migrationStore,
@@ -1223,12 +1200,60 @@ enum LaunchPersistenceContainerSelector {
                     paths: paths,
                     mode: .resumedCompatibility
                 )
+            case .clearStaleCompatibilityGuardAndServePrimary:
+                // The active marker is stale only when no fallback store exists.
+                // Verify its durable removal before selecting primary.
+                try clearCompatibilityActiveGuard(
+                    paths: paths,
+                    migrationStore: migrationStore,
+                    files: files
+                )
+            case .servePrimary:
+                break
+            case .establishCompatibility,
+                 .failClosedMissingActiveCompatibility:
+                throw SelectionError.invalidAuthorityDecision
             }
-
-            if compatibilityWasActive {
-                // Never create an empty replacement when the durable marker says
-                // a fallback branch owns data but that branch is unavailable.
+            return LaunchPersistenceContainerSelection(
+                container: container,
+                storeURL: paths.primaryStoreURL,
+                mode: migratedKnownLegacyPrimary
+                    ? .migratedKnownLegacyPrimary
+                    : .primary
+            )
+        case let .failure(primaryError):
+            let authorityDecision = ProjectStoreAuthorityPolicy.decide(
+                ProjectStoreAuthorityProbe(
+                    primary: .unreadable,
+                    compatibilityWasActive: compatibilityWasActive,
+                    compatibilityStoreExists: durableCompatibilityExists
+                )
+            )
+            switch authorityDecision {
+            case .resumeCompatibility:
+                // An active durable branch is pending reconciliation, not a
+                // launch pin. Primary was probed and still failed, so resume
+                // the branch without modifying either store.
+                let fallback = try openCompatibilityContainer(
+                    paths: paths,
+                    migrationStore: migrationStore,
+                    dependencies: dependencies,
+                    requireExistingStore: true
+                )
+                return compatibilitySelection(
+                    container: fallback,
+                    paths: paths,
+                    mode: .resumedCompatibility
+                )
+            case .failClosedMissingActiveCompatibility:
+                // Never create an empty replacement when the durable marker
+                // says a fallback branch owns data but that branch is absent.
                 throw SelectionError.activeCompatibilityStoreMissing
+            case .establishCompatibility:
+                break
+            case .servePrimary,
+                 .clearStaleCompatibilityGuardAndServePrimary:
+                throw SelectionError.invalidAuthorityDecision
             }
 
             // A fallback must be open and its active guard visible before the
