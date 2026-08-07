@@ -137,6 +137,52 @@ final class ForgePlanCoreTests: XCTestCase {
         XCTAssertEqual(decoded, original)
     }
 
+    func testReadySummaryPreservesSelectionsAndDelegationWithoutGuessing() throws {
+        let proposal = PlanSpaceProposal(
+            intentSummary: "Open-world scooter game",
+            questions: [
+                PlanQuestion(
+                    id: "camera",
+                    prompt: "Camera",
+                    controlKind: .segmentedChoice,
+                    options: [
+                        .init(id: "first", label: "First person"),
+                        .init(id: "third", label: "Third person")
+                    ]
+                ),
+                PlanQuestion(
+                    id: "world-feel",
+                    prompt: "World feel",
+                    controlKind: .segmentedChoice,
+                    options: [
+                        .init(id: "sim", label: "Simulation"),
+                        .init(id: "arcade", label: "Arcade")
+                    ]
+                )
+            ]
+        )
+
+        let summary = try XCTUnwrap(proposal.readySummary(answers: [
+            "camera": .choice("first"),
+            "world-feel": .decideForMe
+        ]))
+
+        XCTAssertEqual(summary.intentSummary, "Open-world scooter game")
+        XCTAssertEqual(summary.decisions[0].value, .selected(optionID: "first", label: "First person"))
+        XCTAssertEqual(summary.decisions[1].value, .delegatedToNovaForge)
+    }
+
+    func testReadySummaryDoesNotExistWhileMaterialDecisionIsUnresolved() {
+        let proposal = PlanSpaceProposal(
+            intentSummary: "Utility",
+            questions: [
+                PlanQuestion(id: "name", prompt: "Name", controlKind: .freeText)
+            ]
+        )
+
+        XCTAssertNil(proposal.readySummary(answers: [:]))
+    }
+
     func testDuplicateQuestionIDsFailClosed() {
         let first = PlanQuestion(id: "camera", prompt: "Camera", controlKind: .freeText)
         let second = PlanQuestion(id: "camera", prompt: "Camera style", controlKind: .freeText)
