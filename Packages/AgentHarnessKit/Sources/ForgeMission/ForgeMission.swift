@@ -498,7 +498,10 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
     ) throws {
         try requireNonTerminal()
         guard phase == .needsDecision else { throw ForgeMissionError.invalidPhase(phase) }
-        guard !acceptedAnswer.trimmed.isEmpty, !decisionReceiptID.trimmed.isEmpty else { throw ForgeMissionError.invalidDecision }
+        let normalizedAnswer = acceptedAnswer.trimmed
+        guard !normalizedAnswer.isEmpty,
+              !normalizedAnswer.isUnresolvedDecisionDelegation,
+              !decisionReceiptID.trimmed.isEmpty else { throw ForgeMissionError.invalidDecision }
         guard let request = pendingDecision,
               request.requestID == decisionRequestID,
               request.stageID == stageID else { throw ForgeMissionError.staleDecisionRequest }
@@ -511,7 +514,7 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
         decisions.append(MissionDecisionRecord(
             decisionID: MissionDecisionID(),
             stageID: stageID,
-            acceptedAnswer: acceptedAnswer.trimmed,
+            acceptedAnswer: normalizedAnswer,
             decisionReceiptID: decisionReceiptID.trimmed,
             acceptedAt: now
         ))
@@ -901,4 +904,12 @@ private extension MissionStageGraph {
 
 private extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var isUnresolvedDecisionDelegation: Bool {
+        let token = trimmed
+            .uppercased()
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "-", with: "_")
+        return token == "DECIDE_FOR_ME"
+    }
 }

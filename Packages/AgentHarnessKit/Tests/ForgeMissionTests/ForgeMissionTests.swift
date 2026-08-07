@@ -38,6 +38,52 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.decisions.count, 1)
     }
 
+
+    func testDecideForMePlaceholderCannotBecomeAcceptedSemanticDecision() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        let lease = try mission.beginWork(on: [stageID])[0]
+        try mission.acceptWorkerResult(
+            .init(
+                lease: lease,
+                outcome: .needsDecision,
+                summary: "Choose camera",
+                allowsDecisionDelegation: true
+            ),
+            at: instant(75)
+        )
+        let requestID = try XCTUnwrap(mission.pendingDecision?.requestID)
+
+        XCTAssertThrowsError(try mission.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: requestID,
+            acceptedAnswer: "DECIDE_FOR_ME",
+            decisionReceiptID: "decision:delegated",
+            at: instant(76)
+        )) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .invalidDecision)
+        }
+        XCTAssertThrowsError(try mission.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: requestID,
+            acceptedAnswer: "Decide for me",
+            decisionReceiptID: "decision:delegated",
+            at: instant(76)
+        ))
+        XCTAssertEqual(mission.phase, .needsDecision)
+        XCTAssertNotNil(mission.pendingDecision)
+
+        try mission.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: requestID,
+            acceptedAnswer: "Third person",
+            decisionReceiptID: "decision:delegated:resolved",
+            at: instant(77)
+        )
+        XCTAssertEqual(mission.decisions.last?.acceptedAnswer, "Third person")
+        XCTAssertEqual(mission.phase, .ready)
+    }
+
     func testExternalBlockRequiresResolutionReceipt() throws {
         var mission = try makeMission()
         let id = try XCTUnwrap(mission.runnableStageIDs.first)
