@@ -515,6 +515,48 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.phase, .completedWithEvidence)
     }
 
+    func testGraphReplacementCannotDropStageWithAcceptedDecisionHistory() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        let lease = try mission.beginWork(on: [stageID])[0]
+        try mission.acceptWorkerResult(.init(lease: lease, outcome: .needsDecision, summary: "Choose camera"), at: instant(78))
+        let requestID = try XCTUnwrap(mission.pendingDecision?.requestID)
+        try mission.acceptDecision(
+            stageID: stageID,
+            decisionRequestID: requestID,
+            acceptedAnswer: "First person",
+            decisionReceiptID: "decision:camera:history",
+            at: instant(79)
+        )
+        let replacement = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [])
+
+        XCTAssertThrowsError(try mission.replaceStageGraph(replacement)) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .acceptedRecordedStageWouldBeLost(stageID))
+        }
+        XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
+    }
+
+    func testArchiveRejectsCompletedStageWhenAcceptedEvidenceRecordIsRemoved() throws {
+        var mission = try makeMission()
+        let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
+        let lease = try mission.beginWork(on: [stageID])[0]
+        try mission.acceptWorkerResult(
+            .init(lease: lease, outcome: .completed, summary: "Built", evidenceReceiptIDs: .init(["build:accepted"])),
+            at: instant(80)
+        )
+        let archive = try ForgeMissionArchive(state: mission)
+        let data = try JSONEncoder().encode(archive)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var state = try XCTUnwrap(root["state"] as? [String: Any])
+        state["stageEvidence"] = []
+        root["state"] = state
+
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            ForgeMissionArchive.self,
+            from: JSONSerialization.data(withJSONObject: root)
+        ))
+    }
+
     func testGraphReplacementCannotEraseOutstandingBlockGate() throws {
         var mission = try makeMission()
         let stageID = try XCTUnwrap(mission.runnableStageIDs.first)

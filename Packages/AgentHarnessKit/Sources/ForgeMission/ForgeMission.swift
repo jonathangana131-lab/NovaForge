@@ -262,6 +262,7 @@ public enum ForgeMissionError: Error, Equatable, Sendable {
     case graphMissionMismatch
     case graphRevisionNotAdvanced
     case acceptedCompletedStageWouldBeLost(MissionStageID)
+    case acceptedRecordedStageWouldBeLost(MissionStageID)
     case invalidRouteReceipt
     case invalidPhase(MissionPhase)
     case missionTerminal
@@ -615,6 +616,15 @@ public struct ForgeMissionState: Codable, Equatable, Sendable {
             guard newByID[gated.stageID]?.status == gated.status else {
                 throw ForgeMissionError.invalidGraph
             }
+        }
+        let recordedStageIDs = Set(
+            stageEvidence.map(\.stageID) +
+            workerReceipts.map(\.stageID) +
+            decisions.map(\.stageID) +
+            recoveryRecords.map(\.stageID)
+        )
+        for stageID in recordedStageIDs where newByID[stageID] == nil {
+            throw ForgeMissionError.acceptedRecordedStageWouldBeLost(stageID)
         }
         if let pendingDecision {
             guard newGraph.stages.contains(where: {

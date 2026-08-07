@@ -47,7 +47,13 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
             decisions: state.decisions,
             recoveryRecords: state.recoveryRecords,
             missionID: state.missionID,
-            projectID: state.projectID
+            projectID: state.projectID,
+            knownStageIDs: Set(state.graph.stages.map(\.stageID))
+        )
+        try validateCompletedStageEvidence(
+            stages: state.graph.stages,
+            stageEvidence: state.stageEvidence,
+            workerReceipts: state.workerReceipts
         )
 
         let activeStageIDs = Set(state.graph.stages.filter { $0.status == .active }.map(\.stageID))
@@ -132,7 +138,13 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
                 decisions: checkpoint.decisions,
                 recoveryRecords: checkpoint.recoveryRecords,
                 missionID: checkpoint.missionID,
-                projectID: checkpoint.projectID
+                projectID: checkpoint.projectID,
+                knownStageIDs: Set(checkpoint.graph.stages.map(\.stageID))
+            )
+            try validateCompletedStageEvidence(
+                stages: checkpoint.graph.stages,
+                stageEvidence: checkpoint.stageEvidence,
+                workerReceipts: checkpoint.workerReceipts
             )
             switch checkpoint.phase {
             case .needsDecision:
@@ -195,9 +207,11 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
         decisions: [MissionDecisionRecord],
         recoveryRecords: [MissionRecoveryRecord],
         missionID: MissionID,
-        projectID: ProjectID
+        projectID: ProjectID,
+        knownStageIDs: Set<MissionStageID>
     ) throws {
         guard stageEvidence.allSatisfy({
+            knownStageIDs.contains($0.stageID) &&
             !$0.summary.trimmed.isEmpty &&
             !$0.receiptIDs.values.isEmpty &&
             $0.receiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty })
@@ -205,14 +219,43 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
         guard workerReceipts.allSatisfy({
             $0.missionID == missionID &&
             $0.projectID == projectID &&
+            knownStageIDs.contains($0.stageID) &&
             !$0.summary.trimmed.isEmpty &&
             $0.evidenceReceiptIDs.values.allSatisfy({ !$0.trimmed.isEmpty })
         }) else { throw ForgeMissionArchiveError.invalidWorkerReceipt }
-        guard decisions.allSatisfy({
-            !$0.acceptedAnswer.trimmed.isEmpty && !$0.decisionReceiptID.trimmed.isEmpty
+        guard decisions.allSatisfy({ record in
+            knownStageIDs.contains(record.stageID) &&
+            !record.acceptedAnswer.trimmed.isEmpty &&
+            !record.decisionReceiptID.trimmed.isEmpty &&
+            workerReceipts.contains(where: { $0.stageID == record.stageID && $0.kind == .needsDecision })
         }) else { throw ForgeMissionArchiveError.invalidDecisionRecord }
-        guard recoveryRecords.allSatisfy({ !$0.resolutionReceiptID.trimmed.isEmpty }) else {
+        guard recoveryRecords.allSatisfy({ record in
+            knownStageIDs.contains(record.stageID) &&
+            !record.resolutionReceiptID.trimmed.isEmpty &&
+            workerReceipts.contains(where: { receipt in
+                receipt.stageID == record.stageID &&
+                ((record.kind == .externalBlockResolved && receipt.kind == .blockedExternal) ||
+                 (record.kind == .recoverableFailureRetried && receipt.kind == .failedRecoverably))
+            })
+        }) else {
             throw ForgeMissionArchiveError.invalidRecoveryRecord
+        }
+    }
+
+    private static func validateCompletedStageEvidence(
+        stages: [MissionStage],
+        stageEvidence: [MissionStageEvidence],
+        workerReceipts: [MissionAcceptedWorkerReceipt]
+    ) throws {
+        let completedStageIDs = Set(stages.lazy.filter { $0.status == .completed }.map(\.stageID))
+        let evidencedStageIDs = Set(stageEvidence.map(\.stageID))
+        guard evidencedStageIDs == completedStageIDs else {
+            throw ForgeMissionArchiveError.invalidStageEvidence
+        }
+        guard completedStageIDs.allSatisfy({ stageID in
+            workerReceipts.contains(where: { $0.stageID == stageID && $0.kind == .completed })
+        }), workerReceipts.lazy.filter({ $0.kind == .completed }).allSatisfy({ completedStageIDs.contains($0.stageID) }) else {
+            throw ForgeMissionArchiveError.invalidWorkerReceipt
         }
     }
 }
