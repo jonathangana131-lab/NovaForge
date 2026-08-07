@@ -148,8 +148,17 @@ final class ForgeHistoryAcceptedProjectionTests: XCTestCase {
         }
     }
 
-    func testAcceptedProjectStateIdentifierFailsClosedOnPathLikeValue() throws {
-        XCTAssertThrowsError(try ForgeHistoryAcceptedProjectStateID("/tmp/project-state"))
+    func testAcceptedProjectStateIdentityIsOpaqueButMustBeNonEmpty() throws {
+        XCTAssertEqual(
+            try ForgeHistoryAcceptedProjectStateID(" /tmp/project state#1 ").rawValue,
+            "/tmp/project state#1"
+        )
+        XCTAssertThrowsError(try ForgeHistoryAcceptedProjectStateID("   ")) { error in
+            XCTAssertEqual(
+                error as? ForgeHistoryAcceptedProjectionError,
+                .invalidAcceptedProjectStateID
+            )
+        }
     }
 
     private func makeCheckpoint(
