@@ -679,6 +679,25 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeMissionArchive.self, from: JSONSerialization.data(withJSONObject: json)))
     }
 
+    func testArchiveRejectsReadyPhaseWithManufacturedBlockedStage() throws {
+        let mission = try makeMission()
+        let archive = try ForgeMissionArchive(state: mission)
+        let data = try JSONEncoder().encode(archive)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var state = try XCTUnwrap(root["state"] as? [String: Any])
+        var graph = try XCTUnwrap(state["graph"] as? [String: Any])
+        var stages = try XCTUnwrap(graph["stages"] as? [[String: Any]])
+        stages[0]["status"] = "blocked"
+        graph["stages"] = stages
+        state["graph"] = graph
+        root["state"] = state
+
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            ForgeMissionArchive.self,
+            from: JSONSerialization.data(withJSONObject: root)
+        ))
+    }
+
     func testArchiveRejectsCorruptedExecutingStateWithoutLease() throws {
         var mission = try makeMission()
         _ = try mission.beginWork(on: [mission.runnableStageIDs[0]])

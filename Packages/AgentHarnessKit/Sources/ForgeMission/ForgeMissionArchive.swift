@@ -55,6 +55,7 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
             stageEvidence: state.stageEvidence,
             workerReceipts: state.workerReceipts
         )
+        try validatePhaseStageCoherence(phase: state.phase, stages: state.graph.stages)
 
         let activeStageIDs = Set(state.graph.stages.filter { $0.status == .active }.map(\.stageID))
         let leaseStageIDs = Set(state.activeLeases.map(\.stageID))
@@ -146,6 +147,7 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
                 stageEvidence: checkpoint.stageEvidence,
                 workerReceipts: checkpoint.workerReceipts
             )
+            try validatePhaseStageCoherence(phase: checkpoint.phase, stages: checkpoint.graph.stages)
             switch checkpoint.phase {
             case .needsDecision:
                 guard let pending = checkpoint.pendingDecision,
@@ -198,6 +200,55 @@ public struct ForgeMissionArchive: Codable, Equatable, Sendable {
             if state.phase == .completedWithKnownLimitations, completion.knownLimitations.values.isEmpty { throw ForgeMissionArchiveError.invalidCompletion }
         } else if [.completedWithEvidence, .completedWithKnownLimitations].contains(state.phase) {
             throw ForgeMissionArchiveError.invalidCompletion
+        }
+    }
+
+    private static func validatePhaseStageCoherence(
+        phase: MissionPhase,
+        stages: [MissionStage]
+    ) throws {
+        let ordinary: Set<MissionStageStatus> = [.pending, .deferred, .completed]
+        let executing: Set<MissionStageStatus> = [.pending, .active, .deferred, .completed]
+
+        switch phase {
+        case .executing:
+            guard stages.allSatisfy({ executing.contains($0.status) }),
+                  stages.contains(where: { $0.status == .active }) else {
+                throw ForgeMissionArchiveError.invalidPhaseStageState
+            }
+        case .needsDecision:
+            guard stages.filter({ $0.status == .waitingForDecision }).count == 1,
+                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .waitingForDecision }) else {
+                throw ForgeMissionArchiveError.invalidPhaseStageState
+            }
+        case .blockedExternal:
+            guard stages.filter({ $0.status == .blocked }).count == 1,
+                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .blocked }) else {
+                throw ForgeMissionArchiveError.invalidPhaseStageState
+            }
+        case .interruptedRecoverable:
+            guard stages.filter({ $0.status == .failedRecoverably }).count == 1,
+                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .failedRecoverably }) else {
+                throw ForgeMissionArchiveError.invalidPhaseStageState
+            }
+        case .failedIrrecoverably:
+            guard stages.filter({ $0.status == .failedIrrecoverably }).count == 1,
+                  stages.allSatisfy({ ordinary.contains($0.status) || $0.status == .failedIrrecoverably }) else {
+                throw ForgeMissionArchiveError.invalidPhaseStageState
+            }
+        case .completedWithEvidence, .completedWithKnownLimitations:
+            guard stages.allSatisfy({ [.completed, .deferred].contains($0.status) }) else {
+                throw ForgeMissionArchiveError.invalidPhaseStageState
+            }
+        case .draftIntent, .planning, .ready, .pausedByUser, .pausedByPolicy, .validating, .polishing:
+            guard stages.allSatisfy({ ordinary.contains($0.status) }) else {
+                throw ForgeMissionArchiveError.invalidPhaseStageState
+            }
+        case .cancelled:
+            // Cancellation preserves the truthful pre-cancel gate when there was
+            // no active lease, or marks one or more active stages cancelled. The
+            // active-lease consistency check above still rejects any live active state.
+            break
         }
     }
 
@@ -275,6 +326,7 @@ public enum ForgeMissionArchiveError: Error, Equatable, Sendable {
     case invalidRecoverableState
     case invalidFailedState
     case invalidCompletion
+    case invalidPhaseStageState
     case checkpointIdentityMismatch
     case invalidCheckpointGraph
     case invalidCheckpointConstitutionRevision
