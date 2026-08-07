@@ -206,16 +206,62 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.constitution.revision, 2)
     }
 
-    func testRestoreCreatesNewLineageAndKeepsProjectIdentity() throws {
+    func testRestoreRequiresVerifiedProjectStateBeforeMissionMetadataMoves() throws {
         var mission = try makeMission()
         let first = try mission.checkpoint(acceptedProjectStateID: "state:a", evidenceReceiptIDs: .init(["r:a"]), summary: "A", at: instant(1))
         try mission.switchRoute(to: .init(routeReceiptID: "route:other"))
         _ = try mission.checkpoint(acceptedProjectStateID: "state:b", evidenceReceiptIDs: .init(["r:b"]), summary: "B", at: instant(2))
-        let restored = try mission.restore(to: first.id, restoreReceiptID: "restore:r", at: instant(3))
+        let routeBeforeVerification = mission.route
+        let graphBeforeVerification = mission.graph
+        let request = try mission.prepareRestore(to: first.id)
+
+        XCTAssertThrowsError(try mission.acceptVerifiedRestore(
+            request,
+            verifiedProjectStateID: "state:wrong",
+            restoreReceiptID: "restore:r",
+            at: instant(3)
+        )) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .restoreVerificationMismatch)
+        }
+        XCTAssertEqual(mission.route, routeBeforeVerification)
+        XCTAssertEqual(mission.graph, graphBeforeVerification)
+
+        let restored = try mission.acceptVerifiedRestore(
+            request,
+            verifiedProjectStateID: "state:a",
+            restoreReceiptID: "restore:r",
+            at: instant(3)
+        )
         XCTAssertEqual(restored.parentID, first.id)
         XCTAssertEqual(restored.projectID, mission.projectID)
         XCTAssertEqual(mission.phase, .pausedByUser)
+        XCTAssertEqual(mission.route.routeReceiptID, first.routeReceiptID)
         XCTAssertTrue(restored.evidenceReceiptIDs.contains("restore:r"))
+    }
+
+    func testCompletedMissionCanReopenAsContinuationWithoutLosingCheckpointLineage() throws {
+        var mission = try completedReadyMission()
+        try mission.complete(with: completion(state: "state:1", classes: [.runtimeTested]))
+        let checkpointBeforeContinuation = mission.latestCheckpointID
+        let newStage = MissionStage(
+            stageID: MissionStageID(),
+            kind: .polish,
+            title: "Improve the accepted build",
+            order: 2,
+            required: false,
+            dependencies: mission.graph.stages.map(\.stageID),
+            status: .completed
+        )
+
+        try mission.beginContinuation(with: [newStage])
+
+        XCTAssertEqual(mission.phase, .ready)
+        XCTAssertNil(mission.completionEvidence)
+        XCTAssertEqual(mission.latestCheckpointID, checkpointBeforeContinuation)
+        XCTAssertEqual(mission.graph.stages.last?.status, .pending)
+        XCTAssertEqual(mission.runnableStageIDs, [newStage.stageID])
+        _ = try mission.beginWork(on: [newStage.stageID])
+        XCTAssertEqual(mission.phase, .executing)
     }
 
     func testArchiveRoundTripIsDeterministicAndFailClosedOnSchema() throws {
