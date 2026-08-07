@@ -368,6 +368,38 @@ public enum PlanValidationIssue: Hashable, Codable, Sendable {
     case invalidAnswer(questionID: String)
 }
 
+public enum PlanDecisionValue: Hashable, Codable, Sendable {
+    case selected(optionID: String, label: String)
+    case scalar(Double)
+    case interval(lower: Double, upper: Double)
+    case text(String)
+    case delegatedToNovaForge
+}
+
+public struct PlanResolvedDecision: Identifiable, Hashable, Codable, Sendable {
+    public let id: String
+    public var prompt: String
+    public var value: PlanDecisionValue
+
+    public init(id: String, prompt: String, value: PlanDecisionValue) {
+        self.id = id
+        self.prompt = prompt
+        self.value = value
+    }
+}
+
+public struct ReadyToForgeSummary: Hashable, Codable, Sendable {
+    public var intentSummary: String
+    public var decisions: [PlanResolvedDecision]
+    public var controls: ForgeControlProfile
+
+    public init(intentSummary: String, decisions: [PlanResolvedDecision], controls: ForgeControlProfile) {
+        self.intentSummary = intentSummary
+        self.decisions = decisions
+        self.controls = controls
+    }
+}
+
 public struct PlanSpaceProposal: Hashable, Codable, Sendable {
     public var intentSummary: String
     public var questions: [PlanQuestion]
@@ -426,6 +458,34 @@ public struct PlanSpaceProposal: Hashable, Codable, Sendable {
 
     public func isReadyToForge(answers: [String: PlanAnswer]) -> Bool {
         schemaValidationIssues.isEmpty && unresolvedQuestionIDs(answers: answers).isEmpty
+    }
+
+    public func readySummary(answers: [String: PlanAnswer]) -> ReadyToForgeSummary? {
+        guard isReadyToForge(answers: answers) else { return nil }
+
+        let decisions = presentedQuestions.compactMap { question -> PlanResolvedDecision? in
+            guard let answer = answers[question.id] else { return nil }
+
+            let value: PlanDecisionValue
+            switch answer {
+            case .choice(let optionID):
+                guard let option = question.options.first(where: { $0.id == optionID }) else { return nil }
+                value = .selected(optionID: option.id, label: option.label)
+            case .scalar(let scalar):
+                value = .scalar(scalar)
+            case .interval(let lower, let upper):
+                value = .interval(lower: lower, upper: upper)
+            case .text(let text):
+                value = .text(text)
+            case .decideForMe:
+                value = .delegatedToNovaForge
+            }
+
+            return PlanResolvedDecision(id: question.id, prompt: question.prompt, value: value)
+        }
+
+        guard decisions.count == presentedQuestions.count else { return nil }
+        return ReadyToForgeSummary(intentSummary: intentSummary, decisions: decisions, controls: controls)
     }
 }
 
