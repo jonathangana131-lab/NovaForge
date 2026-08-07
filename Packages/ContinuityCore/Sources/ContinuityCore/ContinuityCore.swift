@@ -244,6 +244,18 @@ public enum ContinuityReducer {
         return try suspend(snapshot, reason: .userPaused)
     }
 
+    /// Revokes work when the environment that owned the active lease disappears or becomes
+    /// unusable. Adapters call this for real worker/process loss; it must never leave `working` UI.
+    public static func executionEnvironmentLost(
+        in snapshot: ContinuitySnapshot
+    ) throws -> ContinuitySnapshot {
+        try validate(snapshot)
+        guard case .executing = snapshot.state else {
+            throw ContinuityMutationError.noActiveExecution
+        }
+        return try suspend(snapshot, reason: .executionEnvironmentLost)
+    }
+
     public static func handoffToCloud(
         from snapshot: ContinuitySnapshot,
         capabilities: ContinuityCapabilities
