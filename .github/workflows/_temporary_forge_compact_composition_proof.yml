@@ -1,0 +1,19 @@
+name: Temporary Forge Compact composition proof
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-V14-COMPACT-CLOSE-8A8C/forge-compact-compose/e1
+
+jobs:
+  swift-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test ForgeCompactCore debug
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - name: Test ForgeCompactCore release
+        run: swift test --package-path Packages/ForgeCompactCore -c release -Xswiftc -warnings-as-errors
