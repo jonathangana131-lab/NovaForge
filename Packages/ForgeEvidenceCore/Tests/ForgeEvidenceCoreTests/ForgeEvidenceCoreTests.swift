@@ -330,13 +330,11 @@ private func receipt(
     var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     var events = try #require(object["events"] as? [[String: Any]])
     var payload = try #require(events[0]["payload"] as? [String: Any])
-    var receiptWrapper = try #require(payload["receipt"] as? [String: Any])
-    var receiptObject = try #require(receiptWrapper["_0"] as? [String: Any])
+    var receiptObject = try #require(payload["receipt"] as? [String: Any])
     var receiptBinding = try #require(receiptObject["binding"] as? [String: Any])
     receiptBinding["sourceRevision"] = "rev-2"
     receiptObject["binding"] = receiptBinding
-    receiptWrapper["_0"] = receiptObject
-    payload["receipt"] = receiptWrapper
+    payload["receipt"] = receiptObject
     events[0]["payload"] = payload
     object["events"] = events
     let tampered = try JSONSerialization.data(withJSONObject: object)
