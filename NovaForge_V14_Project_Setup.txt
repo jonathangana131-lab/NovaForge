@@ -1,0 +1,33 @@
+NOVAFORGE V14 PROJECT SETUP
+
+Purpose: make a fresh NovaForge project chat usable with a one-word `GO` command.
+
+PROJECT SOURCES TO INCLUDE:
+1. `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt`
+2. `NovaForge_Project_Instructions_v14_GO.txt`
+3. `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`
+4. `CONTINUATION_PROMPT.md`
+5. `AGENTS.md`
+6. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md`
+7. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md`
+8. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md`
+9. `docs/NOVAFORGE_V13_ROADMAP.md`
+
+PROJECT INSTRUCTIONS:
+Use the exact text from `NovaForge_Project_Instructions_v14_GO.txt` as the project's working instructions. The full V14 master and V14 swarm OS are source references. Live GitHub always outranks stale source snapshots.
+
+EXPECTED FRESH-CHAT BEHAVIOR:
+User: `GO`
+Worker: fresh-checks `jonathangana131-lab/NovaForge`, resolves current main/PRs/CI/reviews/ownership, reads V14 execution sources, claims a safe non-conflicting lane, performs real work, persists results to GitHub, refreshes, and continues.
+
+20+ WORKERS:
+Workers spread across independent closure lanes. They do not all wait on one PR/file. An occupied lane causes immediate self-reassignment. Feature gravity beats PR gravity.
+
+NIGHT WORKERS:
+Scheduled relays exist to keep repository work moving after interactive workers die/time out/go idle. They are not status-only monitors. Every meaningful scheduled-run result must be persisted to GitHub.
+
+REVIEWERS:
+A finding that exists only in reviewer chat is considered lost/incomplete. Reviewers must write material findings to the relevant GitHub PR/issue/comment before ending.
+
+PROGRESS:
+When asked for progress, fresh-query GitHub and provide simple bars for menus/product, visuals, and foundations; distinguish integrated vs active work and compare with the prior checkpoint when available.
