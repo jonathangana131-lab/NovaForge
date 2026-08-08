@@ -19,6 +19,8 @@ public enum ForgeCompletionBlocker: Equatable, Sendable {
     case unresolvedSevereDefect(String)
     case undisclosedDefect(String)
     case knownLimitationsNotAllowed
+    case defectSnapshotScopeMismatch
+    case defectSnapshotNotBoundToAudit
 }
 
 public enum ForgeCompletionDisposition: String, Codable, Sendable {
@@ -82,7 +84,16 @@ public enum ForgeCompletionGate {
             if result != .passed { blockers.append(.criterion(criterion.id, result)) }
         }
 
-        let currentDefects = defects.defects.filter { $0.scope == constitution.scope && $0.state != .resolved }
+        if defects.scope != constitution.scope {
+            blockers.append(.defectSnapshotScopeMismatch)
+        }
+        let defectAuditCriterion = constitution.criteria.first { $0.kind == .defectAudit }
+        let acceptedDefectAuditReceiptIDs = Set(criterionAssessments.first { $0.criterionID == defectAuditCriterion?.id }?.acceptedReceiptIDs ?? [])
+        if !acceptedDefectAuditReceiptIDs.contains(defects.defectAuditReceiptID) {
+            blockers.append(.defectSnapshotNotBoundToAudit)
+        }
+
+        let currentDefects = defects.defects.filter { $0.state != .resolved }
         for defect in currentDefects where defect.severity >= .high {
             blockers.append(.unresolvedSevereDefect(defect.defectID))
         }
