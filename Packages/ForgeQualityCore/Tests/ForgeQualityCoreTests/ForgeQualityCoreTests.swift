@@ -40,11 +40,38 @@ struct ForgeQualityCoreTests {
         )
     }
 
-    private func policy(_ targets: [ForgeQualityTarget]) -> ForgeQualityPolicy {
+    private func policy(
+        _ targets: [ForgeQualityTarget],
+        projectID: String = "project-a",
+        sourceRevision: String = "source-r2",
+        acceptanceRevision: UInt64 = 4,
+        authorityReceipt: String = "quality-policy-authority-1",
+        criterionID: String = "performance-criterion"
+    ) -> ForgeQualityPolicy {
         try! ForgeQualityPolicy(
             policyID: id("quality-policy-1"),
-            constitutionRevision: 4,
+            authorityReceiptID: id(authorityReceipt),
+            criterionID: id(criterionID),
+            projectID: id(projectID),
+            sourceRevision: id(sourceRevision),
+            acceptanceRevision: acceptanceRevision,
             targets: targets
+        )
+    }
+
+    private func evaluate(
+        policy: ForgeQualityPolicy,
+        binding: ForgeQualityRunBinding? = nil,
+        acceptedAcceptanceRevision: UInt64 = 4,
+        trustedPolicyAuthorityReceipt: String = "quality-policy-authority-1",
+        measurements: [ForgeQualityMeasurement]
+    ) throws -> ForgeQualityAssessment {
+        try ForgeQualityEvaluator.evaluate(
+            policy: policy,
+            trustedPolicyAuthorityReceiptID: id(trustedPolicyAuthorityReceipt),
+            acceptedAcceptanceRevision: acceptedAcceptanceRevision,
+            binding: binding ?? self.binding(),
+            measurements: measurements
         )
     }
 
@@ -75,7 +102,15 @@ struct ForgeQualityCoreTests {
     @Test func policyRejectsDuplicateMetricsAndInvalidThresholds() throws {
         let frame = target(.p95FrameTimeMilliseconds, atMost: 20)
         #expect(throws: ForgeQualityError.duplicateTarget(metric: .p95FrameTimeMilliseconds, scope: .run)) {
-            try ForgeQualityPolicy(policyID: id("p"), constitutionRevision: 1, targets: [frame, frame])
+            try ForgeQualityPolicy(
+                policyID: id("p"),
+                authorityReceiptID: id("quality-policy-authority-1"),
+                criterionID: id("performance-criterion"),
+                projectID: id("project-a"),
+                sourceRevision: id("source-r2"),
+                acceptanceRevision: 1,
+                targets: [frame, frame]
+            )
         }
         #expect(throws: ForgeQualityError.invalidThreshold(.longFrameRatePercent)) {
             try ForgeQualityTarget(metric: .longFrameRatePercent, comparator: .atMost, threshold: 101)
@@ -123,9 +158,8 @@ struct ForgeQualityCoreTests {
             measurement(.accessibilityCriticalViolationCount, value: 0, receipt: "a11y-1", binding: currentBinding),
         ]
 
-        let result = try ForgeQualityEvaluator.evaluate(
+        let result = try evaluate(
             policy: currentPolicy,
-            acceptedConstitutionRevision: 4,
             binding: currentBinding,
             measurements: measurements
         )
@@ -136,12 +170,11 @@ struct ForgeQualityCoreTests {
     }
 
     @Test func missingEvidenceBlocksRatherThanPasses() throws {
-        let result = try ForgeQualityEvaluator.evaluate(
+        let result = try evaluate(
             policy: policy([
                 target(.p95FrameTimeMilliseconds, atMost: 20),
                 target(.fatalRuntimeErrorCount, atMost: 0),
             ]),
-            acceptedConstitutionRevision: 4,
             binding: binding(),
             measurements: [measurement(.fatalRuntimeErrorCount, value: 0, receipt: "runtime-1")]
         )
@@ -153,12 +186,11 @@ struct ForgeQualityCoreTests {
     }
 
     @Test func exceededThresholdFailsEvenWhenOtherEvidenceIsMissing() throws {
-        let result = try ForgeQualityEvaluator.evaluate(
+        let result = try evaluate(
             policy: policy([
                 target(.p95FrameTimeMilliseconds, atMost: 20),
                 target(.accessibilityCriticalViolationCount, atMost: 0),
             ]),
-            acceptedConstitutionRevision: 4,
             binding: binding(),
             measurements: [measurement(.p95FrameTimeMilliseconds, value: 28, receipt: "perf-1")]
         )
@@ -185,9 +217,8 @@ struct ForgeQualityCoreTests {
         let stale = binding(sourceRevision: "source-r1")
         let current = binding(sourceRevision: "source-r2")
         #expect(throws: ForgeQualityError.evidenceBindingMismatch(receiptID: id("perf-1"))) {
-            try ForgeQualityEvaluator.evaluate(
+            try evaluate(
                 policy: policy([target(.p95FrameTimeMilliseconds, atMost: 20)]),
-                acceptedConstitutionRevision: 4,
                 binding: current,
                 measurements: [measurement(.p95FrameTimeMilliseconds, value: 16, receipt: "perf-1", binding: stale)]
             )
@@ -198,9 +229,8 @@ struct ForgeQualityCoreTests {
         let current = binding(runtimeRevision: "runtime-r7", runID: "run-2")
         let oldRun = binding(runtimeRevision: "runtime-r6", runID: "run-1")
         #expect(throws: ForgeQualityError.evidenceBindingMismatch(receiptID: id("perf-1"))) {
-            try ForgeQualityEvaluator.evaluate(
+            try evaluate(
                 policy: policy([target(.p95FrameTimeMilliseconds, atMost: 20)]),
-                acceptedConstitutionRevision: 4,
                 binding: current,
                 measurements: [measurement(.p95FrameTimeMilliseconds, value: 16, receipt: "perf-1", binding: oldRun)]
             )
@@ -210,9 +240,8 @@ struct ForgeQualityCoreTests {
     @Test func physicalDeviceRequirementDoesNotAcceptSimulatorSample() throws {
         let currentPolicy = policy([target(.p95FrameTimeMilliseconds, atMost: 20, physical: true)])
         let simulatorBinding = binding(environmentKind: .simulator)
-        let result = try ForgeQualityEvaluator.evaluate(
+        let result = try evaluate(
             policy: currentPolicy,
-            acceptedConstitutionRevision: 4,
             binding: simulatorBinding,
             measurements: [measurement(.p95FrameTimeMilliseconds, value: 12, receipt: "perf-1", binding: simulatorBinding)]
         )
@@ -223,9 +252,8 @@ struct ForgeQualityCoreTests {
 
     @Test func physicalDeviceEvidenceCanSatisfyPhysicalTarget() throws {
         let deviceBinding = binding(environmentKind: .physicalDevice)
-        let result = try ForgeQualityEvaluator.evaluate(
+        let result = try evaluate(
             policy: policy([target(.p95FrameTimeMilliseconds, atMost: 20, physical: true)]),
-            acceptedConstitutionRevision: 4,
             binding: deviceBinding,
             measurements: [measurement(.p95FrameTimeMilliseconds, value: 18, receipt: "perf-device", binding: deviceBinding)]
         )
@@ -239,9 +267,8 @@ struct ForgeQualityCoreTests {
             target(.p99FrameTimeMilliseconds, atMost: 30),
         ])
         #expect(throws: ForgeQualityError.duplicateMeasurement(metric: .p95FrameTimeMilliseconds, scope: .run)) {
-            try ForgeQualityEvaluator.evaluate(
+            try evaluate(
                 policy: perfPolicy,
-                acceptedConstitutionRevision: 4,
                 binding: binding(),
                 measurements: [
                     measurement(.p95FrameTimeMilliseconds, value: 15, receipt: "r1"),
@@ -250,9 +277,8 @@ struct ForgeQualityCoreTests {
             )
         }
         #expect(throws: ForgeQualityError.duplicateReceiptID(id("r1"))) {
-            try ForgeQualityEvaluator.evaluate(
+            try evaluate(
                 policy: perfPolicy,
-                acceptedConstitutionRevision: 4,
                 binding: binding(),
                 measurements: [
                     measurement(.p95FrameTimeMilliseconds, value: 15, receipt: "r1"),
@@ -264,9 +290,8 @@ struct ForgeQualityCoreTests {
 
     @Test func unexpectedMetricsDoNotPolluteAcceptance() throws {
         #expect(throws: ForgeQualityError.unexpectedMeasurement(metric: .p99FrameTimeMilliseconds, scope: .run)) {
-            try ForgeQualityEvaluator.evaluate(
+            try evaluate(
                 policy: policy([target(.p95FrameTimeMilliseconds, atMost: 20)]),
-                acceptedConstitutionRevision: 4,
                 binding: binding(),
                 measurements: [measurement(.p99FrameTimeMilliseconds, value: 22, receipt: "perf-extra")]
             )
@@ -280,9 +305,8 @@ struct ForgeQualityCoreTests {
             target(.p95FrameTimeMilliseconds, atMost: 20, scope: goalScope),
             target(.p95FrameTimeMilliseconds, atMost: 24, scope: chaosScope),
         ])
-        let result = try ForgeQualityEvaluator.evaluate(
+        let result = try evaluate(
             policy: currentPolicy,
-            acceptedConstitutionRevision: 4,
             binding: binding(),
             measurements: [
                 measurement(.p95FrameTimeMilliseconds, value: 17, receipt: "goal-perf", scope: goalScope),
@@ -303,9 +327,8 @@ struct ForgeQualityCoreTests {
             metric: .p95FrameTimeMilliseconds,
             scope: performanceScope
         )) {
-            try ForgeQualityEvaluator.evaluate(
+            try evaluate(
                 policy: currentPolicy,
-                acceptedConstitutionRevision: 4,
                 binding: binding(),
                 measurements: [
                     measurement(
@@ -318,9 +341,8 @@ struct ForgeQualityCoreTests {
             )
         }
 
-        let missing = try ForgeQualityEvaluator.evaluate(
+        let missing = try evaluate(
             policy: currentPolicy,
-            acceptedConstitutionRevision: 4,
             binding: binding(),
             measurements: []
         )
@@ -328,12 +350,43 @@ struct ForgeQualityCoreTests {
         #expect(missing.findings.first?.scope == goalScope)
     }
 
-    @Test func acceptedConstitutionRevisionMustMatchPolicy() throws {
-        #expect(throws: ForgeQualityError.constitutionRevisionMismatch(expected: 4, actual: 5)) {
-            try ForgeQualityEvaluator.evaluate(
+    @Test func serializedPolicyAuthorityCannotSelfAuthorize() throws {
+        let forgedPolicy = policy(
+            [target(.p95FrameTimeMilliseconds, atMost: 20)],
+            authorityReceipt: "model-authored-policy-receipt"
+        )
+        #expect(throws: ForgeQualityError.untrustedPolicyAuthorityReceipt(
+            expected: id("host-trusted-policy-receipt"),
+            actual: id("model-authored-policy-receipt")
+        )) {
+            try evaluate(
+                policy: forgedPolicy,
+                trustedPolicyAuthorityReceipt: "host-trusted-policy-receipt",
+                measurements: [measurement(.p95FrameTimeMilliseconds, value: 16, receipt: "perf-1")]
+            )
+        }
+    }
+
+    @Test func qualityPolicyMustMatchExactCompletionTarget() throws {
+        let wrongTargetPolicy = policy(
+            [target(.p95FrameTimeMilliseconds, atMost: 20)],
+            sourceRevision: "source-r1"
+        )
+        #expect(throws: ForgeQualityError.qualityTargetMismatch) {
+            try evaluate(
+                policy: wrongTargetPolicy,
+                binding: binding(sourceRevision: "source-r2"),
+                measurements: [measurement(.p95FrameTimeMilliseconds, value: 16, receipt: "perf-1")]
+            )
+        }
+    }
+
+    @Test func acceptedAcceptanceRevisionMustMatchPolicy() throws {
+        #expect(throws: ForgeQualityError.acceptanceRevisionMismatch(expected: 4, actual: 5)) {
+            try evaluate(
                 policy: policy([target(.fatalRuntimeErrorCount, atMost: 0)]),
-                acceptedConstitutionRevision: 5,
                 binding: binding(),
+                acceptedAcceptanceRevision: 5,
                 measurements: [measurement(.fatalRuntimeErrorCount, value: 0, receipt: "runtime-1")]
             )
         }
@@ -367,7 +420,6 @@ struct ForgeQualityCoreTests {
                 target(.p95FrameTimeMilliseconds, atMost: 20),
                 target(.accessibilityCriticalViolationCount, atMost: 0),
             ]),
-            acceptedConstitutionRevision: 4,
             binding: currentBinding,
             measurements: [
                 measurement(.p95FrameTimeMilliseconds, value: 17, receipt: "perf-1", binding: currentBinding),
@@ -376,8 +428,8 @@ struct ForgeQualityCoreTests {
         )
         let data = try JSONEncoder().encode(snapshot)
         let decoded = try JSONDecoder().decode(ForgeQualitySnapshot.self, from: data)
-        #expect(try decoded.assessment().status == .passed)
-        #expect(try decoded.assessment().acceptedReceiptIDs == [id("a11y-1"), id("perf-1")])
+        #expect(try decoded.assessment(trustedPolicyAuthorityReceiptID: id("quality-policy-authority-1"), acceptedAcceptanceRevision: 4).status == .passed)
+        #expect(try decoded.assessment(trustedPolicyAuthorityReceiptID: id("quality-policy-authority-1"), acceptedAcceptanceRevision: 4).acceptedReceiptIDs == [id("a11y-1"), id("perf-1")])
     }
 
     @Test func snapshotDecodeRejectsCrossRunMeasurement() throws {
@@ -392,7 +444,6 @@ struct ForgeQualityCoreTests {
         let object: [String: Any] = [
             "schemaVersion": 1,
             "policy": encodedPolicy,
-            "acceptedConstitutionRevision": 4,
             "binding": encodedBinding,
             "measurements": [encodedMeasurement],
         ]
