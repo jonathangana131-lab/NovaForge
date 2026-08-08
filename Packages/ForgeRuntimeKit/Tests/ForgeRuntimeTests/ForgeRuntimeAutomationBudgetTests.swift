@@ -96,6 +96,72 @@ final class ForgeRuntimeAutomationBudgetTests: XCTestCase {
         XCTAssertEqual(gate.nextExpectedSequence, 1)
     }
 
+
+    func testGateCopiesShareSequenceAndBudgetState() throws {
+        let session = try makeSession(
+            granted: [.activateControl],
+            allowed: [.activateControl],
+            maximumInteractions: 2
+        )
+        var firstGate = ForgeRuntimeSemanticInteractionGate(session: session)
+        var copiedGate = firstGate
+
+        XCTAssertNoThrow(
+            try firstGate.authorize(controlData(session: session, requestID: "req-0", sequence: 0))
+        )
+        XCTAssertEqual(copiedGate.nextExpectedSequence, 1)
+
+        XCTAssertThrowsError(
+            try copiedGate.authorize(controlData(session: session, requestID: "req-replay", sequence: 0))
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeSemanticInteractionError,
+                .sequenceMismatch(expected: 1, actual: 0)
+            )
+        }
+
+        XCTAssertNoThrow(
+            try copiedGate.authorize(controlData(session: session, requestID: "req-1", sequence: 1))
+        )
+        XCTAssertEqual(firstGate.nextExpectedSequence, 2)
+
+        XCTAssertThrowsError(
+            try firstGate.authorize(controlData(session: session, requestID: "req-2", sequence: 2))
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeSemanticInteractionError,
+                .interactionBudgetExceeded(maximum: 2)
+            )
+        }
+    }
+
+    func testSeparatelyInitializedGatesForSameSessionCannotForkOrRewind() throws {
+        let session = try makeSession(
+            granted: [.activateControl],
+            allowed: [.activateControl],
+            maximumInteractions: 10
+        )
+        var firstGate = ForgeRuntimeSemanticInteractionGate(session: session, startingSequence: 5)
+        XCTAssertNoThrow(
+            try firstGate.authorize(controlData(session: session, requestID: "req-5", sequence: 5))
+        )
+
+        var secondGate = ForgeRuntimeSemanticInteractionGate(session: session, startingSequence: 0)
+        XCTAssertEqual(secondGate.nextExpectedSequence, 6)
+        XCTAssertThrowsError(
+            try secondGate.authorize(controlData(session: session, requestID: "req-rewind", sequence: 5))
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeSemanticInteractionError,
+                .sequenceMismatch(expected: 6, actual: 5)
+            )
+        }
+        XCTAssertNoThrow(
+            try secondGate.authorize(controlData(session: session, requestID: "req-6", sequence: 6))
+        )
+        XCTAssertEqual(firstGate.nextExpectedSequence, 7)
+    }
+
     func testExhaustedGateChecksBudgetBeforeSequenceIncrementCanOverflow() throws {
         let session = try makeSession(
             granted: [.activateControl],
