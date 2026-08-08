@@ -6,6 +6,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case invalidRevision
     case invalidBudget
     case invalidCost
+    case incompatibleCostBasis
     case duplicateEntryID(String)
     case crossProjectEntry(entryID: String)
     case requiredEntryIneligible(entryID: String, reason: ForgeCompactOmissionReason)
@@ -213,6 +214,7 @@ public struct ForgeCompactReceipt: Codable, Equatable, Sendable {
     public let selectedUnits: Int
     public let selectedEntryIDs: [String]
     public let omissions: [ForgeCompactOmission]
+    public let costBasis: ForgeCompactCostBasis?
     public let costTruth: ForgeCompactCostTruth
 }
 
@@ -297,6 +299,7 @@ public struct ProjectCapsule: Codable, Equatable, Sendable {
 
         var seen = Set<String>()
         var selectedUnits = 0
+        var selectedCostBasis: ForgeCompactCostBasis?
         var includesEstimate = false
         for entry in entries {
             let validatedCost = try ForgeCompactContextCost(units: entry.cost.units, basis: entry.cost.basis)
@@ -333,6 +336,11 @@ public struct ProjectCapsule: Codable, Equatable, Sendable {
             guard entry.authority.isAcceptedTruth else {
                 throw ForgeCompactError.requiredEntryIneligible(entryID: entry.id, reason: .nonAuthoritative)
             }
+            if let selectedCostBasis {
+                guard selectedCostBasis == entry.cost.basis else { throw ForgeCompactError.incompatibleCostBasis }
+            } else {
+                selectedCostBasis = entry.cost.basis
+            }
             let (nextSelectedUnits, overflow) = selectedUnits.addingReportingOverflow(entry.cost.units)
             guard !overflow else { throw ForgeCompactError.invalidCost }
             selectedUnits = nextSelectedUnits
@@ -341,6 +349,7 @@ public struct ProjectCapsule: Codable, Equatable, Sendable {
 
         guard selectedUnits == receipt.selectedUnits else { throw ForgeCompactError.invalidCost }
         guard entries.map(\.id) == receipt.selectedEntryIDs else { throw ForgeCompactError.invalidRevision }
+        guard receipt.costBasis == selectedCostBasis else { throw ForgeCompactError.incompatibleCostBasis }
         let expectedTruth: ForgeCompactCostTruth = includesEstimate ? .includesEstimates : .exact
         guard receipt.costTruth == expectedTruth else { throw ForgeCompactError.invalidCost }
 
@@ -395,6 +404,12 @@ public enum ForgeCompactPlanner {
             }
         }
 
+        if let firstBasis = eligible.first?.cost.basis {
+            guard eligible.allSatisfy({ $0.cost.basis == firstBasis }) else {
+                throw ForgeCompactError.incompatibleCostBasis
+            }
+        }
+
         let required = eligible.filter { $0.inclusion == .required }.sorted(by: stableOrdering)
         var requiredUnits = 0
         for entry in required {
@@ -438,6 +453,7 @@ public enum ForgeCompactPlanner {
             selectedUnits: selectedUnits,
             selectedEntryIDs: selected.map(\.id),
             omissions: omissions,
+            costBasis: selected.first?.cost.basis,
             costTruth: costTruth
         )
 
