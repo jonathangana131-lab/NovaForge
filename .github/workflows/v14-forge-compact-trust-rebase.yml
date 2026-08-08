@@ -1,0 +1,42 @@
+name: V14 Forge Compact Trust Rebase
+
+on:
+  push:
+    branches:
+      - 'worker/GPT56-NF-V14-COMPACT-REPAIR-8A8/forge-compact-trust-rebase/e2'
+  pull_request:
+    paths:
+      - 'Packages/ForgeCompactCore/**'
+      - '.github/workflows/v14-forge-compact-trust-rebase.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-forge-compact-trust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - run: swift --version
+      - run: git diff --check origin/main...HEAD
+      - run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - run: swift test -c release --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - run: swift --version
+      - run: git diff --check origin/main...HEAD
+      - run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - run: swift test -c release --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors

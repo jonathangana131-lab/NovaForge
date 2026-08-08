@@ -23,13 +23,14 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
 enum ForgeCompactValidation {
     static func identifier(_ value: String, field: String, maxUTF8Bytes: Int = 256) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              trimmed.utf8.count <= maxUTF8Bytes,
-              !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        guard value == trimmed,
+              !value.isEmpty,
+              value.utf8.count <= maxUTF8Bytes,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
         else {
             throw ForgeCompactError.invalidIdentifier(field: field)
         }
-        return trimmed
+        return value
     }
 
     static func content(_ value: String) throws -> String {
