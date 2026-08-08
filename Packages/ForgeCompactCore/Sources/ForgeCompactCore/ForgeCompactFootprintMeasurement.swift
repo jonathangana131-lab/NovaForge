@@ -78,8 +78,10 @@ public enum ForgeCompactFootprintMeasurer {
             budgetBytes: budgetBytes
         )
 
-        guard capsule.sourceItemCount == items.count,
-              capsule.selectedItems.count + capsule.omittedItems.count == items.count
+        let (capsuleItemCount, countOverflow) = capsule.selectedItems.count.addingReportingOverflow(capsule.omittedItems.count)
+        guard !countOverflow,
+              capsule.sourceItemCount == items.count,
+              capsuleItemCount == items.count
         else {
             throw ForgeCompactFootprintMeasurementError.inconsistentSourceItemCount
         }
