@@ -28,10 +28,12 @@ struct ForgeQualityCoreTests {
     private func target(
         _ metric: ForgeQualityMetric,
         atMost threshold: Double,
+        scope: ForgeQualityScope = .run,
         physical: Bool = false
     ) -> ForgeQualityTarget {
         try! ForgeQualityTarget(
             metric: metric,
+            scope: scope,
             comparator: .atMost,
             threshold: threshold,
             requiresPhysicalDevice: physical
@@ -50,12 +52,14 @@ struct ForgeQualityCoreTests {
         _ metric: ForgeQualityMetric,
         value: Double,
         receipt: String,
-        binding: ForgeQualityRunBinding? = nil
+        binding: ForgeQualityRunBinding? = nil,
+        scope: ForgeQualityScope = .run
     ) -> ForgeQualityMeasurement {
         try! ForgeQualityMeasurement(
             receiptID: id(receipt),
             binding: binding ?? self.binding(),
             metric: metric,
+            scope: scope,
             evidenceKind: metric.expectedEvidenceKind,
             value: value
         )
@@ -70,7 +74,7 @@ struct ForgeQualityCoreTests {
 
     @Test func policyRejectsDuplicateMetricsAndInvalidThresholds() throws {
         let frame = target(.p95FrameTimeMilliseconds, atMost: 20)
-        #expect(throws: ForgeQualityError.duplicateTargetMetric(.p95FrameTimeMilliseconds)) {
+        #expect(throws: ForgeQualityError.duplicateTarget(metric: .p95FrameTimeMilliseconds, scope: .run)) {
             try ForgeQualityPolicy(policyID: id("p"), constitutionRevision: 1, targets: [frame, frame])
         }
         #expect(throws: ForgeQualityError.invalidThreshold(.longFrameRatePercent)) {
@@ -234,7 +238,7 @@ struct ForgeQualityCoreTests {
             target(.p95FrameTimeMilliseconds, atMost: 20),
             target(.p99FrameTimeMilliseconds, atMost: 30),
         ])
-        #expect(throws: ForgeQualityError.duplicateMeasurementMetric(.p95FrameTimeMilliseconds)) {
+        #expect(throws: ForgeQualityError.duplicateMeasurement(metric: .p95FrameTimeMilliseconds, scope: .run)) {
             try ForgeQualityEvaluator.evaluate(
                 policy: perfPolicy,
                 acceptedConstitutionRevision: 4,
@@ -259,7 +263,7 @@ struct ForgeQualityCoreTests {
     }
 
     @Test func unexpectedMetricsDoNotPolluteAcceptance() throws {
-        #expect(throws: ForgeQualityError.unexpectedMeasurementMetric(.p99FrameTimeMilliseconds)) {
+        #expect(throws: ForgeQualityError.unexpectedMeasurement(metric: .p99FrameTimeMilliseconds, scope: .run)) {
             try ForgeQualityEvaluator.evaluate(
                 policy: policy([target(.p95FrameTimeMilliseconds, atMost: 20)]),
                 acceptedConstitutionRevision: 4,
@@ -267,6 +271,61 @@ struct ForgeQualityCoreTests {
                 measurements: [measurement(.p99FrameTimeMilliseconds, value: 22, receipt: "perf-extra")]
             )
         }
+    }
+
+    @Test func sameMetricCanBeRequiredForDistinctJourneyScopes() throws {
+        let goalScope = ForgeQualityScope.journey(id("goal-journey"))
+        let chaosScope = ForgeQualityScope.journey(id("chaos-journey"))
+        let currentPolicy = policy([
+            target(.p95FrameTimeMilliseconds, atMost: 20, scope: goalScope),
+            target(.p95FrameTimeMilliseconds, atMost: 24, scope: chaosScope),
+        ])
+        let result = try ForgeQualityEvaluator.evaluate(
+            policy: currentPolicy,
+            acceptedConstitutionRevision: 4,
+            binding: binding(),
+            measurements: [
+                measurement(.p95FrameTimeMilliseconds, value: 17, receipt: "goal-perf", scope: goalScope),
+                measurement(.p95FrameTimeMilliseconds, value: 22, receipt: "chaos-perf", scope: chaosScope),
+            ]
+        )
+        #expect(result.status == .passed)
+        #expect(result.acceptedReceiptIDs == [id("chaos-perf"), id("goal-perf")])
+    }
+
+    @Test func performanceFromOneJourneyCannotSatisfyAnotherJourney() throws {
+        let goalScope = ForgeQualityScope.journey(id("goal-journey"))
+        let performanceScope = ForgeQualityScope.journey(id("performance-journey"))
+        let currentPolicy = policy([
+            target(.p95FrameTimeMilliseconds, atMost: 20, scope: goalScope),
+        ])
+        #expect(throws: ForgeQualityError.unexpectedMeasurement(
+            metric: .p95FrameTimeMilliseconds,
+            scope: performanceScope
+        )) {
+            try ForgeQualityEvaluator.evaluate(
+                policy: currentPolicy,
+                acceptedConstitutionRevision: 4,
+                binding: binding(),
+                measurements: [
+                    measurement(
+                        .p95FrameTimeMilliseconds,
+                        value: 15,
+                        receipt: "wrong-journey-perf",
+                        scope: performanceScope
+                    ),
+                ]
+            )
+        }
+
+        let missing = try ForgeQualityEvaluator.evaluate(
+            policy: currentPolicy,
+            acceptedConstitutionRevision: 4,
+            binding: binding(),
+            measurements: []
+        )
+        #expect(missing.status == .blocked)
+        #expect(missing.findings.first?.scope == goalScope)
     }
 
     @Test func acceptedConstitutionRevisionMustMatchPolicy() throws {
