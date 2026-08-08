@@ -1,7 +1,8 @@
 import Foundation
 
 public struct ProjectCapsule: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 1
+    /// Schema 2 adds durable retrieval provenance to omitted/deferred context.
+    public static let currentSchemaVersion = 2
 
     public let schemaVersion: Int
     public let authority: ProjectCapsuleAuthority

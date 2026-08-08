@@ -138,9 +138,10 @@ public enum ForgeCompactFactKind: String, Codable, CaseIterable, Sendable {
     public var requiresRetentionWhenPresent: Bool {
         switch self {
         case .missionIdentity, .currentObjective, .safetyPolicy, .privacyPolicy,
-             .acceptedRequirement, .unresolvedDecision, .failingTest, .knownLimitation:
+             .acceptedRequirement, .unresolvedDecision, .failingTest, .knownLimitation,
+             .designDNA:
             true
-        case .acceptedDecision, .designDNA, .sourceLocation, .testReceipt,
+        case .acceptedDecision, .sourceLocation, .testReceipt,
              .runtimeReceipt, .workingNote:
             false
         }
@@ -262,9 +263,10 @@ public struct ForgeCompactContextItem: Codable, Hashable, Sendable {
     }
 }
 
-/// Compact reference for context not selected into the rendered capsule. It retains enough
-/// source and retention metadata to prove that persisted bytes did not hide mandatory truth or
-/// move an omitted fact across source revisions.
+/// Compact retrieval reference for context not selected into the rendered capsule. Omission must
+/// preserve the exact provenance pointer needed to recover the fact from Project Brain, source
+/// storage, checkpoints, runtime evidence, or test evidence without pretending omitted truth was
+/// discarded.
 public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
     public let id: String
     public let sourceRevision: String
@@ -272,6 +274,7 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
     public let kind: ForgeCompactFactKind
     public let priority: Int
     public let protectedByUser: Bool
+    public let provenance: ForgeCompactProvenance
 
     public var mustRetain: Bool {
         tier == .l0AlwaysResident || kind.requiresRetentionWhenPresent || protectedByUser
@@ -284,6 +287,7 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
         kind = item.kind
         priority = item.priority
         protectedByUser = item.protectedByUser
+        provenance = item.provenance
     }
 
     private init(
@@ -292,7 +296,8 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
         tier: ForgeCompactContextTier,
         kind: ForgeCompactFactKind,
         priority: Int,
-        protectedByUser: Bool
+        protectedByUser: Bool,
+        provenance: ForgeCompactProvenance
     ) throws {
         self.id = try ForgeCompactValidation.identifier(id, field: "omitted.id")
         self.sourceRevision = try ForgeCompactValidation.identifier(sourceRevision, field: "omitted.sourceRevision")
@@ -303,13 +308,14 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
         self.kind = kind
         self.priority = priority
         self.protectedByUser = protectedByUser
+        self.provenance = provenance
         guard !mustRetain else {
             throw ForgeCompactError.invalidCapsuleShape
         }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, sourceRevision, tier, kind, priority, protectedByUser
+        case id, sourceRevision, tier, kind, priority, protectedByUser, provenance
     }
 
     public init(from decoder: Decoder) throws {
@@ -320,7 +326,8 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
             tier: c.decode(ForgeCompactContextTier.self, forKey: .tier),
             kind: c.decode(ForgeCompactFactKind.self, forKey: .kind),
             priority: c.decode(Int.self, forKey: .priority),
-            protectedByUser: c.decode(Bool.self, forKey: .protectedByUser)
+            protectedByUser: c.decode(Bool.self, forKey: .protectedByUser),
+            provenance: c.decode(ForgeCompactProvenance.self, forKey: .provenance)
         )
     }
 }
