@@ -32,7 +32,7 @@ public enum LocalModelFabricSelectionMode: String, Hashable, Sendable {
 public enum LocalModelFabricPrivacyRequirement: String, Hashable, Sendable {
     /// The selected execution must be local. Physical-device runtime qualification is required.
     case localExecution
-    /// In addition to physical-device runtime qualification, the canonical Local Only network audit must pass.
+    /// Physical-device runtime qualification plus the canonical Local Only network audit is required.
     case localOnly
 }
 
@@ -398,6 +398,8 @@ public enum LocalModelFabricSelector {
             result.reasons.append(.contextInsufficient)
         }
 
+        // Legacy compatibility is only a conservative artifact/device preflight. Its measured label does not
+        // authorize mission routing; canonical #101 evidence below is the only normal-routing authority.
         let compatibility = LocalModelCompatibilityEvaluator.evaluate(
             descriptor: candidate.descriptor,
             device: candidate.deviceProfile,
@@ -447,11 +449,13 @@ public enum LocalModelFabricSelector {
             result.reasons.append(.taskSuccessBelowThreshold)
         }
 
+        // Reconcile typed payloads with the current routing policy even if a raw receipt says `passed`.
+        // This keeps routing fail-closed while the canonical qualification policy evolves independently.
         let performance = record.evidence.compactMap { evidence -> LocalModelPerformanceMeasurement? in
             guard case .performance(let measurement) = evidence.payload else { return nil }
             return measurement
         }
-        if let maxPeak = performance.map(\ .peakResidentBytes).max() {
+        if let maxPeak = performance.map(\.peakResidentBytes).max() {
             result.peakResidentBytes = maxPeak
             if let limit = request.policy.maximumPeakResidentBytes, maxPeak > limit {
                 result.reasons.append(.measuredMemoryExceeded)
@@ -506,8 +510,10 @@ public enum LocalModelFabricSelector {
         for privacy: LocalModelFabricPrivacyRequirement
     ) -> LocalModelQualificationClaim {
         switch privacy {
-        case .localExecution: .deviceRuntimeQualified
-        case .localOnly: .localOnlyDeviceQualified
+        case .localExecution:
+            return .deviceRuntimeQualified
+        case .localOnly:
+            return .localOnlyDeviceQualified
         }
     }
 
@@ -516,7 +522,7 @@ public enum LocalModelFabricSelector {
     private static func canonicalSubjectKey(_ subject: LocalModelQualificationSubject) -> String? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return try? encoder.encode(subject).base64EncodedString()
+        return (try? encoder.encode(subject))?.base64EncodedString()
     }
 
     private static func canonicalRejections(
@@ -524,8 +530,8 @@ public enum LocalModelFabricSelector {
     ) -> [LocalModelFabricCandidateRejection] {
         rejections.sorted { lhs, rhs in
             if lhs.candidateKey == rhs.candidateKey {
-                return lhs.reasons.map(\ .rawValue).joined(separator: "|")
-                    < rhs.reasons.map(\ .rawValue).joined(separator: "|")
+                return lhs.reasons.map(\.rawValue).joined(separator: "|")
+                    < rhs.reasons.map(\.rawValue).joined(separator: "|")
             }
             return lhs.candidateKey < rhs.candidateKey
         }
@@ -540,21 +546,21 @@ public enum LocalModelFabricSelector {
 
     private static func memoryPressureRank(_ value: LocalModelMemoryPressure) -> Int {
         switch value {
-        case .nominal: 0
-        case .warning: 1
-        case .critical: 2
-        case .terminated: 3
-        case .unknown: 4
+        case .nominal: return 0
+        case .warning: return 1
+        case .critical: return 2
+        case .terminated: return 3
+        case .unknown: return 4
         }
     }
 
     private static func thermalRank(_ value: LocalModelThermalState) -> Int {
         switch value {
-        case .nominal: 0
-        case .fair: 1
-        case .serious: 2
-        case .critical: 3
-        case .unknown: 4
+        case .nominal: return 0
+        case .fair: return 1
+        case .serious: return 2
+        case .critical: return 3
+        case .unknown: return 4
         }
     }
 }
