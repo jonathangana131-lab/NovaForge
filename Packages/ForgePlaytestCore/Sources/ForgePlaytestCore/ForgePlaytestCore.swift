@@ -681,7 +681,10 @@ public enum ForgePlaytestGateEvaluator {
             return .blocked(blockers)
         }
 
-        let repairItems = completed.flatMap { result in
+        // Severe defects are source-revision truth, not success-status truth. A failed or
+        // interrupted journey can still discover a receipted high/critical defect that must
+        // prevent this exact revision from being accepted.
+        let repairItems = results.flatMap { result in
             result.defects.compactMap { defect -> ForgePlaytestRepairItem? in
                 guard defect.severity >= policy.repairThreshold else { return nil }
                 return ForgePlaytestRepairItem(
