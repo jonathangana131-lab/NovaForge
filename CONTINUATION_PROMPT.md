@@ -15,10 +15,11 @@ Start with tools, not a giant plan.
 5. Read `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt`.
 6. Read `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`.
 7. Read `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md`.
-8. Read the relevant V13 Product Constitution / Agent Runtime Architecture / Design System / Roadmap sections for the feature you choose.
-9. Use GitHub issue #23 as live coordination context when useful, but live code/PRs outrank stale issue text.
-10. Choose the highest-value safe non-conflicting lane.
-11. Execute real work immediately.
+8. Read `docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md` and fresh-check upstream sources before treating any snapshot model/runtime fact as current.
+9. Read the relevant V13 Product Constitution / Agent Runtime Architecture / Design System / Roadmap sections for the feature you choose.
+10. Use GitHub issue #23 as live coordination context when useful, but live code/PRs outrank stale issue text.
+11. Choose the highest-value safe non-conflicting lane.
+12. Execute real work immediately.
 
 ## Product north star
 
