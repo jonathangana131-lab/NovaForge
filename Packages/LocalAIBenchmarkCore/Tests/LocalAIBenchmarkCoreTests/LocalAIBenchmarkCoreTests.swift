@@ -173,8 +173,8 @@ final class LocalAIBenchmarkCoreTests: XCTestCase {
 
     func testExactComparisonRequiresSameCompleteSuiteIdentity() throws {
         let suite = try makeSuite()
-        let baseline = try score(suite: suite, failedTaskID: "repair")
-        let candidate = try score(suite: suite, failedTaskID: nil)
+        let baseline = try receipt(suite: suite, failedTaskID: "repair")
+        let candidate = try receipt(suite: suite, failedTaskID: nil)
         let comparison = try LocalAIBenchmarkEvaluator.compare(
             baseline: baseline, candidate: candidate
         )
@@ -185,16 +185,35 @@ final class LocalAIBenchmarkCoreTests: XCTestCase {
             requiredCategories: suite.requiredCategories, tasks: suite.tasks
         )
         XCTAssertThrowsError(try LocalAIBenchmarkEvaluator.compare(
-            baseline: baseline, candidate: try score(suite: other, failedTaskID: nil)
+            baseline: baseline, candidate: try receipt(suite: other, failedTaskID: nil)
         )) { error in
             XCTAssertEqual(error as? LocalAIBenchmarkError, .suiteVersionMismatch)
         }
     }
 
+    func testSameVersionDifferentSuiteDefinitionCannotBeCompared() throws {
+        let suite = try makeSuite()
+        var changedTasks = suite.tasks
+        changedTasks[0] = makeTask(
+            id: "route", category: .intentRouting,
+            digest: String(repeating: "e", count: 64)
+        )
+        let changedSuite = try LocalAIBenchmarkSuite(
+            id: suite.id, version: suite.version,
+            requiredCategories: suite.requiredCategories, tasks: changedTasks
+        )
+        XCTAssertThrowsError(try LocalAIBenchmarkEvaluator.compare(
+            baseline: receipt(suite: suite, failedTaskID: nil),
+            candidate: receipt(suite: changedSuite, failedTaskID: nil)
+        )) { error in
+            XCTAssertEqual(error as? LocalAIBenchmarkError, .suiteDefinitionMismatch)
+        }
+    }
+
     func testIncompleteScoreCannotBeCompared() throws {
         let suite = try makeSuite()
-        let complete = try score(suite: suite, failedTaskID: nil)
-        let partial = try LocalAIBenchmarkEvaluator.evaluate(
+        let complete = try receipt(suite: suite, failedTaskID: nil)
+        let partial = try LocalAIBenchmarkRunReceipt(
             suite: suite,
             observations: [observation(id: "route", outcome: .passed, digest: digestA)]
         )
@@ -231,6 +250,16 @@ final class LocalAIBenchmarkCoreTests: XCTestCase {
         ))
     }
 
+    func testRunReceiptRoundTripsAndRecomputesScore() throws {
+        let original = try receipt(suite: makeSuite(), failedTaskID: "repair")
+        let decoded = try JSONDecoder().decode(
+            LocalAIBenchmarkRunReceipt.self,
+            from: JSONEncoder().encode(original)
+        )
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.score.failedTaskIDs, ["repair"])
+    }
+
     func testDecodedScoreRejectsImpossiblePersistedMetrics() throws {
         let malformed = #"{"suiteID":"general-agent","suiteVersion":1,"weightedSuccess":1.25,"completedCoverage":1,"requiredTasksPassed":true,"requiredCategoryCoverage":true,"isComplete":true,"categoryScores":[],"passedTaskIDs":["route"],"failedTaskIDs":[],"notRunTaskIDs":[]}"#
         XCTAssertThrowsError(try JSONDecoder().decode(
@@ -264,6 +293,19 @@ final class LocalAIBenchmarkCoreTests: XCTestCase {
                              digest: String?) -> LocalAIBenchmarkObservation {
         .init(taskID: id, taskRevision: 1, outcome: outcome,
               evidenceDigest: outcome == .notRun ? nil : digest)
+    }
+
+    private func receipt(suite: LocalAIBenchmarkSuite,
+                         failedTaskID: String?) throws -> LocalAIBenchmarkRunReceipt {
+        let evidence = [digestA, digestB, digestC, digestD]
+        return try LocalAIBenchmarkRunReceipt(
+            suite: suite,
+            observations: suite.tasks.enumerated().map { index, task in
+                .init(taskID: task.id, taskRevision: task.revision,
+                      outcome: task.id == failedTaskID ? .failed : .passed,
+                      evidenceDigest: evidence[index % evidence.count])
+            }
+        )
     }
 
     private func score(suite: LocalAIBenchmarkSuite,
