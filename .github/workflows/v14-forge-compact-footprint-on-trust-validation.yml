@@ -1,0 +1,26 @@
+name: V14 Forge Compact footprint on trust validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-COMPACT-MEASURE-8B8M/footprint-on-trust/e1
+
+permissions:
+  contents: read
+
+jobs:
+  forge-compact-footprint-on-trust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Swift toolchain
+        run: swift --version
+      - name: Diff hygiene
+        run: git diff --check origin/main...HEAD
+      - name: ForgeCompactCore debug
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - name: ForgeCompactCore release
+        run: swift test -c release --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
