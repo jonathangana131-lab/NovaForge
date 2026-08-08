@@ -1,0 +1,21 @@
+name: V14 Local Qualification Package
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-V14-LOCALQUAL-8A8C/exact-qualification-truth/e1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: AgentHarnessKit warnings-as-errors
+        run: swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
