@@ -4,6 +4,7 @@ import XCTest
 
 final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
     private let digest = String(repeating: "a", count: 64)
+    private let modelArtifactDigest = String(repeating: "c", count: 64)
 
     func testMandatoryTruthCannotBeDroppedForOptionalContext() throws {
         let objective = try item(
@@ -220,6 +221,7 @@ final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
     func testCacheReuseRequiresExactStablePrefixAndMemoryProfile() throws {
         let base = try cacheIdentity()
         XCTAssertTrue(base.canReusePrefixOrKV(with: try cacheIdentity()))
+        XCTAssertFalse(base.canReusePrefixOrKV(with: try cacheIdentity(modelArtifactSHA256: String(repeating: "d", count: 64))))
         XCTAssertFalse(base.canReusePrefixOrKV(with: try cacheIdentity(weightProfileID: "Q5_K_M")))
         XCTAssertFalse(base.canReusePrefixOrKV(with: try cacheIdentity(keyCacheType: "q4_0")))
         XCTAssertFalse(base.canReusePrefixOrKV(with: try cacheIdentity(valueCacheType: "q4_0")))
@@ -241,6 +243,7 @@ final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
 
     func testCacheIdentityRejectsNonCanonicalIdentityAndDigest() throws {
         XCTAssertThrowsError(try cacheIdentity(modelID: " model "))
+        XCTAssertThrowsError(try cacheIdentity(modelArtifactSHA256: "not-a-digest"))
         XCTAssertThrowsError(try cacheIdentity(stablePrefixSHA256: "not-a-digest"))
         XCTAssertThrowsError(try cacheIdentity(contextCapacityTokens: 0))
     }
@@ -253,6 +256,11 @@ final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
         let tampered = try JSONSerialization.data(withJSONObject: json)
 
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeCompactCacheIdentity.self, from: tampered))
+
+        var artifactJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        artifactJSON["modelArtifactSHA256"] = "BAD"
+        let artifactTampered = try JSONSerialization.data(withJSONObject: artifactJSON)
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeCompactCacheIdentity.self, from: artifactTampered))
     }
 
     func testCapsuleAndArchiveRoundTripPreserveDeterministicBytes() throws {
@@ -318,6 +326,7 @@ final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
 
     private func cacheIdentity(
         modelID: String = "Qwen-small",
+        modelArtifactSHA256: String? = nil,
         tokenizerRevision: String = "tok-r1",
         runtimeRevision: String = "runtime-r1",
         backendProfileID: String = "metal",
@@ -335,6 +344,7 @@ final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
         try ForgeCompactCacheIdentity(
             modelID: modelID,
             modelRevision: "model-r1",
+            modelArtifactSHA256: modelArtifactSHA256 ?? modelArtifactDigest,
             tokenizerID: "tokenizer",
             tokenizerRevision: tokenizerRevision,
             runtimeID: "llama.cpp",
