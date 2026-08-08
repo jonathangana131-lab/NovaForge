@@ -9,12 +9,14 @@ Before substantial work, read in this order:
 1. `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt` — canonical `GO` behavior and feature-closure execution kernel.
 2. `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md` — large-swarm anti-collision, no-wait, integration-closer, durability, visual, and continuity rules.
 3. `CONTINUATION_PROMPT.md` — concise fresh-session boot/resume contract.
-4. `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md` — flagship local-model fabric, Forge Compact, Composer/Plan Space, Full Forge autonomy, self-play/playtest, repair and evidence-backed completion direction.
-5. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md` — product identity and generation goals.
-6. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md` — durable mission, Project Brain, Forge Runtime, model/runtime boundaries.
-7. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md` — visual language and quality bar.
-8. `docs/NOVAFORGE_V13_ROADMAP.md` — product closure waves and capability ordering.
-9. GitHub issue `#23` — live swarm coordination context; live GitHub code/PRs always outrank stale issue text.
+4. `NovaForge_V14_Project_Sources_Pack.txt` — compact all-in-one V14 project source pack for product north star, autonomy, local AI, Forge Compact, and exact iPhone qualification direction.
+5. `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md` — flagship local-model fabric, Forge Compact, Composer/Plan Space, Full Forge autonomy, self-play/playtest, repair and evidence-backed completion direction.
+6. `docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md` — concrete low-RAM/high-speed research seeds: LLM in a Flash, PowerInfer-2, TurboQuant, adaptive KV, llama.cpp Metal/KV/mmap, BitNet, tiny edge models, sparse/MoE paging and speculative decoding. These are research inputs, not support claims.
+7. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md` — product identity and generation goals.
+8. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md` — durable mission, Project Brain, Forge Runtime, model/runtime boundaries.
+9. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md` — visual language and quality bar.
+10. `docs/NOVAFORGE_V13_ROADMAP.md` — product closure waves and capability ordering.
+11. GitHub issue `#23` — live swarm coordination context; live GitHub code/PRs always outrank stale issue text.
 
 When the user says only `GO`, do not ask what to do. Fresh-check live GitHub, map active ownership, claim the highest-value safe non-conflicting lane, execute immediately, checkpoint durably, refresh, and continue.
 
