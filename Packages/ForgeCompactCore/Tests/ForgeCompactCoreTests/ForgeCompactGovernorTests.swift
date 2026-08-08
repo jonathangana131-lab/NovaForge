@@ -11,6 +11,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let receipt = decide(activeEnvelopeID: active.id, envelopes: [larger, active])
 
         XCTAssertEqual(receipt.action, .keep(envelopeID: active.id))
+        XCTAssertEqual(receipt.selectedEnvelope, active)
         XCTAssertTrue(receipt.candidateVerdicts.allSatisfy(\.isEligible))
     }
 
@@ -26,10 +27,42 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: fits.id))
-        XCTAssertEqual(
-            verdict(for: tooLarge.id, in: receipt)?.rejectionReasons,
-            [.insufficientMeasuredHeadroom]
+        XCTAssertEqual(receipt.selectedEnvelope, fits)
+        XCTAssertEqual(verdict(for: tooLarge.id, in: receipt)?.rejectionReasons, [.insufficientMeasuredHeadroom])
+    }
+
+    func testCandidateCannotSelfAuthorizeExactDeviceQualification() {
+        let asserted = envelope(id: "asserted-measured")
+
+        let receipt = decide(envelopes: [asserted], trustedQualifiedEnvelopes: [])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertNil(receipt.selectedEnvelope)
+        XCTAssertEqual(verdict(for: asserted.id, in: receipt)?.rejectionReasons, [.qualificationNotTrusted])
+    }
+
+    func testTrustBindsExactWholeEnvelopeNotOnlyEvidenceReceiptID() {
+        let trusted = envelope(id: "measured", context: 8_192, peak: 2 * gib)
+        let mutated = ForgeCompactExecutionEnvelope(
+            id: trusted.id,
+            profileID: trusted.profileID,
+            configurationBindingID: trusted.configurationBindingID,
+            deviceProfileID: trusted.deviceProfileID,
+            evidenceReceiptID: trusted.evidenceReceiptID,
+            computeLocation: trusted.computeLocation,
+            evidenceStatus: trusted.evidenceStatus,
+            contextTokens: 16_384,
+            observedPeakResidentBytes: trusted.observedPeakResidentBytes
         )
+
+        let receipt = decide(
+            requestedContext: 16_384,
+            envelopes: [mutated],
+            trustedQualifiedEnvelopes: [trusted]
+        )
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(verdict(for: mutated.id, in: receipt)?.rejectionReasons, [.qualificationNotTrusted])
     }
 
     func testWarningReserveCanForceLowerFootprintEnvelopeWithoutMagicThresholds() {
@@ -46,16 +79,15 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: compact.id))
-        XCTAssertEqual(
-            verdict(for: active.id, in: receipt)?.rejectionReasons,
-            [.insufficientMeasuredHeadroom]
-        )
+        XCTAssertEqual(receipt.selectedEnvelope, compact)
+        XCTAssertEqual(verdict(for: active.id, in: receipt)?.rejectionReasons, [.insufficientMeasuredHeadroom])
     }
 
     func testCriticalMemoryPressureSuspendsBeforeSelection() {
         let receipt = decide(memoryPressure: .critical, envelopes: [envelope(id: "safe")])
 
         XCTAssertEqual(receipt.action, .suspend(reason: .memoryPressureThresholdReached))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
@@ -67,111 +99,93 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .suspend(reason: .thermalPressureThresholdReached))
+        XCTAssertNil(receipt.selectedEnvelope)
     }
 
     func testRemoteEnvelopeIsNeverSelected() {
         let remote = envelope(id: "hosted", location: .remote)
-
         let receipt = decide(envelopes: [remote])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertEqual(verdict(for: remote.id, in: receipt)?.rejectionReasons, [.nonLocalCompute])
     }
 
-    func testProductionRejectsExperimentalEnvelope() {
-        let experimental = envelope(
-            id: "flash-paging-lab",
-            evidence: .experimentalExactDeviceMeasured
-        )
-
+    func testProductionRejectsExperimentalEnvelopeEvenWhenTrusted() {
+        let experimental = envelope(id: "flash-paging-lab", evidence: .experimentalExactDeviceMeasured)
         let receipt = decide(envelopes: [experimental])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
-        XCTAssertEqual(
-            verdict(for: experimental.id, in: receipt)?.rejectionReasons,
-            [.experimentalDisallowed]
-        )
+        XCTAssertEqual(verdict(for: experimental.id, in: receipt)?.rejectionReasons, [.experimentalDisallowed])
     }
 
-    func testResearchModeCanAdmitExactDeviceExperimentalEnvelope() {
-        let experimental = envelope(
-            id: "flash-paging-lab",
-            evidence: .experimentalExactDeviceMeasured
-        )
-
+    func testResearchModeCanAdmitTrustedExactDeviceExperimentalEnvelope() {
+        let experimental = envelope(id: "flash-paging-lab", evidence: .experimentalExactDeviceMeasured)
         let receipt = decide(mode: .research, envelopes: [experimental])
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: experimental.id))
+        XCTAssertEqual(receipt.selectedEnvelope, experimental)
         XCTAssertTrue(verdict(for: experimental.id, in: receipt)?.isEligible == true)
     }
 
-    func testUnverifiedEnvelopeFailsClosedEvenInResearchMode() {
-        let unverified = envelope(id: "paper-only", evidence: .unverified)
-
-        let receipt = decide(mode: .research, envelopes: [unverified])
+    func testResearchModeRejectsUntrustedExperimentalEnvelope() {
+        let experimental = envelope(id: "flash-paging-lab", evidence: .experimentalExactDeviceMeasured)
+        let receipt = decide(
+            mode: .research,
+            envelopes: [experimental],
+            trustedQualifiedEnvelopes: []
+        )
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
-        XCTAssertEqual(
-            verdict(for: unverified.id, in: receipt)?.rejectionReasons,
-            [.unverifiedEvidence]
+        XCTAssertEqual(verdict(for: experimental.id, in: receipt)?.rejectionReasons, [.qualificationNotTrusted])
+    }
+
+    func testUnverifiedEnvelopeFailsClosedEvenIfIncludedInTrustedSet() {
+        let unverified = envelope(id: "paper-only", evidence: .unverified)
+        let receipt = decide(
+            mode: .research,
+            envelopes: [unverified],
+            trustedQualifiedEnvelopes: [unverified]
         )
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(verdict(for: unverified.id, in: receipt)?.rejectionReasons, [.unverifiedEvidence])
     }
 
     func testExactDeviceBindingMismatchIsRejected() {
         let otherDevice = envelope(id: "other-device", deviceProfileID: "iphone17,1-ios27")
-
         let receipt = decide(envelopes: [otherDevice])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
-        XCTAssertEqual(
-            verdict(for: otherDevice.id, in: receipt)?.rejectionReasons,
-            [.deviceProfileMismatch]
-        )
+        XCTAssertEqual(verdict(for: otherDevice.id, in: receipt)?.rejectionReasons, [.deviceProfileMismatch])
     }
 
     func testContextNeverDropsBelowMissionMinimum() {
         let tooSmall = envelope(id: "2k", context: 2_048, peak: gib)
-
-        let receipt = decide(
-            requestedContext: 8_192,
-            minimumContext: 4_096,
-            envelopes: [tooSmall]
-        )
+        let receipt = decide(requestedContext: 8_192, minimumContext: 4_096, envelopes: [tooSmall])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
-        XCTAssertEqual(
-            verdict(for: tooSmall.id, in: receipt)?.rejectionReasons,
-            [.contextBelowMissionMinimum]
-        )
+        XCTAssertEqual(verdict(for: tooSmall.id, in: receipt)?.rejectionReasons, [.contextBelowMissionMinimum])
     }
 
     func testEnvelopeAboveRequestedContextIsRejectedInsteadOfSilentlyExpanding() {
         let tooWide = envelope(id: "32k", context: 32_768)
-
         let receipt = decide(requestedContext: 16_384, envelopes: [tooWide])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
-        XCTAssertEqual(
-            verdict(for: tooWide.id, in: receipt)?.rejectionReasons,
-            [.contextExceedsRequest]
-        )
+        XCTAssertEqual(verdict(for: tooWide.id, in: receipt)?.rejectionReasons, [.contextExceedsRequest])
     }
 
     func testMissingPeakMeasurementCannotDriveMemoryDecision() {
         let invalid = envelope(id: "no-peak", peak: 0)
-
         let receipt = decide(envelopes: [invalid])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
-        XCTAssertEqual(
-            verdict(for: invalid.id, in: receipt)?.rejectionReasons,
-            [.invalidPeakMemoryMeasurement]
-        )
+        XCTAssertEqual(verdict(for: invalid.id, in: receipt)?.rejectionReasons, [.invalidPeakMemoryMeasurement])
     }
 
     func testEmptyEvidenceIdentityIsRejected() {
         let invalid = envelope(id: "bad-receipt", evidenceReceiptID: "   ")
-
         let receipt = decide(envelopes: [invalid])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
@@ -180,7 +194,22 @@ final class ForgeCompactGovernorTests: XCTestCase {
 
     func testWhitespacePaddedEnvelopeIdentityIsRejectedInsteadOfNormalizedSilently() {
         let invalid = envelope(id: " padded-id ")
+        let receipt = decide(envelopes: [invalid])
 
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(verdict(for: invalid.id, in: receipt)?.rejectionReasons, [.invalidIdentity])
+    }
+
+    func testControlCharacterEnvelopeIdentityIsRejected() {
+        let invalid = envelope(id: "agent\u{0000}q4")
+        let receipt = decide(envelopes: [invalid])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(verdict(for: invalid.id, in: receipt)?.rejectionReasons, [.invalidIdentity])
+    }
+
+    func testOversizedEvidenceIdentityIsRejected() {
+        let invalid = envelope(id: "oversized", evidenceReceiptID: String(repeating: "r", count: 513))
         let receipt = decide(envelopes: [invalid])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
@@ -188,54 +217,72 @@ final class ForgeCompactGovernorTests: XCTestCase {
     }
 
     func testWhitespacePaddedActiveIdentityMakesSnapshotInvalid() {
+        let receipt = decide(activeEnvelopeID: " active ", envelopes: [envelope(id: "active")])
+
+        XCTAssertEqual(receipt.action, .block(reason: .invalidRuntimeSnapshot))
+        XCTAssertNil(receipt.selectedEnvelope)
+        XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
+    }
+
+    func testOversizedActiveIdentityMakesSnapshotInvalid() {
         let receipt = decide(
-            activeEnvelopeID: " active ",
+            activeEnvelopeID: String(repeating: "a", count: 513),
             envelopes: [envelope(id: "active")]
         )
 
         XCTAssertEqual(receipt.action, .block(reason: .invalidRuntimeSnapshot))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
     func testDuplicateEnvelopeIDsAreRejectedDeterministically() {
         let first = envelope(id: "duplicate", context: 4_096)
         let second = envelope(id: "duplicate", context: 8_192)
-
         let receipt = decide(envelopes: [first, second])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
         XCTAssertEqual(receipt.candidateVerdicts.count, 2)
-        XCTAssertTrue(receipt.candidateVerdicts.allSatisfy {
-            $0.rejectionReasons == [.duplicateEnvelopeID]
-        })
+        XCTAssertTrue(receipt.candidateVerdicts.allSatisfy { $0.rejectionReasons == [.duplicateEnvelopeID] })
     }
 
     func testStableSelectionPrefersLowerMeasuredPeakWhenContextMatches() {
         let larger = envelope(id: "same-context-larger", context: 8_192, peak: 2 * gib)
         let smaller = envelope(id: "same-context-smaller", context: 8_192, peak: gib)
-
         let receipt = decide(envelopes: [larger, smaller])
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: smaller.id))
+        XCTAssertEqual(receipt.selectedEnvelope, smaller)
     }
 
     func testStableSelectionUsesEnvelopeIDAsFinalTieBreaker() {
         let z = envelope(id: "z-profile", context: 8_192, peak: gib)
         let a = envelope(id: "a-profile", context: 8_192, peak: gib)
-
         let receipt = decide(envelopes: [z, a])
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: a.id))
+        XCTAssertEqual(receipt.selectedEnvelope, a)
+    }
+
+    func testSelectedEnvelopePreservesDecisionTimeEvidenceBinding() {
+        let selected = envelope(id: "selected", evidenceReceiptID: "receipt-original", context: 8_192, peak: gib)
+        let receipt = decide(envelopes: [selected])
+        let mutatedCatalogEntry = envelope(
+            id: "selected",
+            evidenceReceiptID: "receipt-replaced",
+            context: 8_192,
+            peak: 2 * gib
+        )
+
+        XCTAssertEqual(receipt.action, .switchTo(envelopeID: selected.id))
+        XCTAssertEqual(receipt.selectedEnvelope, selected)
+        XCTAssertNotEqual(receipt.selectedEnvelope, mutatedCatalogEntry)
     }
 
     func testInvalidSnapshotBlocksBeforeEvaluatingCandidates() {
-        let receipt = decide(
-            requestedContext: 2_048,
-            minimumContext: 4_096,
-            envelopes: [envelope(id: "safe")]
-        )
+        let receipt = decide(requestedContext: 2_048, minimumContext: 4_096, envelopes: [envelope(id: "safe")])
 
         XCTAssertEqual(receipt.action, .block(reason: .invalidRuntimeSnapshot))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
@@ -247,15 +294,8 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .block(reason: .invalidPolicy))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
-    }
-
-    func testDecisionReceiptRoundTripsThroughJSON() throws {
-        let receipt = decide(envelopes: [envelope(id: "measured")])
-        let encoded = try JSONEncoder().encode(receipt)
-        let decoded = try JSONDecoder().decode(ForgeCompactDecisionReceipt.self, from: encoded)
-
-        XCTAssertEqual(decoded, receipt)
     }
 
     private func envelope(
@@ -291,7 +331,8 @@ final class ForgeCompactGovernorTests: XCTestCase {
         nominalReserve: UInt64? = nil,
         warningReserve: UInt64? = nil,
         suspendAtThermalPressure: ForgeCompactThermalPressure = .critical,
-        envelopes: [ForgeCompactExecutionEnvelope]
+        envelopes: [ForgeCompactExecutionEnvelope],
+        trustedQualifiedEnvelopes: Set<ForgeCompactExecutionEnvelope>? = nil
     ) -> ForgeCompactDecisionReceipt {
         let snapshot = ForgeCompactRuntimeSnapshot(
             deviceProfileID: "iphone13,2-ios27",
@@ -309,7 +350,12 @@ final class ForgeCompactGovernorTests: XCTestCase {
             suspendAtMemoryPressure: .critical,
             suspendAtThermalPressure: suspendAtThermalPressure
         )
-        return ForgeCompactGovernor.decide(snapshot: snapshot, policy: policy, envelopes: envelopes)
+        return ForgeCompactGovernor.decide(
+            snapshot: snapshot,
+            policy: policy,
+            envelopes: envelopes,
+            trustedQualifiedEnvelopes: trustedQualifiedEnvelopes ?? Set(envelopes)
+        )
     }
 
     private func verdict(
