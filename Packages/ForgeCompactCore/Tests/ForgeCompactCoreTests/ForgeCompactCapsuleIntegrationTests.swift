@@ -144,7 +144,7 @@ final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
         XCTAssertEqual(capsule.selectedItems.map(\.id), ["design-choice"])
     }
 
-    func testCapsuleDecodeRevalidatesTamperedMandatoryOmission() throws {
+    func testCapsuleDecodeRejectsOmittedMandatoryTruthTampering() throws {
         let optional = try item(
             id: "note",
             tier: .l2ProjectMemory,
@@ -157,7 +157,27 @@ final class ForgeCompactCapsuleIntegrationTests: XCTestCase {
         let encoded = try JSONEncoder().encode(capsule)
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         var omitted = try XCTUnwrap(json["omittedItems"] as? [[String: Any]])
-        omitted[0]["mustRetain"] = true
+        omitted[0]["kind"] = ForgeCompactFactKind.acceptedRequirement.rawValue
+        json["omittedItems"] = omitted
+        let tampered = try JSONSerialization.data(withJSONObject: json)
+
+        XCTAssertThrowsError(try JSONDecoder().decode(ProjectCapsule.self, from: tampered))
+    }
+
+    func testCapsuleDecodeRejectsOmittedSourceRevisionTampering() throws {
+        let optional = try item(
+            id: "note",
+            tier: .l2ProjectMemory,
+            kind: .workingNote,
+            priority: 10,
+            content: "Optional note.",
+            authoritative: false
+        )
+        let capsule = try ProjectCapsuleBuilder.build(authority: authority(), items: [optional], budgetBytes: 0)
+        let encoded = try JSONEncoder().encode(capsule)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var omitted = try XCTUnwrap(json["omittedItems"] as? [[String: Any]])
+        omitted[0]["sourceRevision"] = "src-other"
         json["omittedItems"] = omitted
         let tampered = try JSONSerialization.data(withJSONObject: json)
 
