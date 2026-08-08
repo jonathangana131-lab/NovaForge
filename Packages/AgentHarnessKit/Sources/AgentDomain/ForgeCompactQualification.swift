@@ -179,6 +179,7 @@ public enum ForgeCompactQualificationReason: String, Codable, Hashable, Sendable
     case insufficientSuccessfulRuns
     case failureRateExceeded
     case nonPhysicalDeviceEvidence
+    case missingRequiredDeviceMeasurements
     case exactPhysicalDeviceEvidence
 }
 
@@ -249,6 +250,10 @@ public enum ForgeCompactQualifier {
             return .init(status: .functionallyVerified, reasons: [.nonPhysicalDeviceEvidence])
         }
 
+        guard hasRequiredDeviceMeasurements(observation) else {
+            return .init(status: .unverified, reasons: [.missingRequiredDeviceMeasurements])
+        }
+
         return .init(status: .deviceQualified, reasons: [.exactPhysicalDeviceEvidence])
     }
 
@@ -282,6 +287,24 @@ public enum ForgeCompactQualifier {
         }
 
         return []
+    }
+
+    private static func hasRequiredDeviceMeasurements(_ observation: ForgeCompactObservation) -> Bool {
+        guard let peakResidentMemoryBytes = observation.peakResidentMemoryBytes,
+              peakResidentMemoryBytes > 0,
+              let timeToFirstTokenMilliseconds = observation.timeToFirstTokenMilliseconds,
+              timeToFirstTokenMilliseconds > 0,
+              let prefillTokensPerSecond = observation.prefillTokensPerSecond,
+              prefillTokensPerSecond > 0,
+              let decodeTokensPerSecond = observation.decodeTokensPerSecond,
+              decodeTokensPerSecond > 0,
+              observation.thermalStart != .unknown,
+              observation.thermalEnd != .unknown
+        else {
+            return false
+        }
+
+        return true
     }
 
     private static func measurementsAreValid(_ observation: ForgeCompactObservation) -> Bool {
