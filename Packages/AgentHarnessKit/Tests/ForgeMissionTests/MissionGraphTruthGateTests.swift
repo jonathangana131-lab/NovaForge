@@ -3,7 +3,7 @@ import ForgeMission
 import XCTest
 
 final class MissionGraphTruthGateTests: XCTestCase {
-    func testMissionConstructorRejectsEmptyStageGraph() {
+    func testEmptyMissionCannotVacuouslyComplete() throws {
         let missionID = MissionID()
         let projectID = ProjectID()
         let constitution = MissionConstitution(
@@ -13,13 +13,21 @@ final class MissionGraphTruthGateTests: XCTestCase {
             productGoal: "Build a runnable app",
             projectType: "app"
         )
-
-        XCTAssertThrowsError(try ForgeMissionState(
+        var mission = try ForgeMissionState(
             constitution: constitution,
             graph: MissionStageGraph(missionID: missionID, stages: []),
             route: MissionRouteBinding(routeReceiptID: "route:local:1")
-        )) { error in
-            XCTAssertEqual(error as? ForgeMissionError, .invalidGraph)
+        )
+        let evidence = MissionCompletionEvidence(
+            acceptedProjectStateID: "state:empty",
+            evidenceClasses: MissionEvidenceSet([]),
+            receiptIDs: MissionStringSet(["completion:empty"]),
+            acceptedAt: AgentInstant(rawValue: 2)
+        )
+
+        XCTAssertFalse(mission.graph.requiredWorkIsSatisfied)
+        XCTAssertThrowsError(try mission.complete(with: evidence)) { error in
+            XCTAssertEqual(error as? ForgeMissionError, .completionRequiresSatisfiedRequiredWork)
         }
     }
 
