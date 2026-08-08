@@ -45,14 +45,11 @@ public enum ForgeCompactComputeLocation: String, Codable, Hashable, Sendable {
     case remote
 }
 
-/// Qualification status is asserted by the external compatibility/evidence authority.
-/// ForgeCompactCore does not mint model support, device compatibility, or benchmark truth.
+/// Candidate qualification status. This field is descriptive, not sufficient authority by itself.
+/// The host must separately trust the exact measured envelope passed to `decide`.
 public enum ForgeCompactEvidenceStatus: String, Codable, Hashable, Sendable {
-    /// A durable receipt covers this exact execution envelope on this exact device profile.
     case exactDeviceMeasured
-    /// Exact-device experiment exists, but the envelope is still research-only.
     case experimentalExactDeviceMeasured
-    /// Source metadata, estimates, or missing/stale evidence cannot be treated as measured proof.
     case unverified
 }
 
@@ -147,16 +144,12 @@ public struct ForgeCompactGovernorPolicy: Codable, Equatable, Sendable {
         self.suspendAtThermalPressure = suspendAtThermalPressure
     }
 
-    fileprivate var isValid: Bool {
-        warningReserveBytes >= nominalReserveBytes
-    }
+    fileprivate var isValid: Bool { warningReserveBytes >= nominalReserveBytes }
 
     fileprivate func reserveBytes(for pressure: ForgeCompactMemoryPressure) -> UInt64 {
         switch pressure {
-        case .nominal:
-            nominalReserveBytes
-        case .warning, .critical:
-            warningReserveBytes
+        case .nominal: nominalReserveBytes
+        case .warning, .critical: warningReserveBytes
         }
     }
 }
@@ -165,6 +158,7 @@ public enum ForgeCompactCandidateRejectionReason: String, CaseIterable, Codable,
     case duplicateEnvelopeID
     case invalidIdentity
     case nonLocalCompute
+    case qualificationNotTrusted
     case unverifiedEvidence
     case experimentalDisallowed
     case deviceProfileMismatch
@@ -179,10 +173,7 @@ public struct ForgeCompactCandidateVerdict: Codable, Equatable, Sendable {
     public let envelopeID: String
     public let rejectionReasons: [ForgeCompactCandidateRejectionReason]
 
-    public init(
-        envelopeID: String,
-        rejectionReasons: [ForgeCompactCandidateRejectionReason]
-    ) {
+    public init(envelopeID: String, rejectionReasons: [ForgeCompactCandidateRejectionReason]) {
         self.envelopeID = envelopeID
         self.rejectionReasons = rejectionReasons
     }
@@ -208,23 +199,27 @@ public enum ForgeCompactDecisionAction: Codable, Equatable, Sendable {
     case block(reason: ForgeCompactBlockReason)
 }
 
-/// Durable, serializable proof of a deterministic policy decision. It is not a benchmark receipt;
-/// it references benchmark/qualification receipts supplied in the candidate envelopes.
-public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
+/// Transient derived policy truth for one invocation. This type is intentionally not Codable and
+/// cannot be publicly constructed: durable compatibility/benchmark authority remains with the
+/// host's qualification receipts and inputs. Accepted decisions preserve the exact envelope used.
+public struct ForgeCompactDecisionReceipt: Equatable, Sendable {
     public let snapshot: ForgeCompactRuntimeSnapshot
     public let policy: ForgeCompactGovernorPolicy
     public let action: ForgeCompactDecisionAction
+    public let selectedEnvelope: ForgeCompactExecutionEnvelope?
     public let candidateVerdicts: [ForgeCompactCandidateVerdict]
 
-    public init(
+    init(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         action: ForgeCompactDecisionAction,
+        selectedEnvelope: ForgeCompactExecutionEnvelope?,
         candidateVerdicts: [ForgeCompactCandidateVerdict]
     ) {
         self.snapshot = snapshot
         self.policy = policy
         self.action = action
+        self.selectedEnvelope = selectedEnvelope
         self.candidateVerdicts = candidateVerdicts
     }
 }
@@ -233,7 +228,8 @@ public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
 ///
 /// Safety boundaries:
 /// - remote compute is never selected;
-/// - production accepts only externally asserted exact-device measured evidence;
+/// - a candidate cannot self-authorize exact-device qualification through serialized status;
+/// - measured candidates require exact whole-envelope membership in the host-trusted set;
 /// - context never drops below the mission minimum;
 /// - critical/configured pressure fails closed by suspending;
 /// - no eligible envelope blocks rather than guessing or silently escalating to cloud.
@@ -241,13 +237,15 @@ public enum ForgeCompactGovernor {
     public static func decide(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
-        envelopes: [ForgeCompactExecutionEnvelope]
+        envelopes: [ForgeCompactExecutionEnvelope],
+        trustedQualifiedEnvelopes: Set<ForgeCompactExecutionEnvelope>
     ) -> ForgeCompactDecisionReceipt {
         guard isValid(snapshot) else {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidRuntimeSnapshot),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -257,6 +255,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidPolicy),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -266,6 +265,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .suspend(reason: .memoryPressureThresholdReached),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -275,6 +275,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .suspend(reason: .thermalPressureThresholdReached),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -288,7 +289,8 @@ public enum ForgeCompactGovernor {
                     snapshot: snapshot,
                     policy: policy,
                     reserveBytes: reserveBytes,
-                    isDuplicate: duplicateIDs.contains(envelope.id)
+                    isDuplicate: duplicateIDs.contains(envelope.id),
+                    isTrustedQualified: trustedQualifiedEnvelopes.contains(envelope)
                 )
             }
             .sorted { lhs, rhs in
@@ -302,12 +304,12 @@ public enum ForgeCompactGovernor {
         let eligible = envelopes.filter { eligibleIDs.contains($0.id) }
 
         if let activeEnvelopeID = snapshot.activeEnvelopeID,
-           eligible.contains(where: { $0.id == activeEnvelopeID })
-        {
+           let activeEnvelope = eligible.first(where: { $0.id == activeEnvelopeID }) {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .keep(envelopeID: activeEnvelopeID),
+                selectedEnvelope: activeEnvelope,
                 candidateVerdicts: verdicts
             )
         }
@@ -317,6 +319,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .noEligibleLocalEnvelope),
+                selectedEnvelope: nil,
                 candidateVerdicts: verdicts
             )
         }
@@ -325,28 +328,25 @@ public enum ForgeCompactGovernor {
             snapshot: snapshot,
             policy: policy,
             action: .switchTo(envelopeID: selected.id),
+            selectedEnvelope: selected,
             candidateVerdicts: verdicts
         )
     }
 
     private static func isValid(_ snapshot: ForgeCompactRuntimeSnapshot) -> Bool {
         isCanonicalIdentity(snapshot.deviceProfileID)
-            && snapshot.activeEnvelopeID.map(isCanonicalIdentity) ?? true
+            && (snapshot.activeEnvelopeID.map(isCanonicalIdentity) ?? true)
             && snapshot.requestedContextTokens > 0
             && snapshot.minimumMissionContextTokens > 0
             && snapshot.minimumMissionContextTokens <= snapshot.requestedContextTokens
             && snapshot.memoryBudgetBytes > 0
     }
 
-    private static func duplicateEnvelopeIDs(
-        in envelopes: [ForgeCompactExecutionEnvelope]
-    ) -> Set<String> {
+    private static func duplicateEnvelopeIDs(in envelopes: [ForgeCompactExecutionEnvelope]) -> Set<String> {
         var seen = Set<String>()
         var duplicates = Set<String>()
         for envelope in envelopes {
-            if !seen.insert(envelope.id).inserted {
-                duplicates.insert(envelope.id)
-            }
+            if !seen.insert(envelope.id).inserted { duplicates.insert(envelope.id) }
         }
         return duplicates
     }
@@ -356,34 +356,29 @@ public enum ForgeCompactGovernor {
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         reserveBytes: UInt64,
-        isDuplicate: Bool
+        isDuplicate: Bool,
+        isTrustedQualified: Bool
     ) -> ForgeCompactCandidateVerdict {
         var reasons: [ForgeCompactCandidateRejectionReason] = []
 
-        if isDuplicate {
-            reasons.append(.duplicateEnvelopeID)
-        }
+        if isDuplicate { reasons.append(.duplicateEnvelopeID) }
 
         if !isCanonicalIdentity(envelope.id)
             || !isCanonicalIdentity(envelope.profileID)
             || !isCanonicalIdentity(envelope.configurationBindingID)
             || !isCanonicalIdentity(envelope.deviceProfileID)
-            || !isCanonicalIdentity(envelope.evidenceReceiptID)
-        {
+            || !isCanonicalIdentity(envelope.evidenceReceiptID) {
             reasons.append(.invalidIdentity)
         }
 
-        if envelope.computeLocation != .local {
-            reasons.append(.nonLocalCompute)
-        }
+        if envelope.computeLocation != .local { reasons.append(.nonLocalCompute) }
 
         switch envelope.evidenceStatus {
         case .exactDeviceMeasured:
-            break
+            if !isTrustedQualified { reasons.append(.qualificationNotTrusted) }
         case .experimentalExactDeviceMeasured:
-            if policy.operatingMode != .research {
-                reasons.append(.experimentalDisallowed)
-            }
+            if !isTrustedQualified { reasons.append(.qualificationNotTrusted) }
+            if policy.operatingMode != .research { reasons.append(.experimentalDisallowed) }
         case .unverified:
             reasons.append(.unverifiedEvidence)
         }
@@ -429,23 +424,23 @@ public enum ForgeCompactGovernor {
         _ lhs: ForgeCompactExecutionEnvelope,
         _ rhs: ForgeCompactExecutionEnvelope
     ) -> Bool {
-        if lhs.contextTokens != rhs.contextTokens {
-            return lhs.contextTokens > rhs.contextTokens
-        }
+        if lhs.contextTokens != rhs.contextTokens { return lhs.contextTokens > rhs.contextTokens }
         if lhs.observedPeakResidentBytes != rhs.observedPeakResidentBytes {
             return lhs.observedPeakResidentBytes < rhs.observedPeakResidentBytes
         }
         return lhs.id < rhs.id
     }
 
+    /// Evidence identities cross package/runtime boundaries without normalization. Keep their exact
+    /// spelling, reject controls, and cap UTF-8 size so the governor cannot admit identities that
+    /// the canonical capsule/cache boundary would reject or treat differently.
     private static func isCanonicalIdentity(_ value: String) -> Bool {
-        guard let normalized = normalized(value) else { return false }
-        return normalized == value
-    }
-
-    private static func normalized(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty ? nil : normalized
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed == value,
+              !value.isEmpty,
+              value.utf8.count <= 512,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else { return false }
+        return true
     }
 }
