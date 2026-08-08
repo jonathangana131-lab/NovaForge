@@ -10,6 +10,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case unsupportedCapsuleSchema(Int)
     case invalidMissionRevision
     case duplicateCapsuleReference(String)
+    case conflictingDecisionReference(String)
     case missingQualificationIdentity
 }
 
@@ -46,7 +47,7 @@ public enum ForgeCompactTier: Int, Codable, CaseIterable, Sendable {
     case coldArchive = 3
 }
 
-public struct ForgeCompactContextItem: Codable, Equatable, Sendable {
+public struct ForgeCompactContextItem: Equatable, Sendable {
     public let id: String
     public let tier: ForgeCompactTier
     public let estimatedTokens: Int
@@ -71,7 +72,7 @@ public struct ForgeCompactContextItem: Codable, Equatable, Sendable {
     }
 }
 
-public struct ForgeCompactContextBudget: Codable, Equatable, Sendable {
+public struct ForgeCompactContextBudget: Equatable, Sendable {
     public let maximumTokens: Int
 
     public init(maximumTokens: Int) throws {
@@ -207,21 +208,88 @@ public struct ForgeProjectCapsule: Codable, Equatable, Sendable {
             throw ForgeCompactError.invalidEstimatedTokenCount
         }
 
+        let canonicalAcceptedDecisionIDs = try canonicalReferences(
+            acceptedDecisionIDs,
+            field: "capsule.acceptedDecisionID"
+        )
+        let canonicalUnresolvedDecisionIDs = try canonicalReferences(
+            unresolvedDecisionIDs,
+            field: "capsule.unresolvedDecisionID"
+        )
+        if let conflictingDecision = Set(canonicalAcceptedDecisionIDs)
+            .intersection(canonicalUnresolvedDecisionIDs)
+            .sorted()
+            .first {
+            throw ForgeCompactError.conflictingDecisionReference(conflictingDecision)
+        }
+
         self.schemaVersion = schemaVersion
         self.projectID = try validatedIdentifier(projectID, field: "capsule.projectID")
         self.missionID = try validatedIdentifier(missionID, field: "capsule.missionID")
         self.checkpointID = try validatedIdentifier(checkpointID, field: "capsule.checkpointID")
         self.sourceRevision = try validatedIdentifier(sourceRevision, field: "capsule.sourceRevision")
         self.missionRevision = missionRevision
-        self.acceptedDecisionIDs = try canonicalReferences(acceptedDecisionIDs, field: "capsule.acceptedDecisionID")
-        self.unresolvedDecisionIDs = try canonicalReferences(unresolvedDecisionIDs, field: "capsule.unresolvedDecisionID")
-        self.evidenceReceiptIDs = try canonicalReferences(evidenceReceiptIDs, field: "capsule.evidenceReceiptID")
-        self.knownDefectIDs = try canonicalReferences(knownDefectIDs, field: "capsule.knownDefectID")
+        self.acceptedDecisionIDs = canonicalAcceptedDecisionIDs
+        self.unresolvedDecisionIDs = canonicalUnresolvedDecisionIDs
+        self.evidenceReceiptIDs = try canonicalReferences(
+            evidenceReceiptIDs,
+            field: "capsule.evidenceReceiptID"
+        )
+        self.knownDefectIDs = try canonicalReferences(
+            knownDefectIDs,
+            field: "capsule.knownDefectID"
+        )
         self.estimatedTokens = estimatedTokens
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case projectID
+        case missionID
+        case checkpointID
+        case sourceRevision
+        case missionRevision
+        case acceptedDecisionIDs
+        case unresolvedDecisionIDs
+        case evidenceReceiptIDs
+        case knownDefectIDs
+        case estimatedTokens
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            schemaVersion: container.decode(Int.self, forKey: .schemaVersion),
+            projectID: container.decode(String.self, forKey: .projectID),
+            missionID: container.decode(String.self, forKey: .missionID),
+            checkpointID: container.decode(String.self, forKey: .checkpointID),
+            sourceRevision: container.decode(String.self, forKey: .sourceRevision),
+            missionRevision: container.decode(Int.self, forKey: .missionRevision),
+            acceptedDecisionIDs: container.decode([String].self, forKey: .acceptedDecisionIDs),
+            unresolvedDecisionIDs: container.decode([String].self, forKey: .unresolvedDecisionIDs),
+            evidenceReceiptIDs: container.decode([String].self, forKey: .evidenceReceiptIDs),
+            knownDefectIDs: container.decode([String].self, forKey: .knownDefectIDs),
+            estimatedTokens: container.decode(Int.self, forKey: .estimatedTokens)
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(projectID, forKey: .projectID)
+        try container.encode(missionID, forKey: .missionID)
+        try container.encode(checkpointID, forKey: .checkpointID)
+        try container.encode(sourceRevision, forKey: .sourceRevision)
+        try container.encode(missionRevision, forKey: .missionRevision)
+        try container.encode(acceptedDecisionIDs, forKey: .acceptedDecisionIDs)
+        try container.encode(unresolvedDecisionIDs, forKey: .unresolvedDecisionIDs)
+        try container.encode(evidenceReceiptIDs, forKey: .evidenceReceiptIDs)
+        try container.encode(knownDefectIDs, forKey: .knownDefectIDs)
+        try container.encode(estimatedTokens, forKey: .estimatedTokens)
     }
 }
 
-public struct ForgeCompactPrefixIdentity: Codable, Equatable, Sendable {
+public struct ForgeCompactPrefixIdentity: Equatable, Sendable {
     public let modelID: String
     public let modelRevision: String
     public let tokenizerID: String
@@ -246,9 +314,18 @@ public struct ForgeCompactPrefixIdentity: Codable, Equatable, Sendable {
         self.tokenizerID = try validatedIdentifier(tokenizerID, field: "prefix.tokenizerID")
         self.runtimeID = try validatedIdentifier(runtimeID, field: "prefix.runtimeID")
         self.runtimeRevision = try validatedIdentifier(runtimeRevision, field: "prefix.runtimeRevision")
-        self.promptTemplateRevision = try validatedIdentifier(promptTemplateRevision, field: "prefix.promptTemplateRevision")
-        self.toolSchemaRevision = try validatedIdentifier(toolSchemaRevision, field: "prefix.toolSchemaRevision")
-        self.stablePrefixDigest = try validatedIdentifier(stablePrefixDigest, field: "prefix.stablePrefixDigest")
+        self.promptTemplateRevision = try validatedIdentifier(
+            promptTemplateRevision,
+            field: "prefix.promptTemplateRevision"
+        )
+        self.toolSchemaRevision = try validatedIdentifier(
+            toolSchemaRevision,
+            field: "prefix.toolSchemaRevision"
+        )
+        self.stablePrefixDigest = try validatedIdentifier(
+            stablePrefixDigest,
+            field: "prefix.stablePrefixDigest"
+        )
     }
 }
 
@@ -278,7 +355,7 @@ public enum ForgeCompactEvidenceKind: String, Codable, Sendable {
     case exactDeviceMeasured
 }
 
-public struct ForgeCompactRuntimeIdentity: Codable, Equatable, Sendable {
+public struct ForgeCompactRuntimeIdentity: Equatable, Sendable {
     public let modelID: String
     public let modelRevision: String
     public let tokenizerID: String
@@ -309,8 +386,14 @@ public struct ForgeCompactRuntimeIdentity: Codable, Equatable, Sendable {
         self.modelRevision = try validatedIdentifier(modelRevision, field: "qualification.modelRevision")
         self.tokenizerID = try validatedIdentifier(tokenizerID, field: "qualification.tokenizerID")
         self.runtimeID = try validatedIdentifier(runtimeID, field: "qualification.runtimeID")
-        self.runtimeRevision = try validatedIdentifier(runtimeRevision, field: "qualification.runtimeRevision")
-        self.quantization = try validatedIdentifier(quantization, field: "qualification.quantization")
+        self.runtimeRevision = try validatedIdentifier(
+            runtimeRevision,
+            field: "qualification.runtimeRevision"
+        )
+        self.quantization = try validatedIdentifier(
+            quantization,
+            field: "qualification.quantization"
+        )
         self.kvType = try validatedIdentifier(kvType, field: "qualification.kvType")
         self.contextTokens = contextTokens
         self.deviceModel = try validatedIdentifier(deviceModel, field: "qualification.deviceModel")
@@ -318,7 +401,7 @@ public struct ForgeCompactRuntimeIdentity: Codable, Equatable, Sendable {
     }
 }
 
-public struct ForgeCompactTechniqueEvidence: Codable, Equatable, Sendable {
+public struct ForgeCompactTechniqueEvidence: Equatable, Sendable {
     public let kind: ForgeCompactEvidenceKind
     public let runtimeIdentity: ForgeCompactRuntimeIdentity?
 
