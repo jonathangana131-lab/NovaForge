@@ -148,7 +148,6 @@ public struct MissionStageGraph: Codable, Equatable, Sendable {
 
     public var validationError: MissionStageGraphValidationError? {
         guard revision > 0 else { return .invalidGraphRevision }
-        guard !stages.isEmpty else { return .emptyStageGraph }
 
         var knownIDs = Set<MissionStageID>()
         var knownOrders = Set<UInt32>()
@@ -216,7 +215,6 @@ public struct MissionStageGraph: Codable, Equatable, Sendable {
 
 public enum MissionStageGraphValidationError: String, Error, Codable, Equatable, Sendable {
     case invalidGraphRevision
-    case emptyStageGraph
     case blankStageTitle
     case duplicateStageID
     case duplicateStageOrder
