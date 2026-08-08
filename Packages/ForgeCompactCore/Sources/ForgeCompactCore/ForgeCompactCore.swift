@@ -4,6 +4,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case invalidIdentifier(field: String)
     case invalidEstimatedTokenCount
     case invalidBudget
+    case invalidPriority
     case duplicateContextItem(String)
     case alwaysResidentItemMustBeRequired(String)
     case mandatoryContextExceedsBudget(required: Int, budget: Int)
@@ -52,16 +53,21 @@ public struct ForgeCompactContextItem: Equatable, Sendable {
     public let tier: ForgeCompactTier
     public let estimatedTokens: Int
     public let required: Bool
+    public let relevancePriority: Int
 
     public init(
         id: String,
         tier: ForgeCompactTier,
         estimatedTokens: Int,
-        required: Bool
+        required: Bool,
+        relevancePriority: Int = 0
     ) throws {
         self.id = try validatedIdentifier(id, field: "contextItem.id")
         guard estimatedTokens > 0 else {
             throw ForgeCompactError.invalidEstimatedTokenCount
+        }
+        guard relevancePriority >= 0 else {
+            throw ForgeCompactError.invalidPriority
         }
         if tier == .alwaysResident && !required {
             throw ForgeCompactError.alwaysResidentItemMustBeRequired(id)
@@ -69,6 +75,7 @@ public struct ForgeCompactContextItem: Equatable, Sendable {
         self.tier = tier
         self.estimatedTokens = estimatedTokens
         self.required = required
+        self.relevancePriority = relevancePriority
     }
 }
 
@@ -123,15 +130,7 @@ public enum ForgeCompactContextPlanner {
 
         let optional = items
             .filter { !$0.required }
-            .sorted { lhs, rhs in
-                if lhs.tier.rawValue != rhs.tier.rawValue {
-                    return lhs.tier.rawValue < rhs.tier.rawValue
-                }
-                if lhs.estimatedTokens != rhs.estimatedTokens {
-                    return lhs.estimatedTokens < rhs.estimatedTokens
-                }
-                return lhs.id < rhs.id
-            }
+            .sorted(by: contextPriority)
 
         var selected = mandatory
         var dropped: [ForgeCompactContextItem] = []
@@ -165,6 +164,9 @@ public enum ForgeCompactContextPlanner {
         }
         if lhs.required != rhs.required {
             return lhs.required && !rhs.required
+        }
+        if lhs.relevancePriority != rhs.relevancePriority {
+            return lhs.relevancePriority > rhs.relevancePriority
         }
         return lhs.id < rhs.id
     }
@@ -404,16 +406,19 @@ public struct ForgeCompactRuntimeIdentity: Equatable, Sendable {
 public struct ForgeCompactTechniqueEvidence: Equatable, Sendable {
     public let kind: ForgeCompactEvidenceKind
     public let runtimeIdentity: ForgeCompactRuntimeIdentity?
+    public let qualificationSucceeded: Bool
 
     public init(
         kind: ForgeCompactEvidenceKind,
-        runtimeIdentity: ForgeCompactRuntimeIdentity? = nil
+        runtimeIdentity: ForgeCompactRuntimeIdentity? = nil,
+        qualificationSucceeded: Bool = false
     ) throws {
         if kind != .sourceReported && runtimeIdentity == nil {
             throw ForgeCompactError.missingQualificationIdentity
         }
         self.kind = kind
         self.runtimeIdentity = runtimeIdentity
+        self.qualificationSucceeded = qualificationSucceeded
     }
 }
 
@@ -434,8 +439,12 @@ public enum ForgeCompactTechniqueGate {
 
         switch evidence.kind {
         case .exactDeviceMeasured:
-            return .qualified
-        case .runtimeObserved, .sourceReported:
+            return evidence.qualificationSucceeded ? .qualified : .unavailable
+        case .runtimeObserved:
+            return explicitResearchOptIn && evidence.qualificationSucceeded
+                ? .experimental
+                : .unavailable
+        case .sourceReported:
             return explicitResearchOptIn ? .experimental : .unavailable
         }
     }
