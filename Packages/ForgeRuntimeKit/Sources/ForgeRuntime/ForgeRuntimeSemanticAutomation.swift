@@ -20,21 +20,25 @@ public enum ForgeRuntimeAutomationCapability: String, Codable, CaseIterable, Com
 public enum ForgeRuntimeAutomationPolicyError: Error, Equatable, Sendable {
     case invalidMaximumTextUTF8Bytes
     case invalidMaximumGestureDurationMilliseconds
+    case invalidMaximumInteractions
 }
 
 /// Trusted host policy bounding one semantic automation session.
 public struct ForgeRuntimeAutomationPolicy: Equatable, Sendable {
     public static let hardMaximumTextUTF8Bytes = 16 * 1024
     public static let hardMaximumGestureDurationMilliseconds = 30_000
+    public static let hardMaximumInteractions = 20_000
 
     public let allowedCapabilities: Set<ForgeRuntimeAutomationCapability>
     public let maximumTextUTF8Bytes: Int
     public let maximumGestureDurationMilliseconds: Int
+    public let maximumInteractions: Int
 
     public init(
         allowedCapabilities: Set<ForgeRuntimeAutomationCapability>,
         maximumTextUTF8Bytes: Int = 4 * 1024,
-        maximumGestureDurationMilliseconds: Int = 10_000
+        maximumGestureDurationMilliseconds: Int = 10_000,
+        maximumInteractions: Int = 4_096
     ) throws {
         guard (1...Self.hardMaximumTextUTF8Bytes).contains(maximumTextUTF8Bytes) else {
             throw ForgeRuntimeAutomationPolicyError.invalidMaximumTextUTF8Bytes
@@ -42,10 +46,14 @@ public struct ForgeRuntimeAutomationPolicy: Equatable, Sendable {
         guard (1...Self.hardMaximumGestureDurationMilliseconds).contains(maximumGestureDurationMilliseconds) else {
             throw ForgeRuntimeAutomationPolicyError.invalidMaximumGestureDurationMilliseconds
         }
+        guard (1...Self.hardMaximumInteractions).contains(maximumInteractions) else {
+            throw ForgeRuntimeAutomationPolicyError.invalidMaximumInteractions
+        }
 
         self.allowedCapabilities = allowedCapabilities
         self.maximumTextUTF8Bytes = maximumTextUTF8Bytes
         self.maximumGestureDurationMilliseconds = maximumGestureDurationMilliseconds
+        self.maximumInteractions = maximumInteractions
     }
 }
 
@@ -62,6 +70,7 @@ public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
     public let grantedCapabilities: Set<ForgeRuntimeAutomationCapability>
     public let maximumTextUTF8Bytes: Int
     public let maximumGestureDurationMilliseconds: Int
+    public let maximumInteractions: Int
 
     init(
         sessionID: String,
@@ -70,7 +79,8 @@ public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
         runtimeVersion: ForgeRuntimeVersion,
         grantedCapabilities: Set<ForgeRuntimeAutomationCapability>,
         maximumTextUTF8Bytes: Int,
-        maximumGestureDurationMilliseconds: Int
+        maximumGestureDurationMilliseconds: Int,
+        maximumInteractions: Int
     ) {
         self.sessionID = sessionID
         self.projectID = projectID
@@ -79,6 +89,7 @@ public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
         self.grantedCapabilities = grantedCapabilities
         self.maximumTextUTF8Bytes = maximumTextUTF8Bytes
         self.maximumGestureDurationMilliseconds = maximumGestureDurationMilliseconds
+        self.maximumInteractions = maximumInteractions
     }
 }
 
@@ -121,7 +132,8 @@ public struct ForgeRuntimeAutomationSessionAuthorizer: Sendable {
             runtimeVersion: launchAuthorization.runtimeVersion,
             grantedCapabilities: requestedCapabilities,
             maximumTextUTF8Bytes: policy.maximumTextUTF8Bytes,
-            maximumGestureDurationMilliseconds: policy.maximumGestureDurationMilliseconds
+            maximumGestureDurationMilliseconds: policy.maximumGestureDurationMilliseconds,
+            maximumInteractions: policy.maximumInteractions
         )
     }
 
@@ -273,6 +285,7 @@ public enum ForgeRuntimeSemanticInteractionError: Error, Equatable, Sendable {
     case unexpectedPayload
     case sequenceMismatch(expected: Int, actual: Int)
     case capabilityNotAuthorized(ForgeRuntimeAutomationCapability)
+    case interactionBudgetExceeded(maximum: Int)
 }
 
 public struct ForgeRuntimeSemanticInteractionDecoder: Sendable {
@@ -475,6 +488,12 @@ public struct ForgeRuntimeSemanticInteractionGate: Sendable {
         let required = request.interaction.kind.requiredCapability
         guard session.grantedCapabilities.contains(required) else {
             throw ForgeRuntimeSemanticInteractionError.capabilityNotAuthorized(required)
+        }
+
+        guard nextExpectedSequence < session.maximumInteractions else {
+            throw ForgeRuntimeSemanticInteractionError.interactionBudgetExceeded(
+                maximum: session.maximumInteractions
+            )
         }
 
         nextExpectedSequence += 1
