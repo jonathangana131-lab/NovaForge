@@ -221,6 +221,18 @@ public struct ForgeCompactContextBudget: Codable, Equatable, Sendable {
         self.maxEstimatedTokens = maxEstimatedTokens
         self.allowColdArchiveRetrieval = allowColdArchiveRetrieval
     }
+
+    private enum CodingKeys: CodingKey {
+        case maxEstimatedTokens, allowColdArchiveRetrieval
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            maxEstimatedTokens: container.decode(Int.self, forKey: .maxEstimatedTokens),
+            allowColdArchiveRetrieval: container.decode(Bool.self, forKey: .allowColdArchiveRetrieval)
+        )
+    }
 }
 
 public struct ForgeCompactContextSelection: Equatable, Sendable {
@@ -309,6 +321,28 @@ public struct ForgeCompactPrefixReuseIdentity: Codable, Equatable, Hashable, Sen
         self.capsuleSourceRevision = try ForgeCompactValidation.identifier(capsuleSourceRevision, field: "capsuleSourceRevision")
         self.capsuleMissionRevision = capsuleMissionRevision
         self.capsuleAuthorityEpoch = capsuleAuthorityEpoch
+    }
+
+    private enum CodingKeys: CodingKey {
+        case modelID, modelRevision, tokenizerRevision, runtimeID, runtimeRevision
+        case promptTemplateRevision, toolSchemaRevision, capsuleSourceRevision
+        case capsuleMissionRevision, capsuleAuthorityEpoch
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            modelID: container.decode(String.self, forKey: .modelID),
+            modelRevision: container.decode(String.self, forKey: .modelRevision),
+            tokenizerRevision: container.decode(String.self, forKey: .tokenizerRevision),
+            runtimeID: container.decode(String.self, forKey: .runtimeID),
+            runtimeRevision: container.decode(String.self, forKey: .runtimeRevision),
+            promptTemplateRevision: container.decode(String.self, forKey: .promptTemplateRevision),
+            toolSchemaRevision: container.decode(String.self, forKey: .toolSchemaRevision),
+            capsuleSourceRevision: container.decode(String.self, forKey: .capsuleSourceRevision),
+            capsuleMissionRevision: container.decode(Int.self, forKey: .capsuleMissionRevision),
+            capsuleAuthorityEpoch: container.decode(Int.self, forKey: .capsuleAuthorityEpoch)
+        )
     }
 
     public func canReusePrefix(with candidate: Self) -> Bool {
