@@ -17,12 +17,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  portable-smoke:
+    name: ForgeCompactCore portable smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Toolchain
+        run: swift --version
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
+      - name: Debug package tests with warnings as errors
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - name: Release package tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+
   exact-package:
-    name: ForgeCompactCore debug + release
+    name: ForgeCompactCore macOS debug + release
     runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - name: Toolchain
+        run: swift --version
       - name: Diff check
         run: git diff --check origin/main...HEAD
       - name: Debug package tests with warnings as errors
