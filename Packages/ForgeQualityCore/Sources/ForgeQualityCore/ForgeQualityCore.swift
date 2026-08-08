@@ -1,0 +1,515 @@
+import Foundation
+
+public enum ForgeQualityError: Error, Equatable, Sendable {
+    case invalidIdentifier
+    case invalidRevision
+    case emptyPolicy
+    case tooManyTargets
+    case duplicateTargetMetric(ForgeQualityMetric)
+    case invalidThreshold(ForgeQualityMetric)
+    case unsupportedComparator(metric: ForgeQualityMetric, comparator: ForgeQualityComparator)
+    case invalidMeasurement(ForgeQualityMetric)
+    case evidenceKindMismatch(metric: ForgeQualityMetric, expected: ForgeQualityEvidenceKind, actual: ForgeQualityEvidenceKind)
+    case duplicateMeasurementMetric(ForgeQualityMetric)
+    case duplicateReceiptID(ForgeQualityID)
+    case unexpectedMeasurementMetric(ForgeQualityMetric)
+    case evidenceBindingMismatch(receiptID: ForgeQualityID)
+    case constitutionRevisionMismatch(expected: UInt64, actual: UInt64)
+}
+
+public struct ForgeQualityID: Hashable, Codable, Sendable, Comparable, CustomStringConvertible {
+    public let rawValue: String
+
+    public init(_ rawValue: String) throws {
+        guard Self.isCanonical(rawValue) else {
+            throw ForgeQualityError.invalidIdentifier
+        }
+        self.rawValue = rawValue
+    }
+
+    public var description: String { rawValue }
+
+    public static func < (lhs: ForgeQualityID, rhs: ForgeQualityID) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        try self.init(rawValue)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    private static func isCanonical(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 256 else { return false }
+        guard value == value.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+}
+
+public enum ForgeQualityMetric: String, CaseIterable, Codable, Hashable, Sendable {
+    case averageFrameTimeMilliseconds
+    case p95FrameTimeMilliseconds
+    case p99FrameTimeMilliseconds
+    case longFrameRatePercent
+    case inputLatencyP95Milliseconds
+    case fatalRuntimeErrorCount
+    case accessibilityCriticalViolationCount
+    case accessibilitySeriousViolationCount
+    case clippedInteractiveControlCount
+
+    public var expectedEvidenceKind: ForgeQualityEvidenceKind {
+        switch self {
+        case .averageFrameTimeMilliseconds,
+             .p95FrameTimeMilliseconds,
+             .p99FrameTimeMilliseconds,
+             .longFrameRatePercent:
+            return .runtimeTelemetry
+        case .inputLatencyP95Milliseconds:
+            return .interactionHarness
+        case .fatalRuntimeErrorCount:
+            return .runtimeDiagnostics
+        case .accessibilityCriticalViolationCount,
+             .accessibilitySeriousViolationCount,
+             .clippedInteractiveControlCount:
+            return .accessibilityAudit
+        }
+    }
+
+    fileprivate func accepts(_ comparator: ForgeQualityComparator) -> Bool {
+        // Every metric currently defined here is a maximum-bound quality budget.
+        // Future higher-is-better metrics must opt in explicitly instead of inheriting
+        // a comparator that could invert completion semantics.
+        comparator == .atMost
+    }
+
+    fileprivate func accepts(_ value: Double) -> Bool {
+        guard value.isFinite, value >= 0 else { return false }
+        switch self {
+        case .longFrameRatePercent:
+            return value <= 100
+        case .fatalRuntimeErrorCount,
+             .accessibilityCriticalViolationCount,
+             .accessibilitySeriousViolationCount,
+             .clippedInteractiveControlCount:
+            return value.rounded(.towardZero) == value
+        default:
+            return true
+        }
+    }
+}
+
+public enum ForgeQualityEvidenceKind: String, Codable, Hashable, Sendable {
+    case runtimeTelemetry
+    case runtimeDiagnostics
+    case interactionHarness
+    case accessibilityAudit
+}
+
+public enum ForgeQualityComparator: String, Codable, Hashable, Sendable {
+    case atMost
+    case atLeast
+
+    fileprivate func accepts(value: Double, threshold: Double) -> Bool {
+        switch self {
+        case .atMost:
+            return value <= threshold
+        case .atLeast:
+            return value >= threshold
+        }
+    }
+}
+
+public enum ForgeQualityEnvironmentKind: String, Codable, Hashable, Sendable {
+    case simulator
+    case physicalDevice
+}
+
+public struct ForgeQualityTarget: Codable, Hashable, Sendable {
+    public let metric: ForgeQualityMetric
+    public let comparator: ForgeQualityComparator
+    public let threshold: Double
+    public let requiresPhysicalDevice: Bool
+
+    public init(
+        metric: ForgeQualityMetric,
+        comparator: ForgeQualityComparator,
+        threshold: Double,
+        requiresPhysicalDevice: Bool = false
+    ) throws {
+        guard metric.accepts(comparator) else {
+            throw ForgeQualityError.unsupportedComparator(metric: metric, comparator: comparator)
+        }
+        guard metric.accepts(threshold) else {
+            throw ForgeQualityError.invalidThreshold(metric)
+        }
+        self.metric = metric
+        self.comparator = comparator
+        self.threshold = threshold
+        self.requiresPhysicalDevice = requiresPhysicalDevice
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            metric: container.decode(ForgeQualityMetric.self, forKey: .metric),
+            comparator: container.decode(ForgeQualityComparator.self, forKey: .comparator),
+            threshold: container.decode(Double.self, forKey: .threshold),
+            requiresPhysicalDevice: container.decode(Bool.self, forKey: .requiresPhysicalDevice)
+        )
+    }
+}
+
+public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
+    public static let currentSchemaVersion = 1
+    public static let maximumTargets = 32
+
+    public let schemaVersion: Int
+    public let policyID: ForgeQualityID
+    public let constitutionRevision: UInt64
+    public let targets: [ForgeQualityTarget]
+
+    public init(
+        policyID: ForgeQualityID,
+        constitutionRevision: UInt64,
+        targets: [ForgeQualityTarget]
+    ) throws {
+        guard constitutionRevision > 0 else { throw ForgeQualityError.invalidRevision }
+        guard !targets.isEmpty else { throw ForgeQualityError.emptyPolicy }
+        guard targets.count <= Self.maximumTargets else { throw ForgeQualityError.tooManyTargets }
+
+        var seen = Set<ForgeQualityMetric>()
+        for target in targets {
+            guard seen.insert(target.metric).inserted else {
+                throw ForgeQualityError.duplicateTargetMetric(target.metric)
+            }
+        }
+
+        self.schemaVersion = Self.currentSchemaVersion
+        self.policyID = policyID
+        self.constitutionRevision = constitutionRevision
+        self.targets = targets.sorted { $0.metric.rawValue < $1.metric.rawValue }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == Self.currentSchemaVersion else {
+            throw ForgeQualityError.invalidRevision
+        }
+        try self.init(
+            policyID: container.decode(ForgeQualityID.self, forKey: .policyID),
+            constitutionRevision: container.decode(UInt64.self, forKey: .constitutionRevision),
+            targets: container.decode([ForgeQualityTarget].self, forKey: .targets)
+        )
+    }
+}
+
+public struct ForgeQualityRunBinding: Codable, Hashable, Sendable {
+    public let projectID: ForgeQualityID
+    public let sourceRevision: ForgeQualityID
+    public let checkpointID: ForgeQualityID
+    public let runtimeRevision: ForgeQualityID
+    public let runID: ForgeQualityID
+    public let environmentKind: ForgeQualityEnvironmentKind
+    public let environmentProfileID: ForgeQualityID
+    public let osBuild: ForgeQualityID
+
+    public init(
+        projectID: ForgeQualityID,
+        sourceRevision: ForgeQualityID,
+        checkpointID: ForgeQualityID,
+        runtimeRevision: ForgeQualityID,
+        runID: ForgeQualityID,
+        environmentKind: ForgeQualityEnvironmentKind,
+        environmentProfileID: ForgeQualityID,
+        osBuild: ForgeQualityID
+    ) {
+        self.projectID = projectID
+        self.sourceRevision = sourceRevision
+        self.checkpointID = checkpointID
+        self.runtimeRevision = runtimeRevision
+        self.runID = runID
+        self.environmentKind = environmentKind
+        self.environmentProfileID = environmentProfileID
+        self.osBuild = osBuild
+    }
+}
+
+public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
+    public let receiptID: ForgeQualityID
+    public let binding: ForgeQualityRunBinding
+    public let metric: ForgeQualityMetric
+    public let evidenceKind: ForgeQualityEvidenceKind
+    public let value: Double
+
+    public init(
+        receiptID: ForgeQualityID,
+        binding: ForgeQualityRunBinding,
+        metric: ForgeQualityMetric,
+        evidenceKind: ForgeQualityEvidenceKind,
+        value: Double
+    ) throws {
+        guard metric.accepts(value) else {
+            throw ForgeQualityError.invalidMeasurement(metric)
+        }
+        guard evidenceKind == metric.expectedEvidenceKind else {
+            throw ForgeQualityError.evidenceKindMismatch(
+                metric: metric,
+                expected: metric.expectedEvidenceKind,
+                actual: evidenceKind
+            )
+        }
+        self.receiptID = receiptID
+        self.binding = binding
+        self.metric = metric
+        self.evidenceKind = evidenceKind
+        self.value = value
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            receiptID: container.decode(ForgeQualityID.self, forKey: .receiptID),
+            binding: container.decode(ForgeQualityRunBinding.self, forKey: .binding),
+            metric: container.decode(ForgeQualityMetric.self, forKey: .metric),
+            evidenceKind: container.decode(ForgeQualityEvidenceKind.self, forKey: .evidenceKind),
+            value: container.decode(Double.self, forKey: .value)
+        )
+    }
+}
+
+public enum ForgeQualityFindingReason: String, Codable, Hashable, Sendable {
+    case missingEvidence
+    case physicalDeviceRequired
+    case thresholdExceeded
+}
+
+public struct ForgeQualityFinding: Codable, Hashable, Sendable {
+    public let metric: ForgeQualityMetric
+    public let reason: ForgeQualityFindingReason
+    public let measuredValue: Double?
+    public let comparator: ForgeQualityComparator
+    public let threshold: Double
+
+    public init(
+        metric: ForgeQualityMetric,
+        reason: ForgeQualityFindingReason,
+        measuredValue: Double?,
+        comparator: ForgeQualityComparator,
+        threshold: Double
+    ) {
+        self.metric = metric
+        self.reason = reason
+        self.measuredValue = measuredValue
+        self.comparator = comparator
+        self.threshold = threshold
+    }
+}
+
+public enum ForgeQualityGateStatus: String, Codable, Hashable, Sendable {
+    case passed
+    case blocked
+    case failed
+}
+
+public struct ForgeQualityAssessment: Encodable, Hashable, Sendable {
+    public let policyID: ForgeQualityID
+    public let constitutionRevision: UInt64
+    public let binding: ForgeQualityRunBinding
+    public let status: ForgeQualityGateStatus
+    public let findings: [ForgeQualityFinding]
+    public let supportingReceiptIDs: [ForgeQualityID]
+    public let acceptedReceiptIDs: [ForgeQualityID]
+
+    fileprivate init(
+        policyID: ForgeQualityID,
+        constitutionRevision: UInt64,
+        binding: ForgeQualityRunBinding,
+        status: ForgeQualityGateStatus,
+        findings: [ForgeQualityFinding],
+        supportingReceiptIDs: [ForgeQualityID],
+        acceptedReceiptIDs: [ForgeQualityID]
+    ) {
+        self.policyID = policyID
+        self.constitutionRevision = constitutionRevision
+        self.binding = binding
+        self.status = status
+        self.findings = findings
+        self.supportingReceiptIDs = supportingReceiptIDs
+        self.acceptedReceiptIDs = acceptedReceiptIDs
+    }
+}
+
+public enum ForgeQualityEvaluator {
+    public static func evaluate(
+        policy: ForgeQualityPolicy,
+        acceptedConstitutionRevision: UInt64,
+        binding: ForgeQualityRunBinding,
+        measurements: [ForgeQualityMeasurement]
+    ) throws -> ForgeQualityAssessment {
+        guard policy.constitutionRevision == acceptedConstitutionRevision else {
+            throw ForgeQualityError.constitutionRevisionMismatch(
+                expected: policy.constitutionRevision,
+                actual: acceptedConstitutionRevision
+            )
+        }
+
+        let targetMetrics = Set(policy.targets.map(\.metric))
+        var measurementsByMetric: [ForgeQualityMetric: ForgeQualityMeasurement] = [:]
+        var receiptIDs = Set<ForgeQualityID>()
+
+        for measurement in measurements {
+            guard measurement.binding == binding else {
+                throw ForgeQualityError.evidenceBindingMismatch(receiptID: measurement.receiptID)
+            }
+            guard targetMetrics.contains(measurement.metric) else {
+                throw ForgeQualityError.unexpectedMeasurementMetric(measurement.metric)
+            }
+            guard measurementsByMetric[measurement.metric] == nil else {
+                throw ForgeQualityError.duplicateMeasurementMetric(measurement.metric)
+            }
+            guard receiptIDs.insert(measurement.receiptID).inserted else {
+                throw ForgeQualityError.duplicateReceiptID(measurement.receiptID)
+            }
+            measurementsByMetric[measurement.metric] = measurement
+        }
+
+        var findings: [ForgeQualityFinding] = []
+        var supportingReceiptIDs: [ForgeQualityID] = []
+
+        for target in policy.targets {
+            guard let measurement = measurementsByMetric[target.metric] else {
+                findings.append(
+                    ForgeQualityFinding(
+                        metric: target.metric,
+                        reason: .missingEvidence,
+                        measuredValue: nil,
+                        comparator: target.comparator,
+                        threshold: target.threshold
+                    )
+                )
+                continue
+            }
+
+            supportingReceiptIDs.append(measurement.receiptID)
+
+            if target.requiresPhysicalDevice, binding.environmentKind != .physicalDevice {
+                findings.append(
+                    ForgeQualityFinding(
+                        metric: target.metric,
+                        reason: .physicalDeviceRequired,
+                        measuredValue: measurement.value,
+                        comparator: target.comparator,
+                        threshold: target.threshold
+                    )
+                )
+                continue
+            }
+
+            if !target.comparator.accepts(value: measurement.value, threshold: target.threshold) {
+                findings.append(
+                    ForgeQualityFinding(
+                        metric: target.metric,
+                        reason: .thresholdExceeded,
+                        measuredValue: measurement.value,
+                        comparator: target.comparator,
+                        threshold: target.threshold
+                    )
+                )
+            }
+        }
+
+        findings.sort {
+            if $0.metric.rawValue == $1.metric.rawValue {
+                return $0.reason.rawValue < $1.reason.rawValue
+            }
+            return $0.metric.rawValue < $1.metric.rawValue
+        }
+        supportingReceiptIDs.sort()
+
+        let hasFailure = findings.contains { $0.reason == .thresholdExceeded }
+        let hasBlocker = findings.contains {
+            $0.reason == .missingEvidence || $0.reason == .physicalDeviceRequired
+        }
+        let status: ForgeQualityGateStatus
+        if hasFailure {
+            status = .failed
+        } else if hasBlocker {
+            status = .blocked
+        } else {
+            status = .passed
+        }
+
+        return ForgeQualityAssessment(
+            policyID: policy.policyID,
+            constitutionRevision: policy.constitutionRevision,
+            binding: binding,
+            status: status,
+            findings: findings,
+            supportingReceiptIDs: supportingReceiptIDs,
+            acceptedReceiptIDs: status == .passed ? supportingReceiptIDs : []
+        )
+    }
+}
+
+public struct ForgeQualitySnapshot: Codable, Hashable, Sendable {
+    public static let currentSchemaVersion = 1
+
+    public let schemaVersion: Int
+    public let policy: ForgeQualityPolicy
+    public let acceptedConstitutionRevision: UInt64
+    public let binding: ForgeQualityRunBinding
+    public let measurements: [ForgeQualityMeasurement]
+
+    public init(
+        policy: ForgeQualityPolicy,
+        acceptedConstitutionRevision: UInt64,
+        binding: ForgeQualityRunBinding,
+        measurements: [ForgeQualityMeasurement]
+    ) throws {
+        _ = try ForgeQualityEvaluator.evaluate(
+            policy: policy,
+            acceptedConstitutionRevision: acceptedConstitutionRevision,
+            binding: binding,
+            measurements: measurements
+        )
+        self.schemaVersion = Self.currentSchemaVersion
+        self.policy = policy
+        self.acceptedConstitutionRevision = acceptedConstitutionRevision
+        self.binding = binding
+        self.measurements = measurements.sorted {
+            if $0.metric.rawValue == $1.metric.rawValue {
+                return $0.receiptID < $1.receiptID
+            }
+            return $0.metric.rawValue < $1.metric.rawValue
+        }
+    }
+
+    public func assessment() throws -> ForgeQualityAssessment {
+        try ForgeQualityEvaluator.evaluate(
+            policy: policy,
+            acceptedConstitutionRevision: acceptedConstitutionRevision,
+            binding: binding,
+            measurements: measurements
+        )
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == Self.currentSchemaVersion else {
+            throw ForgeQualityError.invalidRevision
+        }
+        try self.init(
+            policy: container.decode(ForgeQualityPolicy.self, forKey: .policy),
+            acceptedConstitutionRevision: container.decode(UInt64.self, forKey: .acceptedConstitutionRevision),
+            binding: container.decode(ForgeQualityRunBinding.self, forKey: .binding),
+            measurements: container.decode([ForgeQualityMeasurement].self, forKey: .measurements)
+        )
+    }
+}
