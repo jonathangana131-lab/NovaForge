@@ -5,14 +5,14 @@ public enum ForgeQualityError: Error, Equatable, Sendable {
     case invalidRevision
     case emptyPolicy
     case tooManyTargets
-    case duplicateTargetMetric(ForgeQualityMetric)
+    case duplicateTarget(metric: ForgeQualityMetric, scope: ForgeQualityScope)
     case invalidThreshold(ForgeQualityMetric)
     case unsupportedComparator(metric: ForgeQualityMetric, comparator: ForgeQualityComparator)
     case invalidMeasurement(ForgeQualityMetric)
     case evidenceKindMismatch(metric: ForgeQualityMetric, expected: ForgeQualityEvidenceKind, actual: ForgeQualityEvidenceKind)
-    case duplicateMeasurementMetric(ForgeQualityMetric)
+    case duplicateMeasurement(metric: ForgeQualityMetric, scope: ForgeQualityScope)
     case duplicateReceiptID(ForgeQualityID)
-    case unexpectedMeasurementMetric(ForgeQualityMetric)
+    case unexpectedMeasurement(metric: ForgeQualityMetric, scope: ForgeQualityScope)
     case evidenceBindingMismatch(receiptID: ForgeQualityID)
     case constitutionRevisionMismatch(expected: UInt64, actual: UInt64)
 }
@@ -129,14 +129,37 @@ public enum ForgeQualityEnvironmentKind: String, Codable, Hashable, Sendable {
     case physicalDevice
 }
 
+/// The acceptance scope a quality budget applies to. Journey scope prevents a
+/// measurement from one autonomous playtest path from satisfying another path.
+public enum ForgeQualityScope: Codable, Hashable, Sendable {
+    case run
+    case journey(ForgeQualityID)
+
+    fileprivate var sortKey: String {
+        switch self {
+        case .run:
+            return "0:run"
+        case let .journey(journeyID):
+            return "1:\(journeyID.rawValue)"
+        }
+    }
+}
+
+private struct ForgeQualityTargetKey: Hashable {
+    let metric: ForgeQualityMetric
+    let scope: ForgeQualityScope
+}
+
 public struct ForgeQualityTarget: Codable, Hashable, Sendable {
     public let metric: ForgeQualityMetric
+    public let scope: ForgeQualityScope
     public let comparator: ForgeQualityComparator
     public let threshold: Double
     public let requiresPhysicalDevice: Bool
 
     public init(
         metric: ForgeQualityMetric,
+        scope: ForgeQualityScope = .run,
         comparator: ForgeQualityComparator,
         threshold: Double,
         requiresPhysicalDevice: Bool = false
@@ -148,6 +171,7 @@ public struct ForgeQualityTarget: Codable, Hashable, Sendable {
             throw ForgeQualityError.invalidThreshold(metric)
         }
         self.metric = metric
+        self.scope = scope
         self.comparator = comparator
         self.threshold = threshold
         self.requiresPhysicalDevice = requiresPhysicalDevice
@@ -157,10 +181,15 @@ public struct ForgeQualityTarget: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
             metric: container.decode(ForgeQualityMetric.self, forKey: .metric),
+            scope: container.decode(ForgeQualityScope.self, forKey: .scope),
             comparator: container.decode(ForgeQualityComparator.self, forKey: .comparator),
             threshold: container.decode(Double.self, forKey: .threshold),
             requiresPhysicalDevice: container.decode(Bool.self, forKey: .requiresPhysicalDevice)
         )
+    }
+
+    fileprivate var key: ForgeQualityTargetKey {
+        ForgeQualityTargetKey(metric: metric, scope: scope)
     }
 }
 
@@ -182,17 +211,22 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
         guard !targets.isEmpty else { throw ForgeQualityError.emptyPolicy }
         guard targets.count <= Self.maximumTargets else { throw ForgeQualityError.tooManyTargets }
 
-        var seen = Set<ForgeQualityMetric>()
+        var seen = Set<ForgeQualityTargetKey>()
         for target in targets {
-            guard seen.insert(target.metric).inserted else {
-                throw ForgeQualityError.duplicateTargetMetric(target.metric)
+            guard seen.insert(target.key).inserted else {
+                throw ForgeQualityError.duplicateTarget(metric: target.metric, scope: target.scope)
             }
         }
 
         self.schemaVersion = Self.currentSchemaVersion
         self.policyID = policyID
         self.constitutionRevision = constitutionRevision
-        self.targets = targets.sorted { $0.metric.rawValue < $1.metric.rawValue }
+        self.targets = targets.sorted { lhs, rhs in
+            if lhs.scope.sortKey == rhs.scope.sortKey {
+                return lhs.metric.rawValue < rhs.metric.rawValue
+            }
+            return lhs.scope.sortKey < rhs.scope.sortKey
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -244,6 +278,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
     public let receiptID: ForgeQualityID
     public let binding: ForgeQualityRunBinding
     public let metric: ForgeQualityMetric
+    public let scope: ForgeQualityScope
     public let evidenceKind: ForgeQualityEvidenceKind
     public let value: Double
 
@@ -251,6 +286,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
         receiptID: ForgeQualityID,
         binding: ForgeQualityRunBinding,
         metric: ForgeQualityMetric,
+        scope: ForgeQualityScope = .run,
         evidenceKind: ForgeQualityEvidenceKind,
         value: Double
     ) throws {
@@ -267,6 +303,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
         self.receiptID = receiptID
         self.binding = binding
         self.metric = metric
+        self.scope = scope
         self.evidenceKind = evidenceKind
         self.value = value
     }
@@ -277,9 +314,14 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
             receiptID: container.decode(ForgeQualityID.self, forKey: .receiptID),
             binding: container.decode(ForgeQualityRunBinding.self, forKey: .binding),
             metric: container.decode(ForgeQualityMetric.self, forKey: .metric),
+            scope: container.decode(ForgeQualityScope.self, forKey: .scope),
             evidenceKind: container.decode(ForgeQualityEvidenceKind.self, forKey: .evidenceKind),
             value: container.decode(Double.self, forKey: .value)
         )
+    }
+
+    fileprivate var key: ForgeQualityTargetKey {
+        ForgeQualityTargetKey(metric: metric, scope: scope)
     }
 }
 
@@ -291,6 +333,7 @@ public enum ForgeQualityFindingReason: String, Codable, Hashable, Sendable {
 
 public struct ForgeQualityFinding: Codable, Hashable, Sendable {
     public let metric: ForgeQualityMetric
+    public let scope: ForgeQualityScope
     public let reason: ForgeQualityFindingReason
     public let measuredValue: Double?
     public let comparator: ForgeQualityComparator
@@ -298,12 +341,14 @@ public struct ForgeQualityFinding: Codable, Hashable, Sendable {
 
     public init(
         metric: ForgeQualityMetric,
+        scope: ForgeQualityScope,
         reason: ForgeQualityFindingReason,
         measuredValue: Double?,
         comparator: ForgeQualityComparator,
         threshold: Double
     ) {
         self.metric = metric
+        self.scope = scope
         self.reason = reason
         self.measuredValue = measuredValue
         self.comparator = comparator
@@ -359,34 +404,35 @@ public enum ForgeQualityEvaluator {
             )
         }
 
-        let targetMetrics = Set(policy.targets.map(\.metric))
-        var measurementsByMetric: [ForgeQualityMetric: ForgeQualityMeasurement] = [:]
+        let targetKeys = Set(policy.targets.map(\.key))
+        var measurementsByTarget: [ForgeQualityTargetKey: ForgeQualityMeasurement] = [:]
         var receiptIDs = Set<ForgeQualityID>()
 
         for measurement in measurements {
             guard measurement.binding == binding else {
                 throw ForgeQualityError.evidenceBindingMismatch(receiptID: measurement.receiptID)
             }
-            guard targetMetrics.contains(measurement.metric) else {
-                throw ForgeQualityError.unexpectedMeasurementMetric(measurement.metric)
+            guard targetKeys.contains(measurement.key) else {
+                throw ForgeQualityError.unexpectedMeasurement(metric: measurement.metric, scope: measurement.scope)
             }
-            guard measurementsByMetric[measurement.metric] == nil else {
-                throw ForgeQualityError.duplicateMeasurementMetric(measurement.metric)
+            guard measurementsByTarget[measurement.key] == nil else {
+                throw ForgeQualityError.duplicateMeasurement(metric: measurement.metric, scope: measurement.scope)
             }
             guard receiptIDs.insert(measurement.receiptID).inserted else {
                 throw ForgeQualityError.duplicateReceiptID(measurement.receiptID)
             }
-            measurementsByMetric[measurement.metric] = measurement
+            measurementsByTarget[measurement.key] = measurement
         }
 
         var findings: [ForgeQualityFinding] = []
         var supportingReceiptIDs: [ForgeQualityID] = []
 
         for target in policy.targets {
-            guard let measurement = measurementsByMetric[target.metric] else {
+            guard let measurement = measurementsByTarget[target.key] else {
                 findings.append(
                     ForgeQualityFinding(
                         metric: target.metric,
+                        scope: target.scope,
                         reason: .missingEvidence,
                         measuredValue: nil,
                         comparator: target.comparator,
@@ -402,6 +448,7 @@ public enum ForgeQualityEvaluator {
                 findings.append(
                     ForgeQualityFinding(
                         metric: target.metric,
+                        scope: target.scope,
                         reason: .physicalDeviceRequired,
                         measuredValue: measurement.value,
                         comparator: target.comparator,
@@ -415,6 +462,7 @@ public enum ForgeQualityEvaluator {
                 findings.append(
                     ForgeQualityFinding(
                         metric: target.metric,
+                        scope: target.scope,
                         reason: .thresholdExceeded,
                         measuredValue: measurement.value,
                         comparator: target.comparator,
@@ -424,11 +472,14 @@ public enum ForgeQualityEvaluator {
             }
         }
 
-        findings.sort {
-            if $0.metric.rawValue == $1.metric.rawValue {
-                return $0.reason.rawValue < $1.reason.rawValue
+        findings.sort { lhs, rhs in
+            if lhs.scope.sortKey == rhs.scope.sortKey {
+                if lhs.metric.rawValue == rhs.metric.rawValue {
+                    return lhs.reason.rawValue < rhs.reason.rawValue
+                }
+                return lhs.metric.rawValue < rhs.metric.rawValue
             }
-            return $0.metric.rawValue < $1.metric.rawValue
+            return lhs.scope.sortKey < rhs.scope.sortKey
         }
         supportingReceiptIDs.sort()
 
@@ -482,11 +533,14 @@ public struct ForgeQualitySnapshot: Codable, Hashable, Sendable {
         self.policy = policy
         self.acceptedConstitutionRevision = acceptedConstitutionRevision
         self.binding = binding
-        self.measurements = measurements.sorted {
-            if $0.metric.rawValue == $1.metric.rawValue {
-                return $0.receiptID < $1.receiptID
+        self.measurements = measurements.sorted { lhs, rhs in
+            if lhs.scope.sortKey == rhs.scope.sortKey {
+                if lhs.metric.rawValue == rhs.metric.rawValue {
+                    return lhs.receiptID < rhs.receiptID
+                }
+                return lhs.metric.rawValue < rhs.metric.rawValue
             }
-            return $0.metric.rawValue < $1.metric.rawValue
+            return lhs.scope.sortKey < rhs.scope.sortKey
         }
     }
 
