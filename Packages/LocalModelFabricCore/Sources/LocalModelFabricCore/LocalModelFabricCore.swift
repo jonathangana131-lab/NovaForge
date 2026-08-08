@@ -189,8 +189,11 @@ public struct LocalModelRuntimeIdentity: Codable, Equatable, Hashable, Sendable 
     }
 
     fileprivate var stableKey: String {
-        [modelID, revision, artifactSHA256, runtimeID, runtimeRevision, kvCacheType, String(contextTokens), deviceProfileID, osBuild]
-            .joined(separator: "|")
+        [
+            modelID, revision, artifactID, artifactSHA256, tokenizerID, tokenizerRevision,
+            runtimeID, runtimeRevision, quantization ?? "<none>", kvCacheType,
+            String(contextTokens), deviceProfileID, osBuild,
+        ].joined(separator: "|")
     }
 
     private static func isBlank(_ value: String) -> Bool {
@@ -399,6 +402,7 @@ public struct LocalModelFabricRequest: Equatable, Sendable {
     public let role: LocalModelFabricRole
     public let mode: LocalModelFabricSelectionMode
     public let deviceProfileID: String
+    public let osBuild: String
     public let requirements: LocalModelMissionRequirements
     public let qualificationSuiteID: String
     public let qualificationSuiteRevision: String
@@ -409,6 +413,7 @@ public struct LocalModelFabricRequest: Equatable, Sendable {
         role: LocalModelFabricRole,
         mode: LocalModelFabricSelectionMode = .mission,
         deviceProfileID: String,
+        osBuild: String,
         requirements: LocalModelMissionRequirements = .init(),
         qualificationSuiteID: String,
         qualificationSuiteRevision: String,
@@ -416,11 +421,13 @@ public struct LocalModelFabricRequest: Equatable, Sendable {
         compatibilityPolicy: LocalModelCompatibilityPolicy = .conservativeV1
     ) throws {
         guard !Self.isBlank(deviceProfileID) else { throw LocalModelFabricValidationError.blankField("deviceProfileID") }
+        guard !Self.isBlank(osBuild) else { throw LocalModelFabricValidationError.blankField("osBuild") }
         guard !Self.isBlank(qualificationSuiteID) else { throw LocalModelFabricValidationError.blankField("qualificationSuiteID") }
         guard !Self.isBlank(qualificationSuiteRevision) else { throw LocalModelFabricValidationError.blankField("qualificationSuiteRevision") }
         self.role = role
         self.mode = mode
         self.deviceProfileID = deviceProfileID
+        self.osBuild = osBuild
         self.requirements = requirements
         self.qualificationSuiteID = qualificationSuiteID
         self.qualificationSuiteRevision = qualificationSuiteRevision
@@ -437,6 +444,7 @@ public enum LocalModelFabricRejectionReason: String, Codable, Hashable, Sendable
     case tierNotPreferred
     case experimentalOptInRequired
     case deviceProfileMismatch
+    case osBuildMismatch
     case runtimeIdentityMismatch
     case contextInsufficient
     case preflightIneligible
@@ -587,6 +595,9 @@ public enum LocalModelFabricSelector {
         }
         if candidate.device.profileID != request.deviceProfileID {
             reasons.append(.deviceProfileMismatch)
+        }
+        if candidate.runtimeIdentity.osBuild != request.osBuild {
+            reasons.append(.osBuildMismatch)
         }
         if !candidate.runtimeIdentity.matches(descriptor: candidate.descriptor, deviceProfileID: request.deviceProfileID) {
             reasons.append(.runtimeIdentityMismatch)
