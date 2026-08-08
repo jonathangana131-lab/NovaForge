@@ -68,6 +68,13 @@ public struct ForgeComposerUnitInterval: Hashable, Codable, Sendable {
         self.value = value
     }
 
+    private init(validatedValue value: Double) {
+        self.value = value
+    }
+
+    public static let standardCreativity = Self(validatedValue: 0.45)
+    public static let cautiousRefactorRisk = Self(validatedValue: 0.25)
+
     private enum CodingKeys: String, CodingKey { case value }
 
     public init(from decoder: Decoder) throws {
@@ -183,6 +190,39 @@ public enum ForgeComposerPrivacyIntent: Hashable, Codable, Sendable {
     }
 }
 
+/// The one V14 control authority shared by the Composer and Plan Space. These fields capture user
+/// preferences only. Mission policy, provider permission, and model/device qualification remain
+/// external authorities; in particular `privacy == .localOnly` never contains a cloud fallback.
+public struct ForgeComposerV14ControlProfile: Hashable, Codable, Sendable {
+    public var intelligence: ForgeComposerIntelligenceIntent
+    public var buildDepth: ForgeComposerBuildDepthIntent
+    public var creativity: ForgeComposerUnitInterval
+    public var refactorRisk: ForgeComposerUnitInterval
+    public var autonomy: ForgeComposerAutonomyIntent
+    public var privacy: ForgeComposerPrivacyIntent
+
+    public init(
+        intelligence: ForgeComposerIntelligenceIntent = .automatic,
+        buildDepth: ForgeComposerBuildDepthIntent = .complete,
+        creativity: ForgeComposerUnitInterval = .standardCreativity,
+        refactorRisk: ForgeComposerUnitInterval = .cautiousRefactorRisk,
+        autonomy: ForgeComposerAutonomyIntent = .collaborate,
+        privacy: ForgeComposerPrivacyIntent = .localOnly
+    ) {
+        self.intelligence = intelligence
+        self.buildDepth = buildDepth
+        self.creativity = creativity
+        self.refactorRisk = refactorRisk
+        self.autonomy = autonomy
+        self.privacy = privacy
+    }
+
+    public var requestsFullForge: Bool { autonomy == .fullForge }
+    public var requiresExternalModelQualification: Bool {
+        intelligence.requiresExternalQualification
+    }
+}
+
 public enum ForgeComposerCreationKind: String, CaseIterable, Codable, Hashable, Sendable {
     case app
     case game
@@ -191,48 +231,33 @@ public enum ForgeComposerCreationKind: String, CaseIterable, Codable, Hashable, 
     case other
 }
 
-/// Durable user-owned front-door intent. It captures preferences only; it cannot grant execution,
-/// promote a model, mint completion evidence, or authorize a provider outside `privacy`.
+/// Durable user-owned front-door intent. The same V14 control profile is carried forward by
+/// `PlanSpaceProposal` and `ReadyToForgeSummary`, so the front door cannot fork into a second
+/// autonomy/privacy/intelligence authority while a plan is being resolved.
 public struct ForgeComposerIntentEnvelope: Hashable, Codable, Sendable {
     public static let currentSchemaVersion = ForgeComposerIntentValidation.schemaVersion
 
     public let schemaVersion: Int
     public let intentSummary: String
-    public let autonomy: ForgeComposerAutonomyIntent
-    public let buildDepth: ForgeComposerBuildDepthIntent
-    public let intelligence: ForgeComposerIntelligenceIntent
-    public let privacy: ForgeComposerPrivacyIntent
-    public let creativity: ForgeComposerUnitInterval
-    public let refactorRisk: ForgeComposerUnitInterval
+    public let controls: ForgeComposerV14ControlProfile
     public let creationKind: ForgeComposerCreationKind?
     public let runTargetID: String?
 
     public init(
         intentSummary: String,
-        autonomy: ForgeComposerAutonomyIntent = .collaborate,
-        buildDepth: ForgeComposerBuildDepthIntent = .complete,
-        intelligence: ForgeComposerIntelligenceIntent = .automatic,
-        privacy: ForgeComposerPrivacyIntent = .localOnly,
-        creativity: ForgeComposerUnitInterval,
-        refactorRisk: ForgeComposerUnitInterval,
+        controls: ForgeComposerV14ControlProfile = .init(),
         creationKind: ForgeComposerCreationKind? = nil,
         runTargetID: String? = nil
     ) throws {
         self.schemaVersion = Self.currentSchemaVersion
         self.intentSummary = try ForgeComposerIntentValidation.intentSummary(intentSummary)
-        self.autonomy = autonomy
-        self.buildDepth = buildDepth
-        self.intelligence = try Self.validatedIntelligence(intelligence)
-        self.privacy = try Self.validatedPrivacy(privacy)
-        self.creativity = creativity
-        self.refactorRisk = refactorRisk
+        self.controls = try Self.validatedControls(controls)
         self.creationKind = creationKind
         self.runTargetID = try runTargetID.map(ForgeComposerIntentValidation.identifier)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, intentSummary, autonomy, buildDepth, intelligence, privacy
-        case creativity, refactorRisk, creationKind, runTargetID
+        case schemaVersion, intentSummary, controls, creationKind, runTargetID
     }
 
     public init(from decoder: Decoder) throws {
@@ -244,43 +269,45 @@ public struct ForgeComposerIntentEnvelope: Hashable, Codable, Sendable {
 
         try self.init(
             intentSummary: container.decode(String.self, forKey: .intentSummary),
-            autonomy: container.decode(ForgeComposerAutonomyIntent.self, forKey: .autonomy),
-            buildDepth: container.decode(ForgeComposerBuildDepthIntent.self, forKey: .buildDepth),
-            intelligence: container.decode(ForgeComposerIntelligenceIntent.self, forKey: .intelligence),
-            privacy: container.decode(ForgeComposerPrivacyIntent.self, forKey: .privacy),
-            creativity: container.decode(ForgeComposerUnitInterval.self, forKey: .creativity),
-            refactorRisk: container.decode(ForgeComposerUnitInterval.self, forKey: .refactorRisk),
+            controls: container.decode(ForgeComposerV14ControlProfile.self, forKey: .controls),
             creationKind: container.decodeIfPresent(ForgeComposerCreationKind.self, forKey: .creationKind),
             runTargetID: container.decodeIfPresent(String.self, forKey: .runTargetID)
         )
     }
 
     public var requiresExternalModelQualification: Bool {
-        intelligence.requiresExternalQualification
+        controls.requiresExternalModelQualification
     }
 
-    public var requestsFullForge: Bool { autonomy == .fullForge }
+    public var requestsFullForge: Bool { controls.requestsFullForge }
 
-    private static func validatedIntelligence(
-        _ intelligence: ForgeComposerIntelligenceIntent
-    ) throws -> ForgeComposerIntelligenceIntent {
-        switch intelligence {
+    private static func validatedControls(
+        _ controls: ForgeComposerV14ControlProfile
+    ) throws -> ForgeComposerV14ControlProfile {
+        let intelligence: ForgeComposerIntelligenceIntent
+        switch controls.intelligence {
         case .automatic:
-            return .automatic
+            intelligence = .automatic
         case .explicitModel(let referenceID):
-            return try .explicit(referenceID: referenceID)
+            intelligence = try .explicit(referenceID: referenceID)
         }
-    }
 
-    private static func validatedPrivacy(
-        _ privacy: ForgeComposerPrivacyIntent
-    ) throws -> ForgeComposerPrivacyIntent {
-        switch privacy {
+        let privacy: ForgeComposerPrivacyIntent
+        switch controls.privacy {
         case .localOnly:
-            return .localOnly
+            privacy = .localOnly
         case .providerAllowlist(let providerIDs):
-            return try .providers(providerIDs)
+            privacy = try .providers(providerIDs)
         }
+
+        return .init(
+            intelligence: intelligence,
+            buildDepth: controls.buildDepth,
+            creativity: controls.creativity,
+            refactorRisk: controls.refactorRisk,
+            autonomy: controls.autonomy,
+            privacy: privacy
+        )
     }
 }
 
