@@ -262,18 +262,65 @@ public struct ForgeCompactContextItem: Codable, Hashable, Sendable {
     }
 }
 
+/// Compact reference for context not selected into the rendered capsule. It retains enough
+/// source and retention metadata to prove that persisted bytes did not hide mandatory truth or
+/// move an omitted fact across source revisions.
 public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
     public let id: String
+    public let sourceRevision: String
     public let tier: ForgeCompactContextTier
     public let kind: ForgeCompactFactKind
     public let priority: Int
-    public let mustRetain: Bool
+    public let protectedByUser: Bool
+
+    public var mustRetain: Bool {
+        tier == .l0AlwaysResident || kind.requiresRetentionWhenPresent || protectedByUser
+    }
 
     init(item: ForgeCompactContextItem) {
         id = item.id
+        sourceRevision = item.sourceRevision
         tier = item.tier
         kind = item.kind
         priority = item.priority
-        mustRetain = item.mustRetain
+        protectedByUser = item.protectedByUser
+    }
+
+    private init(
+        id: String,
+        sourceRevision: String,
+        tier: ForgeCompactContextTier,
+        kind: ForgeCompactFactKind,
+        priority: Int,
+        protectedByUser: Bool
+    ) throws {
+        self.id = try ForgeCompactValidation.identifier(id, field: "omitted.id")
+        self.sourceRevision = try ForgeCompactValidation.identifier(sourceRevision, field: "omitted.sourceRevision")
+        guard (0...100).contains(priority) else {
+            throw ForgeCompactError.invalidPriority(priority)
+        }
+        self.tier = tier
+        self.kind = kind
+        self.priority = priority
+        self.protectedByUser = protectedByUser
+        guard !mustRetain else {
+            throw ForgeCompactError.invalidCapsuleShape
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sourceRevision, tier, kind, priority, protectedByUser
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            id: c.decode(String.self, forKey: .id),
+            sourceRevision: c.decode(String.self, forKey: .sourceRevision),
+            tier: c.decode(ForgeCompactContextTier.self, forKey: .tier),
+            kind: c.decode(ForgeCompactFactKind.self, forKey: .kind),
+            priority: c.decode(Int.self, forKey: .priority),
+            protectedByUser: c.decode(Bool.self, forKey: .protectedByUser)
+        )
     }
 }
