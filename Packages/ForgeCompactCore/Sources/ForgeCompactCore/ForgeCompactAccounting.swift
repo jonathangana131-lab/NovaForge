@@ -279,7 +279,7 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
         }
     }
 
-    private static func provenanceIsCompatible(
+    fileprivate static func provenanceIsCompatible(
         _ provenance: ForgeCompactAccountingProvenance,
         basis: ForgeCompactAccountingBasis
     ) -> Bool {
