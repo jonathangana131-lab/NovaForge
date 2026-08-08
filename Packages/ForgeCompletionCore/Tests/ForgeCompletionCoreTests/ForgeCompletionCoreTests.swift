@@ -3,11 +3,18 @@ import XCTest
 @testable import ForgeCompletionCore
 
 final class ForgeCompletionCoreTests: XCTestCase {
-    private func target(revision: String = "source-abc", acceptanceRevision: Int = 4) throws -> ForgeCompletionTarget {
+    private func target(
+        missionID: String = "mission-1",
+        sourceRevision: String = "source-abc",
+        constitutionRevision: Int = 4,
+        constitutionReceiptID: String = "constitution-receipt-4"
+    ) throws -> ForgeCompletionTarget {
         try ForgeCompletionTarget(
+            missionID: missionID,
             projectID: "project-1",
-            sourceRevision: revision,
-            acceptanceRevision: acceptanceRevision
+            sourceRevision: sourceRevision,
+            constitutionRevision: constitutionRevision,
+            constitutionReceiptID: constitutionReceiptID
         )
     }
 
@@ -29,11 +36,30 @@ final class ForgeCompletionCoreTests: XCTestCase {
     }
 
     private func constitution(_ criteria: [ForgeCompletionCriterion]) throws -> ForgeCompletionConstitution {
-        try ForgeCompletionConstitution(
-            target: target(),
-            authorityReceiptID: "mission-constitution-receipt-1",
-            criteria: criteria
-        )
+        try ForgeCompletionConstitution(target: target(), criteria: criteria)
+    }
+
+    private func authority(for evidenceClass: ForgeCompletionEvidenceClass) -> ForgeCompletionEvidenceAuthority {
+        switch evidenceClass {
+        case .buildReceipt:
+            return .buildSystem
+        case .launchReceipt, .runtimeJourney:
+            return .runtimeHarness
+        case .semanticPlaytest:
+            return .playtestHarness
+        case .persistenceReceipt:
+            return .persistenceHarness
+        case .visualQAReceipt:
+            return .visualQA
+        case .accessibilityReceipt:
+            return .accessibilityHarness
+        case .performanceReceipt:
+            return .performanceHarness
+        case .testReceipt:
+            return .testHarness
+        case .acceptedExternalReceipt:
+            return .acceptedExternal
+        }
     }
 
     private func evidence(
@@ -42,7 +68,8 @@ final class ForgeCompletionCoreTests: XCTestCase {
         evidenceClass: ForgeCompletionEvidenceClass,
         journeyID: String? = nil,
         outcome: ForgeCompletionEvidenceOutcome = .passed,
-        target: ForgeCompletionTarget? = nil
+        target: ForgeCompletionTarget? = nil,
+        authority: ForgeCompletionEvidenceAuthority? = nil
     ) throws -> ForgeCompletionEvidence {
         try ForgeCompletionEvidence(
             id: id,
@@ -50,7 +77,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
             criterionID: criterionID,
             evidenceClass: evidenceClass,
             journeyID: journeyID,
-            authority: .testHarness,
+            authority: authority ?? self.authority(for: evidenceClass),
             authorityReceiptID: "authority-\(id)",
             outcome: outcome
         )
@@ -165,7 +192,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
 
     func testEvidenceFromAnotherSourceRevisionFailsClosed() throws {
         let build = try criterion("build", kind: .build, evidenceClasses: [.buildReceipt])
-        let staleTarget = try target(revision: "source-old")
+        let staleTarget = try target(sourceRevision: "source-old")
 
         XCTAssertThrowsError(
             try ForgeCompletionEvaluator.evaluate(
@@ -180,6 +207,46 @@ final class ForgeCompletionCoreTests: XCTestCase {
             )
         ) { error in
             XCTAssertEqual(error as? ForgeCompletionError, .targetMismatch("evidence:stale-build"))
+        }
+    }
+
+    func testEvidenceFromAnotherMissionFailsClosed() throws {
+        let build = try criterion("build", kind: .build, evidenceClasses: [.buildReceipt])
+        let otherMission = try target(missionID: "mission-2")
+
+        XCTAssertThrowsError(
+            try ForgeCompletionEvaluator.evaluate(
+                constitution: constitution([build]),
+                evidence: [try evidence(
+                    "other-mission-build",
+                    criterionID: "build",
+                    evidenceClass: .buildReceipt,
+                    target: otherMission
+                )],
+                defectInventory: emptyInventory()
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCompletionError, .targetMismatch("evidence:other-mission-build"))
+        }
+    }
+
+    func testEvidenceFromAnotherConstitutionReceiptFailsClosed() throws {
+        let build = try criterion("build", kind: .build, evidenceClasses: [.buildReceipt])
+        let otherConstitution = try target(constitutionReceiptID: "constitution-receipt-other")
+
+        XCTAssertThrowsError(
+            try ForgeCompletionEvaluator.evaluate(
+                constitution: constitution([build]),
+                evidence: [try evidence(
+                    "other-constitution-build",
+                    criterionID: "build",
+                    evidenceClass: .buildReceipt,
+                    target: otherConstitution
+                )],
+                defectInventory: emptyInventory()
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCompletionError, .targetMismatch("evidence:other-constitution-build"))
         }
     }
 
@@ -199,6 +266,19 @@ final class ForgeCompletionCoreTests: XCTestCase {
                 error as? ForgeCompletionError,
                 .duplicateEvidenceSlot("launch|launchReceipt|-")
             )
+        }
+    }
+
+    func testEvidenceAuthorityMustMatchEvidenceClass() throws {
+        XCTAssertThrowsError(
+            try evidence(
+                "fake-visual",
+                criterionID: "visual",
+                evidenceClass: .visualQAReceipt,
+                authority: .testHarness
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCompletionError, .invalidEvidenceAuthority("fake-visual"))
         }
     }
 
@@ -290,7 +370,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
         XCTAssertEqual(evaluation.knownLimitationIDs, ["limitation-minor"])
     }
 
-    func testLimitationCannotHideResolvedOrSevereDefect() throws {
+    func testLimitationCannotHideSevereDefect() throws {
         let build = try criterion("build", kind: .build, evidenceClasses: [.buildReceipt])
         let inventory = try ForgeCompletionDefectInventory(
             target: target(),
@@ -318,10 +398,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
                 knownLimitations: [limitation]
             )
         ) { error in
-            XCTAssertEqual(
-                error as? ForgeCompletionError,
-                .invalidLimitationDefectReference("severe")
-            )
+            XCTAssertEqual(error as? ForgeCompletionError, .invalidLimitationDefectReference("severe"))
         }
     }
 
@@ -351,7 +428,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
             explanation: "Explicitly waived.",
             authorityReceiptID: "waiver-receipt"
         )
-        let criterion = try self.criterion(
+        let performance = try criterion(
             "perf",
             kind: .performance,
             evidenceClasses: [.performanceReceipt],
@@ -360,7 +437,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
 
         XCTAssertThrowsError(
             try ForgeCompletionEvaluator.evaluate(
-                constitution: constitution([criterion]),
+                constitution: constitution([performance]),
                 evidence: [try evidence("fake", criterionID: "perf", evidenceClass: .performanceReceipt)],
                 defectInventory: emptyInventory()
             )
@@ -369,17 +446,17 @@ final class ForgeCompletionCoreTests: XCTestCase {
         }
     }
 
-    func testNestedTargetDecodeRevalidatesRevision() throws {
+    func testNestedTargetDecodeRevalidatesConstitutionRevision() throws {
         let item = try evidence("build", criterionID: "build", evidenceClass: .buildReceipt)
         let data = try JSONEncoder().encode(item)
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         var nestedTarget = try XCTUnwrap(object["target"] as? [String: Any])
-        nestedTarget["acceptanceRevision"] = -1
+        nestedTarget["constitutionRevision"] = -1
         object["target"] = nestedTarget
         let tampered = try JSONSerialization.data(withJSONObject: object)
 
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeCompletionEvidence.self, from: tampered)) { error in
-            XCTAssertEqual(error as? ForgeCompletionError, .invalidRevision("target.acceptanceRevision"))
+            XCTAssertEqual(error as? ForgeCompletionError, .invalidRevision("target.constitutionRevision"))
         }
     }
 
@@ -416,5 +493,19 @@ final class ForgeCompletionCoreTests: XCTestCase {
         let tampered = try JSONSerialization.data(withJSONObject: object)
 
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeCompletionEvidence.self, from: tampered))
+    }
+
+    func testTargetRejectsControlCharactersInAuthorityIdentity() throws {
+        XCTAssertThrowsError(
+            try ForgeCompletionTarget(
+                missionID: "mission\u{0000}bad",
+                projectID: "project",
+                sourceRevision: "source",
+                constitutionRevision: 1,
+                constitutionReceiptID: "receipt"
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCompletionError, .invalidIdentifier("target.missionID"))
+        }
     }
 }

@@ -5,27 +5,29 @@ public enum ForgeCompletionError: Error, Equatable, Sendable {
     case invalidText(String)
     case invalidRevision(String)
     case unsupportedSchema(Int)
+    case collectionTooLarge(field: String, maximum: Int)
     case duplicateCriterionID(String)
     case duplicateEvidenceID(String)
     case duplicateEvidenceSlot(String)
     case duplicateDefectID(String)
     case duplicateLimitationID(String)
     case invalidCriterion(String)
-    case invalidRequirement(String)
     case targetMismatch(String)
     case unknownCriterion(String)
     case evidenceForWaivedCriterion(String)
     case unexpectedEvidenceClass(String)
     case unexpectedJourney(String)
+    case invalidEvidenceAuthority(String)
     case invalidLimitationDefectReference(String)
 }
 
 private enum ForgeCompletionValidation {
-    static func identifier(_ value: String, field: String) throws -> String {
+    static func identifier(_ value: String, field: String, maximumLength: Int = 512) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              trimmed.count <= 512,
-              !trimmed.contains(where: { $0.isNewline || $0.isControl }) else {
+        guard !trimmed.isEmpty, trimmed.count <= maximumLength else {
+            throw ForgeCompletionError.invalidIdentifier(field)
+        }
+        guard !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw ForgeCompletionError.invalidIdentifier(field)
         }
         return trimmed
@@ -45,36 +47,75 @@ private enum ForgeCompletionValidation {
         }
         return value
     }
+
+    static func maximumCount(_ count: Int, field: String, maximum: Int) throws {
+        guard count <= maximum else {
+            throw ForgeCompletionError.collectionTooLarge(field: field, maximum: maximum)
+        }
+    }
 }
 
-/// Exact accepted product state that completion evidence must describe.
-/// Mission lifecycle authority remains external to this package.
+/// Exact accepted mission/product definition that all completion evidence must describe.
+/// The constitution receipt is opaque: authenticity belongs to the canonical Mission adapter.
 public struct ForgeCompletionTarget: Codable, Equatable, Hashable, Sendable {
+    public let missionID: String
     public let projectID: String
     public let sourceRevision: String
-    public let acceptanceRevision: Int
+    public let constitutionRevision: Int
+    public let constitutionReceiptID: String
 
-    public init(projectID: String, sourceRevision: String, acceptanceRevision: Int) throws {
-        self.projectID = try ForgeCompletionValidation.identifier(projectID, field: "target.projectID")
-        self.sourceRevision = try ForgeCompletionValidation.identifier(sourceRevision, field: "target.sourceRevision")
-        self.acceptanceRevision = try ForgeCompletionValidation.revision(acceptanceRevision, field: "target.acceptanceRevision")
+    public init(
+        missionID: String,
+        projectID: String,
+        sourceRevision: String,
+        constitutionRevision: Int,
+        constitutionReceiptID: String
+    ) throws {
+        self.missionID = try ForgeCompletionValidation.identifier(
+            missionID,
+            field: "target.missionID",
+            maximumLength: 256
+        )
+        self.projectID = try ForgeCompletionValidation.identifier(
+            projectID,
+            field: "target.projectID",
+            maximumLength: 256
+        )
+        self.sourceRevision = try ForgeCompletionValidation.identifier(
+            sourceRevision,
+            field: "target.sourceRevision"
+        )
+        self.constitutionRevision = try ForgeCompletionValidation.revision(
+            constitutionRevision,
+            field: "target.constitutionRevision"
+        )
+        self.constitutionReceiptID = try ForgeCompletionValidation.identifier(
+            constitutionReceiptID,
+            field: "target.constitutionReceiptID"
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case projectID, sourceRevision, acceptanceRevision
+        case missionID
+        case projectID
+        case sourceRevision
+        case constitutionRevision
+        case constitutionReceiptID
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
+            missionID: container.decode(String.self, forKey: .missionID),
             projectID: container.decode(String.self, forKey: .projectID),
             sourceRevision: container.decode(String.self, forKey: .sourceRevision),
-            acceptanceRevision: container.decode(Int.self, forKey: .acceptanceRevision)
+            constitutionRevision: container.decode(Int.self, forKey: .constitutionRevision),
+            constitutionReceiptID: container.decode(String.self, forKey: .constitutionReceiptID)
         )
     }
 }
 
-public enum ForgeCompletionCriterionKind: String, Codable, CaseIterable, Sendable {
+public enum ForgeCompletionCriterionKind: String, Codable, CaseIterable, Hashable, Sendable {
     case build
     case launch
     case runtimeStability
@@ -90,7 +131,7 @@ public enum ForgeCompletionCriterionKind: String, Codable, CaseIterable, Sendabl
     case custom
 }
 
-public enum ForgeCompletionEvidenceClass: String, Codable, CaseIterable, Sendable {
+public enum ForgeCompletionEvidenceClass: String, Codable, CaseIterable, Hashable, Sendable {
     case buildReceipt
     case launchReceipt
     case runtimeJourney
@@ -101,6 +142,29 @@ public enum ForgeCompletionEvidenceClass: String, Codable, CaseIterable, Sendabl
     case performanceReceipt
     case testReceipt
     case acceptedExternalReceipt
+
+    fileprivate func permits(_ authority: ForgeCompletionEvidenceAuthority) -> Bool {
+        switch self {
+        case .buildReceipt:
+            return authority == .buildSystem || authority == .testHarness || authority == .acceptedExternal
+        case .launchReceipt, .runtimeJourney:
+            return authority == .runtimeHarness || authority == .testHarness || authority == .acceptedExternal
+        case .semanticPlaytest:
+            return authority == .playtestHarness || authority == .acceptedExternal
+        case .persistenceReceipt:
+            return authority == .persistenceHarness || authority == .runtimeHarness || authority == .testHarness || authority == .acceptedExternal
+        case .visualQAReceipt:
+            return authority == .visualQA || authority == .acceptedExternal
+        case .accessibilityReceipt:
+            return authority == .accessibilityHarness || authority == .acceptedExternal
+        case .performanceReceipt:
+            return authority == .performanceHarness || authority == .acceptedExternal
+        case .testReceipt:
+            return authority == .testHarness || authority == .acceptedExternal
+        case .acceptedExternalReceipt:
+            return authority == .userAccepted || authority == .acceptedExternal
+        }
+    }
 }
 
 /// Deliberately has no model/model-observation case. A model statement is not completion evidence.
@@ -128,12 +192,20 @@ public struct ForgeCompletionWaiver: Codable, Equatable, Sendable {
     public let authorityReceiptID: String
 
     public init(explanation: String, authorityReceiptID: String) throws {
-        self.explanation = try ForgeCompletionValidation.text(explanation, field: "waiver.explanation", maximumLength: 4_096)
-        self.authorityReceiptID = try ForgeCompletionValidation.identifier(authorityReceiptID, field: "waiver.authorityReceiptID")
+        self.explanation = try ForgeCompletionValidation.text(
+            explanation,
+            field: "waiver.explanation",
+            maximumLength: 4_096
+        )
+        self.authorityReceiptID = try ForgeCompletionValidation.identifier(
+            authorityReceiptID,
+            field: "waiver.authorityReceiptID"
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case explanation, authorityReceiptID
+        case explanation
+        case authorityReceiptID
     }
 
     public init(from decoder: Decoder) throws {
@@ -145,12 +217,15 @@ public struct ForgeCompletionWaiver: Codable, Equatable, Sendable {
     }
 }
 
+/// There is no silent optional state. A criterion is either required or explicitly authority-waived.
 public enum ForgeCompletionRequirement: Codable, Equatable, Sendable {
     case required
     case waived(ForgeCompletionWaiver)
 }
 
 public struct ForgeCompletionCriterion: Codable, Equatable, Sendable {
+    public static let maximumJourneyIDs = 128
+
     public let id: String
     public let kind: ForgeCompletionCriterionKind
     public let title: String
@@ -166,19 +241,36 @@ public struct ForgeCompletionCriterion: Codable, Equatable, Sendable {
         requiredEvidenceClasses: [ForgeCompletionEvidenceClass],
         journeyIDs: [String] = []
     ) throws {
-        let normalizedID = try ForgeCompletionValidation.identifier(id, field: "criterion.id")
-        let normalizedTitle = try ForgeCompletionValidation.text(title, field: "criterion.title", maximumLength: 1_024)
-
+        let normalizedID = try ForgeCompletionValidation.identifier(
+            id,
+            field: "criterion.id",
+            maximumLength: 256
+        )
+        let normalizedTitle = try ForgeCompletionValidation.text(
+            title,
+            field: "criterion.title",
+            maximumLength: 1_024
+        )
         guard !requiredEvidenceClasses.isEmpty else {
             throw ForgeCompletionError.invalidCriterion(normalizedID)
         }
+
         let canonicalEvidenceClasses = Array(Set(requiredEvidenceClasses)).sorted { $0.rawValue < $1.rawValue }
         guard canonicalEvidenceClasses.count == requiredEvidenceClasses.count else {
             throw ForgeCompletionError.invalidCriterion(normalizedID)
         }
 
+        try ForgeCompletionValidation.maximumCount(
+            journeyIDs.count,
+            field: "criterion.journeyIDs",
+            maximum: Self.maximumJourneyIDs
+        )
         let normalizedJourneys = try journeyIDs.map {
-            try ForgeCompletionValidation.identifier($0, field: "criterion.journeyID")
+            try ForgeCompletionValidation.identifier(
+                $0,
+                field: "criterion.journeyID",
+                maximumLength: 256
+            )
         }
         let canonicalJourneys = Array(Set(normalizedJourneys)).sorted()
         guard canonicalJourneys.count == normalizedJourneys.count else {
@@ -199,7 +291,12 @@ public struct ForgeCompletionCriterion: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, title, requirement, requiredEvidenceClasses, journeyIDs
+        case id
+        case kind
+        case title
+        case requirement
+        case requiredEvidenceClasses
+        case journeyIDs
     }
 
     public init(from decoder: Decoder) throws {
@@ -217,21 +314,21 @@ public struct ForgeCompletionCriterion: Codable, Equatable, Sendable {
 
 public struct ForgeCompletionConstitution: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
+    public static let maximumCriteria = 128
 
     public let schemaVersion: Int
     public let target: ForgeCompletionTarget
-    public let authorityReceiptID: String
     public let criteria: [ForgeCompletionCriterion]
 
-    public init(
-        target: ForgeCompletionTarget,
-        authorityReceiptID: String,
-        criteria: [ForgeCompletionCriterion]
-    ) throws {
-        let normalizedReceipt = try ForgeCompletionValidation.identifier(authorityReceiptID, field: "constitution.authorityReceiptID")
+    public init(target: ForgeCompletionTarget, criteria: [ForgeCompletionCriterion]) throws {
         guard !criteria.isEmpty else {
             throw ForgeCompletionError.invalidCriterion("constitution.criteria")
         }
+        try ForgeCompletionValidation.maximumCount(
+            criteria.count,
+            field: "constitution.criteria",
+            maximum: Self.maximumCriteria
+        )
 
         var seen = Set<String>()
         for criterion in criteria {
@@ -242,12 +339,13 @@ public struct ForgeCompletionConstitution: Codable, Equatable, Sendable {
 
         self.schemaVersion = Self.currentSchemaVersion
         self.target = target
-        self.authorityReceiptID = normalizedReceipt
         self.criteria = criteria.sorted { $0.id < $1.id }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, target, authorityReceiptID, criteria
+        case schemaVersion
+        case target
+        case criteria
     }
 
     public init(from decoder: Decoder) throws {
@@ -258,7 +356,6 @@ public struct ForgeCompletionConstitution: Codable, Equatable, Sendable {
         }
         try self.init(
             target: container.decode(ForgeCompletionTarget.self, forKey: .target),
-            authorityReceiptID: container.decode(String.self, forKey: .authorityReceiptID),
             criteria: container.decode([ForgeCompletionCriterion].self, forKey: .criteria)
         )
     }
@@ -284,17 +381,37 @@ public struct ForgeCompletionEvidence: Codable, Equatable, Sendable {
         authorityReceiptID: String,
         outcome: ForgeCompletionEvidenceOutcome
     ) throws {
-        self.id = try ForgeCompletionValidation.identifier(id, field: "evidence.id")
+        let normalizedID = try ForgeCompletionValidation.identifier(
+            id,
+            field: "evidence.id",
+            maximumLength: 256
+        )
+        guard evidenceClass.permits(authority) else {
+            throw ForgeCompletionError.invalidEvidenceAuthority(normalizedID)
+        }
+
+        self.id = normalizedID
         self.target = target
-        self.criterionID = try ForgeCompletionValidation.identifier(criterionID, field: "evidence.criterionID")
+        self.criterionID = try ForgeCompletionValidation.identifier(
+            criterionID,
+            field: "evidence.criterionID",
+            maximumLength: 256
+        )
         self.evidenceClass = evidenceClass
         if let journeyID {
-            self.journeyID = try ForgeCompletionValidation.identifier(journeyID, field: "evidence.journeyID")
+            self.journeyID = try ForgeCompletionValidation.identifier(
+                journeyID,
+                field: "evidence.journeyID",
+                maximumLength: 256
+            )
         } else {
             self.journeyID = nil
         }
         self.authority = authority
-        self.authorityReceiptID = try ForgeCompletionValidation.identifier(authorityReceiptID, field: "evidence.authorityReceiptID")
+        self.authorityReceiptID = try ForgeCompletionValidation.identifier(
+            authorityReceiptID,
+            field: "evidence.authorityReceiptID"
+        )
         self.outcome = outcome
     }
 
@@ -303,7 +420,14 @@ public struct ForgeCompletionEvidence: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, target, criterionID, evidenceClass, journeyID, authority, authorityReceiptID, outcome
+        case id
+        case target
+        case criterionID
+        case evidenceClass
+        case journeyID
+        case authority
+        case authorityReceiptID
+        case outcome
     }
 
     public init(from decoder: Decoder) throws {
@@ -349,14 +473,25 @@ public struct ForgeCompletionDefect: Codable, Equatable, Sendable {
         status: ForgeCompletionDefectStatus,
         summary: String
     ) throws {
-        self.id = try ForgeCompletionValidation.identifier(id, field: "defect.id")
+        self.id = try ForgeCompletionValidation.identifier(
+            id,
+            field: "defect.id",
+            maximumLength: 256
+        )
         self.severity = severity
         self.status = status
-        self.summary = try ForgeCompletionValidation.text(summary, field: "defect.summary", maximumLength: 4_096)
+        self.summary = try ForgeCompletionValidation.text(
+            summary,
+            field: "defect.summary",
+            maximumLength: 4_096
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, severity, status, summary
+        case id
+        case severity
+        case status
+        case summary
     }
 
     public init(from decoder: Decoder) throws {
@@ -371,6 +506,8 @@ public struct ForgeCompletionDefect: Codable, Equatable, Sendable {
 }
 
 public struct ForgeCompletionDefectInventory: Codable, Equatable, Sendable {
+    public static let maximumDefects = 1_024
+
     public let target: ForgeCompletionTarget
     public let authorityReceiptID: String
     public let defects: [ForgeCompletionDefect]
@@ -380,8 +517,17 @@ public struct ForgeCompletionDefectInventory: Codable, Equatable, Sendable {
         authorityReceiptID: String,
         defects: [ForgeCompletionDefect]
     ) throws {
+        try ForgeCompletionValidation.maximumCount(
+            defects.count,
+            field: "defectInventory.defects",
+            maximum: Self.maximumDefects
+        )
         self.target = target
-        self.authorityReceiptID = try ForgeCompletionValidation.identifier(authorityReceiptID, field: "defectInventory.authorityReceiptID")
+        self.authorityReceiptID = try ForgeCompletionValidation.identifier(
+            authorityReceiptID,
+            field: "defectInventory.authorityReceiptID"
+        )
+
         var seen = Set<String>()
         for defect in defects {
             guard seen.insert(defect.id).inserted else {
@@ -392,7 +538,9 @@ public struct ForgeCompletionDefectInventory: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case target, authorityReceiptID, defects
+        case target
+        case authorityReceiptID
+        case defects
     }
 
     public init(from decoder: Decoder) throws {
@@ -406,6 +554,8 @@ public struct ForgeCompletionDefectInventory: Codable, Equatable, Sendable {
 }
 
 public struct ForgeCompletionKnownLimitation: Codable, Equatable, Sendable {
+    public static let maximumCoveredDefects = 256
+
     public let id: String
     public let target: ForgeCompletionTarget
     public let text: String
@@ -419,22 +569,46 @@ public struct ForgeCompletionKnownLimitation: Codable, Equatable, Sendable {
         coveredDefectIDs: [String] = [],
         authorityReceiptID: String
     ) throws {
-        self.id = try ForgeCompletionValidation.identifier(id, field: "limitation.id")
+        self.id = try ForgeCompletionValidation.identifier(
+            id,
+            field: "limitation.id",
+            maximumLength: 256
+        )
         self.target = target
-        self.text = try ForgeCompletionValidation.text(text, field: "limitation.text", maximumLength: 8_192)
+        self.text = try ForgeCompletionValidation.text(
+            text,
+            field: "limitation.text",
+            maximumLength: 8_192
+        )
+        try ForgeCompletionValidation.maximumCount(
+            coveredDefectIDs.count,
+            field: "limitation.coveredDefectIDs",
+            maximum: Self.maximumCoveredDefects
+        )
         let normalizedDefectIDs = try coveredDefectIDs.map {
-            try ForgeCompletionValidation.identifier($0, field: "limitation.coveredDefectID")
+            try ForgeCompletionValidation.identifier(
+                $0,
+                field: "limitation.coveredDefectID",
+                maximumLength: 256
+            )
         }
         let canonicalDefectIDs = Array(Set(normalizedDefectIDs)).sorted()
         guard canonicalDefectIDs.count == normalizedDefectIDs.count else {
             throw ForgeCompletionError.invalidLimitationDefectReference(self.id)
         }
         self.coveredDefectIDs = canonicalDefectIDs
-        self.authorityReceiptID = try ForgeCompletionValidation.identifier(authorityReceiptID, field: "limitation.authorityReceiptID")
+        self.authorityReceiptID = try ForgeCompletionValidation.identifier(
+            authorityReceiptID,
+            field: "limitation.authorityReceiptID"
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, target, text, coveredDefectIDs, authorityReceiptID
+        case id
+        case target
+        case text
+        case coveredDefectIDs
+        case authorityReceiptID
     }
 
     public init(from decoder: Decoder) throws {
@@ -449,22 +623,48 @@ public struct ForgeCompletionKnownLimitation: Codable, Equatable, Sendable {
     }
 }
 
-public enum ForgeCompletionBlocker: Codable, Equatable, Sendable {
-    case missingEvidence(criterionID: String, evidenceClass: ForgeCompletionEvidenceClass, journeyID: String?)
-    case evidenceNotPassed(criterionID: String, evidenceClass: ForgeCompletionEvidenceClass, journeyID: String?, outcome: ForgeCompletionEvidenceOutcome)
+public enum ForgeCompletionBlocker: Equatable, Sendable {
+    case missingEvidence(
+        criterionID: String,
+        evidenceClass: ForgeCompletionEvidenceClass,
+        journeyID: String?
+    )
+    case evidenceNotPassed(
+        criterionID: String,
+        evidenceClass: ForgeCompletionEvidenceClass,
+        journeyID: String?,
+        outcome: ForgeCompletionEvidenceOutcome
+    )
     case missingDefectInventory
     case unresolvedSevereDefect(defectID: String, severity: ForgeCompletionDefectSeverity)
     case undocumentedKnownDefect(defectID: String)
+
+    fileprivate var sortKey: String {
+        switch self {
+        case let .missingEvidence(criterionID, evidenceClass, journeyID):
+            return "0|\(criterionID)|\(evidenceClass.rawValue)|\(journeyID ?? "-")"
+        case let .evidenceNotPassed(criterionID, evidenceClass, journeyID, outcome):
+            return "1|\(criterionID)|\(evidenceClass.rawValue)|\(journeyID ?? "-")|\(outcome.rawValue)"
+        case .missingDefectInventory:
+            return "2"
+        case let .unresolvedSevereDefect(defectID, severity):
+            return "3|\(String(format: "%02d", severity.rawValue))|\(defectID)"
+        case let .undocumentedKnownDefect(defectID):
+            return "4|\(defectID)"
+        }
+    }
 }
 
-public enum ForgeCompletionAcceptanceStatus: String, Codable, Sendable {
+public enum ForgeCompletionAcceptanceStatus: String, Sendable {
     case blocked
     case satisfied
     case satisfiedWithKnownLimitations
 }
 
-/// Product-acceptance result only. It is not a Mission Engine terminal-state transition.
-public struct ForgeCompletionEvaluation: Codable, Equatable, Sendable {
+/// Derived product-acceptance result only. Intentionally not Codable: relaunch/restore must
+/// recompute acceptance from the current canonical constitution, receipts, and defect inventory.
+/// This value is not a Mission Engine terminal-state transition.
+public struct ForgeCompletionEvaluation: Equatable, Sendable {
     public let target: ForgeCompletionTarget
     public let status: ForgeCompletionAcceptanceStatus
     public let blockers: [ForgeCompletionBlocker]
@@ -478,12 +678,26 @@ public struct ForgeCompletionEvaluation: Codable, Equatable, Sendable {
 }
 
 public enum ForgeCompletionEvaluator {
+    public static let maximumEvidence = 4_096
+    public static let maximumKnownLimitations = 512
+
     public static func evaluate(
         constitution: ForgeCompletionConstitution,
         evidence: [ForgeCompletionEvidence],
         defectInventory: ForgeCompletionDefectInventory?,
         knownLimitations: [ForgeCompletionKnownLimitation] = []
     ) throws -> ForgeCompletionEvaluation {
+        try ForgeCompletionValidation.maximumCount(
+            evidence.count,
+            field: "evaluation.evidence",
+            maximum: Self.maximumEvidence
+        )
+        try ForgeCompletionValidation.maximumCount(
+            knownLimitations.count,
+            field: "evaluation.knownLimitations",
+            maximum: Self.maximumKnownLimitations
+        )
+
         let target = constitution.target
         let criteriaByID = Dictionary(uniqueKeysWithValues: constitution.criteria.map { ($0.id, $0) })
 
@@ -512,7 +726,8 @@ public enum ForgeCompletionEvaluator {
                     throw ForgeCompletionError.unexpectedJourney(item.id)
                 }
             } else {
-                guard let journeyID = item.journeyID, criterion.journeyIDs.contains(journeyID) else {
+                guard let journeyID = item.journeyID,
+                      criterion.journeyIDs.contains(journeyID) else {
                     throw ForgeCompletionError.unexpectedJourney(item.id)
                 }
             }
@@ -543,7 +758,10 @@ public enum ForgeCompletionEvaluator {
         var acceptedEvidenceIDs: [String] = []
 
         for criterion in constitution.criteria where criterion.isRequired {
-            let journeys: [String?] = criterion.journeyIDs.isEmpty ? [nil] : criterion.journeyIDs.map(Optional.some)
+            let journeys: [String?] = criterion.journeyIDs.isEmpty
+                ? [nil]
+                : criterion.journeyIDs.map(Optional.some)
+
             for evidenceClass in criterion.requiredEvidenceClasses {
                 for journeyID in journeys {
                     let slot = "\(criterion.id)|\(evidenceClass.rawValue)|\(journeyID ?? "-")"
@@ -573,7 +791,9 @@ public enum ForgeCompletionEvaluator {
             guard defectInventory.target == target else {
                 throw ForgeCompletionError.targetMismatch("defectInventory")
             }
-            let defectsByID = Dictionary(uniqueKeysWithValues: defectInventory.defects.map { ($0.id, $0) })
+            let defectsByID = Dictionary(
+                uniqueKeysWithValues: defectInventory.defects.map { ($0.id, $0) }
+            )
 
             for coveredID in limitationsByDefectID.keys {
                 guard let defect = defectsByID[coveredID],
@@ -585,14 +805,17 @@ public enum ForgeCompletionEvaluator {
 
             for defect in defectInventory.defects where defect.status == .open {
                 if defect.severity >= .high {
-                    blockers.append(.unresolvedSevereDefect(defectID: defect.id, severity: defect.severity))
+                    blockers.append(.unresolvedSevereDefect(
+                        defectID: defect.id,
+                        severity: defect.severity
+                    ))
                 } else if limitationsByDefectID[defect.id] == nil {
                     blockers.append(.undocumentedKnownDefect(defectID: defect.id))
                 }
             }
         } else {
-            if !limitationsByDefectID.isEmpty {
-                throw ForgeCompletionError.invalidLimitationDefectReference(limitationsByDefectID.keys.sorted().first ?? "unknown")
+            if let firstCoveredDefect = limitationsByDefectID.keys.sorted().first {
+                throw ForgeCompletionError.invalidLimitationDefectReference(firstCoveredDefect)
             }
             blockers.append(.missingDefectInventory)
         }
@@ -602,7 +825,7 @@ public enum ForgeCompletionEvaluator {
             return nil
         }.sorted()
 
-        let canonicalBlockers = blockers.sorted { String(describing: $0) < String(describing: $1) }
+        let canonicalBlockers = blockers.sorted { $0.sortKey < $1.sortKey }
         let status: ForgeCompletionAcceptanceStatus
         if !canonicalBlockers.isEmpty {
             status = .blocked
