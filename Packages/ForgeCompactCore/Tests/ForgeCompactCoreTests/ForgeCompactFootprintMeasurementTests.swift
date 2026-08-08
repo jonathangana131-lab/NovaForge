@@ -32,6 +32,8 @@ final class ForgeCompactFootprintMeasurementTests: XCTestCase {
         XCTAssertEqual(result.footprint.sourceItemCount, 2)
         XCTAssertEqual(result.footprint.selectedItemCount, 1)
         XCTAssertEqual(result.footprint.omittedItemCount, 1)
+        let expectedBasisPoints = ((optional.renderedUTF8Bytes + 1) * 10_000) / expectedBaseline
+        XCTAssertEqual(result.footprint.reductionBasisPoints, expectedBasisPoints)
         XCTAssertGreaterThan(result.footprint.reductionBasisPoints, 0)
         XCTAssertLessThanOrEqual(result.footprint.reductionBasisPoints, 10_000)
     }
