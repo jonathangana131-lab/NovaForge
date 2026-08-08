@@ -70,6 +70,9 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
 
         var omittedIDs = Set<String>()
         for item in omittedItems {
+            guard item.sourceRevision == authority.sourceRevision else {
+                throw ForgeCompactError.sourceRevisionMismatch(itemID: item.id)
+            }
             guard !item.mustRetain else {
                 throw ForgeCompactError.invalidCapsuleShape
             }
