@@ -32,33 +32,23 @@ public enum ForgeCompactThermalPressure: String, CaseIterable, Codable, Hashable
     }
 }
 
-/// Production never auto-admits research-only envelopes. Research mode must be opted into.
 public enum ForgeCompactOperatingMode: String, Codable, Hashable, Sendable {
     case production
     case research
 }
 
-/// Forge Compact is a local inference governor. Remote compute is represented only so an
-/// accidental hosted candidate can be rejected explicitly instead of becoming a fallback.
 public enum ForgeCompactComputeLocation: String, Codable, Hashable, Sendable {
     case local
     case remote
 }
 
-/// Qualification status is asserted by the external compatibility/evidence authority.
-/// ForgeCompactCore does not mint model support, device compatibility, or benchmark truth.
+/// Candidate metadata only. A current host grant is required before measured evidence can be used.
 public enum ForgeCompactEvidenceStatus: String, Codable, Hashable, Sendable {
-    /// A durable receipt covers this exact execution envelope on this exact device profile.
     case exactDeviceMeasured
-    /// Exact-device experiment exists, but the envelope is still research-only.
     case experimentalExactDeviceMeasured
-    /// Source metadata, estimates, or missing/stale evidence cannot be treated as measured proof.
     case unverified
 }
 
-/// One externally-qualified local execution option. The binding and receipt identifiers are opaque:
-/// the authority that creates them owns the exact model/revision/tokenizer/runtime/quant/KV/context/
-/// device/OS tuple and its measurement provenance.
 public struct ForgeCompactExecutionEnvelope: Codable, Hashable, Sendable {
     public let id: String
     public let profileID: String
@@ -93,9 +83,28 @@ public struct ForgeCompactExecutionEnvelope: Codable, Hashable, Sendable {
     }
 }
 
-/// Live inputs for one deterministic governor decision. `memoryBudgetBytes` is the host's
-/// current safe process budget after observing memory availability and pressure; it is not a
-/// physical-RAM claim and is intentionally compared with measured peak resident usage.
+/// Transient host acceptance for one exact execution envelope. It is deliberately non-Codable and
+/// package-internal to create, so candidate bytes cannot mint their own qualification authority.
+/// The future LocalModelQualificationCore adapter must live at this package boundary and create
+/// grants only after resolving current accepted evidence.
+public struct ForgeCompactQualificationGrant: Hashable, Sendable {
+    public let acceptedEnvelope: ForgeCompactExecutionEnvelope
+
+    init(acceptedEnvelope: ForgeCompactExecutionEnvelope) throws {
+        guard ForgeCompactGovernor.hasCanonicalIdentity(acceptedEnvelope),
+              acceptedEnvelope.computeLocation == .local,
+              acceptedEnvelope.evidenceStatus != .unverified
+        else {
+            throw ForgeCompactError.invalidIdentifier(field: "qualificationGrant")
+        }
+        self.acceptedEnvelope = acceptedEnvelope
+    }
+
+    fileprivate func matches(_ envelope: ForgeCompactExecutionEnvelope) -> Bool {
+        acceptedEnvelope == envelope
+    }
+}
+
 public struct ForgeCompactRuntimeSnapshot: Codable, Equatable, Sendable {
     public let deviceProfileID: String
     public let requestedContextTokens: UInt64
@@ -124,8 +133,6 @@ public struct ForgeCompactRuntimeSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-/// Headroom is explicit product policy rather than a hidden device claim. Warning pressure may
-/// reserve more memory than nominal pressure, causing a measured lower-footprint envelope to win.
 public struct ForgeCompactGovernorPolicy: Codable, Equatable, Sendable {
     public let operatingMode: ForgeCompactOperatingMode
     public let nominalReserveBytes: UInt64
@@ -147,16 +154,12 @@ public struct ForgeCompactGovernorPolicy: Codable, Equatable, Sendable {
         self.suspendAtThermalPressure = suspendAtThermalPressure
     }
 
-    fileprivate var isValid: Bool {
-        warningReserveBytes >= nominalReserveBytes
-    }
+    fileprivate var isValid: Bool { warningReserveBytes >= nominalReserveBytes }
 
     fileprivate func reserveBytes(for pressure: ForgeCompactMemoryPressure) -> UInt64 {
         switch pressure {
-        case .nominal:
-            nominalReserveBytes
-        case .warning, .critical:
-            warningReserveBytes
+        case .nominal: nominalReserveBytes
+        case .warning, .critical: warningReserveBytes
         }
     }
 }
@@ -166,6 +169,7 @@ public enum ForgeCompactCandidateRejectionReason: String, CaseIterable, Codable,
     case invalidIdentity
     case nonLocalCompute
     case unverifiedEvidence
+    case qualificationGrantMissing
     case experimentalDisallowed
     case deviceProfileMismatch
     case contextBelowMissionMinimum
@@ -174,15 +178,11 @@ public enum ForgeCompactCandidateRejectionReason: String, CaseIterable, Codable,
     case insufficientMeasuredHeadroom
 }
 
-/// Stable per-candidate evidence for why a decision did or did not admit an envelope.
 public struct ForgeCompactCandidateVerdict: Codable, Equatable, Sendable {
     public let envelopeID: String
     public let rejectionReasons: [ForgeCompactCandidateRejectionReason]
 
-    public init(
-        envelopeID: String,
-        rejectionReasons: [ForgeCompactCandidateRejectionReason]
-    ) {
+    public init(envelopeID: String, rejectionReasons: [ForgeCompactCandidateRejectionReason]) {
         self.envelopeID = envelopeID
         self.rejectionReasons = rejectionReasons
     }
@@ -208,39 +208,78 @@ public enum ForgeCompactDecisionAction: Codable, Equatable, Sendable {
     case block(reason: ForgeCompactBlockReason)
 }
 
-/// Durable, serializable proof of a deterministic policy decision. It is not a benchmark receipt;
-/// it preserves the exact selected envelope and therefore the opaque configuration + qualification
-/// receipt bindings that the external evidence authority supplied at decision time.
-///
-/// Decode replays the selected envelope through the current deterministic governor so persisted
-/// bytes cannot swap/remove an accepted evidence binding while leaving the stored action intact.
-public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
+/// Fresh derived decision. This type is intentionally non-Codable: durable bytes are represented
+/// by `ForgeCompactDecisionArchive`, which must be restored through fresh qualification grants.
+public struct ForgeCompactDecisionReceipt: Equatable, Sendable {
     public let snapshot: ForgeCompactRuntimeSnapshot
     public let policy: ForgeCompactGovernorPolicy
     public let action: ForgeCompactDecisionAction
     public let selectedEnvelope: ForgeCompactExecutionEnvelope?
     public let candidateVerdicts: [ForgeCompactCandidateVerdict]
+    public let evaluatedEnvelopes: [ForgeCompactExecutionEnvelope]
 
-    init(
+    fileprivate init(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         action: ForgeCompactDecisionAction,
         selectedEnvelope: ForgeCompactExecutionEnvelope?,
-        candidateVerdicts: [ForgeCompactCandidateVerdict]
+        candidateVerdicts: [ForgeCompactCandidateVerdict],
+        evaluatedEnvelopes: [ForgeCompactExecutionEnvelope]
     ) {
         self.snapshot = snapshot
         self.policy = policy
         self.action = action
         self.selectedEnvelope = selectedEnvelope
         self.candidateVerdicts = candidateVerdicts
+        self.evaluatedEnvelopes = evaluatedEnvelopes
+    }
+
+    public func archive() -> ForgeCompactDecisionArchive {
+        ForgeCompactDecisionArchive(receipt: self)
+    }
+}
+
+public enum ForgeCompactDecisionArchiveError: Error, Equatable, Sendable {
+    case invalidSchema(Int)
+    case invalidShape
+    case freshQualificationRequired
+}
+
+/// Durable, serializable historical inputs + output. Decoding this type never restores execution
+/// authority. Call `restore(qualificationGrants:)` to re-run the governor against current host trust.
+public struct ForgeCompactDecisionArchive: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 1
+    private static let maximumEnvelopeCount = 512
+
+    public let schemaVersion: Int
+    public let snapshot: ForgeCompactRuntimeSnapshot
+    public let policy: ForgeCompactGovernorPolicy
+    public let action: ForgeCompactDecisionAction
+    public let selectedEnvelope: ForgeCompactExecutionEnvelope?
+    public let candidateVerdicts: [ForgeCompactCandidateVerdict]
+    public let evaluatedEnvelopes: [ForgeCompactExecutionEnvelope]
+
+    fileprivate init(receipt: ForgeCompactDecisionReceipt) {
+        schemaVersion = Self.currentSchemaVersion
+        snapshot = receipt.snapshot
+        policy = receipt.policy
+        action = receipt.action
+        selectedEnvelope = receipt.selectedEnvelope
+        candidateVerdicts = receipt.candidateVerdicts
+        evaluatedEnvelopes = receipt.evaluatedEnvelopes
     }
 
     private enum CodingKeys: String, CodingKey {
-        case snapshot, policy, action, selectedEnvelope, candidateVerdicts
+        case schemaVersion, snapshot, policy, action, selectedEnvelope, candidateVerdicts, evaluatedEnvelopes
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == Self.currentSchemaVersion else {
+            throw ForgeCompactDecisionArchiveError.invalidSchema(schemaVersion)
+        }
+
         let snapshot = try container.decode(ForgeCompactRuntimeSnapshot.self, forKey: .snapshot)
         let policy = try container.decode(ForgeCompactGovernorPolicy.self, forKey: .policy)
         let action = try container.decode(ForgeCompactDecisionAction.self, forKey: .action)
@@ -252,131 +291,85 @@ public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
             [ForgeCompactCandidateVerdict].self,
             forKey: .candidateVerdicts
         )
+        let evaluatedEnvelopes = try container.decode(
+            [ForgeCompactExecutionEnvelope].self,
+            forKey: .evaluatedEnvelopes
+        )
 
-        guard Self.isDecodedStateConsistent(
-            snapshot: snapshot,
-            policy: policy,
-            action: action,
-            selectedEnvelope: selectedEnvelope,
-            candidateVerdicts: candidateVerdicts
-        ) else {
-            throw DecodingError.dataCorrupted(
-                .init(
-                    codingPath: decoder.codingPath,
-                    debugDescription: "Forge Compact decision receipt is inconsistent with the deterministic governor."
-                )
-            )
+        guard candidateVerdicts.count <= Self.maximumEnvelopeCount,
+              evaluatedEnvelopes.count <= Self.maximumEnvelopeCount,
+              Self.hasBasicActionShape(action: action, selectedEnvelope: selectedEnvelope)
+        else {
+            throw ForgeCompactDecisionArchiveError.invalidShape
         }
 
-        self.init(
+        self.schemaVersion = schemaVersion
+        self.snapshot = snapshot
+        self.policy = policy
+        self.action = action
+        self.selectedEnvelope = selectedEnvelope
+        self.candidateVerdicts = candidateVerdicts
+        self.evaluatedEnvelopes = evaluatedEnvelopes
+    }
+
+    public func restore(
+        qualificationGrants: Set<ForgeCompactQualificationGrant>
+    ) throws -> ForgeCompactDecisionReceipt {
+        let refreshed = ForgeCompactGovernor.decide(
             snapshot: snapshot,
             policy: policy,
-            action: action,
-            selectedEnvelope: selectedEnvelope,
-            candidateVerdicts: candidateVerdicts
+            envelopes: evaluatedEnvelopes,
+            qualificationGrants: qualificationGrants
         )
+        guard refreshed.action == action,
+              refreshed.selectedEnvelope == selectedEnvelope,
+              refreshed.candidateVerdicts == candidateVerdicts,
+              refreshed.evaluatedEnvelopes == evaluatedEnvelopes
+        else {
+            throw ForgeCompactDecisionArchiveError.freshQualificationRequired
+        }
+        return refreshed
     }
 
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(snapshot, forKey: .snapshot)
-        try container.encode(policy, forKey: .policy)
-        try container.encode(action, forKey: .action)
-        try container.encodeIfPresent(selectedEnvelope, forKey: .selectedEnvelope)
-        try container.encode(candidateVerdicts, forKey: .candidateVerdicts)
-    }
-
-    private static func isDecodedStateConsistent(
-        snapshot: ForgeCompactRuntimeSnapshot,
-        policy: ForgeCompactGovernorPolicy,
+    private static func hasBasicActionShape(
         action: ForgeCompactDecisionAction,
-        selectedEnvelope: ForgeCompactExecutionEnvelope?,
-        candidateVerdicts: [ForgeCompactCandidateVerdict]
+        selectedEnvelope: ForgeCompactExecutionEnvelope?
     ) -> Bool {
         switch action {
         case .keep(let envelopeID), .switchTo(let envelopeID):
-            guard let selectedEnvelope,
-                  selectedEnvelope.id == envelopeID
-            else {
-                return false
-            }
-
-            let selectedVerdicts = candidateVerdicts.filter { $0.envelopeID == envelopeID }
-            guard selectedVerdicts.count == 1,
-                  selectedVerdicts[0].isEligible
-            else {
-                return false
-            }
-
-            let replay = ForgeCompactGovernor.decide(
-                snapshot: snapshot,
-                policy: policy,
-                envelopes: [selectedEnvelope]
-            )
-            return replay.action == action && replay.selectedEnvelope == selectedEnvelope
-
-        case .suspend:
-            guard selectedEnvelope == nil,
-                  candidateVerdicts.isEmpty
-            else {
-                return false
-            }
-            let replay = ForgeCompactGovernor.decide(
-                snapshot: snapshot,
-                policy: policy,
-                envelopes: []
-            )
-            return replay.action == action
-
-        case .block(let reason):
-            guard selectedEnvelope == nil else { return false }
-            switch reason {
-            case .invalidRuntimeSnapshot, .invalidPolicy:
-                guard candidateVerdicts.isEmpty else { return false }
-            case .noEligibleLocalEnvelope:
-                guard !candidateVerdicts.contains(where: \.isEligible) else { return false }
-            }
-            let replay = ForgeCompactGovernor.decide(
-                snapshot: snapshot,
-                policy: policy,
-                envelopes: []
-            )
-            return replay.action == action
+            return selectedEnvelope?.id == envelopeID
+        case .suspend, .block:
+            return selectedEnvelope == nil
         }
     }
 }
 
-/// Pure policy engine for pressure-aware local execution selection.
-///
-/// Safety boundaries:
-/// - remote compute is never selected;
-/// - production accepts only externally asserted exact-device measured evidence;
-/// - context never drops below the mission minimum;
-/// - critical/configured pressure fails closed by suspending;
-/// - no eligible envelope blocks rather than guessing or silently escalating to cloud.
 public enum ForgeCompactGovernor {
     public static func decide(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
-        envelopes: [ForgeCompactExecutionEnvelope]
+        envelopes: [ForgeCompactExecutionEnvelope],
+        qualificationGrants: Set<ForgeCompactQualificationGrant>
     ) -> ForgeCompactDecisionReceipt {
-        guard isValid(snapshot) else {
+        if !isValid(snapshot) {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidRuntimeSnapshot),
                 selectedEnvelope: nil,
-                candidateVerdicts: []
+                candidateVerdicts: [],
+                evaluatedEnvelopes: envelopes
             )
         }
 
-        guard policy.isValid else {
+        if !policy.isValid {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidPolicy),
                 selectedEnvelope: nil,
-                candidateVerdicts: []
+                candidateVerdicts: [],
+                evaluatedEnvelopes: envelopes
             )
         }
 
@@ -386,7 +379,8 @@ public enum ForgeCompactGovernor {
                 policy: policy,
                 action: .suspend(reason: .memoryPressureThresholdReached),
                 selectedEnvelope: nil,
-                candidateVerdicts: []
+                candidateVerdicts: [],
+                evaluatedEnvelopes: envelopes
             )
         }
 
@@ -396,7 +390,8 @@ public enum ForgeCompactGovernor {
                 policy: policy,
                 action: .suspend(reason: .thermalPressureThresholdReached),
                 selectedEnvelope: nil,
-                candidateVerdicts: []
+                candidateVerdicts: [],
+                evaluatedEnvelopes: envelopes
             )
         }
 
@@ -409,7 +404,8 @@ public enum ForgeCompactGovernor {
                     snapshot: snapshot,
                     policy: policy,
                     reserveBytes: reserveBytes,
-                    isDuplicate: duplicateIDs.contains(envelope.id)
+                    isDuplicate: duplicateIDs.contains(envelope.id),
+                    qualificationGrants: qualificationGrants
                 )
             }
             .sorted { lhs, rhs in
@@ -423,14 +419,14 @@ public enum ForgeCompactGovernor {
         let eligible = envelopes.filter { eligibleIDs.contains($0.id) }
 
         if let activeEnvelopeID = snapshot.activeEnvelopeID,
-           let activeEnvelope = eligible.first(where: { $0.id == activeEnvelopeID })
-        {
+           let active = eligible.first(where: { $0.id == activeEnvelopeID }) {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .keep(envelopeID: activeEnvelopeID),
-                selectedEnvelope: activeEnvelope,
-                candidateVerdicts: verdicts
+                selectedEnvelope: active,
+                candidateVerdicts: verdicts,
+                evaluatedEnvelopes: envelopes
             )
         }
 
@@ -440,7 +436,8 @@ public enum ForgeCompactGovernor {
                 policy: policy,
                 action: .block(reason: .noEligibleLocalEnvelope),
                 selectedEnvelope: nil,
-                candidateVerdicts: verdicts
+                candidateVerdicts: verdicts,
+                evaluatedEnvelopes: envelopes
             )
         }
 
@@ -449,13 +446,14 @@ public enum ForgeCompactGovernor {
             policy: policy,
             action: .switchTo(envelopeID: selected.id),
             selectedEnvelope: selected,
-            candidateVerdicts: verdicts
+            candidateVerdicts: verdicts,
+            evaluatedEnvelopes: envelopes
         )
     }
 
     private static func isValid(_ snapshot: ForgeCompactRuntimeSnapshot) -> Bool {
-        isCanonicalIdentity(snapshot.deviceProfileID)
-            && snapshot.activeEnvelopeID.map(isCanonicalIdentity) ?? true
+        hasCanonicalIdentity(snapshot.deviceProfileID)
+            && (snapshot.activeEnvelopeID.map(hasCanonicalIdentity) ?? true)
             && snapshot.requestedContextTokens > 0
             && snapshot.minimumMissionContextTokens > 0
             && snapshot.minimumMissionContextTokens <= snapshot.requestedContextTokens
@@ -467,10 +465,8 @@ public enum ForgeCompactGovernor {
     ) -> Set<String> {
         var seen = Set<String>()
         var duplicates = Set<String>()
-        for envelope in envelopes {
-            if !seen.insert(envelope.id).inserted {
-                duplicates.insert(envelope.id)
-            }
+        for envelope in envelopes where !seen.insert(envelope.id).inserted {
+            duplicates.insert(envelope.id)
         }
         return duplicates
     }
@@ -480,50 +476,41 @@ public enum ForgeCompactGovernor {
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         reserveBytes: UInt64,
-        isDuplicate: Bool
+        isDuplicate: Bool,
+        qualificationGrants: Set<ForgeCompactQualificationGrant>
     ) -> ForgeCompactCandidateVerdict {
         var reasons: [ForgeCompactCandidateRejectionReason] = []
+        let canonicalIdentity = hasCanonicalIdentity(envelope)
 
-        if isDuplicate {
-            reasons.append(.duplicateEnvelopeID)
-        }
-
-        if !isCanonicalIdentity(envelope.id)
-            || !isCanonicalIdentity(envelope.profileID)
-            || !isCanonicalIdentity(envelope.configurationBindingID)
-            || !isCanonicalIdentity(envelope.deviceProfileID)
-            || !isCanonicalIdentity(envelope.evidenceReceiptID)
-        {
-            reasons.append(.invalidIdentity)
-        }
-
-        if envelope.computeLocation != .local {
-            reasons.append(.nonLocalCompute)
-        }
+        if isDuplicate { reasons.append(.duplicateEnvelopeID) }
+        if !canonicalIdentity { reasons.append(.invalidIdentity) }
+        if envelope.computeLocation != .local { reasons.append(.nonLocalCompute) }
 
         switch envelope.evidenceStatus {
         case .exactDeviceMeasured:
             break
         case .experimentalExactDeviceMeasured:
-            if policy.operatingMode != .research {
-                reasons.append(.experimentalDisallowed)
-            }
+            if policy.operatingMode != .research { reasons.append(.experimentalDisallowed) }
         case .unverified:
             reasons.append(.unverifiedEvidence)
+        }
+
+        if canonicalIdentity,
+           envelope.computeLocation == .local,
+           envelope.evidenceStatus != .unverified,
+           !qualificationGrants.contains(where: { $0.matches(envelope) }) {
+            reasons.append(.qualificationGrantMissing)
         }
 
         if envelope.deviceProfileID != snapshot.deviceProfileID {
             reasons.append(.deviceProfileMismatch)
         }
-
         if envelope.contextTokens < snapshot.minimumMissionContextTokens {
             reasons.append(.contextBelowMissionMinimum)
         }
-
         if envelope.contextTokens > snapshot.requestedContextTokens {
             reasons.append(.contextExceedsRequest)
         }
-
         if envelope.observedPeakResidentBytes == 0 {
             reasons.append(.invalidPeakMemoryMeasurement)
         } else if !hasMeasuredHeadroom(
@@ -553,23 +540,25 @@ public enum ForgeCompactGovernor {
         _ lhs: ForgeCompactExecutionEnvelope,
         _ rhs: ForgeCompactExecutionEnvelope
     ) -> Bool {
-        if lhs.contextTokens != rhs.contextTokens {
-            return lhs.contextTokens > rhs.contextTokens
-        }
+        if lhs.contextTokens != rhs.contextTokens { return lhs.contextTokens > rhs.contextTokens }
         if lhs.observedPeakResidentBytes != rhs.observedPeakResidentBytes {
             return lhs.observedPeakResidentBytes < rhs.observedPeakResidentBytes
         }
         return lhs.id < rhs.id
     }
 
-    private static func isCanonicalIdentity(_ value: String) -> Bool {
-        guard let normalized = normalized(value) else { return false }
-        return normalized == value
+    fileprivate static func hasCanonicalIdentity(_ envelope: ForgeCompactExecutionEnvelope) -> Bool {
+        hasCanonicalIdentity(envelope.id)
+            && hasCanonicalIdentity(envelope.profileID)
+            && hasCanonicalIdentity(envelope.configurationBindingID)
+            && hasCanonicalIdentity(envelope.deviceProfileID)
+            && hasCanonicalIdentity(envelope.evidenceReceiptID)
     }
 
-    private static func normalized(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty ? nil : normalized
+    fileprivate static func hasCanonicalIdentity(_ value: String) -> Bool {
+        !value.isEmpty
+            && value.utf8.count <= 512
+            && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+            && !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
     }
 }
