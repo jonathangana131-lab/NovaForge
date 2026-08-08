@@ -2,10 +2,10 @@ import AgentDomain
 import XCTest
 
 final class MissionStageGraphAdversarialTests: XCTestCase {
-    func testEmptyGraphIsNotAValidCompletableMissionPlan() {
+    func testEmptyGraphCanRepresentPlanningButNeverSatisfiedWork() {
         let graph = MissionStageGraph(missionID: MissionID(), stages: [])
 
-        XCTAssertEqual(graph.validationError, .emptyStageGraph)
+        XCTAssertNil(graph.validationError)
         XCTAssertFalse(graph.requiredWorkIsSatisfied)
     }
 
