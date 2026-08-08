@@ -47,6 +47,15 @@ public enum ForgeAuthorizationActionKind: String, CaseIterable, Codable, Hashabl
             .r4Unavailable
         }
     }
+
+    public var canMutateProjectFiles: Bool {
+        switch self {
+        case .projectSourceMutation, .destructiveProjectMutation:
+            true
+        default:
+            false
+        }
+    }
 }
 
 public enum ForgeAuthorizationPrivacyMode: String, Codable, Sendable {
@@ -132,7 +141,7 @@ public struct ForgeActionResourceLimits: Hashable, Sendable {
 
 public enum ForgeDecisionDependency: Hashable, Codable, Sendable {
     case none
-    case accepted(receiptID: String)
+    case accepted(decisionID: String, receiptID: String)
     case unresolvedMaterial(decisionID: String)
 }
 
@@ -223,6 +232,9 @@ public struct ForgeAuthorizationRequest: Hashable, Sendable {
               requestedWallClockSeconds > 0 else {
             throw ForgeAuthorizationError.invalidRequest
         }
+        guard action.canMutateProjectFiles ? mutationFileLimit > 0 : mutationFileLimit == 0 else {
+            throw ForgeAuthorizationError.invalidRequest
+        }
         if case let .hostedProvider(providerID) = workerLocality,
            !ForgeAuthorizationAuthority.isOpaqueIdentifier(providerID) {
             throw ForgeAuthorizationError.invalidRequest
@@ -230,8 +242,9 @@ public struct ForgeAuthorizationRequest: Hashable, Sendable {
         switch decisionDependency {
         case .none:
             break
-        case let .accepted(receiptID):
-            guard ForgeAuthorizationAuthority.isOpaqueIdentifier(receiptID) else {
+        case let .accepted(decisionID, receiptID):
+            guard ForgeAuthorizationAuthority.isOpaqueIdentifier(decisionID),
+                  ForgeAuthorizationAuthority.isOpaqueIdentifier(receiptID) else {
                 throw ForgeAuthorizationError.invalidRequest
             }
         case let .unresolvedMaterial(decisionID):
@@ -292,10 +305,7 @@ public enum ForgeAuthorizationMode: Hashable, Codable, Sendable {
 public struct ForgeAuthorizationReceipt: Hashable, Sendable {
     public let policyID: String
     public let policyRevision: String
-    public let requestID: String
-    public let authority: ForgeAuthorizationAuthority
-    public let scopeID: String
-    public let action: ForgeAuthorizationActionKind
+    public let request: ForgeAuthorizationRequest
     public let mode: ForgeAuthorizationMode
 }
 
@@ -312,19 +322,30 @@ public struct ForgeAuthorizationReceiptProjection: Hashable, Codable, Sendable {
     public let authorityEpoch: UInt64
     public let scopeID: String
     public let action: ForgeAuthorizationActionKind
+    public let workerLocality: ForgeWorkerLocality
+    public let mutationFileLimit: Int
+    public let requestedWallClockSeconds: Int
+    public let requestedThermalLoad: ForgeAuthorizationThermalLoad
+    public let decisionDependency: ForgeDecisionDependency
     public let mode: ForgeAuthorizationMode
 
     public init(receipt: ForgeAuthorizationReceipt) {
+        let request = receipt.request
         policyID = receipt.policyID
         policyRevision = receipt.policyRevision
-        requestID = receipt.requestID
-        projectID = receipt.authority.projectID
-        missionID = receipt.authority.missionID
-        checkpointID = receipt.authority.checkpointID
-        missionRevision = receipt.authority.missionRevision
-        authorityEpoch = receipt.authority.authorityEpoch
-        scopeID = receipt.scopeID
-        action = receipt.action
+        requestID = request.requestID
+        projectID = request.authority.projectID
+        missionID = request.authority.missionID
+        checkpointID = request.authority.checkpointID
+        missionRevision = request.authority.missionRevision
+        authorityEpoch = request.authority.authorityEpoch
+        scopeID = request.scopeID
+        action = request.action
+        workerLocality = request.workerLocality
+        mutationFileLimit = request.mutationFileLimit
+        requestedWallClockSeconds = request.requestedWallClockSeconds
+        requestedThermalLoad = request.requestedThermalLoad
+        decisionDependency = request.decisionDependency
         mode = receipt.mode
     }
 }
@@ -443,10 +464,7 @@ public enum ForgeAuthorizationEvaluator {
         ForgeAuthorizationReceipt(
             policyID: policy.policyID,
             policyRevision: policy.revision,
-            requestID: request.requestID,
-            authority: request.authority,
-            scopeID: request.scopeID,
-            action: request.action,
+            request: request,
             mode: mode
         )
     }
