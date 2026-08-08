@@ -178,6 +178,25 @@ final class ForgeCompactGovernorTests: XCTestCase {
         XCTAssertEqual(verdict(for: invalid.id, in: receipt)?.rejectionReasons, [.invalidIdentity])
     }
 
+    func testWhitespacePaddedEnvelopeIdentityIsRejectedInsteadOfNormalizedSilently() {
+        let invalid = envelope(id: " padded-id ")
+
+        let receipt = decide(envelopes: [invalid])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(verdict(for: invalid.id, in: receipt)?.rejectionReasons, [.invalidIdentity])
+    }
+
+    func testWhitespacePaddedActiveIdentityMakesSnapshotInvalid() {
+        let receipt = decide(
+            activeEnvelopeID: " active ",
+            envelopes: [envelope(id: "active")]
+        )
+
+        XCTAssertEqual(receipt.action, .block(reason: .invalidRuntimeSnapshot))
+        XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
+    }
+
     func testDuplicateEnvelopeIDsAreRejectedDeterministically() {
         let first = envelope(id: "duplicate", context: 4_096)
         let second = envelope(id: "duplicate", context: 8_192)
