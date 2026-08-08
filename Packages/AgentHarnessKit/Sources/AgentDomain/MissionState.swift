@@ -148,6 +148,7 @@ public struct MissionStageGraph: Codable, Equatable, Sendable {
 
     public var validationError: MissionStageGraphValidationError? {
         guard revision > 0 else { return .invalidGraphRevision }
+        guard !stages.isEmpty else { return .emptyStageGraph }
 
         var knownIDs = Set<MissionStageID>()
         var knownOrders = Set<UInt32>()
@@ -161,9 +162,18 @@ public struct MissionStageGraph: Codable, Equatable, Sendable {
             }
         }
 
+        let stagesByID = Dictionary(uniqueKeysWithValues: stages.map { ($0.stageID, $0) })
         for stage in stages {
-            for dependency in stage.dependencies where !knownIDs.contains(dependency) {
-                return .missingDependency
+            for dependency in stage.dependencies {
+                guard let dependencyStage = stagesByID[dependency] else {
+                    return .missingDependency
+                }
+                // Dependencies are hard prerequisites. Optional stages are
+                // deferrable, so they cannot be used as hard dependency roots.
+                // A future soft/ordering edge must be modeled separately.
+                if !dependencyStage.required {
+                    return .deferrableDependency
+                }
             }
         }
 
@@ -205,12 +215,14 @@ public struct MissionStageGraph: Codable, Equatable, Sendable {
 
 public enum MissionStageGraphValidationError: String, Error, Codable, Equatable, Sendable {
     case invalidGraphRevision
+    case emptyStageGraph
     case blankStageTitle
     case duplicateStageID
     case duplicateStageOrder
     case selfDependency
     case requiredStageDeferred
     case missingDependency
+    case deferrableDependency
     case dependencyCycle
 }
 
