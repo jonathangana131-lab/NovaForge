@@ -73,6 +73,20 @@ final class LocalAIQualificationCoreTests: XCTestCase {
         )
     }
 
+    private func standard(
+        suiteID: String = "novaforge-local-agent",
+        suiteRevision: String = "suite-1",
+        requiredTaskIDs: [String] = ["structured-tool-call", "multi-file-edit", "repair-loop"]
+    ) throws -> LocalAIQualificationStandard {
+        try .init(
+            standardID: "novaforge-iphone-local-agent",
+            standardRevision: "standard-1",
+            taskSuiteID: suiteID,
+            taskSuiteRevision: suiteRevision,
+            requiredTaskIDs: requiredTaskIDs
+        )
+    }
+
     private func receipt(
         profile: LocalAIExactProfile? = nil,
         revision: Int = 1,
@@ -93,13 +107,13 @@ final class LocalAIQualificationCoreTests: XCTestCase {
     }
 
     func testPhysicalExactEvidenceCanQualify() throws {
-        XCTAssertEqual(LocalAIQualificationEvaluator.badge(for: try receipt()), .qualified)
+        XCTAssertEqual(LocalAIQualificationEvaluator.badge(for: try receipt(), against: try standard()), .qualified)
     }
 
     func testSimulatorEvidenceCannotMintQualifiedBadge() throws {
         let simulatorProfile = try profile(environment: .simulator)
         XCTAssertEqual(
-            LocalAIQualificationEvaluator.badge(for: try receipt(profile: simulatorProfile)),
+            LocalAIQualificationEvaluator.badge(for: try receipt(profile: simulatorProfile), against: try standard()),
             .experimental
         )
     }
@@ -107,37 +121,62 @@ final class LocalAIQualificationCoreTests: XCTestCase {
     func testExperimentalBeyondRAMModeCannotMintQualifiedBadge() throws {
         let experimental = try profile(loading: .flashStreamingExperimental)
         XCTAssertEqual(
-            LocalAIQualificationEvaluator.badge(for: try receipt(profile: experimental)),
+            LocalAIQualificationEvaluator.badge(for: try receipt(profile: experimental), against: try standard()),
             .experimental
         )
     }
 
     func testLocalOnlyExternalNetworkEvidenceFailsClosed() throws {
         XCTAssertEqual(
-            LocalAIQualificationEvaluator.badge(for: try receipt(audit: .externalAccessObserved)),
+            LocalAIQualificationEvaluator.badge(for: try receipt(audit: .externalAccessObserved), against: try standard()),
             .unsupported
         )
     }
 
     func testUnmeasuredNetworkAuditCannotQualify() throws {
         XCTAssertEqual(
-            LocalAIQualificationEvaluator.badge(for: try receipt(audit: .notMeasured)),
+            LocalAIQualificationEvaluator.badge(for: try receipt(audit: .notMeasured), against: try standard()),
             .experimental
         )
     }
 
     func testFailedTaskOrCriticalResourceEvidenceIsUnsupported() throws {
         XCTAssertEqual(
-            LocalAIQualificationEvaluator.badge(for: try receipt(taskOutcome: .failed)),
+            LocalAIQualificationEvaluator.badge(for: try receipt(taskOutcome: .failed), against: try standard()),
             .unsupported
         )
         XCTAssertEqual(
-            LocalAIQualificationEvaluator.badge(for: try receipt(memoryPressure: .critical)),
+            LocalAIQualificationEvaluator.badge(for: try receipt(memoryPressure: .critical), against: try standard()),
             .unsupported
         )
         XCTAssertEqual(
-            LocalAIQualificationEvaluator.badge(for: try receipt(thermalEnd: .critical)),
+            LocalAIQualificationEvaluator.badge(for: try receipt(thermalEnd: .critical), against: try standard()),
             .unsupported
+        )
+    }
+
+    func testArbitraryOrStaleTaskSuiteCannotMintQualifiedBadge() throws {
+        let exactReceipt = try receipt()
+        XCTAssertEqual(
+            LocalAIQualificationEvaluator.badge(
+                for: exactReceipt,
+                against: try standard(suiteRevision: "suite-2")
+            ),
+            .unverified
+        )
+
+        XCTAssertEqual(
+            LocalAIQualificationEvaluator.badge(
+                for: exactReceipt,
+                against: try standard(requiredTaskIDs: ["structured-tool-call", "security-audit"])
+            ),
+            .unverified
+        )
+    }
+
+    func testQualificationStandardRejectsDuplicateRequiredTaskIdentity() throws {
+        XCTAssertThrowsError(
+            try standard(requiredTaskIDs: ["same", "same"])
         )
     }
 
@@ -183,7 +222,7 @@ final class LocalAIQualificationCoreTests: XCTestCase {
         let exact = try profile()
         let first = try receipt(profile: exact, revision: 1)
         let second = try receipt(profile: exact, revision: 2)
-        XCTAssertEqual(try LocalAIQualificationArchive(profile: exact, receipts: [first, second]).badge, .qualified)
+        XCTAssertEqual(try LocalAIQualificationArchive(profile: exact, receipts: [first, second]).badge(against: standard()), .qualified)
 
         XCTAssertThrowsError(try LocalAIQualificationArchive(profile: exact, receipts: [second, first]))
 
