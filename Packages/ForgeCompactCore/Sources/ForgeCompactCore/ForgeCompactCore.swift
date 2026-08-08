@@ -7,6 +7,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case invalidBudget
     case invalidCost
     case incompatibleCostBasis
+    case authoritySourceMismatch(entryID: String)
     case duplicateEntryID(String)
     case crossProjectEntry(entryID: String)
     case requiredEntryIneligible(entryID: String, reason: ForgeCompactOmissionReason)
@@ -84,16 +85,22 @@ public struct ForgeCompactContextCost: Codable, Equatable, Sendable {
 
     public init(units: Int, basis: ForgeCompactCostBasis) throws {
         guard units > 0 else { throw ForgeCompactError.invalidCost }
+        let normalizedBasis: ForgeCompactCostBasis
         switch basis {
         case let .exactTokenizer(tokenizerID, tokenizerRevision):
             guard Self.isValidIdentifier(tokenizerID), Self.isValidIdentifier(tokenizerRevision) else {
                 throw ForgeCompactError.invalidCost
             }
+            normalizedBasis = .exactTokenizer(
+                tokenizerID: tokenizerID.trimmingCharacters(in: .whitespacesAndNewlines),
+                tokenizerRevision: tokenizerRevision.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         case let .heuristic(name):
             guard Self.isValidIdentifier(name) else { throw ForgeCompactError.invalidCost }
+            normalizedBasis = .heuristic(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         self.units = units
-        self.basis = basis
+        self.basis = normalizedBasis
     }
 
     private static func isValidIdentifier(_ value: String) -> Bool {
@@ -162,6 +169,9 @@ public struct ForgeCompactEntry: Codable, Equatable, Sendable {
         guard Self.validID(normalizedProjectID) else { throw ForgeCompactError.invalidIdentifier(projectID) }
         guard !normalizedText.isEmpty, normalizedText.count <= 16_384 else {
             throw ForgeCompactError.invalidText(id)
+        }
+        guard source.kind != .modelOutput || !authority.isAcceptedTruth else {
+            throw ForgeCompactError.authoritySourceMismatch(entryID: normalizedID)
         }
         self.id = normalizedID
         self.projectID = normalizedProjectID
