@@ -24,6 +24,7 @@ final class ForgeCompactFootprintMeasurementTests: XCTestCase {
         )
         let expectedBaseline = optional.renderedUTF8Bytes + 1 + objective.renderedUTF8Bytes
 
+        XCTAssertEqual(result.footprint.basis, .renderedUTF8BytesV1)
         XCTAssertEqual(result.capsule.selectedItems.map(\.id), ["objective"])
         XCTAssertEqual(result.footprint.fullSourceRenderedUTF8Bytes, expectedBaseline)
         XCTAssertEqual(result.footprint.capsuleRenderedUTF8Bytes, objective.renderedUTF8Bytes)
