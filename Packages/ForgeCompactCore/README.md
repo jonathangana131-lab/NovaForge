@@ -9,6 +9,8 @@
 - explicit retrieval relevance ordering rather than choosing context by token size alone;
 - versioned Project Capsules bound to project, mission, checkpoint, source revision, mission revision, accepted decisions, unresolved decisions, evidence receipts, and known defects;
 - decode-time capsule revalidation so persisted bytes cannot bypass construction invariants;
+- fail-closed resume authority referencing the current mission stage, Project Brain revision, accepted checkpoint receipt, mission-policy receipt, model-policy receipt, and optional Design DNA revision;
+- exact stale-resume rejection across project, mission, source revision, and mission revision;
 - exact prefix/KV reuse identity across model, model revision, tokenizer, runtime, runtime revision, prompt template, tool schema, and stable-prefix digest;
 - evidence-gated compression/runtime techniques;
 - memory-pressure policy that sheds optional cost before always-resident mission truth.
@@ -18,6 +20,8 @@
 This package does **not** implement llama.cpp, Metal kernels, KV quantization, TurboQuant, speculative decoding, mmap, flash-backed weight loading, sparse expert paging, or Project Brain retrieval itself. It does not claim any model is compatible with an iPhone, any compression ratio, tokens/sec, RAM saving, thermal result, or battery result.
 
 A research/source report may make a technique visible only as **experimental** when the caller explicitly opts into research behavior. A technique becomes `qualified` here only when the adapter supplies a successful exact-device qualification bound to exact model/revision/tokenizer/runtime/runtime revision/quant/KV/context/device/OS identity. The adapter remains responsible for proving that evidence is genuine.
+
+Resume authority stores only opaque IDs/revisions for canonical Mission Engine, Project Brain, checkpoint, policy, model-policy, and Design DNA truth. Forge Compact does not become a second authority for those domains. Integration must resolve those references and reject missing, stale, or conflicting receipts before execution resumes.
 
 ## Current upstream research context
 
