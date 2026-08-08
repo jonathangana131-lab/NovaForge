@@ -75,6 +75,20 @@ struct ForgeCompactCoreTests {
         }
     }
 
+    @Test func requiredCostOverflowFailsClosed() throws {
+        let huge = try entry("huge", inclusion: .required, units: .max)
+        let one = try entry("one", inclusion: .required, units: 1)
+        #expect(throws: ForgeCompactError.invalidCost) {
+            try ForgeCompactPlanner.build(
+                projectID: "project-1",
+                missionID: "mission-1",
+                authorityRevision: 1,
+                entries: [huge, one],
+                policy: try .init(maximumUnits: .max)
+            )
+        }
+    }
+
     @Test func staleRequiredTruthFailsClosed() throws {
         let stale = try entry("stale", inclusion: .required, freshness: .stale)
         #expect(throws: ForgeCompactError.requiredEntryIneligible(entryID: "stale", reason: .stale)) {
