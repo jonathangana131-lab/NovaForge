@@ -14,9 +14,8 @@ public enum ForgeQualityError: Error, Equatable, Sendable {
     case duplicateReceiptID(ForgeQualityID)
     case unexpectedMeasurement(metric: ForgeQualityMetric, scope: ForgeQualityScope)
     case evidenceBindingMismatch(receiptID: ForgeQualityID)
-    case qualityTargetMismatch
+    case completionTargetMismatch
     case untrustedPolicyAuthorityReceipt(expected: ForgeQualityID, actual: ForgeQualityID)
-    case acceptanceRevisionMismatch(expected: UInt64, actual: UInt64)
 }
 
 public struct ForgeQualityID: Hashable, Codable, Sendable, Comparable, CustomStringConvertible {
@@ -50,6 +49,28 @@ public struct ForgeQualityID: Hashable, Codable, Sendable, Comparable, CustomStr
         guard !value.isEmpty, value.utf8.count <= 256 else { return false }
         guard value == value.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
         return !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+}
+
+public struct ForgeQualityCompletionTarget: Codable, Hashable, Sendable {
+    public let missionID: ForgeQualityID
+    public let projectID: ForgeQualityID
+    public let sourceRevision: ForgeQualityID
+    public let constitutionRevision: UInt64
+    public let constitutionReceiptID: ForgeQualityID
+
+    public init(
+        missionID: ForgeQualityID,
+        projectID: ForgeQualityID,
+        sourceRevision: ForgeQualityID,
+        constitutionRevision: UInt64,
+        constitutionReceiptID: ForgeQualityID
+    ) {
+        self.missionID = missionID
+        self.projectID = projectID
+        self.sourceRevision = sourceRevision
+        self.constitutionRevision = constitutionRevision
+        self.constitutionReceiptID = constitutionReceiptID
     }
 }
 
@@ -201,20 +222,16 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
 
     public let schemaVersion: Int
     public let policyID: ForgeQualityID
-    public let authorityReceiptID: ForgeQualityID
+    public let policyAuthorityReceiptID: ForgeQualityID
     public let criterionID: ForgeQualityID
-    public let projectID: ForgeQualityID
-    public let sourceRevision: ForgeQualityID
-    public let acceptanceRevision: UInt64
+    public let completionTarget: ForgeQualityCompletionTarget
     public let targets: [ForgeQualityTarget]
 
     public init(
         policyID: ForgeQualityID,
-        authorityReceiptID: ForgeQualityID,
+        policyAuthorityReceiptID: ForgeQualityID,
         criterionID: ForgeQualityID,
-        projectID: ForgeQualityID,
-        sourceRevision: ForgeQualityID,
-        acceptanceRevision: UInt64,
+        completionTarget: ForgeQualityCompletionTarget,
         targets: [ForgeQualityTarget]
     ) throws {
         guard !targets.isEmpty else { throw ForgeQualityError.emptyPolicy }
@@ -229,11 +246,9 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
 
         self.schemaVersion = Self.currentSchemaVersion
         self.policyID = policyID
-        self.authorityReceiptID = authorityReceiptID
+        self.policyAuthorityReceiptID = policyAuthorityReceiptID
         self.criterionID = criterionID
-        self.projectID = projectID
-        self.sourceRevision = sourceRevision
-        self.acceptanceRevision = acceptanceRevision
+        self.completionTarget = completionTarget
         self.targets = targets.sorted { lhs, rhs in
             if lhs.scope.sortKey == rhs.scope.sortKey {
                 return lhs.metric.rawValue < rhs.metric.rawValue
@@ -250,11 +265,9 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
         }
         try self.init(
             policyID: container.decode(ForgeQualityID.self, forKey: .policyID),
-            authorityReceiptID: container.decode(ForgeQualityID.self, forKey: .authorityReceiptID),
+            policyAuthorityReceiptID: container.decode(ForgeQualityID.self, forKey: .policyAuthorityReceiptID),
             criterionID: container.decode(ForgeQualityID.self, forKey: .criterionID),
-            projectID: container.decode(ForgeQualityID.self, forKey: .projectID),
-            sourceRevision: container.decode(ForgeQualityID.self, forKey: .sourceRevision),
-            acceptanceRevision: container.decode(UInt64.self, forKey: .acceptanceRevision),
+            completionTarget: container.decode(ForgeQualityCompletionTarget.self, forKey: .completionTarget),
             targets: container.decode([ForgeQualityTarget].self, forKey: .targets)
         )
     }
@@ -383,7 +396,7 @@ public struct ForgeQualityAssessment: Encodable, Hashable, Sendable {
     public let policyID: ForgeQualityID
     public let policyAuthorityReceiptID: ForgeQualityID
     public let criterionID: ForgeQualityID
-    public let acceptanceRevision: UInt64
+    public let completionTarget: ForgeQualityCompletionTarget
     public let binding: ForgeQualityRunBinding
     public let status: ForgeQualityGateStatus
     public let findings: [ForgeQualityFinding]
@@ -394,7 +407,7 @@ public struct ForgeQualityAssessment: Encodable, Hashable, Sendable {
         policyID: ForgeQualityID,
         policyAuthorityReceiptID: ForgeQualityID,
         criterionID: ForgeQualityID,
-        acceptanceRevision: UInt64,
+        completionTarget: ForgeQualityCompletionTarget,
         binding: ForgeQualityRunBinding,
         status: ForgeQualityGateStatus,
         findings: [ForgeQualityFinding],
@@ -404,7 +417,7 @@ public struct ForgeQualityAssessment: Encodable, Hashable, Sendable {
         self.policyID = policyID
         self.policyAuthorityReceiptID = policyAuthorityReceiptID
         self.criterionID = criterionID
-        self.acceptanceRevision = acceptanceRevision
+        self.completionTarget = completionTarget
         self.binding = binding
         self.status = status
         self.findings = findings
@@ -417,21 +430,18 @@ public enum ForgeQualityEvaluator {
     public static func evaluate(
         policy: ForgeQualityPolicy,
         trustedPolicyAuthorityReceiptID: ForgeQualityID,
-        acceptedAcceptanceRevision: UInt64,
+        acceptedCompletionTarget: ForgeQualityCompletionTarget,
         binding: ForgeQualityRunBinding,
         measurements: [ForgeQualityMeasurement]
     ) throws -> ForgeQualityAssessment {
-        guard policy.authorityReceiptID == trustedPolicyAuthorityReceiptID else {
+        guard policy.policyAuthorityReceiptID == trustedPolicyAuthorityReceiptID else {
             throw ForgeQualityError.untrustedPolicyAuthorityReceipt(
                 expected: trustedPolicyAuthorityReceiptID,
-                actual: policy.authorityReceiptID
+                actual: policy.policyAuthorityReceiptID
             )
         }
-        guard policy.acceptanceRevision == acceptedAcceptanceRevision else {
-            throw ForgeQualityError.acceptanceRevisionMismatch(
-                expected: policy.acceptanceRevision,
-                actual: acceptedAcceptanceRevision
-            )
+        guard policy.completionTarget == acceptedCompletionTarget else {
+            throw ForgeQualityError.completionTargetMismatch
         }
 
         let measurementsByTarget = try validatedMeasurements(
@@ -514,9 +524,9 @@ public enum ForgeQualityEvaluator {
 
         return ForgeQualityAssessment(
             policyID: policy.policyID,
-            policyAuthorityReceiptID: policy.authorityReceiptID,
+            policyAuthorityReceiptID: policy.policyAuthorityReceiptID,
             criterionID: policy.criterionID,
-            acceptanceRevision: policy.acceptanceRevision,
+            completionTarget: policy.completionTarget,
             binding: binding,
             status: status,
             findings: findings,
@@ -530,9 +540,9 @@ public enum ForgeQualityEvaluator {
         binding: ForgeQualityRunBinding,
         measurements: [ForgeQualityMeasurement]
     ) throws -> [ForgeQualityTargetKey: ForgeQualityMeasurement] {
-        guard policy.projectID == binding.projectID,
-              policy.sourceRevision == binding.sourceRevision else {
-            throw ForgeQualityError.qualityTargetMismatch
+        guard policy.completionTarget.projectID == binding.projectID,
+              policy.completionTarget.sourceRevision == binding.sourceRevision else {
+            throw ForgeQualityError.completionTargetMismatch
         }
 
         let targetKeys = Set(policy.targets.map(\.key))
@@ -593,12 +603,12 @@ public struct ForgeQualitySnapshot: Codable, Hashable, Sendable {
 
     public func assessment(
         trustedPolicyAuthorityReceiptID: ForgeQualityID,
-        acceptedAcceptanceRevision: UInt64
+        acceptedCompletionTarget: ForgeQualityCompletionTarget
     ) throws -> ForgeQualityAssessment {
         try ForgeQualityEvaluator.evaluate(
             policy: policy,
             trustedPolicyAuthorityReceiptID: trustedPolicyAuthorityReceiptID,
-            acceptedAcceptanceRevision: acceptedAcceptanceRevision,
+            acceptedCompletionTarget: acceptedCompletionTarget,
             binding: binding,
             measurements: measurements
         )
