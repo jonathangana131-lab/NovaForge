@@ -491,7 +491,7 @@ public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
     /// Persisted/model-authored JSON cannot promote itself merely by spelling `deterministicHarness`.
     public func readiness(
         for claim: LocalModelQualificationClaim,
-        trustedEvidenceIDs: Set<String>
+        trustedEvidence: Set<LocalModelQualificationEvidence>
     ) -> LocalModelQualificationReadiness {
         var reasons: [String] = []
 
@@ -508,7 +508,7 @@ public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
                 reasons.append("Missing \(evidenceClass.rawValue) evidence.")
                 return
             }
-            if !trustedEvidenceIDs.contains(item.evidenceID) {
+            if !trustedEvidence.contains(item) {
                 reasons.append("\(evidenceClass.rawValue) evidence is not trusted by the host qualification boundary.")
             }
             if item.status != .passed {
