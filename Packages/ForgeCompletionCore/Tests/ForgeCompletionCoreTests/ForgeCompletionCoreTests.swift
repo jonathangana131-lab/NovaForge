@@ -69,7 +69,8 @@ final class ForgeCompletionCoreTests: XCTestCase {
         journeyID: String? = nil,
         outcome: ForgeCompletionEvidenceOutcome = .passed,
         target: ForgeCompletionTarget? = nil,
-        authority: ForgeCompletionEvidenceAuthority? = nil
+        authority: ForgeCompletionEvidenceAuthority? = nil,
+        authorityReceiptID: String? = nil
     ) throws -> ForgeCompletionEvidence {
         try ForgeCompletionEvidence(
             id: id,
@@ -78,7 +79,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
             evidenceClass: evidenceClass,
             journeyID: journeyID,
             authority: authority ?? self.authority(for: evidenceClass),
-            authorityReceiptID: "authority-\(id)",
+            authorityReceiptID: authorityReceiptID ?? "authority-\(id)",
             outcome: outcome
         )
     }
@@ -265,6 +266,44 @@ final class ForgeCompletionCoreTests: XCTestCase {
             XCTAssertEqual(
                 error as? ForgeCompletionError,
                 .duplicateEvidenceSlot("launch|launchReceipt|-")
+            )
+        }
+    }
+
+    func testProducerReceiptCannotBeReplayedAcrossJourneySlots() throws {
+        let controls = try criterion(
+            "controls",
+            kind: .controls,
+            evidenceClasses: [.semanticPlaytest],
+            journeys: ["new-player", "chaos"]
+        )
+        let replayedReceipt = "playtest-receipt-one-happy-path"
+
+        XCTAssertThrowsError(
+            try ForgeCompletionEvaluator.evaluate(
+                constitution: constitution([controls]),
+                evidence: [
+                    try evidence(
+                        "new-player",
+                        criterionID: "controls",
+                        evidenceClass: .semanticPlaytest,
+                        journeyID: "new-player",
+                        authorityReceiptID: replayedReceipt
+                    ),
+                    try evidence(
+                        "chaos",
+                        criterionID: "controls",
+                        evidenceClass: .semanticPlaytest,
+                        journeyID: "chaos",
+                        authorityReceiptID: replayedReceipt
+                    ),
+                ],
+                defectInventory: emptyInventory()
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeCompletionError,
+                .duplicateEvidenceAuthorityReceiptID(replayedReceipt)
             )
         }
     }
