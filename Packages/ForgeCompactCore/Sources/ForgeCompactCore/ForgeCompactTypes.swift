@@ -122,10 +122,12 @@ public enum ForgeCompactContextTier: String, Codable, CaseIterable, Sendable {
 public enum ForgeCompactFactKind: String, Codable, CaseIterable, Sendable {
     case missionIdentity
     case currentObjective
+    case missionStage
     case safetyPolicy
     case privacyPolicy
     case acceptedRequirement
     case unresolvedDecision
+    case knownDefect
     case failingTest
     case knownLimitation
     case acceptedDecision
@@ -137,11 +139,11 @@ public enum ForgeCompactFactKind: String, Codable, CaseIterable, Sendable {
 
     public var requiresRetentionWhenPresent: Bool {
         switch self {
-        case .missionIdentity, .currentObjective, .safetyPolicy, .privacyPolicy,
-             .acceptedRequirement, .unresolvedDecision, .failingTest, .knownLimitation:
+        case .missionIdentity, .currentObjective, .missionStage, .safetyPolicy, .privacyPolicy,
+             .acceptedRequirement, .acceptedDecision, .unresolvedDecision, .knownDefect,
+             .failingTest, .knownLimitation:
             true
-        case .acceptedDecision, .designDNA, .sourceLocation, .testReceipt,
-             .runtimeReceipt, .workingNote:
+        case .designDNA, .sourceLocation, .testReceipt, .runtimeReceipt, .workingNote:
             false
         }
     }
@@ -222,7 +224,9 @@ public struct ForgeCompactContextItem: Codable, Hashable, Sendable {
         if isAuthoritative && provenance.kind == .modelSummary {
             throw ForgeCompactError.modelSummaryCannotBeAuthoritative(itemID: self.id)
         }
-        if kind.requiresRetentionWhenPresent && provenance.kind == .modelSummary {
+        let requestsMandatoryRetention =
+            tier == .l0AlwaysResident || kind.requiresRetentionWhenPresent || protectedByUser
+        if requestsMandatoryRetention && provenance.kind == .modelSummary {
             throw ForgeCompactError.modelSummaryCannotSupplyMandatoryTruth(itemID: self.id)
         }
         self.isAuthoritative = isAuthoritative
