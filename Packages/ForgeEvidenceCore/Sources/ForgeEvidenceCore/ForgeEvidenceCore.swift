@@ -253,6 +253,39 @@ public struct ForgeEvidenceRevocation: Codable, Hashable, Sendable {
 public enum ForgeEvidenceLedgerEventPayload: Codable, Hashable, Sendable {
     case receipt(ForgeEvidenceReceipt)
     case revocation(ForgeEvidenceRevocation)
+
+    private enum Kind: String, Codable {
+        case receipt
+        case revocation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case receipt
+        case revocation
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .receipt:
+            self = .receipt(try container.decode(ForgeEvidenceReceipt.self, forKey: .receipt))
+        case .revocation:
+            self = .revocation(try container.decode(ForgeEvidenceRevocation.self, forKey: .revocation))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .receipt(receipt):
+            try container.encode(Kind.receipt, forKey: .kind)
+            try container.encode(receipt, forKey: .receipt)
+        case let .revocation(revocation):
+            try container.encode(Kind.revocation, forKey: .kind)
+            try container.encode(revocation, forKey: .revocation)
+        }
+    }
 }
 
 public struct ForgeEvidenceLedgerEvent: Codable, Hashable, Sendable {
