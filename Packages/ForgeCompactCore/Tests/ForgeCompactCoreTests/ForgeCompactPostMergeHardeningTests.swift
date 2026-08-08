@@ -55,7 +55,9 @@ final class ForgeCompactPostMergeHardeningTests: XCTestCase {
                 budgetBytes: 1
             )
         ) { error in
-            guard case .budgetCannotHoldMandatoryTruth = error as? ForgeCompactError else {
+            guard let compactError = error as? ForgeCompactError,
+                  case .budgetCannotHoldMandatoryTruth = compactError
+            else {
                 return XCTFail("Expected mandatory truth budget failure, got \(error)")
             }
         }
