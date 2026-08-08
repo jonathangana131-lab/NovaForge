@@ -54,18 +54,19 @@ final class ForgeAuthorizationCoreTests: XCTestCase {
         authority: ForgeAuthorizationAuthority? = nil,
         scopeID: String = "scope-1",
         locality: ForgeWorkerLocality = .onDevice,
-        files: Int = 0,
+        files: Int? = nil,
         seconds: Int = 30,
         thermal: ForgeAuthorizationThermalLoad = .low,
         decision: ForgeDecisionDependency = .none
     ) throws -> ForgeAuthorizationRequest {
-        try ForgeAuthorizationRequest(
+        let resolvedFiles = files ?? (action.canMutateProjectFiles ? 1 : 0)
+        return try ForgeAuthorizationRequest(
             requestID: requestID,
             authority: try authority ?? self.authority(),
             scopeID: scopeID,
             action: action,
             workerLocality: locality,
-            mutationFileLimit: files,
+            mutationFileLimit: resolvedFiles,
             requestedWallClockSeconds: seconds,
             requestedThermalLoad: thermal,
             decisionDependency: decision
@@ -217,8 +218,8 @@ final class ForgeAuthorizationCoreTests: XCTestCase {
     }
 
     func testResourceLimitsCannotBeOverriddenByApproval() throws {
-        let p = try policy(autonomy: .autopilot, highRisk: [.remoteMutation])
-        let oversized = try request(action: .remoteMutation, files: 13)
+        let p = try policy(autonomy: .autopilot, highRisk: [.destructiveProjectMutation])
+        let oversized = try request(action: .destructiveProjectMutation, files: 13)
         let approval = try ForgeAcceptedApproval(
             approvalReceiptID: "approval-receipt-1",
             policyID: p.policyID,
@@ -256,7 +257,7 @@ final class ForgeAuthorizationCoreTests: XCTestCase {
         let p = try policy(autonomy: .autopilot)
         let r = try request(
             action: .projectSourceMutation,
-            decision: .accepted(receiptID: "decision-receipt-1")
+            decision: .accepted(decisionID: "decision-1", receiptID: "decision-receipt-1")
         )
         XCTAssertNotNil(allowedReceipt(ForgeAuthorizationEvaluator.evaluate(policy: p, request: r)))
     }
@@ -319,9 +320,9 @@ final class ForgeAuthorizationCoreTests: XCTestCase {
     }
 
     func testApprovalCannotBeReusedWhenResourceAllotmentChanges() throws {
-        let p = try policy(autonomy: .autopilot, highRisk: [.remoteMutation])
-        let original = try request(action: .remoteMutation, files: 2)
-        let widened = try request(action: .remoteMutation, files: 8)
+        let p = try policy(autonomy: .autopilot, highRisk: [.destructiveProjectMutation])
+        let original = try request(action: .destructiveProjectMutation, files: 2)
+        let widened = try request(action: .destructiveProjectMutation, files: 8)
         let approval = try ForgeAcceptedApproval(
             approvalReceiptID: "approval-receipt-1",
             policyID: p.policyID,
@@ -332,6 +333,30 @@ final class ForgeAuthorizationCoreTests: XCTestCase {
         XCTAssertEqual(
             ForgeAuthorizationEvaluator.evaluate(policy: p, request: widened, approval: approval),
             .denied(.approvalDoesNotMatchExactRequest)
+        )
+    }
+
+    func testMutationAllotmentMustMatchActionSemantics() throws {
+        XCTAssertThrowsError(
+            try request(action: .readOnlyInspection, files: 1)
+        )
+        XCTAssertThrowsError(
+            try request(action: .projectSourceMutation, files: 0)
+        )
+    }
+
+    func testAcceptedDecisionRequiresExactOpaqueDecisionAndReceiptIdentity() throws {
+        XCTAssertThrowsError(
+            try request(
+                action: .projectSourceMutation,
+                decision: .accepted(decisionID: "../../decision", receiptID: "decision-receipt-1")
+            )
+        )
+        XCTAssertThrowsError(
+            try request(
+                action: .projectSourceMutation,
+                decision: .accepted(decisionID: "decision-1", receiptID: "../../receipt")
+            )
         )
     }
 
@@ -356,6 +381,24 @@ final class ForgeAuthorizationCoreTests: XCTestCase {
             request: r,
             approval: approval
         )))
+    }
+
+    func testReceiptProjectionBindsExactResourceAndLocalityConstraints() throws {
+        let p = try policy(autonomy: .autopilot)
+        let r = try request(action: .projectSourceMutation, files: 2, seconds: 40)
+        guard case let .allowed(receipt) = ForgeAuthorizationEvaluator.evaluate(policy: p, request: r) else {
+            return XCTFail("expected automatic R2 receipt")
+        }
+        let data = try JSONEncoder().encode(receipt.projection)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["mutationFileLimit"] = 8
+        let forgedBytes = try JSONSerialization.data(withJSONObject: object)
+        let forged = try JSONDecoder().decode(ForgeAuthorizationReceiptProjection.self, from: forgedBytes)
+
+        XCTAssertEqual(
+            ForgeAuthorizationEvaluator.revalidate(projection: forged, policy: p, request: r),
+            .denied(.receiptProjectionMismatch)
+        )
     }
 
     func testReceiptProjectionCannotCrossAuthorityAdvance() throws {
