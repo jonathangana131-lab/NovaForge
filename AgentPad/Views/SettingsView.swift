@@ -475,7 +475,7 @@ struct SettingsView: View {
                 ],
                 spacing: 8
             ) {
-                ForEach(AIProvider.agentRuntimeProviders) { provider in
+                ForEach(AIProvider.userSelectableProviders) { provider in
                     SettingsProviderRow(
                         provider: provider,
                         selected: settings.provider == provider,

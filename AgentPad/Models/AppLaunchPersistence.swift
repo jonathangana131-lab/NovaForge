@@ -8,6 +8,35 @@
 import Foundation
 import SwiftData
 
+extension AIProvider {
+    /// Stable choices for a fresh phone run. Existing Custom/OpenRouter records
+    /// remain valid and recoverable, but the private ChatGPT backend is not
+    /// offered as a new selection.
+    static let userSelectableProviders: [AIProvider] = [
+        .openCodeZen,
+        .local,
+        .openAI,
+    ]
+}
+
+private enum PhoneProviderSelectionRepair {
+    static func apply(to settings: AgentSettings) {
+        switch AIProvider(rawValue: settings.providerRawValue ?? "") {
+        case .none:
+            // Unknown/corrupt data never authorized a network route.
+            settings.providerRawValue = AIProvider.local.rawValue
+        case .some(.openAICodex):
+            // Older phone builds exposed the private ChatGPT backend. Move a
+            // genuine saved selection to the anonymous Zen Free route instead
+            // of repeatedly sending requests that can return provider codes.
+            settings.providerRawValue = AIProvider.openCodeZen.rawValue
+        case .some:
+            // Public OpenAI, Custom, OpenRouter, Zen, and Local remain intact.
+            break
+        }
+    }
+}
+
 enum FilesWorkspacePersistence {
     static func persistWorkspaceSelection(
         _ workspaceName: String,
@@ -123,6 +152,7 @@ enum AppRootPersistence {
         guard let settings else { return false }
 
         let previous = AgentSettingsPersistence.snapshot(settings)
+        PhoneProviderSelectionRepair.apply(to: settings)
         let reportedChange = settings.repairStaleModelSelection(now: now)
         let repaired = AgentSettingsPersistence.snapshot(settings) != previous
         guard reportedChange || repaired else { return false }
@@ -260,6 +290,7 @@ enum AppRootLaunchRepair {
             settings = created
             createdSettings = true
         }
+        PhoneProviderSelectionRepair.apply(to: settings)
         _ = settings.repairStaleModelSelection(now: now)
 
         let project = ProjectBootstrap.ensureDefaultProject(
