@@ -72,14 +72,12 @@ final class ForgeCompactCoreTests: XCTestCase {
         let first = try ForgeProjectCapsuleBuilder.build(
             capsuleRevision: 2,
             binding: binding(),
-            prefixReuseIdentity: prefix(),
             records: records,
             budget: generousBudget()
         )
         let second = try ForgeProjectCapsuleBuilder.build(
             capsuleRevision: 2,
             binding: binding(),
-            prefixReuseIdentity: prefix(),
             records: records.reversed(),
             budget: generousBudget()
         )
@@ -108,7 +106,6 @@ final class ForgeCompactCoreTests: XCTestCase {
             try ForgeProjectCapsuleBuilder.build(
                 capsuleRevision: 1,
                 binding: binding(),
-                prefixReuseIdentity: prefix(),
                 records: records,
                 budget: generousBudget(maxIncluded: records.count - 1)
             )
@@ -128,7 +125,6 @@ final class ForgeCompactCoreTests: XCTestCase {
         let capsule = try ForgeProjectCapsuleBuilder.build(
             capsuleRevision: 3,
             binding: binding(),
-            prefixReuseIdentity: prefix(),
             records: [low, required, high],
             budget: generousBudget(maxIncluded: 2)
         )
@@ -146,7 +142,6 @@ final class ForgeCompactCoreTests: XCTestCase {
             try ForgeProjectCapsuleBuilder.build(
                 capsuleRevision: 1,
                 binding: binding(),
-                prefixReuseIdentity: prefix(),
                 records: [duplicateA, duplicateB],
                 budget: generousBudget()
             )
@@ -167,16 +162,12 @@ final class ForgeCompactCoreTests: XCTestCase {
         let capsule = try ForgeProjectCapsuleBuilder.build(
             capsuleRevision: 1,
             binding: binding(),
-            prefixReuseIdentity: prefix(),
             records: [try record("req", kind: .acceptedRequirement)],
             budget: generousBudget()
         )
 
         XCTAssertThrowsError(
-            try capsule.validateReuse(
-                expectedBinding: binding(sourceRevision: "src-10"),
-                expectedPrefixReuseIdentity: prefix()
-            )
+            try capsule.validateReuse(expectedBinding: binding(sourceRevision: "src-10"))
         ) { error in
             XCTAssertEqual(error as? ForgeCompactError, .sourceRevisionMismatch)
         }
@@ -192,40 +183,71 @@ final class ForgeCompactCoreTests: XCTestCase {
             authorityEpoch: 5
         )
         XCTAssertThrowsError(
-            try capsule.validateReuse(
-                expectedBinding: otherMission,
-                expectedPrefixReuseIdentity: prefix()
-            )
+            try capsule.validateReuse(expectedBinding: otherMission)
         ) { error in
             XCTAssertEqual(error as? ForgeCompactError, .missionBindingMismatch)
         }
     }
 
-    func testPrefixReuseRejectsAnyExactRuntimeIdentityDrift() throws {
+    func testCapsuleSurvivesModelHotSwapWhilePrefixArtifactInvalidates() throws {
         let capsule = try ForgeProjectCapsuleBuilder.build(
             capsuleRevision: 1,
             binding: binding(),
-            prefixReuseIdentity: prefix(),
             records: [try record("req", kind: .acceptedRequirement)],
             budget: generousBudget()
         )
 
+        // Capsule truth is model-agnostic and remains valid across a worker/model switch.
+        XCTAssertNoThrow(try capsule.validateReuse(expectedBinding: binding()))
+
+        let artifact = try ForgeCompactPrefixArtifactBinding(
+            stablePrefixDigest: "sha256:prefix-A",
+            capsuleRevision: capsule.capsuleRevision,
+            projectBinding: capsule.binding,
+            reuseIdentity: prefix()
+        )
+        XCTAssertNoThrow(
+            try artifact.validateReuse(
+                expectedStablePrefixDigest: "sha256:prefix-A",
+                expectedCapsule: capsule,
+                expectedReuseIdentity: prefix()
+            )
+        )
+
         XCTAssertThrowsError(
-            try capsule.validateReuse(
-                expectedBinding: binding(),
-                expectedPrefixReuseIdentity: prefix(modelRevision: "model-r4")
+            try artifact.validateReuse(
+                expectedStablePrefixDigest: "sha256:prefix-A",
+                expectedCapsule: capsule,
+                expectedReuseIdentity: prefix(modelRevision: "model-r4")
             )
         ) { error in
             XCTAssertEqual(error as? ForgeCompactError, .prefixReuseIdentityMismatch)
         }
 
         XCTAssertThrowsError(
-            try capsule.validateReuse(
-                expectedBinding: binding(),
-                expectedPrefixReuseIdentity: prefix(kvCacheProfile: "q4_0")
+            try artifact.validateReuse(
+                expectedStablePrefixDigest: "sha256:prefix-B",
+                expectedCapsule: capsule,
+                expectedReuseIdentity: prefix()
             )
         ) { error in
-            XCTAssertEqual(error as? ForgeCompactError, .prefixReuseIdentityMismatch)
+            XCTAssertEqual(error as? ForgeCompactError, .stablePrefixDigestMismatch)
+        }
+
+        let advancedCapsule = try ForgeProjectCapsuleBuilder.build(
+            capsuleRevision: 2,
+            binding: binding(),
+            records: [try record("req", kind: .acceptedRequirement)],
+            budget: generousBudget()
+        )
+        XCTAssertThrowsError(
+            try artifact.validateReuse(
+                expectedStablePrefixDigest: "sha256:prefix-A",
+                expectedCapsule: advancedCapsule,
+                expectedReuseIdentity: prefix()
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCompactError, .prefixCapsuleRevisionMismatch)
         }
     }
 
@@ -233,7 +255,6 @@ final class ForgeCompactCoreTests: XCTestCase {
         let capsule = try ForgeProjectCapsuleBuilder.build(
             capsuleRevision: 1,
             binding: binding(),
-            prefixReuseIdentity: prefix(),
             records: [try record("req", kind: .acceptedRequirement)],
             budget: generousBudget()
         )
@@ -270,7 +291,6 @@ final class ForgeCompactCoreTests: XCTestCase {
             try ForgeProjectCapsuleBuilder.build(
                 capsuleRevision: 1,
                 binding: binding(),
-                prefixReuseIdentity: prefix(),
                 records: records,
                 budget: tinyBudget
             )
@@ -298,7 +318,6 @@ final class ForgeCompactCoreTests: XCTestCase {
             try ForgeProjectCapsuleBuilder.build(
                 capsuleRevision: 1,
                 binding: binding(),
-                prefixReuseIdentity: prefix(),
                 records: [stale],
                 budget: generousBudget()
             )
@@ -311,7 +330,6 @@ final class ForgeCompactCoreTests: XCTestCase {
         let capsule = try ForgeProjectCapsuleBuilder.build(
             capsuleRevision: 1,
             binding: binding(),
-            prefixReuseIdentity: prefix(),
             records: [try record("file", kind: .relevantFile)],
             budget: generousBudget(maxIncluded: 1)
         )
