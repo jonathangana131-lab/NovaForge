@@ -19,6 +19,9 @@ public enum LocalModelQualificationThermalState: String, Codable, CaseIterable, 
 
 /// Exact execution identity required to reproduce one local-model qualification run.
 /// Friendly family names or parameter counts are intentionally insufficient here.
+/// `runtimeConfigurationSHA256` binds runtime options not modeled as first-class fields
+/// (for example attention/offload/thread settings) without teaching AgentDomain about
+/// backend-specific command-line flags.
 public struct LocalModelQualificationIdentity: Codable, Equatable, Hashable, Sendable {
     public let modelID: String
     public let modelRevision: String
@@ -28,8 +31,11 @@ public struct LocalModelQualificationIdentity: Codable, Equatable, Hashable, Sen
     public let tokenizerRevision: String
     public let runtimeID: String
     public let runtimeRevision: String
+    public let backendID: String
+    public let runtimeConfigurationSHA256: String
     public let quantization: String
-    public let kvCacheType: String
+    public let keyCacheType: String
+    public let valueCacheType: String
     public let contextWindowTokens: UInt64
     public let deviceModelIdentifier: String
     public let operatingSystemVersion: String
@@ -44,8 +50,11 @@ public struct LocalModelQualificationIdentity: Codable, Equatable, Hashable, Sen
         tokenizerRevision: String,
         runtimeID: String,
         runtimeRevision: String,
+        backendID: String,
+        runtimeConfigurationSHA256: String,
         quantization: String,
-        kvCacheType: String,
+        keyCacheType: String,
+        valueCacheType: String,
         contextWindowTokens: UInt64,
         deviceModelIdentifier: String,
         operatingSystemVersion: String,
@@ -59,8 +68,11 @@ public struct LocalModelQualificationIdentity: Codable, Equatable, Hashable, Sen
         self.tokenizerRevision = tokenizerRevision
         self.runtimeID = runtimeID
         self.runtimeRevision = runtimeRevision
+        self.backendID = backendID
+        self.runtimeConfigurationSHA256 = runtimeConfigurationSHA256
         self.quantization = quantization
-        self.kvCacheType = kvCacheType
+        self.keyCacheType = keyCacheType
+        self.valueCacheType = valueCacheType
         self.contextWindowTokens = contextWindowTokens
         self.deviceModelIdentifier = deviceModelIdentifier
         self.operatingSystemVersion = operatingSystemVersion
@@ -185,6 +197,7 @@ public enum LocalModelQualificationEvidenceStatus: String, Codable, Hashable, Se
 public enum LocalModelQualificationIssue: String, Codable, CaseIterable, Hashable, Sendable {
     case incompleteIdentity
     case malformedArtifactSHA256
+    case malformedRuntimeConfigurationSHA256
     case invalidContextWindow
     case invalidMemoryMeasurement
     case invalidPerformanceMeasurement
@@ -234,8 +247,10 @@ public enum LocalModelQualificationValidator {
             identity.tokenizerRevision,
             identity.runtimeID,
             identity.runtimeRevision,
+            identity.backendID,
             identity.quantization,
-            identity.kvCacheType,
+            identity.keyCacheType,
+            identity.valueCacheType,
             identity.deviceModelIdentifier,
             identity.operatingSystemVersion,
         ]
@@ -246,6 +261,10 @@ public enum LocalModelQualificationValidator {
 
         if !isCanonicalSHA256(identity.artifactSHA256) {
             issues.append(.malformedArtifactSHA256)
+        }
+
+        if !isCanonicalSHA256(identity.runtimeConfigurationSHA256) {
+            issues.append(.malformedRuntimeConfigurationSHA256)
         }
 
         if identity.contextWindowTokens == 0 {
