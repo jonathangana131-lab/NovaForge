@@ -1,6 +1,9 @@
 name: V14 Forge Compact Repair Exact Head
 
 on:
+  push:
+    branches:
+      - 'worker/GPT56-NF-V14-COMPACT-REPAIR-8A8/forge-compact-postmerge-hardening/e1'
   pull_request:
     paths:
       - 'Packages/ForgeCompactCore/**'
@@ -10,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v14-forge-compact-repair-${{ github.event.pull_request.number }}
+  group: v14-forge-compact-repair-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Diff check
-        run: git diff --check origin/${{ github.base_ref }}...HEAD
+        run: git diff --check origin/main...HEAD
       - name: Debug package tests with warnings as errors
         run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
       - name: Release package tests with warnings as errors
