@@ -21,7 +21,9 @@ jobs:
       - name: Toolchain
         run: swift --version
       - name: Diff check
-        run: git diff --check origin/main...HEAD
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          git diff --check FETCH_HEAD...HEAD
       - name: Debug package tests
         run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
       - name: Release package tests
