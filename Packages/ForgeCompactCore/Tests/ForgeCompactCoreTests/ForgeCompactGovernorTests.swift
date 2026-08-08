@@ -139,12 +139,18 @@ final class ForgeCompactGovernorTests: XCTestCase {
 
     func testQualificationGrantMustMatchExactConfigurationBinding() throws {
         let measured = envelope(id: "qualified")
-        let wrongGrant = try ForgeCompactQualificationGrant(
+        let differentlyBound = ForgeCompactExecutionEnvelope(
+            id: measured.id,
             profileID: measured.profileID,
             configurationBindingID: "different-binding",
             deviceProfileID: measured.deviceProfileID,
-            evidenceReceiptID: measured.evidenceReceiptID
+            evidenceReceiptID: measured.evidenceReceiptID,
+            computeLocation: measured.computeLocation,
+            evidenceStatus: measured.evidenceStatus,
+            contextTokens: measured.contextTokens,
+            observedPeakResidentBytes: measured.observedPeakResidentBytes
         )
+        let wrongGrant = try ForgeCompactQualificationGrant(acceptedEnvelope: differentlyBound)
 
         let receipt = decide(
             explicitGrants: [wrongGrant],
@@ -154,6 +160,30 @@ final class ForgeCompactGovernorTests: XCTestCase {
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
         XCTAssertEqual(
             verdict(for: measured.id, in: receipt)?.rejectionReasons,
+            [.qualificationGrantMissing]
+        )
+    }
+
+    func testQualificationGrantBindsMeasuredResourceFields() throws {
+        let accepted = envelope(id: "qualified", context: 8_192, peak: 2 * gib)
+        let grant = try ForgeCompactQualificationGrant(acceptedEnvelope: accepted)
+        let rewritten = ForgeCompactExecutionEnvelope(
+            id: accepted.id,
+            profileID: accepted.profileID,
+            configurationBindingID: accepted.configurationBindingID,
+            deviceProfileID: accepted.deviceProfileID,
+            evidenceReceiptID: accepted.evidenceReceiptID,
+            computeLocation: accepted.computeLocation,
+            evidenceStatus: accepted.evidenceStatus,
+            contextTokens: 4_096,
+            observedPeakResidentBytes: 1
+        )
+
+        let receipt = decide(explicitGrants: [grant], envelopes: [rewritten])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(
+            verdict(for: rewritten.id, in: receipt)?.rejectionReasons,
             [.qualificationGrantMissing]
         )
     }
@@ -341,12 +371,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
     }
 
     private func grant(for envelope: ForgeCompactExecutionEnvelope) -> ForgeCompactQualificationGrant? {
-        try? ForgeCompactQualificationGrant(
-            profileID: envelope.profileID,
-            configurationBindingID: envelope.configurationBindingID,
-            deviceProfileID: envelope.deviceProfileID,
-            evidenceReceiptID: envelope.evidenceReceiptID
-        )
+        try? ForgeCompactQualificationGrant(acceptedEnvelope: envelope)
     }
 
     private func decide(
