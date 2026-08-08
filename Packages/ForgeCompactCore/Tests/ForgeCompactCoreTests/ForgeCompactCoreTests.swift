@@ -217,4 +217,18 @@ struct ForgeCompactCoreTests {
             try ForgeCompactContextBudget(maxEstimatedTokens: 0)
         }
     }
+
+    @Test func decodedBudgetCannotBypassValidation() throws {
+        let data = Data(#"{\"maxEstimatedTokens\":0,\"allowColdArchiveRetrieval\":true}"#.utf8)
+        #expect(throws: ForgeCompactError.invalidBudget(0)) {
+            try JSONDecoder().decode(ForgeCompactContextBudget.self, from: data)
+        }
+    }
+
+    @Test func decodedPrefixIdentityCannotBypassValidation() throws {
+        let data = Data(#"{\"modelID\":\" \",\"modelRevision\":\"r1\",\"tokenizerRevision\":\"tok1\",\"runtimeID\":\"llama.cpp\",\"runtimeRevision\":\"runtime1\",\"promptTemplateRevision\":\"template1\",\"toolSchemaRevision\":\"tools1\",\"capsuleSourceRevision\":\"git:abc\",\"capsuleMissionRevision\":7,\"capsuleAuthorityEpoch\":2}"#.utf8)
+        #expect(throws: ForgeCompactError.invalidIdentifier("modelID")) {
+            try JSONDecoder().decode(ForgeCompactPrefixReuseIdentity.self, from: data)
+        }
+    }
 }
