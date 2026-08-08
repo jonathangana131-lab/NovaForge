@@ -100,6 +100,45 @@ public struct ForgeCompactAccountingBasis: Codable, Equatable, Hashable, Sendabl
     }
 }
 
+/// Identity of the exact baseline context snapshot being compared with a Project Capsule.
+/// The revision is deliberately caller-owned: raw conversation history, a Project Brain snapshot,
+/// or another baseline must advance its revision when its content changes.
+public struct ForgeCompactAccountingBaselineIdentity: Codable, Equatable, Hashable, Sendable {
+    public let contextID: String
+    public let contextRevision: String
+
+    public init(contextID: String, contextRevision: String) throws {
+        guard Self.isCanonicalIdentifier(contextID) else {
+            throw ForgeCompactAccountingError.invalidIdentifier(field: "baseline.contextID")
+        }
+        guard Self.isCanonicalIdentifier(contextRevision) else {
+            throw ForgeCompactAccountingError.invalidIdentifier(field: "baseline.contextRevision")
+        }
+        self.contextID = contextID
+        self.contextRevision = contextRevision
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case contextID, contextRevision
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            contextID: c.decode(String.self, forKey: .contextID),
+            contextRevision: c.decode(String.self, forKey: .contextRevision)
+        )
+    }
+
+    private static func isCanonicalIdentifier(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty
+            && trimmed == value
+            && trimmed.utf8.count <= 512
+            && !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    }
+}
+
 /// Where the accounting observation came from. This is provenance, not cryptographic trust.
 /// Callers remain responsible for authenticating any external measurement receipt they depend on.
 public enum ForgeCompactAccountingProvenance: String, Codable, Hashable, Sendable {
@@ -137,15 +176,16 @@ public protocol ForgeCompactContextCounter: Sendable {
     func countUnits(in text: String) throws -> UInt64
 }
 
-/// Durable comparison of a baseline context against one rendered Project Capsule using one and
-/// only one accounting basis. Byte counts are also carried independently so a token/estimate
-/// result can never overwrite the package's exact UTF-8 accounting.
+/// Durable comparison of one named/revisioned baseline snapshot against one rendered Project
+/// Capsule using one and only one accounting basis. Byte counts are also carried independently so
+/// a token/estimate result can never overwrite the package's exact UTF-8 accounting.
 public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
 
     public let schemaVersion: Int
     public let authority: ProjectCapsuleAuthority
     public let selectedItemIDs: [String]
+    public let baselineIdentity: ForgeCompactAccountingBaselineIdentity
     public let measurementReceiptID: String
     public let basis: ForgeCompactAccountingBasis
     public let provenance: ForgeCompactAccountingProvenance
@@ -192,6 +232,7 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
     init(
         authority: ProjectCapsuleAuthority,
         selectedItemIDs: [String],
+        baselineIdentity: ForgeCompactAccountingBaselineIdentity,
         measurementReceiptID: String,
         basis: ForgeCompactAccountingBasis,
         provenance: ForgeCompactAccountingProvenance,
@@ -203,6 +244,7 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
         self.schemaVersion = Self.currentSchemaVersion
         self.authority = authority
         self.selectedItemIDs = selectedItemIDs
+        self.baselineIdentity = baselineIdentity
         self.measurementReceiptID = measurementReceiptID
         self.basis = basis
         self.provenance = provenance
@@ -217,6 +259,7 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
         schemaVersion: Int,
         authority: ProjectCapsuleAuthority,
         selectedItemIDs: [String],
+        baselineIdentity: ForgeCompactAccountingBaselineIdentity,
         measurementReceiptID: String,
         basis: ForgeCompactAccountingBasis,
         provenance: ForgeCompactAccountingProvenance,
@@ -228,6 +271,7 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
         self.schemaVersion = schemaVersion
         self.authority = authority
         self.selectedItemIDs = selectedItemIDs
+        self.baselineIdentity = baselineIdentity
         self.measurementReceiptID = measurementReceiptID
         self.basis = basis
         self.provenance = provenance
@@ -244,6 +288,10 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
         authority == capsule.authority
             && selectedItemIDs == capsule.selectedItems.map(\.id)
             && capsuleUTF8Bytes == UInt64(capsule.renderedUTF8Bytes)
+    }
+
+    public func matches(baselineIdentity: ForgeCompactAccountingBaselineIdentity) -> Bool {
+        self.baselineIdentity == baselineIdentity
     }
 
     private func validate() throws {
@@ -310,6 +358,7 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
         case schemaVersion
         case authority
         case selectedItemIDs
+        case baselineIdentity
         case measurementReceiptID
         case basis
         case provenance
@@ -325,6 +374,7 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
             schemaVersion: c.decode(Int.self, forKey: .schemaVersion),
             authority: c.decode(ProjectCapsuleAuthority.self, forKey: .authority),
             selectedItemIDs: c.decode([String].self, forKey: .selectedItemIDs),
+            baselineIdentity: c.decode(ForgeCompactAccountingBaselineIdentity.self, forKey: .baselineIdentity),
             measurementReceiptID: c.decode(String.self, forKey: .measurementReceiptID),
             basis: c.decode(ForgeCompactAccountingBasis.self, forKey: .basis),
             provenance: c.decode(ForgeCompactAccountingProvenance.self, forKey: .provenance),
@@ -337,10 +387,11 @@ public struct ForgeCompactAccountingReceipt: Codable, Equatable, Sendable {
 }
 
 public enum ForgeCompactAccounting {
-    /// Measures one baseline and one rendered capsule through the same counter identity.
-    /// `counterFailed` deliberately hides counter-specific error types from durable domain state.
+    /// Measures one named/revisioned baseline and one rendered capsule through the same counter
+    /// identity. `counterFailed` deliberately hides counter-specific error types from durable state.
     public static func measure<C: ForgeCompactContextCounter>(
         baselineContext: String,
+        baselineIdentity: ForgeCompactAccountingBaselineIdentity,
         capsule: ProjectCapsule,
         counter: C
     ) throws -> ForgeCompactAccountingReceipt {
@@ -366,6 +417,7 @@ public enum ForgeCompactAccounting {
         return try ForgeCompactAccountingReceipt(
             authority: capsule.authority,
             selectedItemIDs: capsule.selectedItems.map(\.id),
+            baselineIdentity: baselineIdentity,
             measurementReceiptID: counter.measurementReceiptID,
             basis: counter.basis,
             provenance: counter.provenance,
@@ -380,6 +432,7 @@ public enum ForgeCompactAccounting {
     /// accidentally be presented as tokens.
     public static func measureUTF8Bytes(
         baselineContext: String,
+        baselineIdentity: ForgeCompactAccountingBaselineIdentity,
         capsule: ProjectCapsule,
         measurementReceiptID: String
     ) throws -> ForgeCompactAccountingReceipt {
@@ -388,6 +441,7 @@ public enum ForgeCompactAccounting {
         return try ForgeCompactAccountingReceipt(
             authority: capsule.authority,
             selectedItemIDs: capsule.selectedItems.map(\.id),
+            baselineIdentity: baselineIdentity,
             measurementReceiptID: measurementReceiptID,
             basis: .utf8Bytes,
             provenance: .deterministicHarness,
