@@ -1,7 +1,12 @@
 /// A byte-level context-footprint measurement derived from the exact source set used to build a
 /// Project Capsule. This intentionally says UTF-8 bytes, not tokens: tokenizer-aware prompt cost is
 /// a separate measurement that requires an exact tokenizer/runtime identity.
+public enum ForgeCompactFootprintBasis: String, Hashable, Sendable {
+    case renderedUTF8BytesV1
+}
+
 public struct ForgeCompactFootprintMeasurement: Hashable, Sendable {
+    public let basis: ForgeCompactFootprintBasis
     public let authority: ProjectCapsuleAuthority
     public let budgetBytes: Int
     public let sourceItemCount: Int
@@ -14,6 +19,7 @@ public struct ForgeCompactFootprintMeasurement: Hashable, Sendable {
     public let reductionBasisPoints: Int
 
     fileprivate init(
+        basis: ForgeCompactFootprintBasis,
         authority: ProjectCapsuleAuthority,
         budgetBytes: Int,
         sourceItemCount: Int,
@@ -24,6 +30,7 @@ public struct ForgeCompactFootprintMeasurement: Hashable, Sendable {
         savedRenderedUTF8Bytes: Int,
         reductionBasisPoints: Int
     ) {
+        self.basis = basis
         self.authority = authority
         self.budgetBytes = budgetBytes
         self.sourceItemCount = sourceItemCount
@@ -83,6 +90,7 @@ public enum ForgeCompactFootprintMeasurer {
         let savedBytes = fullSourceBytes - capsule.renderedUTF8Bytes
         let basisPoints = reductionBasisPoints(savedBytes: savedBytes, baselineBytes: fullSourceBytes)
         let footprint = ForgeCompactFootprintMeasurement(
+            basis: .renderedUTF8BytesV1,
             authority: capsule.authority,
             budgetBytes: capsule.budgetBytes,
             sourceItemCount: capsule.sourceItemCount,
