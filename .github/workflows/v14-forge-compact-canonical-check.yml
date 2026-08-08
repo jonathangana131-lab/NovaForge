@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - agent/v14-forge-compact-canonical-integration
+  pull_request:
+    paths:
+      - "Packages/ForgeCompactCore/**"
+      - ".github/workflows/v14-forge-compact-canonical-check.yml"
 
 permissions:
   contents: read
