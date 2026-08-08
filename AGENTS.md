@@ -1,20 +1,37 @@
 # NovaForge iOS Agent Notes
 
-## V13 authority — read first
+## V14 execution authority — read first
 
-NovaForge is now operating under **NF-SWARM-v13 / NovaForge 2.0 iPhone AI Creation OS** product direction on the V13 control branch and, after acceptance, `main`.
+NovaForge product identity remains **NovaForge 2.0 / iPhone AI Creation OS** from V13, but concurrent execution is now governed by **NF-SWARM-v14**.
 
-Before substantial product work, read:
+Before substantial work, read in this order:
 
-1. `NovaForge_Master_Continuation_v13_SOL.txt` — self-contained worker continuation prompt.
-2. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md` — product identity and complete generation goals.
-3. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md` — durable mission, Project Brain, Forge Runtime, model/runtime boundaries.
-4. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md` — ChatGPT/first-party quality bar and original Stark/Tesla/JARVIS-inspired NovaForge design language.
-5. `docs/NOVAFORGE_V13_ROADMAP.md` — product-closure waves and parallel lanes.
-6. `docs/NOVAFORGE_SWARM_OPERATING_SYSTEM.md` — minimal product-first multi-worker coordination.
-7. GitHub issue `#23` — live swarm control / lane coordination.
+1. `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt` — canonical `GO` behavior and feature-closure execution kernel.
+2. `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md` — large-swarm anti-collision, no-wait, integration-closer, durability, visual, and night-continuity rules.
+3. `CONTINUATION_PROMPT.md` — concise fresh-session boot/resume contract.
+4. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md` — product identity and generation goals.
+5. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md` — durable mission, Project Brain, Forge Runtime, model/runtime boundaries.
+6. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md` — visual language and quality bar.
+7. `docs/NOVAFORGE_V13_ROADMAP.md` — product closure waves and capability ordering.
+8. GitHub issue `#23` — live swarm coordination context; live GitHub code/PRs always outrank stale issue text.
 
-V13 supersedes older NF-SWARM v1/v2 **product direction**. Older technical findings remain useful only when live code/evidence still supports them.
+When the user says only `GO`, do not ask what to do. Fresh-check live GitHub, map active ownership, claim the highest-value safe non-conflicting lane, execute immediately, checkpoint durably, refresh, and continue.
+
+### V14 mandatory swarm rules
+
+- **No-wait rule:** if another worker owns the obvious lane, do not wait and do not duplicate it; immediately self-reassign to another useful independent lane inside the same flagship.
+- **Feature gravity:** workers belong to a feature/capability, not one PR. A merged/blocked/superseded PR triggers refresh + hot-swap, not session end.
+- **GitHub-or-it-didn’t-happen:** chat-only reviewer findings, test results, visual critiques, blockers, or handoffs are lost work. Persist every material result to GitHub before ending.
+- **Integration closer:** current flagships should have a closer composing accepted independent work into the strongest current spine while other workers continue adjacent lanes.
+- **Visual quality is a release gate:** app-visible work requires real Simulator/runtime interaction, screenshot critique, accessibility, and performance evidence appropriate to the change.
+- **CI is a checkpoint:** while CI runs, do useful non-conflicting work instead of idling/polling.
+- **Night continuity:** scheduled/night workers exist to continue useful repository work when interactive workers die/time out/go idle; they must do real work and leave durable GitHub state, not just status summaries.
+
+The V13 product documents below remain authoritative product/architecture context. V14 supersedes older swarm execution behavior where they conflict.
+
+## V13 product authority — preserved
+
+NovaForge is operating under **NovaForge 2.0 iPhone AI Creation OS** product direction.
 
 Critical product identity: NovaForge is an iPhone-native AI coding agent + personal software creation environment. Git/GitHub/Xcode are optional Pro capabilities, not the default product. Normal flow is **Describe -> Build -> Run -> Improve**.
 
@@ -77,7 +94,7 @@ Useful launch arguments already supported by the smoke/tour scripts:
 
 ## Historical Four-Tab Architecture (July 2026)
 
-This is the current/legacy implementation shape, **not a permanent V13 navigation requirement**.
+This is the current/legacy implementation shape, **not a permanent V13/V14 navigation requirement**.
 
 - Tabs: **Forge** (chat + live mission strip + inline approvals — the loop), **Workspace** (files, artifact shelf, terminal), **History** (run receipts), **Control** (settings).
 - Projects are a context, not a tab: the scope pill in the Forge header switches projects; the full project dashboard presents as the modal "mission dossier" (`MissionDossierCover` in `ForgeChrome.swift`, presented from `AppRootView.missionDossierCover`).
@@ -86,14 +103,14 @@ This is the current/legacy implementation shape, **not a permanent V13 navigatio
 - `ChatHeaderStrip.swift` is a tombstone — do not resurrect the chip train.
 - Historical de-theater rules remain good: content starts early, one fact stated once, search/filters appear only when collections need them.
 
-Under V13 these concepts can be migrated, replaced, or restructured if the new product shell proves better while preserving user data and accepted behavior.
+Under V14 these concepts can be migrated, replaced, or restructured if the new product shell proves better while preserving user data and accepted behavior.
 
 ## Working Rules
 
 - Keep SwiftUI edits scoped and reversible where possible.
 - Preserve user project state and persistence through explicit migration.
-- Prefer existing design components only when they meet the V13 quality bar; legacy components are not sacred.
-- Use `@State`, `@Binding`, `@Environment`, `@Query`, `.task`, and `.task(id:)` before adding unnecessary view-model layers, while allowing proper feature/domain models where V13 durability requires them.
+- Prefer existing design components only when they meet the quality bar; legacy components are not sacred.
+- Use `@State`, `@Binding`, `@Environment`, `@Query`, `.task`, and `.task(id:)` before adding unnecessary view-model layers, while allowing proper feature/domain models where durability requires them.
 - Use iOS 27 Liquid Glass APIs only with availability checks and excellent fallbacks.
 - Run one long build/simulator command at a time with hard timeouts.
 - Do not leave `xcodebuild`, `simctl`, or simulator helper commands running.
