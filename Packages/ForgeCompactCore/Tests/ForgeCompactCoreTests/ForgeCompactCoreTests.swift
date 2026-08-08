@@ -116,6 +116,20 @@ struct ForgeCompactCoreTests {
         #expect(capsule.receipt.omissions == [.init(entryID: "model", reason: .nonAuthoritative)])
     }
 
+    @Test func modelOutputCannotBeLaunderedAsAcceptedTruth() throws {
+        #expect(throws: ForgeCompactError.authoritySourceMismatch(entryID: "laundered")) {
+            try ForgeCompactEntry(
+                id: "laundered",
+                projectID: "project-1",
+                kind: .conciseSummary,
+                text: "Unaccepted model summary",
+                authority: .sourceBacked,
+                source: source(kind: .modelOutput),
+                cost: cost(5)
+            )
+        }
+    }
+
     @Test func crossProjectInputIsRejected() throws {
         let foreign = try entry("foreign", projectID: "project-2")
         #expect(throws: ForgeCompactError.crossProjectEntry(entryID: "foreign")) {
@@ -156,6 +170,14 @@ struct ForgeCompactCoreTests {
         #expect(capsule.entries.map(\.id) == ["exact"])
         #expect(capsule.receipt.costTruth == .exact)
         #expect(capsule.receipt.omissions == [.init(entryID: "estimated", reason: .estimatedCostDisallowed)])
+    }
+
+    @Test func costBasisIdentifiersAreCanonicalized() throws {
+        let normalized = try ForgeCompactContextCost(
+            units: 4,
+            basis: .exactTokenizer(tokenizerID: " tok ", tokenizerRevision: " r1 ")
+        )
+        #expect(normalized.basis == .exactTokenizer(tokenizerID: "tok", tokenizerRevision: "r1"))
     }
 
     @Test func mixedTokenizerBasesAreRejectedBeforeBudgetComparison() throws {
@@ -227,6 +249,30 @@ struct ForgeCompactCoreTests {
         #expect(capsule.entries.map(\.id) == ["preferred", "cheap", "low"])
         #expect(capsule.receipt.selectedUnits == 14)
         #expect(capsule.receipt.omissions == [.init(entryID: "expensive", reason: .budget)])
+    }
+
+    @Test func selectionIsIndependentOfInputOrder() throws {
+        let a = try entry("a", priority: .high, units: 4)
+        let b = try entry("b", priority: .normal, units: 5)
+        let c = try entry("c", priority: .low, units: 2)
+        let policy = try ForgeCompactPolicy(maximumUnits: 9)
+
+        let forward = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [a, b, c],
+            policy: policy
+        )
+        let reversed = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [c, b, a],
+            policy: policy
+        )
+
+        #expect(forward == reversed)
     }
 
     @Test func archiveDecodeRevalidatesNestedEntryCost() throws {
