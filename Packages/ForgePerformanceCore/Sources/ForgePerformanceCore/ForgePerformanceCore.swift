@@ -10,6 +10,7 @@ public enum ForgePerformanceError: Error, Equatable, Sendable {
     case duplicateMetric(String)
     case duplicateRunID(String)
     case targetMismatch(String)
+    case untrustedBudgetAuthorityReceipt(String)
     case untrustedBatchReceipt(String)
     case unsupportedSchema(Int)
 }
@@ -17,7 +18,7 @@ public enum ForgePerformanceError: Error, Equatable, Sendable {
 private enum ForgePerformanceValidation {
     static func identifier(_ value: String, field: String, maximum: Int = 512) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.utf8.count <= maximum else {
+        guard !trimmed.isEmpty, trimmed == value, trimmed.utf8.count <= maximum else {
             throw ForgePerformanceError.invalidIdentifier(field)
         }
         guard !trimmed.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
@@ -465,14 +466,18 @@ public struct ForgePerformanceEvaluation: Equatable, Sendable {
 }
 
 public enum ForgePerformanceEvaluator {
-    /// `trustedBatchReceiptIDs` must come from the host-owned measurement authority, not model/persisted payload.
-    /// A serialized batch cannot authorize itself merely by spelling a receipt ID.
+    /// Both trust sets must come from host-owned authorities, not model/persisted payload.
+    /// Serialized budget/batch data cannot authorize itself merely by spelling receipt IDs.
     public static func evaluate(
         budget: ForgePerformanceBudget,
         batch: ForgePerformanceMeasurementBatch,
+        trustedBudgetAuthorityReceiptIDs: Set<String>,
         trustedBatchReceiptIDs: Set<String>
     ) throws -> ForgePerformanceEvaluation {
         guard batch.target == budget.target else { throw ForgePerformanceError.targetMismatch("batch.target") }
+        guard trustedBudgetAuthorityReceiptIDs.contains(budget.target.budgetAuthorityReceiptID) else {
+            throw ForgePerformanceError.untrustedBudgetAuthorityReceipt(budget.target.budgetAuthorityReceiptID)
+        }
         guard trustedBatchReceiptIDs.contains(batch.batchReceiptID) else {
             throw ForgePerformanceError.untrustedBatchReceipt(batch.batchReceiptID)
         }

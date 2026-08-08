@@ -87,7 +87,7 @@ private func batch(
     let evaluation = try ForgePerformanceEvaluator.evaluate(
         budget: budget(target: target),
         batch: batch(target: target),
-        trustedBatchReceiptIDs: ["trusted-batch"]
+        trustedBudgetAuthorityReceiptIDs: ["budget-receipt-3"], trustedBatchReceiptIDs: ["trusted-batch"]
     )
 
     #expect(evaluation.status == .accepted)
@@ -104,7 +104,7 @@ private func batch(
         run("run-2", target: target, frame: 20, memory: 500_000_000),
     ])
     let evaluation = try ForgePerformanceEvaluator.evaluate(
-        budget: budget(target: target), batch: exact, trustedBatchReceiptIDs: ["trusted-batch"]
+        budget: budget(target: target), batch: exact, trustedBudgetAuthorityReceiptIDs: ["budget-receipt-3"], trustedBatchReceiptIDs: ["trusted-batch"]
     )
     #expect(evaluation.status == .accepted)
 }
@@ -116,7 +116,7 @@ private func batch(
         run("slow", target: target, frame: 25),
     ])
     let evaluation = try ForgePerformanceEvaluator.evaluate(
-        budget: budget(target: target), batch: measurements, trustedBatchReceiptIDs: ["trusted-batch"]
+        budget: budget(target: target), batch: measurements, trustedBudgetAuthorityReceiptIDs: ["budget-receipt-3"], trustedBatchReceiptIDs: ["trusted-batch"]
     )
 
     #expect(evaluation.status == .failed)
@@ -136,7 +136,7 @@ private func batch(
     )
     let measurements = batch(target: target, runs: [incompleteRun, run("run-2", target: target)])
     let evaluation = try ForgePerformanceEvaluator.evaluate(
-        budget: budget(target: target), batch: measurements, trustedBatchReceiptIDs: ["trusted-batch"]
+        budget: budget(target: target), batch: measurements, trustedBudgetAuthorityReceiptIDs: ["budget-receipt-3"], trustedBatchReceiptIDs: ["trusted-batch"]
     )
 
     #expect(evaluation.status == .blocked)
@@ -150,7 +150,7 @@ private func batch(
         run("run-2", target: target),
     ])
     let evaluation = try ForgePerformanceEvaluator.evaluate(
-        budget: budget(target: target), batch: measurements, trustedBatchReceiptIDs: ["trusted-batch"]
+        budget: budget(target: target), batch: measurements, trustedBudgetAuthorityReceiptIDs: ["budget-receipt-3"], trustedBatchReceiptIDs: ["trusted-batch"]
     )
     #expect(evaluation.status == .blocked)
     #expect(evaluation.blockers.contains(
@@ -162,17 +162,29 @@ private func batch(
     let target = target()
     let measurements = batch(target: target, runs: [run("only", target: target)])
     let evaluation = try ForgePerformanceEvaluator.evaluate(
-        budget: budget(target: target, runs: 2), batch: measurements, trustedBatchReceiptIDs: ["trusted-batch"]
+        budget: budget(target: target, runs: 2), batch: measurements, trustedBudgetAuthorityReceiptIDs: ["budget-receipt-3"], trustedBatchReceiptIDs: ["trusted-batch"]
     )
     #expect(evaluation.status == .blocked)
     #expect(evaluation.blockers.contains(.insufficientRuns(required: 2, actual: 1)))
+}
+
+@Test func serializedBudgetAuthorityCannotAuthorizeItself() throws {
+    let target = target()
+    #expect(throws: ForgePerformanceError.untrustedBudgetAuthorityReceipt("budget-receipt-3")) {
+        try ForgePerformanceEvaluator.evaluate(
+            budget: budget(target: target),
+            batch: batch(target: target),
+            trustedBudgetAuthorityReceiptIDs: [],
+            trustedBatchReceiptIDs: ["trusted-batch"]
+        )
+    }
 }
 
 @Test func serializedReceiptCannotAuthorizeItself() throws {
     let target = target()
     #expect(throws: ForgePerformanceError.untrustedBatchReceipt("trusted-batch")) {
         try ForgePerformanceEvaluator.evaluate(
-            budget: budget(target: target), batch: batch(target: target), trustedBatchReceiptIDs: []
+            budget: budget(target: target), batch: batch(target: target), trustedBudgetAuthorityReceiptIDs: [target.budgetAuthorityReceiptID], trustedBatchReceiptIDs: []
         )
     }
 }
@@ -184,7 +196,7 @@ private func batch(
         try ForgePerformanceEvaluator.evaluate(
             budget: budget(target: currentTarget),
             batch: batch(target: staleTarget),
-            trustedBatchReceiptIDs: ["trusted-batch"]
+            trustedBudgetAuthorityReceiptIDs: [currentTarget.budgetAuthorityReceiptID], trustedBatchReceiptIDs: ["trusted-batch"]
         )
     }
 }
@@ -196,7 +208,7 @@ private func batch(
         try ForgePerformanceEvaluator.evaluate(
             budget: budget(target: currentTarget),
             batch: batch(target: staleTarget),
-            trustedBatchReceiptIDs: ["trusted-batch"]
+            trustedBudgetAuthorityReceiptIDs: [currentTarget.budgetAuthorityReceiptID], trustedBatchReceiptIDs: ["trusted-batch"]
         )
     }
 }
@@ -208,7 +220,7 @@ private func batch(
         try ForgePerformanceEvaluator.evaluate(
             budget: budget(target: currentTarget),
             batch: batch(target: staleTarget),
-            trustedBatchReceiptIDs: ["trusted-batch"]
+            trustedBudgetAuthorityReceiptIDs: [currentTarget.budgetAuthorityReceiptID], trustedBatchReceiptIDs: ["trusted-batch"]
         )
     }
 }
@@ -220,7 +232,31 @@ private func batch(
         try ForgePerformanceEvaluator.evaluate(
             budget: budget(target: physical),
             batch: batch(target: simulator),
-            trustedBatchReceiptIDs: ["trusted-batch"]
+            trustedBudgetAuthorityReceiptIDs: [physical.budgetAuthorityReceiptID], trustedBatchReceiptIDs: ["trusted-batch"]
+        )
+    }
+}
+
+@Test func receiptAndIdentityWhitespaceIsRejectedInsteadOfNormalized() {
+    #expect(throws: ForgePerformanceError.invalidIdentifier("target.projectID")) {
+        try ForgePerformanceTarget(
+            projectID: " project-alpha ",
+            sourceRevision: "source-abc",
+            missionID: "mission-1",
+            runtimeID: "runtime",
+            runtimeRevision: "1",
+            environment: environment(),
+            measurementProtocolID: "protocol",
+            measurementProtocolRevision: 1,
+            budgetRevision: 1,
+            budgetAuthorityReceiptID: "budget-receipt"
+        )
+    }
+    #expect(throws: ForgePerformanceError.invalidIdentifier("batch.batchReceiptID")) {
+        try ForgePerformanceMeasurementBatch(
+            batchReceiptID: " trusted-batch ",
+            target: target(),
+            runs: [run("run-1")]
         )
     }
 }
@@ -292,7 +328,7 @@ private func batch(
     let p3 = target(protocolRevision: 3)
     #expect(throws: ForgePerformanceError.targetMismatch("batch.target")) {
         try ForgePerformanceEvaluator.evaluate(
-            budget: budget(target: p3), batch: batch(target: p2), trustedBatchReceiptIDs: ["trusted-batch"]
+            budget: budget(target: p3), batch: batch(target: p2), trustedBudgetAuthorityReceiptIDs: [p3.budgetAuthorityReceiptID], trustedBatchReceiptIDs: ["trusted-batch"]
         )
     }
 }
@@ -308,7 +344,7 @@ private func batch(
     let evaluation = try ForgePerformanceEvaluator.evaluate(
         budget: decoded.budget,
         batch: decoded.batch,
-        trustedBatchReceiptIDs: [decoded.batch.batchReceiptID]
+        trustedBudgetAuthorityReceiptIDs: [decoded.budget.target.budgetAuthorityReceiptID], trustedBatchReceiptIDs: [decoded.batch.batchReceiptID]
     )
     #expect(evaluation.status == .accepted)
 }
