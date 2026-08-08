@@ -1,0 +1,51 @@
+name: V14 Mission all-optional hardening validation only
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-MISSION-CLOSER-8A08/mission-alloptional-644a
+
+permissions:
+  contents: read
+
+jobs:
+  mission-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift toolchain
+        run: swift --version
+      - name: Build signature-faithful Mission harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          HARNESS="$RUNNER_TEMP/novaforge-mission-harness"
+          rm -rf "$HARNESS"
+          mkdir -p "$HARNESS/Sources" "$HARNESS/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$HARNESS/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Sources/ForgeMission "$HARNESS/Sources/ForgeMission"
+          cp -R Packages/AgentHarnessKit/Tests/AgentDomainTests "$HARNESS/Tests/AgentDomainTests"
+          cp -R Packages/AgentHarnessKit/Tests/ForgeMissionTests "$HARNESS/Tests/ForgeMissionTests"
+          cat > "$HARNESS/Package.swift" <<'EOF'
+          // swift-tools-version: 6.0
+          import PackageDescription
+
+          let package = Package(
+              name: "NovaForgeMissionValidation",
+              products: [
+                  .library(name: "AgentDomain", targets: ["AgentDomain"]),
+                  .library(name: "ForgeMission", targets: ["ForgeMission"]),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "ForgeMission", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "AgentDomainTests", dependencies: ["AgentDomain"]),
+                  .testTarget(name: "ForgeMissionTests", dependencies: ["AgentDomain", "ForgeMission"]),
+              ]
+          )
+          EOF
+      - name: Mission debug warnings-as-errors
+        run: swift test --package-path "$RUNNER_TEMP/novaforge-mission-harness" -Xswiftc -warnings-as-errors
+      - name: Mission release warnings-as-errors
+        run: swift test --package-path "$RUNNER_TEMP/novaforge-mission-harness" -c release -Xswiftc -warnings-as-errors
