@@ -228,6 +228,7 @@ public struct ForgeRuntimeSemanticInteraction: Codable, Equatable, Sendable {
 }
 
 public struct ForgeRuntimeSemanticInteractionRequest: Equatable, Sendable {
+    public let protocolVersion: Int
     public let requestID: String
     public let sessionID: String
     public let projectID: String
@@ -236,6 +237,7 @@ public struct ForgeRuntimeSemanticInteractionRequest: Equatable, Sendable {
     public let interaction: ForgeRuntimeSemanticInteraction
 
     init(
+        protocolVersion: Int,
         requestID: String,
         sessionID: String,
         projectID: String,
@@ -243,6 +245,7 @@ public struct ForgeRuntimeSemanticInteractionRequest: Equatable, Sendable {
         sequence: Int,
         interaction: ForgeRuntimeSemanticInteraction
     ) {
+        self.protocolVersion = protocolVersion
         self.requestID = requestID
         self.sessionID = sessionID
         self.projectID = projectID
@@ -302,7 +305,7 @@ public struct ForgeRuntimeSemanticInteractionDecoder: Sendable {
         guard envelope.protocolVersion == supportedProtocolVersion else {
             throw ForgeRuntimeSemanticInteractionError.unsupportedProtocolVersion(envelope.protocolVersion)
         }
-        guard Self.isValidSemanticID(envelope.requestID, maximumUTF8Bytes: 96) else {
+        guard Self.isValidRequestID(envelope.requestID) else {
             throw ForgeRuntimeSemanticInteractionError.invalidRequestID
         }
         guard envelope.sessionID == session.sessionID else {
@@ -323,6 +326,7 @@ public struct ForgeRuntimeSemanticInteractionDecoder: Sendable {
 
         let interaction = try validatePayload(envelope, kind: kind, session: session)
         return ForgeRuntimeSemanticInteractionRequest(
+            protocolVersion: envelope.protocolVersion,
             requestID: envelope.requestID,
             sessionID: envelope.sessionID,
             projectID: envelope.projectID,
@@ -418,6 +422,16 @@ public struct ForgeRuntimeSemanticInteractionDecoder: Sendable {
         }
     }
 
+    private static func isValidRequestID(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 96 else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            let isUpper = scalar.value >= 65 && scalar.value <= 90
+            let isLower = scalar.value >= 97 && scalar.value <= 122
+            let isDigit = scalar.value >= 48 && scalar.value <= 57
+            return isUpper || isLower || isDigit || scalar == "-" || scalar == "_" || scalar == "."
+        }
+    }
+
     private static func isValidSemanticID(_ value: String, maximumUTF8Bytes: Int) -> Bool {
         guard !value.isEmpty, value.utf8.count <= maximumUTF8Bytes else { return false }
         return value.unicodeScalars.allSatisfy { scalar in
@@ -480,7 +494,7 @@ public struct ForgeRuntimeAuthorizedSemanticInteraction: Equatable, Sendable {
         disposition: ForgeRuntimeSemanticInteractionDisposition
     ) -> ForgeRuntimeSemanticInteractionReceipt {
         ForgeRuntimeSemanticInteractionReceipt(
-            protocolVersion: 1,
+            protocolVersion: request.protocolVersion,
             requestID: request.requestID,
             sessionID: request.sessionID,
             projectID: request.projectID,
