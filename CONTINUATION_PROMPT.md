@@ -14,10 +14,46 @@ Start with tools, not a giant plan.
 4. Identify active ownership/high-contention paths.
 5. Read `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt`.
 6. Read `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`.
-7. Read the relevant V13 Product Constitution / Agent Runtime Architecture / Design System / Roadmap sections for the feature you choose.
-8. Use GitHub issue #23 as live coordination context when useful, but live code/PRs outrank stale issue text.
-9. Choose the highest-value safe non-conflicting lane.
-10. Execute real work immediately.
+7. Read `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md`.
+8. Read the relevant V13 Product Constitution / Agent Runtime Architecture / Design System / Roadmap sections for the feature you choose.
+9. Use GitHub issue #23 as live coordination context when useful, but live code/PRs outrank stale issue text.
+10. Choose the highest-value safe non-conflicting lane.
+11. Execute real work immediately.
+
+## Product north star
+
+NovaForge is a **local-first iPhone AI creation OS**, not a generic chat wrapper.
+
+The target loop is:
+
+**Describe -> Understand -> Forge -> Run -> Experience -> Critique -> Repair -> Polish -> Complete**
+
+The Composer + Plan Space are flagship product surfaces. Full Forge is a real autonomous mode that should eventually build, run, self-play/interact with supported generated projects, inspect evidence, repair defects, rerun regression/visual/accessibility/performance checks, and continue until a machine-readable Completion Constitution is genuinely satisfied or a real blocker remains.
+
+A model response is never proof of completion.
+
+## Local AI priority
+
+Local models are a primary NovaForge capability. Prefer a device-aware Local Model Fabric rather than one monolithic model picker:
+
+- tiny router/retrieval/compaction/specialist models;
+- fast default local agent model;
+- deeper local tier when memory/thermal budget permits;
+- explicit experimental beyond-RAM/flash-backed modes only with truthful device evidence.
+
+Continuously investigate new tiny/on-device model families and low-memory runtimes, but never label a model supported merely because its parameter count looks small.
+
+Build **Forge Compact** as a measured memory/context subsystem: model quantization, KV-cache compression, exact-prefix/KV reuse where safe, Project Capsules, structured Project Brain retrieval, speculative decoding, and isolated research into flash-backed/expert-streaming inference.
+
+## Autonomous runtime/playtest priority
+
+Forge Runtime should gain an authorized semantic test-input bridge and deterministic evidence capture so Full Forge can actually test generated games/apps rather than merely read source.
+
+Preferred loop:
+
+`implement -> build -> run -> interact/play -> observe -> test -> visual critique -> repair -> regression -> polish -> accept/loop`
+
+Use goal-runner, explorer, chaos/new-player, persistence and performance journeys where relevant. Persist exact project revision + runtime/test/visual evidence.
 
 ## Large swarm behavior
 
@@ -57,10 +93,6 @@ Continue until a real stop condition exists: explicit user stop, genuine safety/
 
 ## Product identity
 
-NovaForge remains an iPhone-native AI coding agent + personal software creation environment with the normal-user loop:
-
-**Describe -> Build -> Run -> Improve**
-
 Git/GitHub/Xcode are optional Pro capabilities, not the default product.
 
 Do not drift into a GitHub dashboard, CI monitor, terminal-first IDE, generic chatbot, or unrelated Nembra/Voltline work.
@@ -71,8 +103,14 @@ Technically correct but visually mediocre user-facing work is unfinished.
 
 Major UI requires real iPhone 12 / iOS 27 Simulator interaction, screenshots, critique, accessibility, and performance checks appropriate to the change.
 
-Never fabricate provider support, model compatibility, build/test/runtime success, local-only behavior, background guarantees, or physical-device performance.
+The Composer, Plan Space, Local Model Center, Full Forge mission surface, Run mode and final Complete/evidence experience are flagship visual gates.
+
+Never fabricate provider support, model compatibility, build/test/runtime success, local-only behavior, background guarantees, autonomous-play success, or physical-device performance.
+
+## Scheduled continuity
+
+Do not assume NovaForge has scheduled workers. No scheduler is required for `GO`. Leave durable GitHub state so future project chats can resume from live repository truth.
 
 ## Progress
 
-When asked for progress, fresh-query GitHub first and report simple bars for app/menu/product areas, visuals, and foundations. Separate **IN APP / INTEGRATED** from **IN WORK / ACTIVE** and do not inflate progress from PR count.
+When asked for progress, fresh-query GitHub first and report simple bars for app/menu/product areas, visual polish, Local Model Center/local runtime, Full Forge/autonomy/playtest, and foundations. Separate **IN APP / INTEGRATED** from **IN WORK / ACTIVE** and do not inflate progress from PR count.
