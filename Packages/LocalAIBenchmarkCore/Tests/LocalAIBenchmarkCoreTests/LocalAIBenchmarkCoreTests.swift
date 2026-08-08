@@ -260,6 +260,24 @@ final class LocalAIBenchmarkCoreTests: XCTestCase {
         XCTAssertEqual(decoded.score.failedTaskIDs, ["repair"])
     }
 
+    func testRunReceiptRejectsTamperedPersistedAggregate() throws {
+        let original = try receipt(suite: makeSuite(), failedTaskID: "repair")
+        let encoded = try JSONEncoder().encode(original)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        var score = try XCTUnwrap(object["score"] as? [String: Any])
+        score["weightedSuccess"] = 0.125
+        object["score"] = score
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            LocalAIBenchmarkRunReceipt.self, from: tampered
+        )) { error in
+            XCTAssertEqual(error as? LocalAIBenchmarkError, .invalidPersistedReceipt)
+        }
+    }
+
     func testDecodedScoreRejectsImpossiblePersistedMetrics() throws {
         let malformed = #"{"suiteID":"general-agent","suiteVersion":1,"weightedSuccess":1.25,"completedCoverage":1,"requiredTasksPassed":true,"requiredCategoryCoverage":true,"isComplete":true,"categoryScores":[],"passedTaskIDs":["route"],"failedTaskIDs":[],"notRunTaskIDs":[]}"#
         XCTAssertThrowsError(try JSONDecoder().decode(
