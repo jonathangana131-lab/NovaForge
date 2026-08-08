@@ -330,7 +330,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         ForgeCompactExecutionEnvelope(
             id: id,
             profileID: "local-agent-q4",
-            configurationBindingID: "binding-\(id)",
+            configurationBindingID: "binding-default",
             deviceProfileID: deviceProfileID,
             evidenceReceiptID: evidenceReceiptID,
             computeLocation: location,
@@ -384,7 +384,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         if let explicitGrants {
             grants = explicitGrants
         } else if trustEvidence {
-            grants = Set(envelopes.compactMap(grant(for:)))
+            grants = Set(envelopes.compactMap { grant(for: $0) })
         } else {
             grants = []
         }
