@@ -1,11 +1,12 @@
 import Foundation
 
-/// Exact identity for prefix/KV reuse. Reuse is allowed only when the stable prefix bytes and
-/// every runtime memory-profile dimension are identical. This is a compatibility boundary, not
-/// proof that the current runtime actually supports reusable KV state.
+/// Exact identity for prefix/KV reuse. Reuse is allowed only when the stable prefix bytes, model
+/// artifact bytes, and every runtime memory-profile dimension are identical. This is a
+/// compatibility boundary, not proof that the current runtime actually supports reusable KV state.
 public struct ForgeCompactCacheIdentity: Codable, Hashable, Sendable {
     public let modelID: String
     public let modelRevision: String
+    public let modelArtifactSHA256: String
     public let tokenizerID: String
     public let tokenizerRevision: String
     public let runtimeID: String
@@ -27,6 +28,7 @@ public struct ForgeCompactCacheIdentity: Codable, Hashable, Sendable {
     public init(
         modelID: String,
         modelRevision: String,
+        modelArtifactSHA256: String,
         tokenizerID: String,
         tokenizerRevision: String,
         runtimeID: String,
@@ -60,6 +62,7 @@ public struct ForgeCompactCacheIdentity: Codable, Hashable, Sendable {
 
         self.modelID = try Self.canonicalIdentifier(modelID, field: "modelID")
         self.modelRevision = try Self.canonicalIdentifier(modelRevision, field: "modelRevision")
+        self.modelArtifactSHA256 = try Self.canonicalSHA256(modelArtifactSHA256, field: "modelArtifactSHA256")
         self.tokenizerID = try Self.canonicalIdentifier(tokenizerID, field: "tokenizerID")
         self.tokenizerRevision = try Self.canonicalIdentifier(tokenizerRevision, field: "tokenizerRevision")
         self.runtimeID = try Self.canonicalIdentifier(runtimeID, field: "runtimeID")
@@ -79,14 +82,14 @@ public struct ForgeCompactCacheIdentity: Codable, Hashable, Sendable {
         self.stablePrefixSHA256 = try Self.canonicalSHA256(stablePrefixSHA256, field: "stablePrefixSHA256")
     }
 
-    /// Exact equality is deliberately strict. Any identity, memory-profile, capsule-authority, or
-    /// stable-prefix-byte drift invalidates reuse.
+    /// Exact equality is deliberately strict. Any model-artifact, identity, memory-profile,
+    /// capsule-authority, or stable-prefix-byte drift invalidates reuse.
     public func canReusePrefixOrKV(with other: ForgeCompactCacheIdentity) -> Bool {
         self == other
     }
 
     private enum CodingKeys: String, CodingKey {
-        case modelID, modelRevision, tokenizerID, tokenizerRevision
+        case modelID, modelRevision, modelArtifactSHA256, tokenizerID, tokenizerRevision
         case runtimeID, runtimeRevision, backendProfileID, weightProfileID
         case keyCacheType, valueCacheType, contextCapacityTokens
         case promptTemplateRevision, toolSchemaRevision
@@ -99,6 +102,7 @@ public struct ForgeCompactCacheIdentity: Codable, Hashable, Sendable {
         try self.init(
             modelID: c.decode(String.self, forKey: .modelID),
             modelRevision: c.decode(String.self, forKey: .modelRevision),
+            modelArtifactSHA256: c.decode(String.self, forKey: .modelArtifactSHA256),
             tokenizerID: c.decode(String.self, forKey: .tokenizerID),
             tokenizerRevision: c.decode(String.self, forKey: .tokenizerRevision),
             runtimeID: c.decode(String.self, forKey: .runtimeID),
