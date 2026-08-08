@@ -3,17 +3,34 @@ import XCTest
 @testable import ForgeRuntime
 
 final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
-    func testSessionBindsExactLaunchCheckpointAndRequestedHostPolicy() throws {
+    func testSessionBindsExactLaunchAndRequestedHostPolicy() throws {
         let session = try makeSession(
             capabilities: [.activateControl, .setActionValue],
-            policyCapabilities: [.activateControl, .setActionValue, .performGesture]
+            policyCapabilities: [.activateControl, .setActionValue, .performGesture],
+            maximumInteractions: 17
         )
 
         XCTAssertEqual(session.sessionID, "session-1")
         XCTAssertEqual(session.projectID, "neon-racer")
-        XCTAssertEqual(session.checkpointID, "checkpoint:abc123")
         XCTAssertEqual(session.runtimeVersion, .init(major: 1, minor: 0))
         XCTAssertEqual(session.grantedCapabilities, [.activateControl, .setActionValue])
+        XCTAssertEqual(session.maximumInteractions, 17)
+    }
+
+    func testPolicyRejectsInvalidInteractionBudgets() throws {
+        for maximum in [0, ForgeRuntimeAutomationPolicy.hardMaximumInteractions + 1] {
+            XCTAssertThrowsError(
+                try ForgeRuntimeAutomationPolicy(
+                    allowedCapabilities: [.activateControl],
+                    maximumInteractions: maximum
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? ForgeRuntimeAutomationPolicyError,
+                    .invalidMaximumInteractions
+                )
+            }
+        }
     }
 
     func testSessionFailsClosedWhenRequestedCapabilityExceedsHostPolicy() throws {
@@ -23,7 +40,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
             try ForgeRuntimeAutomationSessionAuthorizer().authorize(
                 launchAuthorization: launchAuthorization(),
                 sessionID: "session-1",
-                checkpointID: "checkpoint:abc123",
                 requestedCapabilities: [.restartRuntime, .enterText],
                 policy: policy
             )
@@ -35,15 +51,14 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
         }
     }
 
-    func testGateAuthorizesSemanticControlAndProducesDeterministicReceipt() throws {
+    func testGateAuthorizesSemanticControlAndProducesDeterministicAuthorizationReceipt() throws {
         let session = try makeSession(capabilities: [.activateControl])
-        var gate = ForgeRuntimeSemanticInteractionGate(session: session)
+        var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
         let data = try encode(
             .init(
                 requestID: "req-1",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "control.activate",
                 targetID: "hud/start-button"
@@ -51,20 +66,20 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
         )
 
         let authorized = try gate.authorize(data)
-        let first = authorized.receipt(disposition: .delivered)
-        let second = authorized.receipt(disposition: .delivered)
+        let first = authorized.authorizationReceipt()
+        let second = authorized.authorizationReceipt()
 
         XCTAssertEqual(gate.nextExpectedSequence, 1)
+        XCTAssertEqual(gate.authorizedInteractionCount, 1)
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.interaction.kind, .activateControl)
         XCTAssertEqual(first.interaction.targetID, "hud/start-button")
-        XCTAssertEqual(first.disposition, .delivered)
         XCTAssertNoThrow(try JSONEncoder().encode(first))
     }
 
     func testGateRejectsReplayAndOutOfOrderSequence() throws {
         let session = try makeSession(capabilities: [.activateControl])
-        var gate = ForgeRuntimeSemanticInteractionGate(session: session)
+        var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
         let first = try controlData(session: session, requestID: "req-1", sequence: 0)
         _ = try gate.authorize(first)
 
@@ -81,20 +96,21 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
             }
         }
         XCTAssertEqual(gate.nextExpectedSequence, 1)
+        XCTAssertEqual(gate.authorizedInteractionCount, 1)
     }
 
-    func testCapabilityDenialDoesNotConsumeSequenceSlot() throws {
+    func testCapabilityDenialDoesNotConsumeSequenceOrInteractionBudget() throws {
         let session = try makeSession(
             capabilities: [.activateControl],
-            policyCapabilities: [.activateControl, .enterText]
+            policyCapabilities: [.activateControl, .enterText],
+            maximumInteractions: 1
         )
-        var gate = ForgeRuntimeSemanticInteractionGate(session: session)
+        var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
         let denied = try encode(
             .init(
                 requestID: "req-text",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "text.enter",
                 targetID: "profile/name",
@@ -109,8 +125,87 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
             )
         }
         XCTAssertEqual(gate.nextExpectedSequence, 0)
+        XCTAssertEqual(gate.authorizedInteractionCount, 0)
         XCTAssertNoThrow(try gate.authorize(controlData(session: session, requestID: "req-control", sequence: 0)))
         XCTAssertEqual(gate.nextExpectedSequence, 1)
+        XCTAssertEqual(gate.authorizedInteractionCount, 1)
+    }
+
+    func testInvalidRequestDoesNotConsumeInteractionBudget() throws {
+        let session = try makeSession(capabilities: [.activateControl], maximumInteractions: 1)
+        var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
+        let invalid = try encode(
+            .init(
+                requestID: "req-invalid",
+                sessionID: "other-session",
+                projectID: session.projectID,
+                sequence: 0,
+                kind: "control.activate",
+                targetID: "menu/play"
+            )
+        )
+
+        XCTAssertThrowsError(try gate.authorize(invalid)) { error in
+            XCTAssertEqual(error as? ForgeRuntimeSemanticInteractionError, .sessionMismatch)
+        }
+        XCTAssertEqual(gate.nextExpectedSequence, 0)
+        XCTAssertEqual(gate.authorizedInteractionCount, 0)
+        XCTAssertNoThrow(try gate.authorize(controlData(session: session, requestID: "req-valid", sequence: 0)))
+    }
+
+    func testExactFinalAllowedInteractionSucceedsThenBudgetFailsClosed() throws {
+        let session = try makeSession(capabilities: [.activateControl], maximumInteractions: 2)
+        var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
+
+        XCTAssertNoThrow(try gate.authorize(controlData(session: session, requestID: "req-0", sequence: 0)))
+        XCTAssertNoThrow(try gate.authorize(controlData(session: session, requestID: "req-1", sequence: 1)))
+        XCTAssertEqual(gate.nextExpectedSequence, 2)
+        XCTAssertEqual(gate.authorizedInteractionCount, 2)
+
+        XCTAssertThrowsError(
+            try gate.authorize(controlData(session: session, requestID: "req-2", sequence: 2))
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeRuntimeSemanticInteractionError,
+                .interactionBudgetExhausted(maximum: 2)
+            )
+        }
+        XCTAssertEqual(gate.nextExpectedSequence, 2)
+        XCTAssertEqual(gate.authorizedInteractionCount, 2)
+    }
+
+    func testRestoredGateCannotResetConsumedBudgetOrEnterOverflowState() throws {
+        let session = try makeSession(capabilities: [.activateControl], maximumInteractions: 2)
+        var restored = try ForgeRuntimeSemanticInteractionGate(
+            session: session,
+            startingSequence: 9,
+            authorizedInteractionCount: 1
+        )
+
+        XCTAssertNoThrow(
+            try restored.authorize(controlData(session: session, requestID: "req-9", sequence: 9))
+        )
+        XCTAssertEqual(restored.authorizedInteractionCount, 2)
+
+        XCTAssertThrowsError(
+            try ForgeRuntimeSemanticInteractionGate(
+                session: session,
+                startingSequence: 0,
+                authorizedInteractionCount: 3
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeRuntimeSemanticInteractionError, .invalidGateState)
+        }
+
+        XCTAssertThrowsError(
+            try ForgeRuntimeSemanticInteractionGate(
+                session: session,
+                startingSequence: Int.max,
+                authorizedInteractionCount: 1
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeRuntimeSemanticInteractionError, .invalidGateState)
+        }
     }
 
     func testIdentityMismatchesFailBeforeDispatchAndDoNotAdvanceSequence() throws {
@@ -125,18 +220,15 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 envelope(session: session, projectID: "other-project"),
                 .projectMismatch
             ),
-            (
-                envelope(session: session, checkpointID: "checkpoint:stale"),
-                .checkpointMismatch
-            ),
         ]
 
         for (input, expectedError) in cases {
-            var gate = ForgeRuntimeSemanticInteractionGate(session: session)
+            var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
             XCTAssertThrowsError(try gate.authorize(encode(input))) { error in
                 XCTAssertEqual(error as? ForgeRuntimeSemanticInteractionError, expectedError)
             }
             XCTAssertEqual(gate.nextExpectedSequence, 0)
+            XCTAssertEqual(gate.authorizedInteractionCount, 0)
         }
     }
 
@@ -150,7 +242,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                     requestID: "req-action",
                     sessionID: session.sessionID,
                     projectID: session.projectID,
-                    checkpointID: session.checkpointID,
                     sequence: 0,
                     kind: "action.set-value",
                     targetID: "drive/steer",
@@ -167,12 +258,12 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
         let policy = try ForgeRuntimeAutomationPolicy(
             allowedCapabilities: [.enterText, .performGesture],
             maximumTextUTF8Bytes: 4,
-            maximumGestureDurationMilliseconds: 250
+            maximumGestureDurationMilliseconds: 250,
+            maximumInteractions: 2
         )
         let session = try ForgeRuntimeAutomationSessionAuthorizer().authorize(
             launchAuthorization: launchAuthorization(),
             sessionID: "session-1",
-            checkpointID: "checkpoint:abc123",
             requestedCapabilities: [.enterText, .performGesture],
             policy: policy
         )
@@ -183,7 +274,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 requestID: "req-text",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "text.enter",
                 targetID: "form/name",
@@ -199,7 +289,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 requestID: "req-gesture",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "gesture.perform",
                 targetID: "world/camera",
@@ -220,7 +309,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 requestID: "req-extra",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "control.activate",
                 targetID: "menu/play",
@@ -236,7 +324,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 requestID: "req-unknown",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "system.shell"
             )
@@ -254,7 +341,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 requestID: "../../receipt",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "control.activate",
                 targetID: "menu/play"
@@ -266,9 +352,9 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
         }
     }
 
-    func testReceiptPreservesAuthorizedProtocolVersion() throws {
+    func testAuthorizationReceiptPreservesAuthorizedProtocolVersion() throws {
         let session = try makeSession(capabilities: [.activateControl])
-        var gate = ForgeRuntimeSemanticInteractionGate(
+        var gate = try ForgeRuntimeSemanticInteractionGate(
             session: session,
             decoder: ForgeRuntimeSemanticInteractionDecoder(supportedProtocolVersion: 2)
         )
@@ -278,15 +364,15 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 requestID: "req-v2",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "control.activate",
                 targetID: "menu/play"
             )
         )
 
-        let receipt = try gate.authorize(data).receipt(disposition: .delivered)
+        let receipt = try gate.authorize(data).authorizationReceipt()
         XCTAssertEqual(receipt.protocolVersion, 2)
+        XCTAssertEqual(receipt.projectID, session.projectID)
     }
 
     func testOversizedEnvelopeFailsBeforeJSONDecode() throws {
@@ -302,15 +388,14 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
         }
     }
 
-    func testRestartRequiresExplicitLifecycleCapabilityAndNoPayload() throws {
+    func testRestartRequiresExplicitLifecycleCapabilityAndCarriesNoDeliveryClaim() throws {
         let session = try makeSession(capabilities: [.restartRuntime])
-        var gate = ForgeRuntimeSemanticInteractionGate(session: session)
+        var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
         let data = try encode(
             .init(
                 requestID: "req-restart",
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: 0,
                 kind: "runtime.restart"
             )
@@ -318,20 +403,21 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
 
         let authorized = try gate.authorize(data)
         XCTAssertEqual(authorized.request.interaction.kind, .restartRuntime)
-        XCTAssertEqual(authorized.receipt(disposition: .runtimeUnavailable).disposition, .runtimeUnavailable)
+        XCTAssertEqual(authorized.authorizationReceipt().requestID, "req-restart")
     }
 
     private func makeSession(
         capabilities: Set<ForgeRuntimeAutomationCapability>,
-        policyCapabilities: Set<ForgeRuntimeAutomationCapability>? = nil
+        policyCapabilities: Set<ForgeRuntimeAutomationCapability>? = nil,
+        maximumInteractions: Int = 512
     ) throws -> ForgeRuntimeAutomationSession {
         let policy = try ForgeRuntimeAutomationPolicy(
-            allowedCapabilities: policyCapabilities ?? capabilities
+            allowedCapabilities: policyCapabilities ?? capabilities,
+            maximumInteractions: maximumInteractions
         )
         return try ForgeRuntimeAutomationSessionAuthorizer().authorize(
             launchAuthorization: launchAuthorization(),
             sessionID: "session-1",
-            checkpointID: "checkpoint:abc123",
             requestedCapabilities: capabilities,
             policy: policy
         )
@@ -360,7 +446,6 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
                 requestID: requestID,
                 sessionID: session.sessionID,
                 projectID: session.projectID,
-                checkpointID: session.checkpointID,
                 sequence: sequence,
                 kind: "control.activate",
                 targetID: "menu/play"
@@ -371,14 +456,12 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
     private func envelope(
         session: ForgeRuntimeAutomationSession,
         sessionID: String? = nil,
-        projectID: String? = nil,
-        checkpointID: String? = nil
+        projectID: String? = nil
     ) -> ForgeRuntimeSemanticInteractionEnvelope {
         .init(
             requestID: "req-identity",
             sessionID: sessionID ?? session.sessionID,
             projectID: projectID ?? session.projectID,
-            checkpointID: checkpointID ?? session.checkpointID,
             sequence: 0,
             kind: "control.activate",
             targetID: "menu/play"
