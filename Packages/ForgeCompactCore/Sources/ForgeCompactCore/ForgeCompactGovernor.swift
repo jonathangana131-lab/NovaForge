@@ -90,16 +90,16 @@ public struct ForgeCompactExecutionEnvelope: Codable, Hashable, Sendable {
 
 /// Transient host acceptance projection for an exact qualified execution configuration.
 ///
-/// This value is intentionally non-Codable. A persisted/model-authored execution envelope cannot
-/// authorize itself by copying an evidence status or receipt string; a current qualification
-/// adapter must provide a matching grant for each governor decision.
+/// This value is intentionally non-Codable and its initializer is package-internal. External
+/// callers may consume a grant but cannot mint one from candidate strings. A future adapter in
+/// this package must translate canonical qualification authority into these grants.
 public struct ForgeCompactQualificationGrant: Hashable, Sendable {
     public let profileID: String
     public let configurationBindingID: String
     public let deviceProfileID: String
     public let evidenceReceiptID: String
 
-    public init(
+    init(
         profileID: String,
         configurationBindingID: String,
         deviceProfileID: String,
