@@ -38,6 +38,49 @@ final class ForgeCompactFootprintMeasurementTests: XCTestCase {
         XCTAssertLessThanOrEqual(result.footprint.reductionBasisPoints, 10_000)
     }
 
+    func testMeasurementPreservesHardenedMandatoryMissionTruthUnderPressure() throws {
+        let decision = try item(
+            id: "decision",
+            tier: .l3ColdArchive,
+            kind: .acceptedDecision,
+            content: "Keep Local Only enabled."
+        )
+        let defect = try item(
+            id: "defect",
+            tier: .l3ColdArchive,
+            kind: .knownDefect,
+            content: "Launch journey remains unresolved."
+        )
+        let stage = try item(
+            id: "stage",
+            tier: .l3ColdArchive,
+            kind: .missionStage,
+            content: "repair"
+        )
+        let optional = try item(
+            id: "optional",
+            tier: .l1ActiveWorkingSet,
+            kind: .workingNote,
+            content: String(repeating: "discardable context ", count: 40),
+            authoritative: false
+        )
+        let mandatory = [decision, defect, stage]
+        let mandatoryBytes = mandatory.reduce(0) { $0 + $1.renderedUTF8Bytes } + (mandatory.count - 1)
+
+        let result = try ForgeCompactFootprintMeasurer.buildAndMeasure(
+            authority: authority(),
+            items: [optional, stage, defect, decision],
+            budgetBytes: mandatoryBytes
+        )
+
+        XCTAssertEqual(result.capsule.selectedItems.map(\.id), ["decision", "defect", "stage"])
+        XCTAssertEqual(result.capsule.omittedItems.map(\.id), ["optional"])
+        XCTAssertFalse(result.capsule.omittedItems.contains(where: \.mustRetain))
+        XCTAssertEqual(result.footprint.selectedItemCount, 3)
+        XCTAssertEqual(result.footprint.omittedItemCount, 1)
+        XCTAssertEqual(result.footprint.savedRenderedUTF8Bytes, optional.renderedUTF8Bytes + 1)
+    }
+
     func testAllSelectedReportsZeroByteReduction() throws {
         let items = try [
             item(id: "objective", tier: .l0AlwaysResident, kind: .currentObjective, content: "Build it."),
