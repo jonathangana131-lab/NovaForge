@@ -175,6 +175,56 @@ struct ForgeCompactCoreTests {
         #expect(capsule.receipt.omissions == [.init(entryID: "expensive", reason: .budget)])
     }
 
+    @Test func archiveDecodeRevalidatesNestedEntryCost() throws {
+        let selected = try entry("selected", inclusion: .required)
+        let capsule = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [selected],
+            policy: try .init(maximumUnits: 100)
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(capsule)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var entries = try #require(json["entries"] as? [[String: Any]])
+        var cost = try #require(entries[0]["cost"] as? [String: Any])
+        cost["units"] = 0
+        entries[0]["cost"] = cost
+        json["entries"] = entries
+        let tampered = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+
+        #expect(throws: ForgeCompactError.invalidCost) {
+            try JSONDecoder().decode(ProjectCapsule.self, from: tampered)
+        }
+    }
+
+    @Test func archiveDecodeRejectsInvalidOmissionIdentity() throws {
+        let optional = try entry("optional", units: 50)
+        let capsule = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [optional],
+            policy: try .init(maximumUnits: 10)
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(capsule)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var receipt = try #require(json["receipt"] as? [String: Any])
+        var omissions = try #require(receipt["omissions"] as? [[String: Any]])
+        omissions[0]["entryID"] = "bad id"
+        receipt["omissions"] = omissions
+        json["receipt"] = receipt
+        let tampered = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+
+        #expect(throws: ForgeCompactError.invalidIdentifier("bad id")) {
+            try JSONDecoder().decode(ProjectCapsule.self, from: tampered)
+        }
+    }
+
     @Test func archiveDecodeRevalidatesProjectIdentity() throws {
         let selected = try entry("selected", inclusion: .required)
         let capsule = try ForgeCompactPlanner.build(
