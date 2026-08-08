@@ -1,0 +1,28 @@
+name: V14 Forge Compact Repair Exact Head
+
+on:
+  pull_request:
+    paths:
+      - 'Packages/ForgeCompactCore/**'
+      - '.github/workflows/v14-forge-compact-repair-exact-head.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-forge-compact-repair-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  exact-package:
+    name: ForgeCompactCore debug + release
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Diff check
+        run: git diff --check origin/${{ github.base_ref }}...HEAD
+      - name: Debug package tests with warnings as errors
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - name: Release package tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
