@@ -299,6 +299,27 @@ public struct ProjectCapsule: Codable, Equatable, Sendable {
         var selectedUnits = 0
         var includesEstimate = false
         for entry in entries {
+            let validatedCost = try ForgeCompactContextCost(units: entry.cost.units, basis: entry.cost.basis)
+            let validatedSource = try ForgeCompactSourceReference(
+                kind: entry.source.kind,
+                locator: entry.source.locator,
+                revision: entry.source.revision
+            )
+            let validatedEntry = try ForgeCompactEntry(
+                id: entry.id,
+                projectID: entry.projectID,
+                kind: entry.kind,
+                text: entry.text,
+                priority: entry.priority,
+                inclusion: entry.inclusion,
+                freshness: entry.freshness,
+                authority: entry.authority,
+                source: validatedSource,
+                cost: validatedCost
+            )
+            guard validatedEntry == entry else {
+                throw ForgeCompactError.invalidIdentifier(entry.id)
+            }
             guard entry.projectID == projectID else {
                 throw ForgeCompactError.crossProjectEntry(entryID: entry.id)
             }
@@ -312,7 +333,9 @@ public struct ProjectCapsule: Codable, Equatable, Sendable {
             guard entry.authority.isAcceptedTruth else {
                 throw ForgeCompactError.requiredEntryIneligible(entryID: entry.id, reason: .nonAuthoritative)
             }
-            selectedUnits += entry.cost.units
+            let (nextSelectedUnits, overflow) = selectedUnits.addingReportingOverflow(entry.cost.units)
+            guard !overflow else { throw ForgeCompactError.invalidCost }
+            selectedUnits = nextSelectedUnits
             includesEstimate = includesEstimate || !entry.cost.basis.isExact
         }
 
@@ -322,6 +345,9 @@ public struct ProjectCapsule: Codable, Equatable, Sendable {
         guard receipt.costTruth == expectedTruth else { throw ForgeCompactError.invalidCost }
 
         let omittedIDs = receipt.omissions.map(\.entryID)
+        guard omittedIDs.allSatisfy(validID) else {
+            throw ForgeCompactError.invalidIdentifier(omittedIDs.first(where: { !validID($0) }) ?? "omission")
+        }
         guard Set(omittedIDs).count == omittedIDs.count,
               Set(omittedIDs).isDisjoint(with: seen) else {
             throw ForgeCompactError.duplicateEntryID(omittedIDs.first ?? "omission")
@@ -370,7 +396,12 @@ public enum ForgeCompactPlanner {
         }
 
         let required = eligible.filter { $0.inclusion == .required }.sorted(by: stableOrdering)
-        let requiredUnits = required.reduce(0) { $0 + $1.cost.units }
+        var requiredUnits = 0
+        for entry in required {
+            let (nextRequiredUnits, overflow) = requiredUnits.addingReportingOverflow(entry.cost.units)
+            guard !overflow else { throw ForgeCompactError.invalidCost }
+            requiredUnits = nextRequiredUnits
+        }
         guard requiredUnits <= policy.maximumUnits else {
             throw ForgeCompactError.requiredBudgetExceeded(
                 requiredUnits: requiredUnits,
@@ -386,9 +417,10 @@ public enum ForgeCompactPlanner {
             .sorted(by: candidateOrdering)
 
         for entry in candidates {
-            if selectedUnits + entry.cost.units <= policy.maximumUnits {
+            let (candidateUnits, overflow) = selectedUnits.addingReportingOverflow(entry.cost.units)
+            if !overflow, candidateUnits <= policy.maximumUnits {
                 selected.append(entry)
-                selectedUnits += entry.cost.units
+                selectedUnits = candidateUnits
             } else {
                 omissions.append(.init(entryID: entry.id, reason: .budget))
             }
