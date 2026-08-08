@@ -166,6 +166,11 @@ struct ForgeCompactCoreTests {
             tokenizerRevision: "tok1",
             runtimeID: "llama.cpp",
             runtimeRevision: "runtime1",
+            backendProfileID: "metal-fa",
+            weightProfileID: "q4-k-m",
+            keyCacheType: "q8-0",
+            valueCacheType: "q8-0",
+            contextCapacityTokens: 8_192,
             promptTemplateRevision: "template1",
             toolSchemaRevision: "tools1",
             capsuleSourceRevision: "git:abc",
@@ -178,6 +183,11 @@ struct ForgeCompactCoreTests {
             tokenizerRevision: "tok1",
             runtimeID: "llama.cpp",
             runtimeRevision: "runtime1",
+            backendProfileID: "metal-fa",
+            weightProfileID: "q4-k-m",
+            keyCacheType: "q8-0",
+            valueCacheType: "q8-0",
+            contextCapacityTokens: 8_192,
             promptTemplateRevision: "template1",
             toolSchemaRevision: "tools1",
             capsuleSourceRevision: "git:abc",
@@ -190,7 +200,46 @@ struct ForgeCompactCoreTests {
             tokenizerRevision: "tok1",
             runtimeID: "llama.cpp",
             runtimeRevision: "runtime1",
+            backendProfileID: "metal-fa",
+            weightProfileID: "q4-k-m",
+            keyCacheType: "q8-0",
+            valueCacheType: "q8-0",
+            contextCapacityTokens: 8_192,
             promptTemplateRevision: "template2",
+            toolSchemaRevision: "tools1",
+            capsuleSourceRevision: "git:abc",
+            capsuleMissionRevision: 7,
+            capsuleAuthorityEpoch: 2
+        )
+        let changedKV = try ForgeCompactPrefixReuseIdentity(
+            modelID: "qwen.local",
+            modelRevision: "r1",
+            tokenizerRevision: "tok1",
+            runtimeID: "llama.cpp",
+            runtimeRevision: "runtime1",
+            backendProfileID: "metal-fa",
+            weightProfileID: "q4-k-m",
+            keyCacheType: "q4-0",
+            valueCacheType: "q8-0",
+            contextCapacityTokens: 8_192,
+            promptTemplateRevision: "template1",
+            toolSchemaRevision: "tools1",
+            capsuleSourceRevision: "git:abc",
+            capsuleMissionRevision: 7,
+            capsuleAuthorityEpoch: 2
+        )
+        let changedWeights = try ForgeCompactPrefixReuseIdentity(
+            modelID: "qwen.local",
+            modelRevision: "r1",
+            tokenizerRevision: "tok1",
+            runtimeID: "llama.cpp",
+            runtimeRevision: "runtime1",
+            backendProfileID: "metal-fa",
+            weightProfileID: "q5-k-m",
+            keyCacheType: "q8-0",
+            valueCacheType: "q8-0",
+            contextCapacityTokens: 8_192,
+            promptTemplateRevision: "template1",
             toolSchemaRevision: "tools1",
             capsuleSourceRevision: "git:abc",
             capsuleMissionRevision: 7,
@@ -198,6 +247,8 @@ struct ForgeCompactCoreTests {
         )
         #expect(baseline.canReusePrefix(with: same))
         #expect(!baseline.canReusePrefix(with: changedTemplate))
+        #expect(!baseline.canReusePrefix(with: changedKV))
+        #expect(!baseline.canReusePrefix(with: changedWeights))
     }
 
     @Test func blankCriticalIdentityFailsClosed() throws {
@@ -226,8 +277,15 @@ struct ForgeCompactCoreTests {
     }
 
     @Test func decodedPrefixIdentityCannotBypassValidation() throws {
-        let data = Data(#"{"modelID":" ","modelRevision":"r1","tokenizerRevision":"tok1","runtimeID":"llama.cpp","runtimeRevision":"runtime1","promptTemplateRevision":"template1","toolSchemaRevision":"tools1","capsuleSourceRevision":"git:abc","capsuleMissionRevision":7,"capsuleAuthorityEpoch":2}"#.utf8)
+        let data = Data(#"{"modelID":" ","modelRevision":"r1","tokenizerRevision":"tok1","runtimeID":"llama.cpp","runtimeRevision":"runtime1","backendProfileID":"metal-fa","weightProfileID":"q4-k-m","keyCacheType":"q8-0","valueCacheType":"q8-0","contextCapacityTokens":8192,"promptTemplateRevision":"template1","toolSchemaRevision":"tools1","capsuleSourceRevision":"git:abc","capsuleMissionRevision":7,"capsuleAuthorityEpoch":2}"#.utf8)
         #expect(throws: ForgeCompactError.invalidIdentifier("modelID")) {
+            try JSONDecoder().decode(ForgeCompactPrefixReuseIdentity.self, from: data)
+        }
+    }
+
+    @Test func decodedPrefixContextCapacityCannotBypassValidation() throws {
+        let data = Data(#"{"modelID":"qwen.local","modelRevision":"r1","tokenizerRevision":"tok1","runtimeID":"llama.cpp","runtimeRevision":"runtime1","backendProfileID":"metal-fa","weightProfileID":"q4-k-m","keyCacheType":"q8-0","valueCacheType":"q8-0","contextCapacityTokens":0,"promptTemplateRevision":"template1","toolSchemaRevision":"tools1","capsuleSourceRevision":"git:abc","capsuleMissionRevision":7,"capsuleAuthorityEpoch":2}"#.utf8)
+        #expect(throws: ForgeCompactError.invalidContextCapacity(0)) {
             try JSONDecoder().decode(ForgeCompactPrefixReuseIdentity.self, from: data)
         }
     }
