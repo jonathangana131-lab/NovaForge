@@ -18,12 +18,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Toolchain
         run: swift --version
       - name: Diff check
-        run: |
-          git fetch --no-tags --depth=1 origin main
-          git diff --check FETCH_HEAD...HEAD
+        run: git diff --check origin/main...HEAD
       - name: Debug package tests
         run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
       - name: Release package tests
