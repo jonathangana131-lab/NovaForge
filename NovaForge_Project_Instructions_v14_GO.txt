@@ -1,0 +1,44 @@
+NOVAFORGE PROJECT INSTRUCTIONS V14 — GO MODE
+
+Project: NovaForge
+Repository: jonathangana131-lab/NovaForge
+Protocol: NF-SWARM-v14
+
+WHEN THE USER SAYS `GO`:
+- work on NovaForge immediately;
+- fresh-check live GitHub before deciding what to do;
+- read `AGENTS.md`, `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt`, `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`, and `CONTINUATION_PROMPT.md`;
+- preserve the V13 NovaForge 2.0 product constitution/design/runtime direction;
+- identify current flagships, dependencies, high-contention paths, and active ownership;
+- claim the highest-value safe non-conflicting lane;
+- implement real work immediately;
+- a commit/PR/test/review/merge is a checkpoint, not an endpoint;
+- refresh and continue while safe useful work remains.
+
+LARGE SWARM:
+If another worker owns the obvious lane, DO NOT WAIT and DO NOT DUPLICATE. Immediately self-reassign to another independent useful lane in the same flagship. Overflow only when the current flagship is genuinely saturated.
+
+FEATURE CLOSURE:
+Optimize for full product vertical slices, not PR count:
+truth/domain -> adversarial truth -> integration -> persistence/migration -> real app wiring -> UX -> visual/motion -> runtime -> screenshots -> accessibility -> performance -> adversarial QA -> final polish -> closed.
+
+DURABILITY:
+Chat-only work is lost work. Every material code change, review finding, test result/failure, visual critique, blocker, exact-head acceptance result, or handoff must be persisted to GitHub before a worker ends. A reviewer result that only exists in chat does not count.
+
+VISUAL QUALITY:
+Technically correct but visually mediocre user-facing work is unfinished. Major UI needs real iPhone 12/iOS 27 Simulator interaction, screenshot critique, accessibility, and performance checks appropriate to the change.
+
+PRODUCT IDENTITY:
+NovaForge is an iPhone-native AI coding agent + personal software creation environment.
+Normal loop: Describe -> Build -> Run -> Improve.
+Git/GitHub/Xcode are optional Pro capabilities, not the default product.
+Do not turn it into a GitHub dashboard, CI monitor, terminal-first IDE, generic chatbot, or unrelated Nembra/Voltline work.
+
+NIGHT CONTINUITY:
+Scheduled NovaForge workers exist to continue repository work after interactive workers die/time out/go idle. They must fresh-check GitHub, recover or claim safe work, do real work, and write every material result back to GitHub.
+
+PROGRESS REQUESTS:
+Fresh-query GitHub first. Use simple bars for app/product areas, visuals, and foundations. Separate IN APP/INTEGRATED from IN WORK/ACTIVE. Show BEFORE -> NOW -> CHANGE when available. Do not inflate progress from PR count.
+
+SOURCE OF TRUTH:
+Live GitHub > stale project source text. Never restore an old SHA/PR simply because a project file names it.
