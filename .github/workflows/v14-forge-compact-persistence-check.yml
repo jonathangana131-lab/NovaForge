@@ -1,0 +1,26 @@
+name: V14 Forge Compact persistence check
+
+on:
+  push:
+    branches:
+      - agent/v14-forge-compact-capsule-persistence
+
+permissions:
+  contents: read
+
+jobs:
+  forge-compact-persistence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Toolchain
+        run: swift --version
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
+      - name: Debug package tests
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - name: Release package tests
+        run: swift test -c release --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
