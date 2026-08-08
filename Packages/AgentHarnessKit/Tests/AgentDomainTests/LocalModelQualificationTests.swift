@@ -143,21 +143,12 @@ final class LocalModelQualificationTests: XCTestCase {
         XCTAssertEqual(decision.blockers, [.thermalEvidenceMissing])
     }
 
-    func testRawUntestedCompatibilityCannotBeUpgradedByStrongReceipt() {
-        let compatibility = LocalModelCompatibilityResult(
-            label: .untested,
-            reasons: [.benchmarkMissing],
-            evidence: [
-                .init(
-                    kind: .measured,
-                    code: "benchmark.exact_device_smoke",
-                    detail: "fixture",
-                    observedAt: instant
-                )
-            ]
+    func testEstimatedRateCompatibilityCannotBeUpgradedByStrongReceipt() {
+        let decision = qualify(
+            benchmark: benchmark(
+                generationRateProvenance: .estimatedFromOutput
+            )
         )
-
-        let decision = qualify(compatibility: compatibility)
 
         XCTAssertFalse(decision.isQualified)
         XCTAssertEqual(decision.blockers, [.compatibilityNotMeasured])
@@ -187,7 +178,6 @@ final class LocalModelQualificationTests: XCTestCase {
     }
 
     private func qualify(
-        compatibility: LocalModelCompatibilityResult? = nil,
         descriptor: LocalModelCatalogDescriptor? = nil,
         device: LocalModelDeviceProfile? = nil,
         requirements: LocalModelMissionRequirements = .init(),
@@ -195,33 +185,11 @@ final class LocalModelQualificationTests: XCTestCase {
         receipt: LocalModelQualificationReceipt? = nil
     ) -> LocalModelQualificationDecision {
         LocalModelQualificationGate.qualify(
-            compatibility: compatibility ?? measuredCompatibility(),
             descriptor: descriptor ?? self.descriptor(),
             device: device ?? self.device(),
             requirements: requirements,
             benchmark: benchmark ?? self.benchmark(),
             receipt: receipt ?? self.receipt()
-        )
-    }
-
-    private func measuredCompatibility() -> LocalModelCompatibilityResult {
-        LocalModelCompatibilityResult(
-            label: .excellent,
-            reasons: [.measuredPerformance],
-            evidence: [
-                .init(
-                    kind: .measured,
-                    code: "benchmark.exact_device_smoke",
-                    detail: "fixture",
-                    observedAt: instant
-                ),
-                .init(
-                    kind: .measured,
-                    code: "benchmark.generation_rate",
-                    detail: "fixture",
-                    observedAt: instant
-                ),
-            ]
         )
     }
 
@@ -260,6 +228,7 @@ final class LocalModelQualificationTests: XCTestCase {
 
     private func benchmark(
         generationTokensPerSecond: Double = 8.25,
+        generationRateProvenance: LocalModelGenerationRateProvenance = .measuredTokenCount,
         peakMemoryBytes: UInt64? = 4_000
     ) -> LocalModelBenchmarkObservation {
         LocalModelBenchmarkObservation(
@@ -271,7 +240,7 @@ final class LocalModelQualificationTests: XCTestCase {
             deviceProfileID: "iphone12-test-profile",
             measuredAt: instant,
             generationTokensPerSecond: generationTokensPerSecond,
-            generationRateProvenance: .measuredTokenCount,
+            generationRateProvenance: generationRateProvenance,
             successfulSmokeRuns: 3,
             failedSmokeRuns: 0,
             peakMemoryBytes: peakMemoryBytes
