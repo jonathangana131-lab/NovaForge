@@ -33,6 +33,7 @@ public enum ForgePlaytestError: Error, Equatable, Sendable {
     case completedJourneyMissingRuntimeExecution
     case unknownJourneyPlan(String)
     case traceMismatch
+    case collectionTooLarge(field: String, maximum: Int)
 }
 
 public struct ForgePlaytestProjectRevision: Hashable, Sendable {
@@ -261,6 +262,8 @@ public struct ForgePlaytestEvidenceReference: Hashable, Sendable {
 }
 
 public struct ForgePlaytestMilestoneObservation: Hashable, Sendable {
+    public static let maximumEvidenceReceiptIDs = 32
+
     public let milestoneID: String
     public let evidenceReceiptIDs: Set<String>
 
@@ -273,6 +276,11 @@ public struct ForgePlaytestMilestoneObservation: Hashable, Sendable {
         guard !evidenceReceiptIDs.isEmpty else {
             throw ForgePlaytestError.emptyReceiptReferences(field: "milestone.evidenceReceiptIDs")
         }
+        try ForgePlaytestValidation.maximumCount(
+            evidenceReceiptIDs.count,
+            field: "milestone.evidenceReceiptIDs",
+            maximum: Self.maximumEvidenceReceiptIDs
+        )
         self.evidenceReceiptIDs = try ForgePlaytestValidation.receiptIDs(evidenceReceiptIDs)
     }
 }
@@ -298,6 +306,8 @@ public enum ForgePlaytestDefectCategory: String, Hashable, Sendable {
 }
 
 public struct ForgePlaytestDefect: Hashable, Sendable {
+    public static let maximumEvidenceReceiptIDs = 32
+
     public let defectID: String
     public let severity: ForgePlaytestDefectSeverity
     public let category: ForgePlaytestDefectCategory
@@ -324,6 +334,11 @@ public struct ForgePlaytestDefect: Hashable, Sendable {
         guard !evidenceReceiptIDs.isEmpty else {
             throw ForgePlaytestError.emptyReceiptReferences(field: "defect.evidenceReceiptIDs")
         }
+        try ForgePlaytestValidation.maximumCount(
+            evidenceReceiptIDs.count,
+            field: "defect.evidenceReceiptIDs",
+            maximum: Self.maximumEvidenceReceiptIDs
+        )
         self.severity = severity
         self.category = category
         self.evidenceReceiptIDs = try ForgePlaytestValidation.receiptIDs(evidenceReceiptIDs)
@@ -337,6 +352,10 @@ public enum ForgePlaytestJourneyStatus: String, Hashable, Sendable {
 }
 
 public struct ForgePlaytestJourneyResult: Hashable, Sendable {
+    public static let maximumEvidenceReferences = 256
+    public static let maximumMilestones = 128
+    public static let maximumDefects = 128
+
     public let project: ForgePlaytestProjectRevision
     public let journeyID: String
     public let persona: ForgePlaytestPersona
@@ -365,6 +384,21 @@ public struct ForgePlaytestJourneyResult: Hashable, Sendable {
             traceID,
             field: "traceID",
             maximum: 160
+        )
+        try ForgePlaytestValidation.maximumCount(
+            evidence.count,
+            field: "journey.evidence",
+            maximum: Self.maximumEvidenceReferences
+        )
+        try ForgePlaytestValidation.maximumCount(
+            milestones.count,
+            field: "journey.milestones",
+            maximum: Self.maximumMilestones
+        )
+        try ForgePlaytestValidation.maximumCount(
+            defects.count,
+            field: "journey.defects",
+            maximum: Self.maximumDefects
         )
 
         var receiptIDs = Set<String>()
@@ -484,6 +518,7 @@ public struct ForgePlaytestAcceptancePolicy: Hashable, Sendable {
 
 public enum ForgePlaytestBlocker: Hashable, Sendable {
     case missingCompletedJourneys(persona: ForgePlaytestPersona, required: Int, actual: Int)
+    case insufficientQualifiedJourneys(persona: ForgePlaytestPersona, required: Int, actual: Int)
     case missingEvidence(persona: ForgePlaytestPersona, kind: ForgePlaytestEvidenceKind)
     case missingMilestone(persona: ForgePlaytestPersona, milestoneID: String)
 }
@@ -519,12 +554,26 @@ public enum ForgePlaytestGateVerdict: Hashable, Sendable {
 }
 
 public enum ForgePlaytestGateEvaluator {
+    public static let maximumJourneyPlans = 256
+    public static let maximumJourneyResults = 256
+
     public static func evaluate(
         project: ForgePlaytestProjectRevision,
         policy: ForgePlaytestAcceptancePolicy,
         plans: [ForgePlaytestJourneyPlan],
         results: [ForgePlaytestJourneyResult]
     ) throws -> ForgePlaytestGateVerdict {
+        try ForgePlaytestValidation.maximumCount(
+            plans.count,
+            field: "playtest.plans",
+            maximum: Self.maximumJourneyPlans
+        )
+        try ForgePlaytestValidation.maximumCount(
+            results.count,
+            field: "playtest.results",
+            maximum: Self.maximumJourneyResults
+        )
+
         var plansByJourneyID: [String: ForgePlaytestJourneyPlan] = [:]
         for plan in plans {
             guard plan.project.projectID == project.projectID else {
@@ -578,36 +627,53 @@ public enum ForgePlaytestGateEvaluator {
                 continue
             }
 
-            let selected = Array(personaResults.prefix(requirement.minimumCompletedJourneys))
-            for result in selected {
-                guard let plan = plansByJourneyID[result.journeyID] else {
-                    throw ForgePlaytestError.unknownJourneyPlan(result.journeyID)
+            let qualified = personaResults.filter { result in
+                guard let plan = plansByJourneyID[result.journeyID] else { return false }
+                return requirement.requiredEvidenceKinds.isSubset(of: result.evidenceKinds)
+                    && requirement.requiredMilestoneIDs.isSubset(of: result.milestoneIDs)
+                    && plan.expectedMilestoneIDs.isSubset(of: result.milestoneIDs)
+            }
+
+            if qualified.count < requirement.minimumCompletedJourneys {
+                var addedSpecificBlocker = false
+
+                for kind in requirement.requiredEvidenceKinds.sorted(by: { $0.rawValue < $1.rawValue }) {
+                    let matchingCount = personaResults.filter { $0.evidenceKinds.contains(kind) }.count
+                    if matchingCount < requirement.minimumCompletedJourneys {
+                        blockers.append(.missingEvidence(persona: requirement.persona, kind: kind))
+                        addedSpecificBlocker = true
+                    }
                 }
-                for milestoneID in plan.expectedMilestoneIDs.sorted()
-                where !result.milestoneIDs.contains(milestoneID) {
+
+                for milestoneID in requirement.requiredMilestoneIDs.sorted() {
+                    let matchingCount = personaResults.filter { $0.milestoneIDs.contains(milestoneID) }.count
+                    if matchingCount < requirement.minimumCompletedJourneys {
+                        blockers.append(.missingMilestone(persona: requirement.persona, milestoneID: milestoneID))
+                        addedSpecificBlocker = true
+                    }
+                }
+
+                let plannedMissingMilestones = Set(personaResults.flatMap { result -> [String] in
+                    guard let plan = plansByJourneyID[result.journeyID] else { return [] }
+                    return plan.expectedMilestoneIDs.subtracting(result.milestoneIDs).map { $0 }
+                }).sorted()
+                for milestoneID in plannedMissingMilestones {
                     blockers.append(.missingMilestone(persona: requirement.persona, milestoneID: milestoneID))
+                    addedSpecificBlocker = true
                 }
+
+                if !addedSpecificBlocker {
+                    blockers.append(.insufficientQualifiedJourneys(
+                        persona: requirement.persona,
+                        required: requirement.minimumCompletedJourneys,
+                        actual: qualified.count
+                    ))
+                }
+                continue
             }
 
-            let combinedEvidence = selected.reduce(into: Set<ForgePlaytestEvidenceKind>()) {
-                $0.formUnion($1.evidenceKinds)
-            }
-            let combinedMilestones = selected.reduce(into: Set<String>()) {
-                $0.formUnion($1.milestoneIDs)
-            }
-
-            for kind in requirement.requiredEvidenceKinds.sorted(by: { $0.rawValue < $1.rawValue })
-            where !combinedEvidence.contains(kind) {
-                blockers.append(.missingEvidence(persona: requirement.persona, kind: kind))
-            }
-            for milestoneID in requirement.requiredMilestoneIDs.sorted()
-            where !combinedMilestones.contains(milestoneID) {
-                blockers.append(.missingMilestone(persona: requirement.persona, milestoneID: milestoneID))
-            }
-
-            if requirement.requiredEvidenceKinds.isSubset(of: combinedEvidence),
-               requirement.requiredMilestoneIDs.isSubset(of: combinedMilestones) {
-                selected.forEach { acceptedJourneys.insert($0.journeyID) }
+            qualified.prefix(requirement.minimumCompletedJourneys).forEach {
+                acceptedJourneys.insert($0.journeyID)
             }
         }
 
@@ -661,6 +727,12 @@ private enum ForgePlaytestValidation {
 
     static func userFacingValue(_ value: String, field: String, maximum: Int) throws -> String {
         try stableValue(value, field: field, maximum: maximum)
+    }
+
+    static func maximumCount(_ count: Int, field: String, maximum: Int) throws {
+        guard count <= maximum else {
+            throw ForgePlaytestError.collectionTooLarge(field: field, maximum: maximum)
+        }
     }
 
     static func receiptIDs(_ values: Set<String>) throws -> Set<String> {
