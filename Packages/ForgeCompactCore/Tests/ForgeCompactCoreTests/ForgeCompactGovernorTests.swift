@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import ForgeCompactCore
 
@@ -250,6 +251,84 @@ final class ForgeCompactGovernorTests: XCTestCase {
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
+    func testDecisionReceiptPreservesSelectedEnvelopeEvidenceBinding() {
+        let selected = envelope(id: "audited", evidenceReceiptID: "receipt-exact-123")
+
+        let receipt = decide(envelopes: [selected])
+
+        XCTAssertEqual(receipt.action, .switchTo(envelopeID: selected.id))
+        XCTAssertEqual(receipt.selectedEnvelope, selected)
+        XCTAssertEqual(receipt.selectedEnvelope?.configurationBindingID, "binding-audited")
+        XCTAssertEqual(receipt.selectedEnvelope?.evidenceReceiptID, "receipt-exact-123")
+    }
+
+    func testBlockedDecisionReceiptDoesNotInventSelectedEvidence() {
+        let remote = envelope(id: "remote-only", location: .remote)
+
+        let receipt = decide(envelopes: [remote])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertNil(receipt.selectedEnvelope)
+    }
+
+    func testDecisionReceiptDecodeRejectsSelectedEnvelopeActionMismatch() throws {
+        let receipt = decide(envelopes: [envelope(id: "audited")])
+        var json = try jsonObject(receipt)
+        var selected = try XCTUnwrap(json["selectedEnvelope"] as? [String: Any])
+        selected["id"] = "forged-selection"
+        json["selectedEnvelope"] = selected
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                ForgeCompactDecisionReceipt.self,
+                from: JSONSerialization.data(withJSONObject: json)
+            )
+        )
+    }
+
+    func testDecisionReceiptDecodeRejectsMissingSelectedEnvelopeForSelection() throws {
+        let receipt = decide(envelopes: [envelope(id: "audited")])
+        var json = try jsonObject(receipt)
+        json.removeValue(forKey: "selectedEnvelope")
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                ForgeCompactDecisionReceipt.self,
+                from: JSONSerialization.data(withJSONObject: json)
+            )
+        )
+    }
+
+    func testDecisionReceiptDecodeRejectsSelectedEnvelopeOnBlockedDecision() throws {
+        let blocked = decide(envelopes: [envelope(id: "remote-only", location: .remote)])
+        let selected = decide(envelopes: [envelope(id: "local")])
+        var blockedJSON = try jsonObject(blocked)
+        let selectedJSON = try jsonObject(selected)
+        blockedJSON["selectedEnvelope"] = try XCTUnwrap(selectedJSON["selectedEnvelope"])
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                ForgeCompactDecisionReceipt.self,
+                from: JSONSerialization.data(withJSONObject: blockedJSON)
+            )
+        )
+    }
+
+    func testDecisionReceiptDecodeRejectsEligibleVerdictOnNoEligibleBlock() throws {
+        let blocked = decide(envelopes: [envelope(id: "remote-only", location: .remote)])
+        var json = try jsonObject(blocked)
+        var verdicts = try XCTUnwrap(json["candidateVerdicts"] as? [[String: Any]])
+        verdicts[0]["rejectionReasons"] = []
+        json["candidateVerdicts"] = verdicts
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                ForgeCompactDecisionReceipt.self,
+                from: JSONSerialization.data(withJSONObject: json)
+            )
+        )
+    }
+
     func testDecisionReceiptRoundTripsThroughJSON() throws {
         let receipt = decide(envelopes: [envelope(id: "measured")])
         let encoded = try JSONEncoder().encode(receipt)
@@ -317,5 +396,10 @@ final class ForgeCompactGovernorTests: XCTestCase {
         in receipt: ForgeCompactDecisionReceipt
     ) -> ForgeCompactCandidateVerdict? {
         receipt.candidateVerdicts.first(where: { $0.envelopeID == id })
+    }
+
+    private func jsonObject<T: Encodable>(_ value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 }
