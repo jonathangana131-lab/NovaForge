@@ -69,7 +69,13 @@ public extension ForgePlaytestGateEvaluator {
         }
 
         var consumedBindings = Set<String>()
+        var globalReceiptIDs = Set<String>()
         for result in results {
+            for reference in result.evidence {
+                guard globalReceiptIDs.insert(reference.receiptID).inserted else {
+                    throw ForgePlaytestError.duplicateReceiptID(reference.receiptID)
+                }
+            }
             let executionEvidence = result.evidence.filter { $0.kind == .runtimeExecution }
             if executionEvidence.isEmpty {
                 if bindingsByJourneyID[result.journeyID] != nil {
