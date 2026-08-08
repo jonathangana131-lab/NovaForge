@@ -8,6 +8,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case invalidCost
     case incompatibleCostBasis
     case authoritySourceMismatch(entryID: String)
+    case protectedTruthDowngrade(entryID: String, kind: ForgeCompactEntryKind)
     case duplicateEntryID(String)
     case crossProjectEntry(entryID: String)
     case requiredEntryIneligible(entryID: String, reason: ForgeCompactOmissionReason)
@@ -26,6 +27,15 @@ public enum ForgeCompactEntryKind: String, Codable, CaseIterable, Sendable {
     case unresolvedDecision
     case missionStage
     case conciseSummary
+
+    public var requiresRetention: Bool {
+        switch self {
+        case .requirement, .currentObjective, .knownDefect, .unresolvedDecision, .missionStage:
+            true
+        case .relevantSource, .acceptedDecision, .designDNA, .evidenceReceipt, .conciseSummary:
+            false
+        }
+    }
 }
 
 public enum ForgeCompactPriority: Int, Codable, Comparable, Sendable {
@@ -169,6 +179,9 @@ public struct ForgeCompactEntry: Codable, Equatable, Sendable {
         guard Self.validID(normalizedProjectID) else { throw ForgeCompactError.invalidIdentifier(projectID) }
         guard !normalizedText.isEmpty, normalizedText.count <= 16_384 else {
             throw ForgeCompactError.invalidText(id)
+        }
+        guard !kind.requiresRetention || inclusion == .required else {
+            throw ForgeCompactError.protectedTruthDowngrade(entryID: normalizedID, kind: kind)
         }
         guard source.kind != .modelOutput || !authority.isAcceptedTruth else {
             throw ForgeCompactError.authoritySourceMismatch(entryID: normalizedID)
