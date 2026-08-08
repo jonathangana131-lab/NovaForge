@@ -211,6 +211,9 @@ public enum ForgeCompactDecisionAction: Codable, Equatable, Sendable {
 /// Durable, serializable proof of a deterministic policy decision. It is not a benchmark receipt;
 /// it preserves the exact selected envelope and therefore the opaque configuration + qualification
 /// receipt bindings that the external evidence authority supplied at decision time.
+///
+/// Decode replays the selected envelope through the current deterministic governor so persisted
+/// bytes cannot swap/remove an accepted evidence binding while leaving the stored action intact.
 public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
     public let snapshot: ForgeCompactRuntimeSnapshot
     public let policy: ForgeCompactGovernorPolicy
@@ -218,7 +221,7 @@ public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
     public let selectedEnvelope: ForgeCompactExecutionEnvelope?
     public let candidateVerdicts: [ForgeCompactCandidateVerdict]
 
-    public init(
+    init(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         action: ForgeCompactDecisionAction,
@@ -230,6 +233,116 @@ public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
         self.action = action
         self.selectedEnvelope = selectedEnvelope
         self.candidateVerdicts = candidateVerdicts
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case snapshot, policy, action, selectedEnvelope, candidateVerdicts
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let snapshot = try container.decode(ForgeCompactRuntimeSnapshot.self, forKey: .snapshot)
+        let policy = try container.decode(ForgeCompactGovernorPolicy.self, forKey: .policy)
+        let action = try container.decode(ForgeCompactDecisionAction.self, forKey: .action)
+        let selectedEnvelope = try container.decodeIfPresent(
+            ForgeCompactExecutionEnvelope.self,
+            forKey: .selectedEnvelope
+        )
+        let candidateVerdicts = try container.decode(
+            [ForgeCompactCandidateVerdict].self,
+            forKey: .candidateVerdicts
+        )
+
+        guard Self.isDecodedStateConsistent(
+            snapshot: snapshot,
+            policy: policy,
+            action: action,
+            selectedEnvelope: selectedEnvelope,
+            candidateVerdicts: candidateVerdicts
+        ) else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Forge Compact decision receipt is inconsistent with the deterministic governor."
+                )
+            )
+        }
+
+        self.init(
+            snapshot: snapshot,
+            policy: policy,
+            action: action,
+            selectedEnvelope: selectedEnvelope,
+            candidateVerdicts: candidateVerdicts
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(snapshot, forKey: .snapshot)
+        try container.encode(policy, forKey: .policy)
+        try container.encode(action, forKey: .action)
+        try container.encodeIfPresent(selectedEnvelope, forKey: .selectedEnvelope)
+        try container.encode(candidateVerdicts, forKey: .candidateVerdicts)
+    }
+
+    private static func isDecodedStateConsistent(
+        snapshot: ForgeCompactRuntimeSnapshot,
+        policy: ForgeCompactGovernorPolicy,
+        action: ForgeCompactDecisionAction,
+        selectedEnvelope: ForgeCompactExecutionEnvelope?,
+        candidateVerdicts: [ForgeCompactCandidateVerdict]
+    ) -> Bool {
+        switch action {
+        case .keep(let envelopeID), .switchTo(let envelopeID):
+            guard let selectedEnvelope,
+                  selectedEnvelope.id == envelopeID
+            else {
+                return false
+            }
+
+            let selectedVerdicts = candidateVerdicts.filter { $0.envelopeID == envelopeID }
+            guard selectedVerdicts.count == 1,
+                  selectedVerdicts[0].isEligible
+            else {
+                return false
+            }
+
+            let replay = ForgeCompactGovernor.decide(
+                snapshot: snapshot,
+                policy: policy,
+                envelopes: [selectedEnvelope]
+            )
+            return replay.action == action && replay.selectedEnvelope == selectedEnvelope
+
+        case .suspend:
+            guard selectedEnvelope == nil,
+                  candidateVerdicts.isEmpty
+            else {
+                return false
+            }
+            let replay = ForgeCompactGovernor.decide(
+                snapshot: snapshot,
+                policy: policy,
+                envelopes: []
+            )
+            return replay.action == action
+
+        case .block(let reason):
+            guard selectedEnvelope == nil else { return false }
+            switch reason {
+            case .invalidRuntimeSnapshot, .invalidPolicy:
+                guard candidateVerdicts.isEmpty else { return false }
+            case .noEligibleLocalEnvelope:
+                guard !candidateVerdicts.contains(where: \.isEligible) else { return false }
+            }
+            let replay = ForgeCompactGovernor.decide(
+                snapshot: snapshot,
+                policy: policy,
+                envelopes: []
+            )
+            return replay.action == action
+        }
     }
 }
 
