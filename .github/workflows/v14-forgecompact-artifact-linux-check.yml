@@ -1,0 +1,30 @@
+name: V14 Forge Compact artifact identity Linux check
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-V14-FC-ARTIFACT-8A8G/forgecompact-artifact-identity/e1
+
+jobs:
+  forgecompact-artifact-identity-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Show Swift version
+        run: swift --version
+      - name: Verify focused diff
+        run: git diff --check origin/main...HEAD
+      - name: Test ForgeCompactCore
+        shell: bash
+        run: |
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            swift test -c release --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+          else
+            swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+          fi
