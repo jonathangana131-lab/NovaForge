@@ -30,7 +30,7 @@ final class ForgeCompactRetentionRegressionTests: XCTestCase {
             provenance: try ForgeCompactProvenance(kind: .source, reference: "ref-optional"),
             isAuthoritative: false
         )
-        let mandatory = [stage, decision, defect].sorted(by: ProjectCapsuleBuilder.canonicalOrderForTests)
+        let mandatory = [stage, decision, defect]
         let budget = mandatory.map(\.renderedLine).joined(separator: "\n").utf8.count
 
         let capsule = try ProjectCapsuleBuilder.build(
@@ -151,17 +151,5 @@ final class ForgeCompactRetentionRegressionTests: XCTestCase {
             isAuthoritative: authoritative,
             protectedByUser: protectedByUser
         )
-    }
-}
-
-private extension ProjectCapsuleBuilder {
-    static func canonicalOrderForTests(_ lhs: ForgeCompactContextItem, _ rhs: ForgeCompactContextItem) -> Bool {
-        if lhs.tier.selectionRank != rhs.tier.selectionRank {
-            return lhs.tier.selectionRank < rhs.tier.selectionRank
-        }
-        if lhs.priority != rhs.priority {
-            return lhs.priority > rhs.priority
-        }
-        return lhs.id < rhs.id
     }
 }
