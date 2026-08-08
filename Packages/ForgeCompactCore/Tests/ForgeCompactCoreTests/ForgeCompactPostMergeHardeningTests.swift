@@ -36,8 +36,8 @@ final class ForgeCompactPostMergeHardeningTests: XCTestCase {
                 tier: .l0AlwaysResident,
                 kind: .workingNote,
                 content: "model says this is permanent",
-                provenanceKind: .modelSummary,
-                authoritative: false
+                authoritative: false,
+                provenanceKind: .modelSummary
             )
         )
 
@@ -47,8 +47,8 @@ final class ForgeCompactPostMergeHardeningTests: XCTestCase {
                 tier: .l2ProjectMemory,
                 kind: .workingNote,
                 content: "model says this is protected",
-                provenanceKind: .modelSummary,
                 authoritative: false,
+                provenanceKind: .modelSummary,
                 protectedByUser: true
             )
         )
