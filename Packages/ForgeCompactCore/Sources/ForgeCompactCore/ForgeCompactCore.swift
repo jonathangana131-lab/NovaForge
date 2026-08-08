@@ -1,0 +1,410 @@
+import Foundation
+
+public enum ForgeCompactError: Error, Equatable, Sendable {
+    case invalidIdentifier(field: String)
+    case invalidEstimatedTokenCount
+    case invalidBudget
+    case duplicateContextItem(String)
+    case alwaysResidentItemMustBeRequired(String)
+    case mandatoryContextExceedsBudget(required: Int, budget: Int)
+    case unsupportedCapsuleSchema(Int)
+    case invalidMissionRevision
+    case duplicateCapsuleReference(String)
+    case missingQualificationIdentity
+}
+
+private func validatedIdentifier(_ value: String, field: String) throws -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed == value,
+          value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+        throw ForgeCompactError.invalidIdentifier(field: field)
+    }
+    return value
+}
+
+private func canonicalReferences(_ values: [String], field: String) throws -> [String] {
+    var seen = Set<String>()
+    var result: [String] = []
+    result.reserveCapacity(values.count)
+
+    for value in values {
+        let validated = try validatedIdentifier(value, field: field)
+        guard seen.insert(validated).inserted else {
+            throw ForgeCompactError.duplicateCapsuleReference(validated)
+        }
+        result.append(validated)
+    }
+
+    return result.sorted()
+}
+
+public enum ForgeCompactTier: Int, Codable, CaseIterable, Sendable {
+    case alwaysResident = 0
+    case activeWorkingSet = 1
+    case projectMemory = 2
+    case coldArchive = 3
+}
+
+public struct ForgeCompactContextItem: Codable, Equatable, Sendable {
+    public let id: String
+    public let tier: ForgeCompactTier
+    public let estimatedTokens: Int
+    public let required: Bool
+
+    public init(
+        id: String,
+        tier: ForgeCompactTier,
+        estimatedTokens: Int,
+        required: Bool
+    ) throws {
+        self.id = try validatedIdentifier(id, field: "contextItem.id")
+        guard estimatedTokens > 0 else {
+            throw ForgeCompactError.invalidEstimatedTokenCount
+        }
+        if tier == .alwaysResident && !required {
+            throw ForgeCompactError.alwaysResidentItemMustBeRequired(id)
+        }
+        self.tier = tier
+        self.estimatedTokens = estimatedTokens
+        self.required = required
+    }
+}
+
+public struct ForgeCompactContextBudget: Codable, Equatable, Sendable {
+    public let maximumTokens: Int
+
+    public init(maximumTokens: Int) throws {
+        guard maximumTokens > 0 else {
+            throw ForgeCompactError.invalidBudget
+        }
+        self.maximumTokens = maximumTokens
+    }
+}
+
+public struct ForgeCompactContextPlan: Equatable, Sendable {
+    public let selected: [ForgeCompactContextItem]
+    public let dropped: [ForgeCompactContextItem]
+    public let totalEstimatedTokens: Int
+
+    public var selectedIDs: [String] {
+        selected.map(\.id)
+    }
+
+    public var droppedIDs: [String] {
+        dropped.map(\.id)
+    }
+}
+
+public enum ForgeCompactContextPlanner {
+    public static func select(
+        _ items: [ForgeCompactContextItem],
+        budget: ForgeCompactContextBudget
+    ) throws -> ForgeCompactContextPlan {
+        var seen = Set<String>()
+        for item in items {
+            guard seen.insert(item.id).inserted else {
+                throw ForgeCompactError.duplicateContextItem(item.id)
+            }
+        }
+
+        let mandatory = items
+            .filter(\.required)
+            .sorted(by: contextPriority)
+        let mandatoryTokens = mandatory.reduce(0) { $0 + $1.estimatedTokens }
+
+        guard mandatoryTokens <= budget.maximumTokens else {
+            throw ForgeCompactError.mandatoryContextExceedsBudget(
+                required: mandatoryTokens,
+                budget: budget.maximumTokens
+            )
+        }
+
+        let optional = items
+            .filter { !$0.required }
+            .sorted { lhs, rhs in
+                if lhs.tier.rawValue != rhs.tier.rawValue {
+                    return lhs.tier.rawValue < rhs.tier.rawValue
+                }
+                if lhs.estimatedTokens != rhs.estimatedTokens {
+                    return lhs.estimatedTokens < rhs.estimatedTokens
+                }
+                return lhs.id < rhs.id
+            }
+
+        var selected = mandatory
+        var dropped: [ForgeCompactContextItem] = []
+        var usedTokens = mandatoryTokens
+
+        for item in optional {
+            if usedTokens + item.estimatedTokens <= budget.maximumTokens {
+                selected.append(item)
+                usedTokens += item.estimatedTokens
+            } else {
+                dropped.append(item)
+            }
+        }
+
+        selected.sort(by: contextPriority)
+        dropped.sort(by: contextPriority)
+
+        return ForgeCompactContextPlan(
+            selected: selected,
+            dropped: dropped,
+            totalEstimatedTokens: usedTokens
+        )
+    }
+
+    private static func contextPriority(
+        _ lhs: ForgeCompactContextItem,
+        _ rhs: ForgeCompactContextItem
+    ) -> Bool {
+        if lhs.tier.rawValue != rhs.tier.rawValue {
+            return lhs.tier.rawValue < rhs.tier.rawValue
+        }
+        if lhs.required != rhs.required {
+            return lhs.required && !rhs.required
+        }
+        return lhs.id < rhs.id
+    }
+}
+
+public struct ForgeProjectCapsule: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 1
+
+    public let schemaVersion: Int
+    public let projectID: String
+    public let missionID: String
+    public let checkpointID: String
+    public let sourceRevision: String
+    public let missionRevision: Int
+    public let acceptedDecisionIDs: [String]
+    public let unresolvedDecisionIDs: [String]
+    public let evidenceReceiptIDs: [String]
+    public let knownDefectIDs: [String]
+    public let estimatedTokens: Int
+
+    public init(
+        schemaVersion: Int = ForgeProjectCapsule.currentSchemaVersion,
+        projectID: String,
+        missionID: String,
+        checkpointID: String,
+        sourceRevision: String,
+        missionRevision: Int,
+        acceptedDecisionIDs: [String] = [],
+        unresolvedDecisionIDs: [String] = [],
+        evidenceReceiptIDs: [String] = [],
+        knownDefectIDs: [String] = [],
+        estimatedTokens: Int
+    ) throws {
+        guard schemaVersion == Self.currentSchemaVersion else {
+            throw ForgeCompactError.unsupportedCapsuleSchema(schemaVersion)
+        }
+        guard missionRevision > 0 else {
+            throw ForgeCompactError.invalidMissionRevision
+        }
+        guard estimatedTokens > 0 else {
+            throw ForgeCompactError.invalidEstimatedTokenCount
+        }
+
+        self.schemaVersion = schemaVersion
+        self.projectID = try validatedIdentifier(projectID, field: "capsule.projectID")
+        self.missionID = try validatedIdentifier(missionID, field: "capsule.missionID")
+        self.checkpointID = try validatedIdentifier(checkpointID, field: "capsule.checkpointID")
+        self.sourceRevision = try validatedIdentifier(sourceRevision, field: "capsule.sourceRevision")
+        self.missionRevision = missionRevision
+        self.acceptedDecisionIDs = try canonicalReferences(acceptedDecisionIDs, field: "capsule.acceptedDecisionID")
+        self.unresolvedDecisionIDs = try canonicalReferences(unresolvedDecisionIDs, field: "capsule.unresolvedDecisionID")
+        self.evidenceReceiptIDs = try canonicalReferences(evidenceReceiptIDs, field: "capsule.evidenceReceiptID")
+        self.knownDefectIDs = try canonicalReferences(knownDefectIDs, field: "capsule.knownDefectID")
+        self.estimatedTokens = estimatedTokens
+    }
+}
+
+public struct ForgeCompactPrefixIdentity: Codable, Equatable, Sendable {
+    public let modelID: String
+    public let modelRevision: String
+    public let tokenizerID: String
+    public let runtimeID: String
+    public let runtimeRevision: String
+    public let promptTemplateRevision: String
+    public let toolSchemaRevision: String
+    public let stablePrefixDigest: String
+
+    public init(
+        modelID: String,
+        modelRevision: String,
+        tokenizerID: String,
+        runtimeID: String,
+        runtimeRevision: String,
+        promptTemplateRevision: String,
+        toolSchemaRevision: String,
+        stablePrefixDigest: String
+    ) throws {
+        self.modelID = try validatedIdentifier(modelID, field: "prefix.modelID")
+        self.modelRevision = try validatedIdentifier(modelRevision, field: "prefix.modelRevision")
+        self.tokenizerID = try validatedIdentifier(tokenizerID, field: "prefix.tokenizerID")
+        self.runtimeID = try validatedIdentifier(runtimeID, field: "prefix.runtimeID")
+        self.runtimeRevision = try validatedIdentifier(runtimeRevision, field: "prefix.runtimeRevision")
+        self.promptTemplateRevision = try validatedIdentifier(promptTemplateRevision, field: "prefix.promptTemplateRevision")
+        self.toolSchemaRevision = try validatedIdentifier(toolSchemaRevision, field: "prefix.toolSchemaRevision")
+        self.stablePrefixDigest = try validatedIdentifier(stablePrefixDigest, field: "prefix.stablePrefixDigest")
+    }
+}
+
+public enum ForgeCompactPrefixReuse {
+    public static func canReuse(
+        previous: ForgeCompactPrefixIdentity,
+        current: ForgeCompactPrefixIdentity
+    ) -> Bool {
+        previous == current
+    }
+}
+
+public enum ForgeCompactTechnique: String, Codable, CaseIterable, Sendable {
+    case quantizedKVQ8
+    case quantizedKVQ4
+    case adaptiveKV
+    case turboQuant
+    case memoryMappedWeights
+    case flashBackedColdWeights
+    case sparseExpertPaging
+    case speculativeDecoding
+}
+
+public enum ForgeCompactEvidenceKind: String, Codable, Sendable {
+    case sourceReported
+    case runtimeObserved
+    case exactDeviceMeasured
+}
+
+public struct ForgeCompactRuntimeIdentity: Codable, Equatable, Sendable {
+    public let modelID: String
+    public let modelRevision: String
+    public let tokenizerID: String
+    public let runtimeID: String
+    public let runtimeRevision: String
+    public let quantization: String
+    public let kvType: String
+    public let contextTokens: Int
+    public let deviceModel: String
+    public let osVersion: String
+
+    public init(
+        modelID: String,
+        modelRevision: String,
+        tokenizerID: String,
+        runtimeID: String,
+        runtimeRevision: String,
+        quantization: String,
+        kvType: String,
+        contextTokens: Int,
+        deviceModel: String,
+        osVersion: String
+    ) throws {
+        guard contextTokens > 0 else {
+            throw ForgeCompactError.invalidBudget
+        }
+        self.modelID = try validatedIdentifier(modelID, field: "qualification.modelID")
+        self.modelRevision = try validatedIdentifier(modelRevision, field: "qualification.modelRevision")
+        self.tokenizerID = try validatedIdentifier(tokenizerID, field: "qualification.tokenizerID")
+        self.runtimeID = try validatedIdentifier(runtimeID, field: "qualification.runtimeID")
+        self.runtimeRevision = try validatedIdentifier(runtimeRevision, field: "qualification.runtimeRevision")
+        self.quantization = try validatedIdentifier(quantization, field: "qualification.quantization")
+        self.kvType = try validatedIdentifier(kvType, field: "qualification.kvType")
+        self.contextTokens = contextTokens
+        self.deviceModel = try validatedIdentifier(deviceModel, field: "qualification.deviceModel")
+        self.osVersion = try validatedIdentifier(osVersion, field: "qualification.osVersion")
+    }
+}
+
+public struct ForgeCompactTechniqueEvidence: Codable, Equatable, Sendable {
+    public let kind: ForgeCompactEvidenceKind
+    public let runtimeIdentity: ForgeCompactRuntimeIdentity?
+
+    public init(
+        kind: ForgeCompactEvidenceKind,
+        runtimeIdentity: ForgeCompactRuntimeIdentity? = nil
+    ) throws {
+        if kind != .sourceReported && runtimeIdentity == nil {
+            throw ForgeCompactError.missingQualificationIdentity
+        }
+        self.kind = kind
+        self.runtimeIdentity = runtimeIdentity
+    }
+}
+
+public enum ForgeCompactTechniqueAvailability: String, Codable, Sendable {
+    case unavailable
+    case experimental
+    case qualified
+}
+
+public enum ForgeCompactTechniqueGate {
+    public static func availability(
+        evidence: ForgeCompactTechniqueEvidence?,
+        explicitResearchOptIn: Bool
+    ) -> ForgeCompactTechniqueAvailability {
+        guard let evidence else {
+            return .unavailable
+        }
+
+        switch evidence.kind {
+        case .exactDeviceMeasured:
+            return .qualified
+        case .runtimeObserved, .sourceReported:
+            return explicitResearchOptIn ? .experimental : .unavailable
+        }
+    }
+}
+
+public enum ForgeCompactMemoryPressure: String, Codable, Sendable {
+    case normal
+    case elevated
+    case critical
+}
+
+public enum ForgeCompactContextMode: String, Codable, Sendable {
+    case full
+    case reduced
+    case minimal
+}
+
+public struct ForgeCompactPressurePolicy: Codable, Equatable, Sendable {
+    public let contextMode: ForgeCompactContextMode
+    public let permitsDeepModelTier: Bool
+    public let permitsSpeculativeDecoding: Bool
+    public let permitsExperimentalBeyondRAMByPressure: Bool
+    public let preservesAlwaysResidentTruth: Bool
+}
+
+public enum ForgeCompactPressureGovernor {
+    public static func policy(for pressure: ForgeCompactMemoryPressure) -> ForgeCompactPressurePolicy {
+        switch pressure {
+        case .normal:
+            return ForgeCompactPressurePolicy(
+                contextMode: .full,
+                permitsDeepModelTier: true,
+                permitsSpeculativeDecoding: true,
+                permitsExperimentalBeyondRAMByPressure: true,
+                preservesAlwaysResidentTruth: true
+            )
+        case .elevated:
+            return ForgeCompactPressurePolicy(
+                contextMode: .reduced,
+                permitsDeepModelTier: true,
+                permitsSpeculativeDecoding: false,
+                permitsExperimentalBeyondRAMByPressure: false,
+                preservesAlwaysResidentTruth: true
+            )
+        case .critical:
+            return ForgeCompactPressurePolicy(
+                contextMode: .minimal,
+                permitsDeepModelTier: false,
+                permitsSpeculativeDecoding: false,
+                permitsExperimentalBeyondRAMByPressure: false,
+                preservesAlwaysResidentTruth: true
+            )
+        }
+    }
+}
