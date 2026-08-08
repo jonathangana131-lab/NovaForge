@@ -61,6 +61,43 @@ struct ForgeCompactCoreTests {
         #expect(capsule.receipt.omissions == [.init(entryID: "optional", reason: .budget)])
     }
 
+    @Test func protectedMissionTruthCannotBeDowngraded() throws {
+        let protectedKinds: [ForgeCompactEntryKind] = [
+            .requirement,
+            .currentObjective,
+            .knownDefect,
+            .unresolvedDecision,
+            .missionStage,
+        ]
+
+        for kind in protectedKinds {
+            #expect(throws: ForgeCompactError.protectedTruthDowngrade(entryID: kind.rawValue, kind: kind)) {
+                try entry(kind.rawValue, kind: kind, inclusion: .optional)
+            }
+        }
+    }
+
+    @Test func protectedMissionTruthSurvivesBudgetCompetition() throws {
+        let requirement = try entry(
+            "requirement",
+            kind: .requirement,
+            inclusion: .required,
+            units: 15
+        )
+        let optional = try entry("optional", priority: .critical, units: 10)
+
+        let capsule = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 2,
+            entries: [optional, requirement],
+            policy: try .init(maximumUnits: 20)
+        )
+
+        #expect(capsule.entries.map(\.id) == ["requirement"])
+        #expect(capsule.receipt.omissions == [.init(entryID: "optional", reason: .budget)])
+    }
+
     @Test func requiredBudgetOverflowFailsClosed() throws {
         let a = try entry("a", inclusion: .required, units: 12)
         let b = try entry("b", inclusion: .required, units: 9)
@@ -145,7 +182,7 @@ struct ForgeCompactCoreTests {
 
     @Test func duplicateEntryIDsAreRejected() throws {
         let first = try entry("same")
-        let second = try entry("same", kind: .knownDefect)
+        let second = try entry("same", kind: .knownDefect, inclusion: .required)
         #expect(throws: ForgeCompactError.duplicateEntryID("same")) {
             try ForgeCompactPlanner.build(
                 projectID: "project-1",
@@ -297,6 +334,87 @@ struct ForgeCompactCoreTests {
 
         #expect(throws: ForgeCompactError.invalidCost) {
             try JSONDecoder().decode(ProjectCapsule.self, from: tampered)
+        }
+    }
+
+    @Test func archiveDecodeRevalidatesCostBasisIdentity() throws {
+        let selected = try entry("selected", inclusion: .required)
+        let capsule = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [selected],
+            policy: try .init(maximumUnits: 100)
+        )
+        let data = try JSONEncoder().encode(capsule)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var entries = try #require(json["entries"] as? [[String: Any]])
+        var entryCost = try #require(entries[0]["cost"] as? [String: Any])
+        var basis = try #require(entryCost["basis"] as? [String: Any])
+        var exact = try #require(basis["exactTokenizer"] as? [String: Any])
+        exact["tokenizerID"] = " "
+        basis["exactTokenizer"] = exact
+        entryCost["basis"] = basis
+        entries[0]["cost"] = entryCost
+        json["entries"] = entries
+        let tampered = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+
+        #expect(throws: ForgeCompactError.invalidCost) {
+            try JSONDecoder().decode(ProjectCapsule.self, from: tampered)
+        }
+    }
+
+    @Test func archiveDecodeRevalidatesSourceReference() throws {
+        let selected = try entry("selected", inclusion: .required)
+        let capsule = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [selected],
+            policy: try .init(maximumUnits: 100)
+        )
+        let data = try JSONEncoder().encode(capsule)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var entries = try #require(json["entries"] as? [[String: Any]])
+        var sourceJSON = try #require(entries[0]["source"] as? [String: Any])
+        sourceJSON["locator"] = " "
+        entries[0]["source"] = sourceJSON
+        json["entries"] = entries
+        let tampered = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+
+        #expect(throws: ForgeCompactError.invalidIdentifier(" ")) {
+            try JSONDecoder().decode(ProjectCapsule.self, from: tampered)
+        }
+    }
+
+    @Test func archiveDecodeRevalidatesEntryIdentityAndText() throws {
+        let selected = try entry("selected", inclusion: .required)
+        let capsule = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [selected],
+            policy: try .init(maximumUnits: 100)
+        )
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(capsule)
+
+        var invalidIDJSON = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var invalidIDEntries = try #require(invalidIDJSON["entries"] as? [[String: Any]])
+        invalidIDEntries[0]["id"] = "bad id"
+        invalidIDJSON["entries"] = invalidIDEntries
+        let invalidIDData = try JSONSerialization.data(withJSONObject: invalidIDJSON, options: [.sortedKeys])
+        #expect(throws: ForgeCompactError.invalidIdentifier("bad id")) {
+            try JSONDecoder().decode(ProjectCapsule.self, from: invalidIDData)
+        }
+
+        var invalidTextJSON = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var invalidTextEntries = try #require(invalidTextJSON["entries"] as? [[String: Any]])
+        invalidTextEntries[0]["text"] = " "
+        invalidTextJSON["entries"] = invalidTextEntries
+        let invalidTextData = try JSONSerialization.data(withJSONObject: invalidTextJSON, options: [.sortedKeys])
+        #expect(throws: ForgeCompactError.invalidText("selected")) {
+            try JSONDecoder().decode(ProjectCapsule.self, from: invalidTextData)
         }
     }
 
