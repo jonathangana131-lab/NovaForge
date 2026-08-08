@@ -144,7 +144,7 @@ final class LocalModelQualificationTests: XCTestCase {
         let subject = try makeSubject()
         let artifact = try evidence(.artifactIntegrity, subject: subject, source: .staticAnalysis)
         let record = try LocalModelQualificationRecord(revision: 1, subject: subject, evidence: [artifact])
-        let readiness = record.readiness(for: .artifactVerified)
+        let readiness = record.readiness(for: .artifactVerified, trustedEvidenceIDs: trustedIDs(record))
         XCTAssertTrue(readiness.isQualified)
         XCTAssertTrue(readiness.blockingReasons.isEmpty)
     }
@@ -158,32 +158,41 @@ final class LocalModelQualificationTests: XCTestCase {
             authority: .modelReported
         )
         let record = try LocalModelQualificationRecord(revision: 1, subject: subject, evidence: [artifact])
-        let readiness = record.readiness(for: .artifactVerified)
+        let readiness = record.readiness(for: .artifactVerified, trustedEvidenceIDs: trustedIDs(record))
         XCTAssertFalse(readiness.isQualified)
         XCTAssertTrue(readiness.blockingReasons.contains { $0.contains("deterministic-harness") })
+    }
+
+    func testDeterministicHarnessLabelAloneCannotAuthorizeQualification() throws {
+        let subject = try makeSubject()
+        let artifact = try evidence(.artifactIntegrity, subject: subject, source: .staticAnalysis)
+        let record = try LocalModelQualificationRecord(revision: 1, subject: subject, evidence: [artifact])
+        let readiness = record.readiness(for: .artifactVerified, trustedEvidenceIDs: [])
+        XCTAssertFalse(readiness.isQualified)
+        XCTAssertTrue(readiness.blockingReasons.contains { $0.contains("host qualification boundary") })
     }
 
     func testExactPhysicalHarnessEvidenceQualifiesRuntime() throws {
         let subject = try makeSubject()
         let record = try fullyQualifiedRecord(subject: subject, includeLocalOnlyAudit: false)
-        XCTAssertTrue(record.readiness(for: .deviceRuntimeQualified).isQualified)
-        XCTAssertFalse(record.readiness(for: .localOnlyDeviceQualified).isQualified)
+        XCTAssertTrue(record.readiness(for: .deviceRuntimeQualified, trustedEvidenceIDs: trustedIDs(record)).isQualified)
+        XCTAssertFalse(record.readiness(for: .localOnlyDeviceQualified, trustedEvidenceIDs: trustedIDs(record)).isQualified)
     }
 
     func testLocalOnlyClaimRequiresDeterministicNetworkAudit() throws {
         let subject = try makeSubject()
         let withoutAudit = try fullyQualifiedRecord(subject: subject, includeLocalOnlyAudit: false)
-        XCTAssertFalse(withoutAudit.readiness(for: .localOnlyDeviceQualified).isQualified)
+        XCTAssertFalse(withoutAudit.readiness(for: .localOnlyDeviceQualified, trustedEvidenceIDs: trustedIDs(withoutAudit)).isQualified)
 
         let withAudit = try fullyQualifiedRecord(subject: subject, includeLocalOnlyAudit: true)
-        XCTAssertTrue(withAudit.readiness(for: .localOnlyDeviceQualified).isQualified)
+        XCTAssertTrue(withAudit.readiness(for: .localOnlyDeviceQualified, trustedEvidenceIDs: trustedIDs(withAudit)).isQualified)
     }
 
     func testSimulatorCanStoreBenchmarkEvidenceButCannotQualifyDevice() throws {
         let subject = try makeSubject(environment: .simulator)
         let receipts = try runtimeReceipts(subject: subject, source: .simulator)
         let record = try LocalModelQualificationRecord(revision: 1, subject: subject, evidence: receipts)
-        let readiness = record.readiness(for: .deviceRuntimeQualified)
+        let readiness = record.readiness(for: .deviceRuntimeQualified, trustedEvidenceIDs: trustedIDs(record))
         XCTAssertFalse(readiness.isQualified)
         XCTAssertTrue(readiness.blockingReasons.contains { $0.contains("Simulator") })
         XCTAssertTrue(readiness.blockingReasons.contains { $0.contains("physical device") })
@@ -202,7 +211,7 @@ final class LocalModelQualificationTests: XCTestCase {
             )
         )
         let record = try LocalModelQualificationRecord(revision: 2, subject: subject, evidence: receipts)
-        let readiness = record.readiness(for: .deviceRuntimeQualified)
+        let readiness = record.readiness(for: .deviceRuntimeQualified, trustedEvidenceIDs: trustedIDs(record))
         XCTAssertFalse(readiness.isQualified)
         XCTAssertTrue(readiness.blockingReasons.contains { $0.contains("thermal evidence did not pass") })
     }
@@ -294,6 +303,10 @@ final class LocalModelQualificationTests: XCTestCase {
         object["records"] = records
         let corrupted = try JSONSerialization.data(withJSONObject: object)
         XCTAssertThrowsError(try JSONDecoder().decode(LocalModelQualificationArchive.self, from: corrupted))
+    }
+
+    private func trustedIDs(_ record: LocalModelQualificationRecord) -> Set<String> {
+        Set(record.evidence.map(\.evidenceID))
     }
 
     private func makeSubject(
