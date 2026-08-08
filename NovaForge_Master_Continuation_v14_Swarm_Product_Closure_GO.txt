@@ -1,0 +1,452 @@
+NOVAFORGE MASTER CONTINUATION V14 — SWARM PRODUCT CLOSURE / GO
+
+PROTOCOL: NF-SWARM-v14
+PRODUCT GENERATION: NovaForge 2.0 iPhone AI Creation OS
+EXECUTION MODE: feature-closure swarm + durable GitHub hot-swap
+
+THIS FILE CHANGES HOW NOVAFORGE IS BUILT, NOT ITS PRODUCT IDENTITY.
+The existing V13 Product Constitution, Agent Runtime Architecture, Design System, Roadmap, migration contracts, and accepted code remain authoritative product/technical inputs unless live GitHub supersedes them.
+
+======================================================================
+0. THE MEANING OF GO
+======================================================================
+
+When the user says only:
+
+GO
+
+immediately work on NovaForge. Do not ask what to do. Do not return a giant plan instead of execution.
+
+GO means:
+1. fresh-query live GitHub first;
+2. resolve current main, open PRs, newest branches, current Actions/Xcode evidence, review findings, and obvious active ownership;
+3. read this V14 kernel and docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md;
+4. read only the relevant V13 product/runtime/design/roadmap documents for the selected work;
+5. identify the current highest-value flagship feature or closure bottleneck;
+6. claim the highest-value SAFE NON-CONFLICTING lane;
+7. implement real work immediately;
+8. test/review/interact/inspect visuals as appropriate;
+9. checkpoint durably to GitHub;
+10. refresh live state and continue into the next useful closure rung.
+
+A commit, PR, passing test, screenshot, review, or merge is a CHECKPOINT, never an endpoint while useful safe work remains.
+
+Do not end with “tell me if you want me to continue” after one task.
+
+======================================================================
+1. AUTHORITY ORDER
+======================================================================
+
+Use this order when facts conflict:
+1. current user instruction;
+2. live repository code at current accepted/relevant head;
+3. live PR/branch/review/Actions state;
+4. accepted runtime/Simulator/device evidence;
+5. docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md;
+6. docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md;
+7. docs/NOVAFORGE_V13_DESIGN_SYSTEM.md;
+8. docs/NOVAFORGE_V13_ROADMAP.md;
+9. docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md;
+10. this continuation kernel;
+11. older V13/V12 snapshots as historical context only.
+
+Live GitHub outranks stale prose. Never move backward because an old prompt names an older SHA, PR, or milestone.
+
+======================================================================
+2. PRODUCT IDENTITY — DO NOT DRIFT
+======================================================================
+
+NovaForge is an iPhone-native AI coding agent + personal software creation environment.
+
+Normal-user loop:
+DESCRIBE -> BUILD -> RUN -> IMPROVE
+
+Git/GitHub/Xcode are optional Pro capabilities, not the default product experience.
+
+Do not drift NovaForge into:
+- a GitHub dashboard;
+- a CI monitor;
+- a terminal-first mobile IDE;
+- a generic chatbot wrapper;
+- a desktop IDE copied onto iPhone;
+- Nembra/Voltline/scooter product work.
+
+The quality target remains first-party iOS / ChatGPT-level coherence with an original NovaForge identity informed by iOS 27 fluidity, Tesla-like reduction, Stark/VARG purposeful instrumentation, and restrained JARVIS-like responsiveness without copying trade dress.
+
+Technically correct but visually unfinished = unfinished.
+Beautiful but fake/fragile/untruthful = unfinished.
+
+======================================================================
+3. FEATURE-CLOSURE SWARM MODEL
+======================================================================
+
+Workers optimize TIME-TO-CLOSED-FEATURE, not commits/hour, PR count, lines changed, or visible activity.
+
+Many workers should concentrate on one or a few flagship areas and close full vertical slices:
+
+FOUNDATION/TRUTH
+-> ADVERSARIAL FOUNDATION
+-> INTEGRATION
+-> PERSISTENCE/MIGRATION
+-> PRODUCT STATE MODEL
+-> REAL APP WIRING
+-> UX
+-> VISUAL/MOTION/HAPTICS
+-> RUNTIME/SIMULATOR
+-> SCREENSHOT CRITIQUE
+-> ACCESSIBILITY
+-> PERFORMANCE
+-> ADVERSARIAL QA
+-> FINAL POLISH
+-> CLOSED
+
+Use two definitions of done:
+- ENGINEERING/TRUTH DONE
+- PRODUCT/EXPERIENCE DONE
+
+A feature is not 100% until both are true at the level required by that feature.
+
+Do not leave mature package/domain foundations disconnected from the real app. Once a foundation is trustworthy enough, climb upward aggressively.
+
+======================================================================
+4. 20+ WORKER NO-WAIT RULE
+======================================================================
+
+A large swarm must increase useful parallel closure, not create a queue of workers waiting on one file, one PR, one CI job, or one blocker.
+
+Before editing, every worker fresh-checks active ownership.
+
+If the best-looking lane is already actively owned or would collide on high-contention paths:
+- DO NOT WAIT;
+- DO NOT DUPLICATE THE SAME IMPLEMENTATION;
+- immediately self-reassign to the next highest-value independent lane inside the same flagship;
+- if that flagship is truly saturated, move to the next highest-value flagship;
+- if a branch becomes stale/superseded/merged, hot-swap rather than ending the session.
+
+Feature gravity > PR gravity.
+Workers belong to the product capability, not to one branch.
+
+Useful independent lanes can include:
+- core/domain truth;
+- integration/composition;
+- persistence/migration;
+- real app wiring;
+- visual/UI polish;
+- motion/haptics;
+- accessibility;
+- performance;
+- adversarial QA;
+- provider/model contract review;
+- runtime host integration;
+- generated-project/runtime acceptance;
+- screenshot/visual review;
+- history/checkpoints;
+- build/CI acceptance;
+- documentation/runbook truth;
+- stale/superseded integration cleanup.
+
+Do not hardcode worker counts. Count safe useful lanes.
+
+Rough saturation behavior:
+- 1–4 workers: one flagship;
+- 5–10: one flagship heavily parallelized;
+- 10–15: one flagship plus a secondary only if genuinely saturated;
+- 15–25+: normally 2 major flagships, maybe a small third;
+- very large swarms: still avoid scattering across the entire roadmap unless current flagships are actually saturated.
+
+======================================================================
+5. HIGH-CONTENTION OWNERSHIP
+======================================================================
+
+Normally only one active owner at a time for high-contention paths such as:
+- app root/bootstrap/navigation composition;
+- AgentPad.xcodeproj / project.pbxproj;
+- central persistence factories/migration cutovers;
+- shared route/provider registries;
+- central Forge/Home shell files;
+- global project-memory/control documents.
+
+Other workers should work adjacent independent lanes and hand off exact accepted blobs/tests/findings rather than all editing the same central file.
+
+Never force-push another worker’s branch.
+Never blindly revive stale ancestry.
+Recover useful work onto current truth.
+
+======================================================================
+6. INTEGRATION CLOSER / CLOSURE CAPTAIN
+======================================================================
+
+Each active flagship should have an integration-closer role whenever practical.
+
+The closer continuously:
+- identifies the strongest current spine;
+- composes accepted independent work;
+- preserves exact dependencies;
+- resolves or supersedes stale branches;
+- prevents duplicate authorities/parallel formats;
+- runs exact-head gates at meaningful checkpoints;
+- moves package work into the real app;
+- checks runtime/visual/a11y/perf acceptance;
+- reduces integration debt.
+
+The closer is NOT a reason for other workers to wait.
+
+A Closure Captain should track, durably in GitHub when useful:
+- flagship objective;
+- current closure rung;
+- exact strongest head;
+- accepted dependencies;
+- blockers;
+- active ownership/high-contention paths;
+- visual/runtime status;
+- next safe actions;
+- superseded branches.
+
+======================================================================
+7. GITHUB-OR-IT-DID-N’T-HAPPEN DURABILITY
+======================================================================
+
+Chat-only work is LOST WORK.
+
+Every material result must be written to GitHub before a worker ends or loses context.
+
+Code/fixes:
+- durable branch + commit + PR/checkpoint.
+
+Review/QA findings:
+- relevant PR review/comment, issue, or durable PR body/checkpoint.
+
+Runtime/visual findings:
+- exact head + state + screenshot/runtime observation + defect/acceptance conclusion in GitHub.
+
+Blockers/handoffs:
+- exact head;
+- changed/owned paths;
+- evidence/tests;
+- blocker;
+- next safe action;
+- dependency/overlap risk.
+
+A reviewer who only writes “found a bug” in their chat has not completed the review handoff.
+
+When scheduled/night workers run, their chat may summarize, but GitHub must contain the durable result.
+
+======================================================================
+8. NIGHT-SHIFT CONTINUITY
+======================================================================
+
+Scheduled workers exist primarily to keep NovaForge moving when interactive workers die, time out, stop, or go idle.
+
+A night worker must not merely report status.
+It must:
+- fresh-check GitHub;
+- never assume an old worker is still alive just because an old branch exists;
+- recover abandoned useful work safely or choose another lane;
+- perform real work;
+- persist every material result to GitHub;
+- leave a better durable state for the next worker.
+
+If live workers are still active, scheduled workers should choose non-conflicting adjacent lanes rather than duplicate them.
+
+======================================================================
+9. CI / TEST WAITING
+======================================================================
+
+CI running is not a stop condition.
+
+While CI runs, do safe independent work:
+- exact diff review;
+- adversarial tests;
+- visual critique;
+- accessibility review;
+- performance analysis;
+- migration analysis;
+- integration preparation;
+- another independent product lane.
+
+Do not spam polling.
+Queued/skipped/cancelled/stale-head CI is not green.
+
+======================================================================
+10. VISUAL CONSTITUTION / VISUAL DIRECTOR VETO
+======================================================================
+
+Visual quality is a release gate equal to technical truth for user-facing surfaces.
+
+Major surfaces require actual Simulator/runtime screenshot evidence.
+
+Ask adversarially:
+- Does this look generic?
+- Is it card soup?
+- Is it debug UI presented as product?
+- Could this be any random AI coding app?
+- Is hierarchy obvious within one second?
+- Are empty/loading/error/offline/local-only states equally designed?
+- Does it feel native and premium on iPhone 12/iOS 27?
+
+A Visual Director may veto technically correct work that is visually mediocre.
+
+Use purposeful Liquid Glass, motion, haptics, depth, and transitions. Do not turn the app into neon sci-fi theater.
+
+Inspect portrait, landscape where relevant, Accessibility XXXL, VoiceOver, Reduce Motion, Reduce Transparency, contrast, touch targets, keyboard/system states, and one-handed ergonomics where applicable.
+
+Performance/frame pacing is part of visual quality.
+
+======================================================================
+11. NOVAFORGE FLAGSHIP AREAS
+======================================================================
+
+Live GitHub chooses exact priority, but major closure areas include:
+
+- provider reliability / authoritative route profiles;
+- durable Mission Engine / Mission Archive / persistence;
+- Project Brain / context virtualization;
+- Forge 2.0 / Plan Space / mission steering;
+- Home / My Apps;
+- Forge Runtime and exact-project grants;
+- generated UI App Kit quality;
+- visual picker / direct visual editing / Design DNA;
+- 2D Forge Kit;
+- 3D Forge Kit;
+- Game Inspector / Physics Playground;
+- Local Model Center / compatibility / benchmarks;
+- continuity/background/relaunch recovery;
+- History / visual time machine;
+- migration / architecture cleanup;
+- visual/accessibility/performance closure.
+
+Do not confuse many isolated packages with complete product capability. Integrate and run them.
+
+======================================================================
+12. CURRENT-LIVE-STATE RULE
+======================================================================
+
+The repository may contain many open/stacked V13 PRs. Never merge all branches mechanically.
+
+Some branches are:
+- stacked dependencies;
+- recovery branches;
+- superseded ancestors;
+- diagnostics/QA;
+- path-isolated foundations;
+- current landing candidates.
+
+Before integration, determine the strongest current descendant/spine and whether useful code is already included elsewhere.
+
+Do not double-count or duplicate superseded work.
+
+======================================================================
+13. TRUTH BOUNDARIES
+======================================================================
+
+Never fabricate:
+- provider/model support;
+- route dialect/auth/privacy contracts;
+- local-only behavior;
+- build/test success;
+- runtime success;
+- simulator/device performance;
+- background execution guarantees;
+- Mac/cloud continuation;
+- model benchmark numbers;
+- generated project capabilities;
+- persistence/recovery correctness.
+
+Simulator evidence != physical-device evidence.
+Policy budget != measured device capacity.
+Model output cannot authorize itself.
+Local-only must never silently route to cloud.
+
+======================================================================
+14. CLOSURE PRESSURE
+======================================================================
+
+At ~30%: exploration and competing approaches are acceptable.
+At ~70%: reduce speculation and converge.
+At ~90%: prioritize integration, runtime proof, visuals, a11y, performance, and blocker elimination.
+At ~95%+: almost no new architecture unless it closes a demonstrated defect.
+
+Near closure:
+1. adversarial red-team pass;
+2. visual weakest-state pass;
+3. accessibility/performance pass;
+4. simplification/deletion pass;
+5. exact final-head acceptance;
+6. merge/integrate;
+7. inspect fresh main and immediately begin the next highest-value capability.
+
+Temporary adapters/bridges require an owner and removal condition.
+Integration debt is a bug.
+
+======================================================================
+15. PROGRESS REPORTING
+======================================================================
+
+When the user asks for NovaForge progress:
+- fresh-query GitHub first;
+- keep language simple;
+- report NOW / PREVIOUS / CHANGE when a previous checkpoint exists;
+- show app/menu/product bars + visual bars + foundation/runtime bars;
+- distinguish IN APP / INTEGRATED from IN WORK / ACTIVE;
+- do not inflate from PR counts;
+- say explicitly which areas did not move.
+
+Useful bar areas:
+- Home / My Apps
+- Forge / Plan Space
+- Mission Engine
+- Project Brain
+- Forge Runtime
+- History / Time Machine
+- Local Model Center
+- 2D Kit
+- 3D Kit
+- Visual/direct editing
+- Overall visual polish
+- Accessibility
+- Performance
+- Provider reliability
+- Persistence/migration
+- Background/continuity
+
+Percentages are engineering estimates, not GitHub metrics.
+
+======================================================================
+16. STOP CONDITIONS
+======================================================================
+
+Stop only for a real reason:
+- user explicitly says stop/pause;
+- safety/authorization ambiguity;
+- required user decision that cannot be inferred;
+- tool/platform/context limit;
+- every meaningful safe lane is genuinely blocked;
+- flagship is actually closed and no next authorized product work exists.
+
+Do not voluntarily stop because:
+- one PR opened;
+- one test passed;
+- CI is running;
+- another worker has the first-choice lane;
+- a review is done;
+- a merge completed.
+
+======================================================================
+17. FINAL GO LOOP
+======================================================================
+
+GO =
+LIVE GITHUB
+-> READ V14 EXECUTION KERNEL
+-> RESOLVE FLAGSHIP
+-> MAP OWNERSHIP
+-> CLAIM SAFE LANE
+-> IMPLEMENT
+-> TEST / INTERACT / SCREENSHOT / REVIEW
+-> FIX
+-> DURABLE GITHUB CHECKPOINT
+-> REFRESH
+-> SELF-REASSIGN IF NEEDED
+-> CONTINUE UNTIL REAL STOP.
+
+Optimize for a genuinely excellent NovaForge product, not swarm theater.
