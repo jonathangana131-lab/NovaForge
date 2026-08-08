@@ -74,7 +74,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
         let result = ForgeCompletionGate.assess(
             constitution: c,
             evidence: try passingArchive(),
-            defects: try .init(defects: [], knownLimitations: [])
+            defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [], knownLimitations: [])
         )
         XCTAssertEqual(result.disposition, .completeWithEvidence)
         XCTAssertTrue(result.blockers.isEmpty)
@@ -88,7 +88,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
         let c = try constitution()
         let model = try receipt(id: "model-done", criterionID: "build", evidenceClass: .modelAssertion, producer: .model, scope: c.scope, environment: environment(.modelOnly, "model"))
         let archive = try ForgeCompletionEvidenceArchive(receipts: [model])
-        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(defects: [], knownLimitations: []))
+        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [], knownLimitations: []))
         XCTAssertEqual(result.disposition, .incomplete)
         XCTAssertEqual(result.ignoredModelAssertionReceiptIDs, ["model-done"])
     }
@@ -99,7 +99,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
         let result = ForgeCompletionGate.assess(
             constitution: c,
             evidence: try passingArchive(scope: staleScope),
-            defects: try .init(defects: [], knownLimitations: [])
+            defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [], knownLimitations: [])
         )
         XCTAssertEqual(result.disposition, .incomplete)
         XCTAssertEqual(result.criteria.map(\.result), [.missingEvidence, .missingEvidence])
@@ -111,7 +111,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
             try receipt(id: "build-r", criterionID: "build", evidenceClass: .buildReceipt, producer: .buildSystem, verdict: .failed),
             try receipt(id: "defect-r", criterionID: "defects", evidenceClass: .defectAudit, producer: .defectTracker),
         ])
-        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(defects: [], knownLimitations: []))
+        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [], knownLimitations: []))
         XCTAssertEqual(result.disposition, .incomplete)
         XCTAssertTrue(result.blockers.contains(.criterion("build", .failedEvidence)))
     }
@@ -126,7 +126,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
             try receipt(id: "perf-r", criterionID: "perf", evidenceClass: .performanceMeasurement, producer: .performanceHarness),
             try receipt(id: "defect-r", criterionID: "defects", evidenceClass: .defectAudit, producer: .defectTracker),
         ])
-        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(defects: [], knownLimitations: []))
+        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [], knownLimitations: []))
         XCTAssertTrue(result.blockers.contains(.criterion("perf", .environmentMismatch)))
     }
 
@@ -140,17 +140,17 @@ final class ForgeCompletionCoreTests: XCTestCase {
             try receipt(id: "visual-r", criterionID: "visual", evidenceClass: .visualInspection, producer: .visualQA),
             try receipt(id: "defect-r", criterionID: "defects", evidenceClass: .defectAudit, producer: .defectTracker),
         ])
-        XCTAssertEqual(ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(defects: [], knownLimitations: [])).disposition, .completeWithEvidence)
+        XCTAssertEqual(ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [], knownLimitations: [])).disposition, .completeWithEvidence)
     }
 
     func testHighDefectBlocksEvenWhenDisclosedAsLimitation() throws {
         let c = try constitution()
         let defect = try ForgeCompletionDefect(defectID: "crash", scope: c.scope, severity: .high, state: .deferred, summary: "crash")
-        let limitation = try ForgeCompletionKnownLimitation(limitationID: "lim", relatedDefectID: "crash", summary: "known crash")
+        let limitation = try ForgeCompletionKnownLimitation(limitationID: "lim", scope: c.scope, relatedDefectID: "crash", summary: "known crash")
         let result = ForgeCompletionGate.assess(
             constitution: c,
             evidence: try passingArchive(),
-            defects: try .init(defects: [defect], knownLimitations: [limitation])
+            defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [defect], knownLimitations: [limitation])
         )
         XCTAssertEqual(result.disposition, .incomplete)
         XCTAssertTrue(result.blockers.contains(.unresolvedSevereDefect("crash")))
@@ -162,7 +162,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
         let result = ForgeCompletionGate.assess(
             constitution: c,
             evidence: try passingArchive(),
-            defects: try .init(defects: [defect], knownLimitations: [])
+            defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [defect], knownLimitations: [])
         )
         XCTAssertTrue(result.blockers.contains(.undisclosedDefect("spacing")))
     }
@@ -170,22 +170,22 @@ final class ForgeCompletionCoreTests: XCTestCase {
     func testAllowedKnownLimitationProducesExplicitCompletionState() throws {
         let c = try constitution(allowsKnownLimitations: true)
         let defect = try ForgeCompletionDefect(defectID: "spacing", scope: c.scope, severity: .low, state: .deferred, summary: "spacing")
-        let limitation = try ForgeCompletionKnownLimitation(limitationID: "lim", relatedDefectID: "spacing", summary: "Minor spacing remains")
+        let limitation = try ForgeCompletionKnownLimitation(limitationID: "lim", scope: c.scope, relatedDefectID: "spacing", summary: "Minor spacing remains")
         let result = ForgeCompletionGate.assess(
             constitution: c,
             evidence: try passingArchive(),
-            defects: try .init(defects: [defect], knownLimitations: [limitation])
+            defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [defect], knownLimitations: [limitation])
         )
         XCTAssertEqual(result.disposition, .completeWithKnownLimitations)
     }
 
     func testKnownLimitationsCannotBypassConstitutionPolicy() throws {
         let c = try constitution(allowsKnownLimitations: false)
-        let limitation = try ForgeCompletionKnownLimitation(limitationID: "lim", summary: "Unsupported optional export")
+        let limitation = try ForgeCompletionKnownLimitation(limitationID: "lim", scope: c.scope, summary: "Unsupported optional export")
         let result = ForgeCompletionGate.assess(
             constitution: c,
             evidence: try passingArchive(),
-            defects: try .init(defects: [], knownLimitations: [limitation])
+            defects: try .init(scope: c.scope, defectAuditReceiptID: "defect-r", defects: [], knownLimitations: [limitation])
         )
         XCTAssertEqual(result.disposition, .incomplete)
         XCTAssertTrue(result.blockers.contains(.knownLimitationsNotAllowed))
@@ -264,6 +264,22 @@ final class ForgeCompletionCoreTests: XCTestCase {
         }
     }
 
+    func testDefectSnapshotMustMatchCompletionScope() throws {
+        let c = try constitution()
+        let stale = try scope(projectRevision: 6, checkpoint: "cp-6")
+        let snapshot = try ForgeCompletionDefectSnapshot(scope: stale, defectAuditReceiptID: "old-audit", defects: [], knownLimitations: [])
+        let result = ForgeCompletionGate.assess(constitution: c, evidence: try passingArchive(), defects: snapshot)
+        XCTAssertTrue(result.blockers.contains(.defectSnapshotScopeMismatch))
+        XCTAssertTrue(result.blockers.contains(.defectSnapshotNotBoundToAudit))
+    }
+
+    func testDefectSnapshotMustBindAcceptedAuditReceipt() throws {
+        let c = try constitution()
+        let snapshot = try ForgeCompletionDefectSnapshot(scope: c.scope, defectAuditReceiptID: "different-audit", defects: [], knownLimitations: [])
+        let result = ForgeCompletionGate.assess(constitution: c, evidence: try passingArchive(), defects: snapshot)
+        XCTAssertTrue(result.blockers.contains(.defectSnapshotNotBoundToAudit))
+    }
+
     func testExactEnvironmentIdentityRejectsNearbyDeviceEvidence() throws {
         let exact = try environment(.physicalDevice, "iPhone13,2/iOS27/buildA")
         let nearby = try environment(.physicalDevice, "iPhone13,2/iOS27/buildB")
@@ -276,7 +292,7 @@ final class ForgeCompletionCoreTests: XCTestCase {
             try receipt(id: "perf", criterionID: "perf", evidenceClass: .performanceMeasurement, producer: .performanceHarness, environment: nearby),
             try receipt(id: "defects", criterionID: "defects", evidenceClass: .defectAudit, producer: .defectTracker),
         ])
-        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(defects: [], knownLimitations: []))
+        let result = ForgeCompletionGate.assess(constitution: c, evidence: archive, defects: try .init(scope: c.scope, defectAuditReceiptID: "defects", defects: [], knownLimitations: []))
         XCTAssertTrue(result.blockers.contains(.criterion("perf", .environmentMismatch)))
     }
 }
