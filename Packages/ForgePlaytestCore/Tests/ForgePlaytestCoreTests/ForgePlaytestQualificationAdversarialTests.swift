@@ -160,4 +160,54 @@ final class ForgePlaytestQualificationAdversarialTests: XCTestCase {
             )
         }
     }
+    func testPolicyCannotWeakenHighSeverityRepairGate() throws {
+        XCTAssertThrowsError(
+            try ForgePlaytestAcceptancePolicy(
+                requirements: [try ForgePlaytestPersonaRequirement(persona: .goalRunner)],
+                repairThreshold: .critical
+            )
+        ) {
+            XCTAssertEqual($0 as? ForgePlaytestError, .repairThresholdTooWeak)
+        }
+    }
+
+    func testSevereDefectFromFailedJourneyStillRequiresRepair() throws {
+        let good = try completedResult(journey: "good", persona: .goalRunner)
+        let log = try evidence(.runtimeEventLog, receipt: "failed-log", journey: "failed")
+        let defect = try ForgePlaytestDefect(
+            defectID: "runtime-crash",
+            severity: .critical,
+            category: .runtime,
+            summary: "Runtime crashed on an adversarial path.",
+            evidenceReceiptIDs: [log.receiptID]
+        )
+        let failed = try ForgePlaytestJourneyResult(
+            project: project(),
+            journeyID: "failed",
+            persona: .goalRunner,
+            traceID: "trace-failed",
+            status: .failed,
+            evidence: [log],
+            defects: [defect]
+        )
+        let policy = try ForgePlaytestAcceptancePolicy(requirements: [
+            try ForgePlaytestPersonaRequirement(persona: .goalRunner),
+        ])
+
+        XCTAssertEqual(
+            try ForgePlaytestGateEvaluator.evaluate(
+                project: project(),
+                policy: policy,
+                plans: [
+                    try plan(journey: "good", persona: .goalRunner),
+                    try plan(journey: "failed", persona: .goalRunner),
+                ],
+                results: [good, failed]
+            ),
+            .repairRequired([
+                ForgePlaytestRepairItem(journeyID: "failed", persona: .goalRunner, defect: defect),
+            ])
+        )
+    }
+
 }
