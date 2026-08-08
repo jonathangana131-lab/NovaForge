@@ -1,0 +1,28 @@
+name: V14 Mission real manifest validation only
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-MISSION-CLOSER-8A08/full-package-macos-9db0
+
+permissions:
+  contents: read
+
+jobs:
+  real-manifest-targets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift toolchain
+        run: swift --version
+      - name: Resolve real AgentHarnessKit manifest
+        run: swift package --package-path Packages/AgentHarnessKit describe >/dev/null
+      - name: ForgeMission debug target warnings-as-errors
+        run: swift build --package-path Packages/AgentHarnessKit --target ForgeMission -Xswiftc -warnings-as-errors
+      - name: AgentStore debug target warnings-as-errors
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentStore -Xswiftc -warnings-as-errors
+      - name: ForgeMission release target warnings-as-errors
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target ForgeMission -Xswiftc -warnings-as-errors
+      - name: AgentStore release target warnings-as-errors
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target AgentStore -Xswiftc -warnings-as-errors
