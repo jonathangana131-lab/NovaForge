@@ -6,6 +6,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case invalidPriority(Int)
     case invalidRevision(field: String, value: Int)
     case invalidBudget(Int)
+    case accountingOverflow
     case duplicateItemID(String)
     case sourceRevisionMismatch(itemID: String)
     case modelSummaryCannotBeAuthoritative(itemID: String)
@@ -24,12 +25,13 @@ enum ForgeCompactValidation {
     static func identifier(_ value: String, field: String, maxUTF8Bytes: Int = 256) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              trimmed.utf8.count <= maxUTF8Bytes,
-              !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+              trimmed == value,
+              value.utf8.count <= maxUTF8Bytes,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
         else {
             throw ForgeCompactError.invalidIdentifier(field: field)
         }
-        return trimmed
+        return value
     }
 
     static func content(_ value: String) throws -> String {
@@ -122,14 +124,16 @@ public enum ForgeCompactContextTier: String, Codable, CaseIterable, Sendable {
 public enum ForgeCompactFactKind: String, Codable, CaseIterable, Sendable {
     case missionIdentity
     case currentObjective
+    case missionStage
     case safetyPolicy
     case privacyPolicy
     case acceptedRequirement
-    case unresolvedDecision
-    case failingTest
-    case knownLimitation
     case acceptedDecision
     case designDNA
+    case unresolvedDecision
+    case knownDefect
+    case failingTest
+    case knownLimitation
     case sourceLocation
     case testReceipt
     case runtimeReceipt
@@ -137,11 +141,11 @@ public enum ForgeCompactFactKind: String, Codable, CaseIterable, Sendable {
 
     public var requiresRetentionWhenPresent: Bool {
         switch self {
-        case .missionIdentity, .currentObjective, .safetyPolicy, .privacyPolicy,
-             .acceptedRequirement, .unresolvedDecision, .failingTest, .knownLimitation:
+        case .missionIdentity, .currentObjective, .missionStage,
+             .safetyPolicy, .privacyPolicy, .acceptedRequirement, .acceptedDecision,
+             .designDNA, .unresolvedDecision, .knownDefect, .failingTest, .knownLimitation:
             true
-        case .acceptedDecision, .designDNA, .sourceLocation, .testReceipt,
-             .runtimeReceipt, .workingNote:
+        case .sourceLocation, .testReceipt, .runtimeReceipt, .workingNote:
             false
         }
     }
@@ -222,7 +226,10 @@ public struct ForgeCompactContextItem: Codable, Hashable, Sendable {
         if isAuthoritative && provenance.kind == .modelSummary {
             throw ForgeCompactError.modelSummaryCannotBeAuthoritative(itemID: self.id)
         }
-        if kind.requiresRetentionWhenPresent && provenance.kind == .modelSummary {
+        let requestsMandatoryRetention = tier == .l0AlwaysResident
+            || kind.requiresRetentionWhenPresent
+            || protectedByUser
+        if requestsMandatoryRetention && provenance.kind == .modelSummary {
             throw ForgeCompactError.modelSummaryCannotSupplyMandatoryTruth(itemID: self.id)
         }
         self.isAuthoritative = isAuthoritative
@@ -262,9 +269,11 @@ public struct ForgeCompactContextItem: Codable, Hashable, Sendable {
     }
 }
 
-/// Compact reference for context not selected into the rendered capsule. It retains enough
-/// source and retention metadata to prove that persisted bytes did not hide mandatory truth or
-/// move an omitted fact across source revisions.
+/// Durable retrieval reference for context omitted from the rendered capsule.
+///
+/// Omission must not erase the source pointer needed to recover the fact from Project Brain,
+/// source storage, a checkpoint, or an evidence store. The provenance reference remains bound to
+/// the exact source revision and semantic kind represented by this deferred item.
 public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
     public let id: String
     public let sourceRevision: String
@@ -272,6 +281,7 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
     public let kind: ForgeCompactFactKind
     public let priority: Int
     public let protectedByUser: Bool
+    public let provenance: ForgeCompactProvenance
 
     public var mustRetain: Bool {
         tier == .l0AlwaysResident || kind.requiresRetentionWhenPresent || protectedByUser
@@ -284,6 +294,7 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
         kind = item.kind
         priority = item.priority
         protectedByUser = item.protectedByUser
+        provenance = item.provenance
     }
 
     private init(
@@ -292,7 +303,8 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
         tier: ForgeCompactContextTier,
         kind: ForgeCompactFactKind,
         priority: Int,
-        protectedByUser: Bool
+        protectedByUser: Bool,
+        provenance: ForgeCompactProvenance
     ) throws {
         self.id = try ForgeCompactValidation.identifier(id, field: "omitted.id")
         self.sourceRevision = try ForgeCompactValidation.identifier(sourceRevision, field: "omitted.sourceRevision")
@@ -303,13 +315,14 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
         self.kind = kind
         self.priority = priority
         self.protectedByUser = protectedByUser
+        self.provenance = provenance
         guard !mustRetain else {
             throw ForgeCompactError.invalidCapsuleShape
         }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, sourceRevision, tier, kind, priority, protectedByUser
+        case id, sourceRevision, tier, kind, priority, protectedByUser, provenance
     }
 
     public init(from decoder: Decoder) throws {
@@ -320,7 +333,8 @@ public struct ForgeCompactOmittedItem: Codable, Hashable, Sendable {
             tier: c.decode(ForgeCompactContextTier.self, forKey: .tier),
             kind: c.decode(ForgeCompactFactKind.self, forKey: .kind),
             priority: c.decode(Int.self, forKey: .priority),
-            protectedByUser: c.decode(Bool.self, forKey: .protectedByUser)
+            protectedByUser: c.decode(Bool.self, forKey: .protectedByUser),
+            provenance: c.decode(ForgeCompactProvenance.self, forKey: .provenance)
         )
     }
 }

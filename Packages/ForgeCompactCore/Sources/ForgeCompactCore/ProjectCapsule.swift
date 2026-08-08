@@ -1,7 +1,8 @@
 import Foundation
 
 public struct ProjectCapsule: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 1
+    /// Schema 2 adds durable retrieval provenance to omitted/deferred items.
+    public static let currentSchemaVersion = 2
 
     public let schemaVersion: Int
     public let authority: ProjectCapsuleAuthority
@@ -25,7 +26,7 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         self.omittedItems = omittedItems
         self.renderedContext = selectedItems.map(\.renderedLine).joined(separator: "\n")
         self.renderedUTF8Bytes = renderedContext.utf8.count
-        self.sourceItemCount = selectedItems.count + omittedItems.count
+        self.sourceItemCount = try Self.checkedAdd(selectedItems.count, omittedItems.count)
         try validate()
     }
 
@@ -54,7 +55,8 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         guard schemaVersion == Self.currentSchemaVersion else {
             throw ForgeCompactError.invalidCapsuleSchema(schemaVersion)
         }
-        guard budgetBytes >= 0, sourceItemCount == selectedItems.count + omittedItems.count else {
+        let expectedSourceItemCount = try Self.checkedAdd(selectedItems.count, omittedItems.count)
+        guard budgetBytes >= 0, sourceItemCount == expectedSourceItemCount else {
             throw ForgeCompactError.invalidCapsuleShape
         }
 
@@ -113,6 +115,14 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
             sourceItemCount: c.decode(Int.self, forKey: .sourceItemCount)
         )
     }
+
+    /// Shared checked arithmetic keeps malformed or future oversized inputs from trapping the
+    /// process before Forge Compact can fail closed with a domain error.
+    static func checkedAdd(_ lhs: Int, _ rhs: Int) throws -> Int {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        guard !overflow else { throw ForgeCompactError.accountingOverflow }
+        return value
+    }
 }
 
 public enum ProjectCapsuleBuilder {
@@ -139,7 +149,7 @@ public enum ProjectCapsuleBuilder {
         let mandatory = canonical.filter(\.mustRetain)
         let optional = canonical.filter { !$0.mustRetain }
 
-        let requiredBytes = renderedBytes(for: mandatory)
+        let requiredBytes = try renderedBytes(for: mandatory)
         guard requiredBytes <= budgetBytes else {
             throw ForgeCompactError.budgetCannotHoldMandatoryTruth(
                 requiredBytes: requiredBytes,
@@ -153,10 +163,11 @@ public enum ProjectCapsuleBuilder {
 
         for item in optional {
             let separatorBytes = selected.isEmpty ? 0 : 1
-            let candidateBytes = separatorBytes + item.renderedUTF8Bytes
-            if usedBytes + candidateBytes <= budgetBytes {
+            let candidateBytes = try ProjectCapsule.checkedAdd(separatorBytes, item.renderedUTF8Bytes)
+            let proposedBytes = try ProjectCapsule.checkedAdd(usedBytes, candidateBytes)
+            if proposedBytes <= budgetBytes {
                 selected.append(item)
-                usedBytes += candidateBytes
+                usedBytes = proposedBytes
             } else {
                 omitted.append(item)
             }
@@ -172,9 +183,13 @@ public enum ProjectCapsuleBuilder {
         )
     }
 
-    private static func renderedBytes(for items: [ForgeCompactContextItem]) -> Int {
+    private static func renderedBytes(for items: [ForgeCompactContextItem]) throws -> Int {
         guard !items.isEmpty else { return 0 }
-        return items.reduce(0) { $0 + $1.renderedUTF8Bytes } + (items.count - 1)
+        var total = 0
+        for item in items {
+            total = try ProjectCapsule.checkedAdd(total, item.renderedUTF8Bytes)
+        }
+        return try ProjectCapsule.checkedAdd(total, items.count - 1)
     }
 
     fileprivate static func canonicalOrder(_ lhs: ForgeCompactContextItem, _ rhs: ForgeCompactContextItem) -> Bool {
