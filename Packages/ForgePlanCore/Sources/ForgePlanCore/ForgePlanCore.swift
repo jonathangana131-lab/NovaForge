@@ -380,6 +380,7 @@ public enum PlanAnswer: Hashable, Codable, Sendable {
             try container.encode(upper, forKey: .upper)
         case .text(let value):
             try container.encode(Kind.text, forKey: .type)
+            try container.encode(value, forKey: .text)
         case .decideForMe:
             try container.encode(Kind.decideForMe, forKey: .type)
         }
