@@ -83,6 +83,38 @@ run_with_timeout() {
   wait "$command_pid"
 }
 
+record_launched_app_pid() {
+  LAUNCHED_APP_PID=""
+  [[ -f "$LAUNCH_LOG" ]] || return
+
+  local line
+  local candidate
+  while IFS= read -r line; do
+    [[ "$line" == "${BUNDLE_ID}: "* ]] || continue
+    candidate="${line#*: }"
+    if [[ "$candidate" == <-> ]] && (( candidate > 0 )); then
+      LAUNCHED_APP_PID="$candidate"
+    fi
+  done < "$LAUNCH_LOG"
+}
+
+assert_launched_app_is_alive() {
+  record_launched_app_pid
+  if [[ -z "$LAUNCHED_APP_PID" ]]; then
+    echo "Unable to read the NovaForge launch PID from $LAUNCH_LOG. Refusing to accept a smoke result without app-process proof." >&2
+    echo "Last 80 lines from $LAUNCH_LOG:" >&2
+    tail -n 80 "$LAUNCH_LOG" >&2
+    exit 1
+  fi
+
+  if ! kill -0 "$LAUNCHED_APP_PID" >/dev/null 2>&1; then
+    echo "NovaForge exited during smoke proof (pid $LAUNCHED_APP_PID). Refusing to accept SpringBoard/Home Screen as product evidence." >&2
+    echo "Last 80 lines from $LAUNCH_LOG:" >&2
+    tail -n 80 "$LAUNCH_LOG" >&2
+    exit 1
+  fi
+}
+
 require_core_simulator_health() {
   [[ "$CHECK_SIMULATOR_HEALTH" == "1" ]] || return 0
 
@@ -121,6 +153,7 @@ INSTALL_LOG="$LOG_DIR/install-$STAMP.log"
 LAUNCH_LOG="$LOG_DIR/launch-$STAMP.log"
 SCREENSHOT_LOG="$LOG_DIR/screenshot-$STAMP.log"
 SCREENSHOT_PATH="${SCREENSHOT_PATH:-$SCREENSHOT_DIR/$SCREENSHOT_NAME}"
+LAUNCHED_APP_PID=""
 
 if [[ "$BUILD_FIRST" == "1" ]]; then
   echo "Building $SCHEME with $BUILD_SDK..."
@@ -223,6 +256,7 @@ else
 fi
 
 sleep "$WAIT_SECONDS"
+assert_launched_app_is_alive
 
 if [[ "$CAPTURE_SCREENSHOT" != "1" ]]; then
   echo "Skipping screenshot. Set CAPTURE_SCREENSHOT=1 to capture after launch."
@@ -248,6 +282,8 @@ else
   tail -n 80 "$SCREENSHOT_LOG" >&2
   exit 1
 fi
+
+assert_launched_app_is_alive
 
 echo "Smoke passed."
 echo "Simulator: $SIMULATOR_ID"
