@@ -7,13 +7,14 @@ NovaForge product identity remains **NovaForge 2.0 / iPhone AI Creation OS** fro
 Before substantial work, read in this order:
 
 1. `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt` — canonical `GO` behavior and feature-closure execution kernel.
-2. `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md` — large-swarm anti-collision, no-wait, integration-closer, durability, visual, and night-continuity rules.
+2. `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md` — large-swarm anti-collision, no-wait, integration-closer, durability, visual, and continuity rules.
 3. `CONTINUATION_PROMPT.md` — concise fresh-session boot/resume contract.
-4. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md` — product identity and generation goals.
-5. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md` — durable mission, Project Brain, Forge Runtime, model/runtime boundaries.
-6. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md` — visual language and quality bar.
-7. `docs/NOVAFORGE_V13_ROADMAP.md` — product closure waves and capability ordering.
-8. GitHub issue `#23` — live swarm coordination context; live GitHub code/PRs always outrank stale issue text.
+4. `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md` — flagship local-model fabric, Forge Compact, Composer/Plan Space, Full Forge autonomy, self-play/playtest, repair and evidence-backed completion direction.
+5. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md` — product identity and generation goals.
+6. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md` — durable mission, Project Brain, Forge Runtime, model/runtime boundaries.
+7. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md` — visual language and quality bar.
+8. `docs/NOVAFORGE_V13_ROADMAP.md` — product closure waves and capability ordering.
+9. GitHub issue `#23` — live swarm coordination context; live GitHub code/PRs always outrank stale issue text.
 
 When the user says only `GO`, do not ask what to do. Fresh-check live GitHub, map active ownership, claim the highest-value safe non-conflicting lane, execute immediately, checkpoint durably, refresh, and continue.
 
@@ -25,9 +26,20 @@ When the user says only `GO`, do not ask what to do. Fresh-check live GitHub, ma
 - **Integration closer:** current flagships should have a closer composing accepted independent work into the strongest current spine while other workers continue adjacent lanes.
 - **Visual quality is a release gate:** app-visible work requires real Simulator/runtime interaction, screenshot critique, accessibility, and performance evidence appropriate to the change.
 - **CI is a checkpoint:** while CI runs, do useful non-conflicting work instead of idling/polling.
-- **Night continuity:** scheduled/night workers exist to continue useful repository work when interactive workers die/time out/go idle; they must do real work and leave durable GitHub state, not just status summaries.
+- **Scheduled continuity is conditional:** if NovaForge schedulers are explicitly configured in the future, they should continue useful repository work after interactive workers die/time out/go idle and must leave durable GitHub state. Do not assume schedulers exist today.
 
 The V13 product documents below remain authoritative product/architecture context. V14 supersedes older swarm execution behavior where they conflict.
+
+## V14 flagship product emphasis
+
+NovaForge must become a **local-first AI creation machine**, not merely a prettier coding chat.
+
+- The Composer + Plan Space are flagship surfaces and must reach first-party visual/interaction quality.
+- Full Forge is an evidence-backed autonomous mode: build, run, interact/play, inspect, test, visually critique, repair, regress, polish, then complete only when the Completion Constitution is satisfied.
+- Local models are primary. Build a device-aware Local Model Fabric with tiny specialist/router models, a default local agent, deeper local tiers where possible, and truthful experimental beyond-RAM modes.
+- Build Forge Compact for model/KV/context efficiency: low-bit profiles, KV compression, Project Capsules, structured Project Brain retrieval, prefix/KV reuse where valid, speculative decoding, and isolated flash/expert-streaming research.
+- Forge Runtime should expose safe semantic playtest inputs so NovaForge can actually self-test generated games/apps instead of merely inspecting source.
+- “Complete” must point to exact build/runtime/test/visual/accessibility/performance evidence; a model saying done is never proof.
 
 ## V13 product authority — preserved
 
