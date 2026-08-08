@@ -18,6 +18,9 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         selectedItems: [ForgeCompactContextItem],
         omittedItems: [ForgeCompactOmittedItem]
     ) throws {
+        let (sourceItemCount, overflow) = selectedItems.count.addingReportingOverflow(omittedItems.count)
+        guard !overflow else { throw ForgeCompactError.invalidCapsuleShape }
+
         self.schemaVersion = Self.currentSchemaVersion
         self.authority = authority
         self.budgetBytes = budgetBytes
@@ -25,7 +28,7 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         self.omittedItems = omittedItems
         self.renderedContext = selectedItems.map(\.renderedLine).joined(separator: "\n")
         self.renderedUTF8Bytes = renderedContext.utf8.count
-        self.sourceItemCount = selectedItems.count + omittedItems.count
+        self.sourceItemCount = sourceItemCount
         try validate()
     }
 
@@ -54,7 +57,11 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         guard schemaVersion == Self.currentSchemaVersion else {
             throw ForgeCompactError.invalidCapsuleSchema(schemaVersion)
         }
-        guard budgetBytes >= 0, sourceItemCount == selectedItems.count + omittedItems.count else {
+        let (expectedSourceItemCount, countOverflow) = selectedItems.count.addingReportingOverflow(omittedItems.count)
+        guard !countOverflow,
+              budgetBytes >= 0,
+              sourceItemCount == expectedSourceItemCount
+        else {
             throw ForgeCompactError.invalidCapsuleShape
         }
 
@@ -139,7 +146,7 @@ public enum ProjectCapsuleBuilder {
         let mandatory = canonical.filter(\.mustRetain)
         let optional = canonical.filter { !$0.mustRetain }
 
-        let requiredBytes = renderedBytes(for: mandatory)
+        let requiredBytes = renderedBytesCapped(for: mandatory, cap: budgetBytes)
         guard requiredBytes <= budgetBytes else {
             throw ForgeCompactError.budgetCannotHoldMandatoryTruth(
                 requiredBytes: requiredBytes,
@@ -153,10 +160,15 @@ public enum ProjectCapsuleBuilder {
 
         for item in optional {
             let separatorBytes = selected.isEmpty ? 0 : 1
-            let candidateBytes = separatorBytes + item.renderedUTF8Bytes
-            if usedBytes + candidateBytes <= budgetBytes {
+            let remaining = budgetBytes - usedBytes
+            guard separatorBytes <= remaining else {
+                omitted.append(item)
+                continue
+            }
+            let contentBudget = remaining - separatorBytes
+            if item.renderedUTF8Bytes <= contentBudget {
                 selected.append(item)
-                usedBytes += candidateBytes
+                usedBytes += separatorBytes + item.renderedUTF8Bytes
             } else {
                 omitted.append(item)
             }
@@ -172,9 +184,25 @@ public enum ProjectCapsuleBuilder {
         )
     }
 
-    private static func renderedBytes(for items: [ForgeCompactContextItem]) -> Int {
+    /// Computes only as far as the accepted capsule budget. Returning `cap + 1` is a
+    /// deterministic fail-closed sentinel and avoids unchecked Int accumulation over
+    /// arbitrarily large caller collections.
+    private static func renderedBytesCapped(
+        for items: [ForgeCompactContextItem],
+        cap: Int
+    ) -> Int {
         guard !items.isEmpty else { return 0 }
-        return items.reduce(0) { $0 + $1.renderedUTF8Bytes } + (items.count - 1)
+
+        var used = 0
+        for (index, item) in items.enumerated() {
+            let separatorBytes = index == 0 ? 0 : 1
+            let remaining = cap - used
+            if separatorBytes > remaining { return cap + 1 }
+            let contentBudget = remaining - separatorBytes
+            if item.renderedUTF8Bytes > contentBudget { return cap + 1 }
+            used += separatorBytes + item.renderedUTF8Bytes
+        }
+        return used
     }
 
     fileprivate static func canonicalOrder(_ lhs: ForgeCompactContextItem, _ rhs: ForgeCompactContextItem) -> Bool {
