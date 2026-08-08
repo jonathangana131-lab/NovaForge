@@ -10,6 +10,7 @@ let package = Package(
     ],
     products: [
         .library(name: "AgentDomain", targets: ["AgentDomain"]),
+        .library(name: "ForgeMission", targets: ["ForgeMission"]),
         .library(name: "AgentEngine", targets: ["AgentEngine"]),
         .library(name: "AgentTools", targets: ["AgentTools"]),
         .library(name: "AgentProviders", targets: ["AgentProviders"]),
@@ -20,6 +21,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "AgentDomain"),
+        .target(
+            name: "ForgeMission",
+            dependencies: ["AgentDomain"]
+        ),
         .target(
             name: "AgentReducerCore",
             dependencies: ["AgentDomain"]
@@ -67,6 +72,10 @@ let package = Package(
         .testTarget(
             name: "AgentDomainTests",
             dependencies: ["AgentDomain"]
+        ),
+        .testTarget(
+            name: "ForgeMissionTests",
+            dependencies: ["AgentDomain", "ForgeMission"]
         ),
         .testTarget(
             name: "AgentEngineTests",
