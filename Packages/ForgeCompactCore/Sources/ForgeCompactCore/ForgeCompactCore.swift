@@ -299,7 +299,7 @@ public enum ForgeCompactGovernor {
         let eligibleIDs = Set(verdicts.filter(\.isEligible).map(\.envelopeID))
         let eligible = envelopes.filter { eligibleIDs.contains($0.id) }
 
-        if let activeEnvelopeID = normalized(snapshot.activeEnvelopeID),
+        if let activeEnvelopeID = snapshot.activeEnvelopeID,
            eligible.contains(where: { $0.id == activeEnvelopeID })
         {
             return .init(
@@ -328,7 +328,8 @@ public enum ForgeCompactGovernor {
     }
 
     private static func isValid(_ snapshot: ForgeCompactRuntimeSnapshot) -> Bool {
-        normalized(snapshot.deviceProfileID) != nil
+        isCanonicalIdentity(snapshot.deviceProfileID)
+            && snapshot.activeEnvelopeID.map(isCanonicalIdentity) ?? true
             && snapshot.requestedContextTokens > 0
             && snapshot.minimumMissionContextTokens > 0
             && snapshot.minimumMissionContextTokens <= snapshot.requestedContextTokens
@@ -361,11 +362,11 @@ public enum ForgeCompactGovernor {
             reasons.append(.duplicateEnvelopeID)
         }
 
-        if normalized(envelope.id) == nil
-            || normalized(envelope.profileID) == nil
-            || normalized(envelope.configurationBindingID) == nil
-            || normalized(envelope.deviceProfileID) == nil
-            || normalized(envelope.evidenceReceiptID) == nil
+        if !isCanonicalIdentity(envelope.id)
+            || !isCanonicalIdentity(envelope.profileID)
+            || !isCanonicalIdentity(envelope.configurationBindingID)
+            || !isCanonicalIdentity(envelope.deviceProfileID)
+            || !isCanonicalIdentity(envelope.evidenceReceiptID)
         {
             reasons.append(.invalidIdentity)
         }
@@ -433,6 +434,11 @@ public enum ForgeCompactGovernor {
             return lhs.observedPeakResidentBytes < rhs.observedPeakResidentBytes
         }
         return lhs.id < rhs.id
+    }
+
+    private static func isCanonicalIdentity(_ value: String) -> Bool {
+        guard let normalized = normalized(value) else { return false }
+        return normalized == value
     }
 
     private static func normalized(_ value: String?) -> String? {
