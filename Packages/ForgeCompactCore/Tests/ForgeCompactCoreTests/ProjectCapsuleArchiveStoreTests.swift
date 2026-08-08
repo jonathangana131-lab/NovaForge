@@ -71,8 +71,9 @@ final class ProjectCapsuleArchiveStoreTests: XCTestCase {
 
         try await store.save(first)
         try await store.save(extended)
+        let loaded = try await store.load()
 
-        XCTAssertEqual(try await store.load(), extended)
+        XCTAssertEqual(loaded, extended)
     }
 
     func testRollbackIsRejectedWithoutChangingDurableBytes() async throws {
@@ -95,8 +96,9 @@ final class ProjectCapsuleArchiveStoreTests: XCTestCase {
             XCTAssertEqual(error as? ProjectCapsuleArchiveStoreError, .historyRollback)
         }
 
+        let loaded = try await store.load()
         XCTAssertEqual(try Data(contentsOf: fixture.fileURL), before)
-        XCTAssertEqual(try await store.load(), latest)
+        XCTAssertEqual(loaded, latest)
     }
 
     func testDivergentExistingHistoryIsRejectedWithoutOverwrite() async throws {
@@ -125,8 +127,9 @@ final class ProjectCapsuleArchiveStoreTests: XCTestCase {
             )
         }
 
+        let loaded = try await store.load()
         XCTAssertEqual(try Data(contentsOf: fixture.fileURL), before)
-        XCTAssertEqual(try await store.load(), original)
+        XCTAssertEqual(loaded, original)
     }
 
     func testStoreRejectsArchiveIdentityMismatchBeforeWrite() async throws {
