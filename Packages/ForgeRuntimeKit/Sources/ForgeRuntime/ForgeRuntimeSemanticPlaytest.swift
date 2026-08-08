@@ -244,6 +244,9 @@ public struct ForgeRuntimePlaytestTrace: Codable, Equatable, Sendable {
         frames: [ForgeRuntimeSemanticInputFrame],
         maximumFrames: Int = Self.defaultMaximumFrames
     ) throws {
+        guard maximumFrames >= 0 else {
+            throw ForgeRuntimePlaytestValidationError.invalidFrameLimit(maximumFrames)
+        }
         guard frames.count <= maximumFrames else {
             throw ForgeRuntimePlaytestValidationError.tooManyFrames(actual: frames.count, maximum: maximumFrames)
         }
