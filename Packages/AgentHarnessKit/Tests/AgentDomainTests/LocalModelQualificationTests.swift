@@ -146,6 +146,7 @@ final class LocalModelQualificationTests: XCTestCase {
     func testRawUntestedCompatibilityCannotBeUpgradedByStrongReceipt() {
         let compatibility = LocalModelCompatibilityResult(
             label: .untested,
+            reasons: [.benchmarkMissing],
             evidence: [
                 .init(
                     kind: .measured,
