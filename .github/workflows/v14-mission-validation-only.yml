@@ -1,0 +1,22 @@
+name: V14 Mission validation only
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-MISSION-CLOSER-8A08/mission-0667
+
+permissions:
+  contents: read
+
+jobs:
+  agent-harness-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift toolchain
+        run: swift --version
+      - name: AgentHarnessKit debug warnings-as-errors
+        run: swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
+      - name: AgentHarnessKit release warnings-as-errors
+        run: swift test --package-path Packages/AgentHarnessKit -c release -Xswiftc -warnings-as-errors
