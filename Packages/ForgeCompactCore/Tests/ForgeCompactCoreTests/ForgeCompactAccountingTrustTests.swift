@@ -1,31 +1,93 @@
+import Foundation
 import XCTest
 @testable import ForgeCompactCore
 
 final class ForgeCompactAccountingTrustTests: XCTestCase {
-    func testExactTokenizerClaimRequiresTrustedMeasurementReceipt() throws {
+    func testExactTokenizerClaimRequiresExactTrustedMeasurementBinding() throws {
         let receipt = try makeReceipt(provenance: .runtimeTokenizer)
+        let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
 
         XCTAssertFalse(
-            receipt.canSupportExactTokenCountClaim(trustedMeasurementReceiptIDs: [])
+            receipt.canSupportExactTokenCountClaim(trustedMeasurements: [])
         )
         XCTAssertTrue(
-            receipt.canSupportExactTokenCountClaim(
-                trustedMeasurementReceiptIDs: ["measurement-001"]
-            )
+            receipt.canSupportExactTokenCountClaim(trustedMeasurements: [binding])
         )
     }
 
-    func testModelReportedExactTokenizerValueCannotClaimExactTokensEvenWhenReceiptIDIsTrusted() throws {
+    func testSameTrustedReceiptIDCannotAuthorizeTamperedTokenCounts() throws {
+        let receipt = try makeReceipt(provenance: .runtimeTokenizer)
+        let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
+        let tampered = try tamperedReceipt(receipt) { object in
+            object["baselineUnits"] = 9_999
+            object["capsuleUnits"] = 1
+        }
+
+        XCTAssertEqual(tampered.measurementReceiptID, receipt.measurementReceiptID)
+        XCTAssertTrue(tampered.hasExactTokenizerProvenance)
+        XCTAssertFalse(
+            tampered.canSupportExactTokenCountClaim(trustedMeasurements: [binding])
+        )
+    }
+
+    func testSameTrustedReceiptIDCannotAuthorizeDifferentTokenizerSubject() throws {
+        let receipt = try makeReceipt(provenance: .runtimeTokenizer)
+        let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
+        let tampered = try tamperedReceipt(receipt) { object in
+            var basis = try XCTUnwrap(object["basis"] as? [String: Any])
+            basis["counterRevision"] = "rev-2"
+            object["basis"] = basis
+        }
+
+        XCTAssertEqual(tampered.measurementReceiptID, receipt.measurementReceiptID)
+        XCTAssertTrue(tampered.hasExactTokenizerProvenance)
+        XCTAssertFalse(
+            tampered.canSupportExactTokenCountClaim(trustedMeasurements: [binding])
+        )
+    }
+
+    func testSameTrustedReceiptIDCannotAuthorizeDifferentCapsuleAuthority() throws {
+        let receipt = try makeReceipt(provenance: .runtimeTokenizer)
+        let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
+        let tampered = try tamperedReceipt(receipt) { object in
+            var authority = try XCTUnwrap(object["authority"] as? [String: Any])
+            authority["capsuleRevision"] = 2
+            object["authority"] = authority
+        }
+
+        XCTAssertEqual(tampered.measurementReceiptID, receipt.measurementReceiptID)
+        XCTAssertTrue(tampered.hasExactTokenizerProvenance)
+        XCTAssertFalse(
+            tampered.canSupportExactTokenCountClaim(trustedMeasurements: [binding])
+        )
+    }
+
+    func testSameTrustedReceiptIDCannotAuthorizeDifferentBaselineSnapshot() throws {
+        let receipt = try makeReceipt(provenance: .runtimeTokenizer)
+        let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
+        let tampered = try tamperedReceipt(receipt) { object in
+            var baseline = try XCTUnwrap(object["baselineIdentity"] as? [String: Any])
+            baseline["contextRevision"] = "history-r2"
+            object["baselineIdentity"] = baseline
+        }
+
+        XCTAssertEqual(tampered.measurementReceiptID, receipt.measurementReceiptID)
+        XCTAssertTrue(tampered.hasExactTokenizerProvenance)
+        XCTAssertFalse(
+            tampered.canSupportExactTokenCountClaim(trustedMeasurements: [binding])
+        )
+    }
+
+    func testModelReportedExactTokenizerValueCannotClaimExactTokensEvenWhenExactSubjectIsTrusted() throws {
         let receipt = try makeReceipt(provenance: .modelReported)
+        let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
 
         XCTAssertFalse(
-            receipt.canSupportExactTokenCountClaim(
-                trustedMeasurementReceiptIDs: ["measurement-001"]
-            )
+            receipt.canSupportExactTokenCountClaim(trustedMeasurements: [binding])
         )
     }
 
-    func testHeuristicCannotClaimExactTokensEvenWhenReceiptIDIsTrusted() throws {
+    func testHeuristicCannotClaimExactTokensEvenWhenExactSubjectIsTrusted() throws {
         let capsule = try makeCapsule()
         let counter = HeuristicCounter()
         let receipt = try ForgeCompactAccounting.measure(
@@ -34,11 +96,23 @@ final class ForgeCompactAccountingTrustTests: XCTestCase {
             capsule: capsule,
             counter: counter
         )
+        let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
 
         XCTAssertFalse(
-            receipt.canSupportExactTokenCountClaim(
-                trustedMeasurementReceiptIDs: ["measurement-heuristic"]
-            )
+            receipt.canSupportExactTokenCountClaim(trustedMeasurements: [binding])
+        )
+    }
+
+    private func tamperedReceipt(
+        _ receipt: ForgeCompactAccountingReceipt,
+        mutation: (inout [String: Any]) throws -> Void
+    ) throws -> ForgeCompactAccountingReceipt {
+        let encoded = try JSONEncoder().encode(receipt)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        try mutation(&object)
+        return try JSONDecoder().decode(
+            ForgeCompactAccountingReceipt.self,
+            from: JSONSerialization.data(withJSONObject: object)
         )
     }
 
