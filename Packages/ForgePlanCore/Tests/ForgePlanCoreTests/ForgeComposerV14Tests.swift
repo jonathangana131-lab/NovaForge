@@ -73,86 +73,110 @@ final class ForgeComposerV14Tests: XCTestCase {
         XCTAssertNoThrow(try ForgeComposerUnitInterval(1))
     }
 
-    func testEnvelopeDefaultsLocalFirstAndDoesNotTurnFullForgeIntoAuthorization() throws {
+    func testV14ControlProfileDefaultsLocalFirst() {
+        let controls = ForgeComposerV14ControlProfile()
+        XCTAssertEqual(controls.autonomy, .collaborate)
+        XCTAssertEqual(controls.buildDepth, .complete)
+        XCTAssertEqual(controls.intelligence, .automatic)
+        XCTAssertEqual(controls.privacy, .localOnly)
+        XCTAssertFalse(controls.requestsFullForge)
+        XCTAssertFalse(controls.requiresExternalModelQualification)
+    }
+
+    func testEnvelopeUsesSingleSharedV14ControlProfile() throws {
+        let controls = ForgeComposerV14ControlProfile()
         let envelope = try ForgeComposerIntentEnvelope(
             intentSummary: "Build a local-first notes app",
-            creativity: ForgeComposerUnitInterval(0.5),
-            refactorRisk: ForgeComposerUnitInterval(0.2)
+            controls: controls
         )
 
-        XCTAssertEqual(envelope.autonomy, .collaborate)
-        XCTAssertEqual(envelope.buildDepth, .complete)
-        XCTAssertEqual(envelope.intelligence, .automatic)
-        XCTAssertEqual(envelope.privacy, .localOnly)
+        XCTAssertEqual(envelope.controls, controls)
+        XCTAssertTrue(envelope.controls.privacy.isLocalOnly)
         XCTAssertFalse(envelope.requestsFullForge)
         XCTAssertFalse(envelope.requiresExternalModelQualification)
     }
 
     func testEnvelopePreservesFullForgeAsUserIntentOnly() throws {
+        let controls = ForgeComposerV14ControlProfile(
+            intelligence: .automatic,
+            buildDepth: .obsessive,
+            creativity: try ForgeComposerUnitInterval(0.8),
+            refactorRisk: try ForgeComposerUnitInterval(0.4),
+            autonomy: .fullForge,
+            privacy: .localOnly
+        )
         let envelope = try ForgeComposerIntentEnvelope(
             intentSummary: "Build and autonomously polish a game",
-            autonomy: .fullForge,
-            buildDepth: .obsessive,
-            intelligence: .automatic,
-            privacy: .localOnly,
-            creativity: ForgeComposerUnitInterval(0.8),
-            refactorRisk: ForgeComposerUnitInterval(0.4),
+            controls: controls,
             creationKind: .game,
             runTargetID: "iphone"
         )
 
         XCTAssertTrue(envelope.requestsFullForge)
-        XCTAssertTrue(envelope.privacy.isLocalOnly)
+        XCTAssertTrue(envelope.controls.privacy.isLocalOnly)
         XCTAssertEqual(envelope.creationKind, .game)
         XCTAssertEqual(envelope.runTargetID, "iphone")
     }
 
+    func testPlanSpaceAndReadySummaryPreserveExactV14ControlProfile() throws {
+        let controls = ForgeComposerV14ControlProfile(
+            intelligence: try .explicit(referenceID: "qualified-profile-42"),
+            buildDepth: .obsessive,
+            creativity: try ForgeComposerUnitInterval(0.7),
+            refactorRisk: try ForgeComposerUnitInterval(0.3),
+            autonomy: .fullForge,
+            privacy: try .providers(["openai"])
+        )
+        let proposal = PlanSpaceProposal(
+            intentSummary: "Build a driving simulator",
+            questions: [PlanQuestion(id: "camera", prompt: "Camera", controlKind: .freeText)],
+            controls: controls
+        )
+        let summary = try XCTUnwrap(proposal.readySummary(answers: ["camera": .text("cockpit")]))
+
+        XCTAssertEqual(proposal.controls, controls)
+        XCTAssertEqual(summary.controls, controls)
+        XCTAssertTrue(summary.controls.requestsFullForge)
+        XCTAssertTrue(summary.controls.requiresExternalModelQualification)
+    }
+
     func testEnvelopeRejectsBlankOrControlCharacterIntent() throws {
         XCTAssertThrowsError(
-            try ForgeComposerIntentEnvelope(
-                intentSummary: "   ",
-                creativity: ForgeComposerUnitInterval(0.5),
-                refactorRisk: ForgeComposerUnitInterval(0.5)
-            )
+            try ForgeComposerIntentEnvelope(intentSummary: "   ")
         )
         XCTAssertThrowsError(
-            try ForgeComposerIntentEnvelope(
-                intentSummary: "Build\u{0000}app",
-                creativity: ForgeComposerUnitInterval(0.5),
-                refactorRisk: ForgeComposerUnitInterval(0.5)
-            )
+            try ForgeComposerIntentEnvelope(intentSummary: "Build\u{0000}app")
         )
     }
 
     func testEnvelopeAllowsMultilineIntentAndTrimsOuterWhitespace() throws {
         let envelope = try ForgeComposerIntentEnvelope(
-            intentSummary: "  Build this:\n- local\n- fast  ",
-            creativity: ForgeComposerUnitInterval(0.5),
-            refactorRisk: ForgeComposerUnitInterval(0.5)
+            intentSummary: "  Build this:\n- local\n- fast  "
         )
         XCTAssertEqual(envelope.intentSummary, "Build this:\n- local\n- fast")
     }
 
-    func testEnvelopeRejectsMalformedRunTargetIdentity() throws {
+    func testEnvelopeRejectsMalformedRunTargetIdentity() {
         XCTAssertThrowsError(
             try ForgeComposerIntentEnvelope(
                 intentSummary: "Build an app",
-                creativity: ForgeComposerUnitInterval(0.5),
-                refactorRisk: ForgeComposerUnitInterval(0.5),
                 runTargetID: " iphone "
             )
         )
     }
 
     func testEnvelopeRoundTripsWithExplicitModelAndProviders() throws {
+        let controls = ForgeComposerV14ControlProfile(
+            intelligence: try .explicit(referenceID: "qualified-profile-42"),
+            buildDepth: .obsessive,
+            creativity: try ForgeComposerUnitInterval(0.7),
+            refactorRisk: try ForgeComposerUnitInterval(0.3),
+            autonomy: .fullForge,
+            privacy: try .providers(["anthropic", "openai"])
+        )
         let envelope = try ForgeComposerIntentEnvelope(
             intentSummary: "Build a driving simulator",
-            autonomy: .fullForge,
-            buildDepth: .obsessive,
-            intelligence: .explicit(referenceID: "qualified-profile-42"),
-            privacy: .providers(["anthropic", "openai"]),
-            creativity: ForgeComposerUnitInterval(0.7),
-            refactorRisk: ForgeComposerUnitInterval(0.3),
+            controls: controls,
             creationKind: .game,
             runTargetID: "iphone"
         )
@@ -164,11 +188,7 @@ final class ForgeComposerV14Tests: XCTestCase {
     }
 
     func testDecodeRejectsUnknownSchemaVersion() throws {
-        let envelope = try ForgeComposerIntentEnvelope(
-            intentSummary: "Build an app",
-            creativity: ForgeComposerUnitInterval(0.5),
-            refactorRisk: ForgeComposerUnitInterval(0.5)
-        )
+        let envelope = try ForgeComposerIntentEnvelope(intentSummary: "Build an app")
         let encoded = try JSONEncoder().encode(envelope)
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         object["schemaVersion"] = 99
@@ -177,16 +197,29 @@ final class ForgeComposerV14Tests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeComposerIntentEnvelope.self, from: tampered))
     }
 
-    func testDecodeRejectsLocalProviderAllowlistWithDuplicateIDs() throws {
-        let envelope = try ForgeComposerIntentEnvelope(
-            intentSummary: "Build an app",
-            privacy: .providers(["openai"]),
-            creativity: ForgeComposerUnitInterval(0.5),
-            refactorRisk: ForgeComposerUnitInterval(0.5)
-        )
+    func testDecodeRejectsDuplicateProviderIDsInsideSharedControls() throws {
+        let controls = ForgeComposerV14ControlProfile(privacy: try .providers(["openai"]))
+        let envelope = try ForgeComposerIntentEnvelope(intentSummary: "Build an app", controls: controls)
         let encoded = try JSONEncoder().encode(envelope)
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        object["privacy"] = ["kind": "providerAllowlist", "providerIDs": ["openai", "openai"]]
+        var controlsObject = try XCTUnwrap(object["controls"] as? [String: Any])
+        controlsObject["privacy"] = ["kind": "providerAllowlist", "providerIDs": ["openai", "openai"]]
+        object["controls"] = controlsObject
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeComposerIntentEnvelope.self, from: tampered))
+    }
+
+    func testDecodeRejectsInvalidExplicitModelInsideSharedControls() throws {
+        let controls = ForgeComposerV14ControlProfile(
+            intelligence: try .explicit(referenceID: "qualified-profile")
+        )
+        let envelope = try ForgeComposerIntentEnvelope(intentSummary: "Build an app", controls: controls)
+        let encoded = try JSONEncoder().encode(envelope)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var controlsObject = try XCTUnwrap(object["controls"] as? [String: Any])
+        controlsObject["intelligence"] = ["kind": "explicitModel", "referenceID": " padded "]
+        object["controls"] = controlsObject
         let tampered = try JSONSerialization.data(withJSONObject: object)
 
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeComposerIntentEnvelope.self, from: tampered))
