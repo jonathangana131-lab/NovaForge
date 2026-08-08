@@ -20,7 +20,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let smaller = envelope(id: "4k", context: 4_096, peak: 1 * gib)
 
         let receipt = decide(
-            availableMemory: 3 * gib,
+            memoryBudget: 3 * gib,
             nominalReserve: gib / 2,
             envelopes: [smaller, tooLarge, fits]
         )
@@ -37,7 +37,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let compact = envelope(id: "compact-4k", context: 4_096, peak: 1_800_000_000)
 
         let receipt = decide(
-            availableMemory: 3_200_000_000,
+            memoryBudget: 3_200_000_000,
             memoryPressure: .warning,
             activeEnvelopeID: active.id,
             nominalReserve: 200_000_000,
@@ -281,7 +281,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
     }
 
     private func decide(
-        availableMemory: UInt64? = nil,
+        memoryBudget: UInt64? = nil,
         requestedContext: UInt64 = 16_384,
         minimumContext: UInt64 = 4_096,
         memoryPressure: ForgeCompactMemoryPressure = .nominal,
@@ -297,7 +297,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
             deviceProfileID: "iphone13,2-ios27",
             requestedContextTokens: requestedContext,
             minimumMissionContextTokens: minimumContext,
-            availableMemoryBytes: availableMemory ?? 4 * gib,
+            memoryBudgetBytes: memoryBudget ?? 4 * gib,
             activeEnvelopeID: activeEnvelopeID,
             memoryPressure: memoryPressure,
             thermalPressure: thermalPressure
