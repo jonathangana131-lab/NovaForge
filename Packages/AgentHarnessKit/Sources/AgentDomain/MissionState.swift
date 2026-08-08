@@ -186,9 +186,10 @@ public struct MissionStageGraph: Codable, Equatable, Sendable {
     }
 
     /// This is deliberately stricter than `MissionStageStatus.isSettled`.
-    /// A failed, cancelled, or deferred required stage is not completion evidence.
+    /// A failed, cancelled, deferred, or structurally empty graph cannot count
+    /// as completion evidence.
     public var requiredWorkIsSatisfied: Bool {
-        stages.lazy.filter(\.required).allSatisfy { $0.status == .completed }
+        !stages.isEmpty && stages.lazy.filter(\.required).allSatisfy { $0.status == .completed }
     }
 
     private var containsDependencyCycle: Bool {
