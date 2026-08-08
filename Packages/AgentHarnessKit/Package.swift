@@ -50,7 +50,7 @@ let package = Package(
         ),
         .target(
             name: "AgentStore",
-            dependencies: ["AgentDomain", "AgentReducerCore"]
+            dependencies: ["AgentDomain", "AgentReducerCore", "ForgeMission"]
         ),
         .target(
             name: "AgentShadow",
@@ -99,7 +99,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AgentStoreTests",
-            dependencies: ["AgentDomain", "AgentStore"]
+            dependencies: ["AgentDomain", "AgentStore", "ForgeMission"]
         ),
         .testTarget(
             name: "AgentShadowTests",
