@@ -95,9 +95,16 @@ final class ForgeCompactAccountingTrustTests: XCTestCase {
     ) throws -> ForgeCompactAccountingReceipt {
         let capsule = try makeCapsule()
         let selectedCounter = counter ?? ExactCounter(provenance: provenance)
+        let selectedBaselineIdentity: ForgeCompactAccountingBaselineIdentity
+        if let baselineIdentity {
+            selectedBaselineIdentity = baselineIdentity
+        } else {
+            selectedBaselineIdentity = try self.baselineIdentity()
+        }
+
         return try ForgeCompactAccounting.measure(
             baselineContext: "BASELINE raw context",
-            baselineIdentity: try baselineIdentity ?? self.baselineIdentity(),
+            baselineIdentity: selectedBaselineIdentity,
             capsule: capsule,
             counter: selectedCounter
         )
