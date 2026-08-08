@@ -21,6 +21,9 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case graphRevisionMismatch
     case authorityEpochMismatch
     case prefixReuseIdentityMismatch
+    case stablePrefixDigestMismatch
+    case prefixCapsuleRevisionMismatch
+    case prefixProjectBindingMismatch
     case recordSourceRevisionMismatch(String)
     case deferredSourceRevisionMismatch(String)
     case mandatoryRecordDeferred(String)
@@ -178,6 +181,70 @@ public struct ForgeCompactPrefixReuseIdentity: Codable, Hashable, Sendable {
             kvCacheProfile: container.decode(String.self, forKey: .kvCacheProfile),
             contextPolicyRevision: container.decode(String.self, forKey: .contextPolicyRevision)
         )
+    }
+}
+
+/// Binding for a concrete cached stable-prefix/KV artifact. This is deliberately separate from
+/// `ForgeProjectCapsule`: a mission capsule must survive model/runtime hot-swap, while any cache
+/// produced for a different exact prefix or inference identity must be invalidated.
+public struct ForgeCompactPrefixArtifactBinding: Codable, Hashable, Sendable {
+    public let stablePrefixDigest: String
+    public let capsuleRevision: UInt64
+    public let projectBinding: ForgeCompactProjectBinding
+    public let reuseIdentity: ForgeCompactPrefixReuseIdentity
+
+    public init(
+        stablePrefixDigest: String,
+        capsuleRevision: UInt64,
+        projectBinding: ForgeCompactProjectBinding,
+        reuseIdentity: ForgeCompactPrefixReuseIdentity
+    ) throws {
+        self.stablePrefixDigest = try ForgeCompactValidation.bounded(
+            stablePrefixDigest,
+            field: "stablePrefixDigest",
+            maxUTF8Bytes: 512
+        )
+        self.capsuleRevision = capsuleRevision
+        self.projectBinding = projectBinding
+        self.reuseIdentity = reuseIdentity
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case stablePrefixDigest, capsuleRevision, projectBinding, reuseIdentity
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            stablePrefixDigest: container.decode(String.self, forKey: .stablePrefixDigest),
+            capsuleRevision: container.decode(UInt64.self, forKey: .capsuleRevision),
+            projectBinding: container.decode(ForgeCompactProjectBinding.self, forKey: .projectBinding),
+            reuseIdentity: container.decode(ForgeCompactPrefixReuseIdentity.self, forKey: .reuseIdentity)
+        )
+    }
+
+    /// The caller supplies a digest of the exact rendered stable prefix. This type does not claim
+    /// which hash algorithm produced it; it only requires exact equality before cache reuse.
+    public func validateReuse(
+        expectedStablePrefixDigest: String,
+        expectedCapsule: ForgeProjectCapsule,
+        expectedReuseIdentity: ForgeCompactPrefixReuseIdentity
+    ) throws {
+        let normalizedDigest = try ForgeCompactValidation.bounded(
+            expectedStablePrefixDigest,
+            field: "expectedStablePrefixDigest",
+            maxUTF8Bytes: 512
+        )
+        guard stablePrefixDigest == normalizedDigest else { throw ForgeCompactError.stablePrefixDigestMismatch }
+        guard capsuleRevision == expectedCapsule.capsuleRevision else {
+            throw ForgeCompactError.prefixCapsuleRevisionMismatch
+        }
+        guard projectBinding == expectedCapsule.binding else {
+            throw ForgeCompactError.prefixProjectBindingMismatch
+        }
+        guard reuseIdentity == expectedReuseIdentity else {
+            throw ForgeCompactError.prefixReuseIdentityMismatch
+        }
     }
 }
 
@@ -401,7 +468,6 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
     public let schemaVersion: Int
     public let capsuleRevision: UInt64
     public let binding: ForgeCompactProjectBinding
-    public let prefixReuseIdentity: ForgeCompactPrefixReuseIdentity
     public let includedRecords: [ForgeCompactRecord]
     public let deferredReferences: [ForgeCompactDeferredReference]
 
@@ -409,7 +475,6 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
         schemaVersion: Int,
         capsuleRevision: UInt64,
         binding: ForgeCompactProjectBinding,
-        prefixReuseIdentity: ForgeCompactPrefixReuseIdentity,
         includedRecords: [ForgeCompactRecord],
         deferredReferences: [ForgeCompactDeferredReference]
     ) throws {
@@ -434,7 +499,6 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
         self.schemaVersion = schemaVersion
         self.capsuleRevision = capsuleRevision
         self.binding = binding
-        self.prefixReuseIdentity = prefixReuseIdentity
         self.includedRecords = Self.canonicalRecords(includedRecords)
         self.deferredReferences = Self.canonicalDeferredReferences(deferredReferences)
     }
@@ -442,7 +506,6 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
     fileprivate static func make(
         capsuleRevision: UInt64,
         binding: ForgeCompactProjectBinding,
-        prefixReuseIdentity: ForgeCompactPrefixReuseIdentity,
         includedRecords: [ForgeCompactRecord],
         deferredReferences: [ForgeCompactDeferredReference]
     ) throws -> Self {
@@ -450,14 +513,13 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
             schemaVersion: currentSchemaVersion,
             capsuleRevision: capsuleRevision,
             binding: binding,
-            prefixReuseIdentity: prefixReuseIdentity,
             includedRecords: includedRecords,
             deferredReferences: deferredReferences
         )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, capsuleRevision, binding, prefixReuseIdentity, includedRecords, deferredReferences
+        case schemaVersion, capsuleRevision, binding, includedRecords, deferredReferences
     }
 
     public init(from decoder: Decoder) throws {
@@ -466,7 +528,6 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
             schemaVersion: container.decode(Int.self, forKey: .schemaVersion),
             capsuleRevision: container.decode(UInt64.self, forKey: .capsuleRevision),
             binding: container.decode(ForgeCompactProjectBinding.self, forKey: .binding),
-            prefixReuseIdentity: container.decode(ForgeCompactPrefixReuseIdentity.self, forKey: .prefixReuseIdentity),
             includedRecords: container.decode([ForgeCompactRecord].self, forKey: .includedRecords),
             deferredReferences: container.decode([ForgeCompactDeferredReference].self, forKey: .deferredReferences)
         )
@@ -479,10 +540,7 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
     }
 
     /// Fail-closed resume/reuse guard. Callers must resolve the current upstream authorities first.
-    public func validateReuse(
-        expectedBinding: ForgeCompactProjectBinding,
-        expectedPrefixReuseIdentity: ForgeCompactPrefixReuseIdentity
-    ) throws {
+    public func validateReuse(expectedBinding: ForgeCompactProjectBinding) throws {
         guard binding.projectID == expectedBinding.projectID else { throw ForgeCompactError.projectBindingMismatch }
         guard binding.missionID == expectedBinding.missionID else { throw ForgeCompactError.missionBindingMismatch }
         guard binding.acceptedProjectStateID == expectedBinding.acceptedProjectStateID else {
@@ -495,7 +553,6 @@ public struct ForgeProjectCapsule: Codable, Hashable, Sendable {
         }
         guard binding.graphRevision == expectedBinding.graphRevision else { throw ForgeCompactError.graphRevisionMismatch }
         guard binding.authorityEpoch == expectedBinding.authorityEpoch else { throw ForgeCompactError.authorityEpochMismatch }
-        guard prefixReuseIdentity == expectedPrefixReuseIdentity else { throw ForgeCompactError.prefixReuseIdentityMismatch }
     }
 
     fileprivate static func canonicalRecords(_ records: [ForgeCompactRecord]) -> [ForgeCompactRecord] {
@@ -520,7 +577,6 @@ public enum ForgeProjectCapsuleBuilder {
     public static func build(
         capsuleRevision: UInt64,
         binding: ForgeCompactProjectBinding,
-        prefixReuseIdentity: ForgeCompactPrefixReuseIdentity,
         records: [ForgeCompactRecord],
         budget: ForgeCompactBudget
     ) throws -> ForgeProjectCapsule {
@@ -555,7 +611,6 @@ public enum ForgeProjectCapsuleBuilder {
         var capsule = try ForgeProjectCapsule.make(
             capsuleRevision: capsuleRevision,
             binding: binding,
-            prefixReuseIdentity: prefixReuseIdentity,
             includedRecords: included,
             deferredReferences: deferred
         )
@@ -574,7 +629,6 @@ public enum ForgeProjectCapsuleBuilder {
             let trial = try ForgeProjectCapsule.make(
                 capsuleRevision: capsuleRevision,
                 binding: binding,
-                prefixReuseIdentity: prefixReuseIdentity,
                 includedRecords: trialIncluded,
                 deferredReferences: trialDeferred
             )
