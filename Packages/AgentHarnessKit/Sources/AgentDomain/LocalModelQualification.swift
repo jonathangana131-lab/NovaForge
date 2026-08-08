@@ -215,6 +215,11 @@ public struct LocalModelQualificationAssessment: Codable, Equatable, Sendable {
 }
 
 public enum LocalModelQualificationValidator {
+    private struct TaskSuiteIdentity: Hashable {
+        let id: String
+        let revision: String
+    }
+
     public static func evaluate(
         _ observation: LocalModelQualificationObservation
     ) -> LocalModelQualificationAssessment {
@@ -267,7 +272,7 @@ public enum LocalModelQualificationValidator {
         if observation.taskSuites.isEmpty {
             issues.append(.missingTaskSuiteEvidence)
         } else {
-            var identities = Set<String>()
+            var identities = Set<TaskSuiteIdentity>()
             var hasInvalidSuite = false
             var hasDuplicateSuite = false
 
@@ -279,7 +284,7 @@ public enum LocalModelQualificationValidator {
                     hasInvalidSuite = true
                 }
 
-                let identityKey = suite.suiteID + "\u{001F}" + suite.suiteRevision
+                let identityKey = TaskSuiteIdentity(id: suite.suiteID, revision: suite.suiteRevision)
                 if !identities.insert(identityKey).inserted {
                     hasDuplicateSuite = true
                 }
@@ -307,7 +312,8 @@ public enum LocalModelQualificationValidator {
 
     private static func isCanonicalIdentityText(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && trimmed == value
+        guard !trimmed.isEmpty, trimmed == value else { return false }
+        return value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
     }
 
     private static func isCanonicalSHA256(_ value: String) -> Bool {
