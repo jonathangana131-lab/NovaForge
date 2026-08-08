@@ -20,21 +20,25 @@ public enum ForgeRuntimeAutomationCapability: String, Codable, CaseIterable, Com
 public enum ForgeRuntimeAutomationPolicyError: Error, Equatable, Sendable {
     case invalidMaximumTextUTF8Bytes
     case invalidMaximumGestureDurationMilliseconds
+    case invalidMaximumInteractions
 }
 
 /// Trusted host policy bounding one semantic automation session.
 public struct ForgeRuntimeAutomationPolicy: Equatable, Sendable {
     public static let hardMaximumTextUTF8Bytes = 16 * 1024
     public static let hardMaximumGestureDurationMilliseconds = 30_000
+    public static let hardMaximumInteractions = 4_096
 
     public let allowedCapabilities: Set<ForgeRuntimeAutomationCapability>
     public let maximumTextUTF8Bytes: Int
     public let maximumGestureDurationMilliseconds: Int
+    public let maximumInteractions: Int
 
     public init(
         allowedCapabilities: Set<ForgeRuntimeAutomationCapability>,
         maximumTextUTF8Bytes: Int = 4 * 1024,
-        maximumGestureDurationMilliseconds: Int = 10_000
+        maximumGestureDurationMilliseconds: Int = 10_000,
+        maximumInteractions: Int = 512
     ) throws {
         guard (1...Self.hardMaximumTextUTF8Bytes).contains(maximumTextUTF8Bytes) else {
             throw ForgeRuntimeAutomationPolicyError.invalidMaximumTextUTF8Bytes
@@ -42,26 +46,34 @@ public struct ForgeRuntimeAutomationPolicy: Equatable, Sendable {
         guard (1...Self.hardMaximumGestureDurationMilliseconds).contains(maximumGestureDurationMilliseconds) else {
             throw ForgeRuntimeAutomationPolicyError.invalidMaximumGestureDurationMilliseconds
         }
+        guard (1...Self.hardMaximumInteractions).contains(maximumInteractions) else {
+            throw ForgeRuntimeAutomationPolicyError.invalidMaximumInteractions
+        }
 
         self.allowedCapabilities = allowedCapabilities
         self.maximumTextUTF8Bytes = maximumTextUTF8Bytes
         self.maximumGestureDurationMilliseconds = maximumGestureDurationMilliseconds
+        self.maximumInteractions = maximumInteractions
     }
 }
 
-/// Exact host-created authority for autonomous interaction with one launched project checkpoint.
+/// Exact host-created authority for autonomous interaction with one launched project runtime.
 ///
 /// The initializer is intentionally internal. App/runtime code obtains this through
-/// `ForgeRuntimeAutomationSessionAuthorizer`, which binds the session to the host-owned launch
-/// authorization rather than trusting IDs supplied by a model or generated project.
+/// `ForgeRuntimeAutomationSessionAuthorizer`, which binds project identity and runtime version to
+/// host-owned launch authorization rather than trusting IDs supplied by a model or generated project.
+/// `checkpointID` remains only a compatibility/correlation label here; it is not source-revision
+/// evidence until Forge Runtime owns a canonical revision-bound launch receipt.
 public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
     public let sessionID: String
     public let projectID: String
+    /// Caller correlation label only. This is not proof of a source revision or launched checkpoint.
     public let checkpointID: String
     public let runtimeVersion: ForgeRuntimeVersion
     public let grantedCapabilities: Set<ForgeRuntimeAutomationCapability>
     public let maximumTextUTF8Bytes: Int
     public let maximumGestureDurationMilliseconds: Int
+    public let maximumInteractions: Int
 
     init(
         sessionID: String,
@@ -70,7 +82,8 @@ public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
         runtimeVersion: ForgeRuntimeVersion,
         grantedCapabilities: Set<ForgeRuntimeAutomationCapability>,
         maximumTextUTF8Bytes: Int,
-        maximumGestureDurationMilliseconds: Int
+        maximumGestureDurationMilliseconds: Int,
+        maximumInteractions: Int
     ) {
         self.sessionID = sessionID
         self.projectID = projectID
@@ -79,6 +92,7 @@ public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
         self.grantedCapabilities = grantedCapabilities
         self.maximumTextUTF8Bytes = maximumTextUTF8Bytes
         self.maximumGestureDurationMilliseconds = maximumGestureDurationMilliseconds
+        self.maximumInteractions = maximumInteractions
     }
 }
 
@@ -121,7 +135,8 @@ public struct ForgeRuntimeAutomationSessionAuthorizer: Sendable {
             runtimeVersion: launchAuthorization.runtimeVersion,
             grantedCapabilities: requestedCapabilities,
             maximumTextUTF8Bytes: policy.maximumTextUTF8Bytes,
-            maximumGestureDurationMilliseconds: policy.maximumGestureDurationMilliseconds
+            maximumGestureDurationMilliseconds: policy.maximumGestureDurationMilliseconds,
+            maximumInteractions: policy.maximumInteractions
         )
     }
 
@@ -157,12 +172,14 @@ public enum ForgeRuntimeSemanticInteractionKind: String, Codable, CaseIterable, 
 /// Untyped wire envelope produced by an agent/test planner before fail-closed validation.
 ///
 /// The payload is deliberately semantic: stable control/action/gesture identifiers are preferred
-/// over raw screen coordinates so replay remains meaningful across layout changes.
+/// over raw screen coordinates so replay remains meaningful across layout changes. The checkpoint
+/// field is a correlation label only; revision binding belongs to a later canonical launch receipt.
 public struct ForgeRuntimeSemanticInteractionEnvelope: Codable, Equatable, Sendable {
     public let protocolVersion: Int
     public let requestID: String
     public let sessionID: String
     public let projectID: String
+    /// Correlation label only; not source-revision evidence.
     public let checkpointID: String
     public let sequence: Int
     public let kind: String
@@ -201,8 +218,10 @@ public struct ForgeRuntimeSemanticInteractionEnvelope: Codable, Equatable, Senda
     }
 }
 
-/// Validated semantic interaction. Only the decoder in this file constructs this value publicly.
-public struct ForgeRuntimeSemanticInteraction: Codable, Equatable, Sendable {
+/// Validated semantic interaction. Only the decoder in this file constructs this value.
+/// It is encodable for deterministic authorization receipts but intentionally not Decodable so
+/// persisted/untrusted bytes cannot bypass the semantic validation boundary.
+public struct ForgeRuntimeSemanticInteraction: Encodable, Equatable, Sendable {
     public let kind: ForgeRuntimeSemanticInteractionKind
     public let targetID: String?
     public let value: Double?
@@ -273,6 +292,8 @@ public enum ForgeRuntimeSemanticInteractionError: Error, Equatable, Sendable {
     case unexpectedPayload
     case sequenceMismatch(expected: Int, actual: Int)
     case capabilityNotAuthorized(ForgeRuntimeAutomationCapability)
+    case interactionBudgetExhausted(maximum: Int)
+    case sequenceExhausted
 }
 
 public struct ForgeRuntimeSemanticInteractionDecoder: Sendable {
@@ -445,12 +466,13 @@ public struct ForgeRuntimeSemanticInteractionDecoder: Sendable {
 
 /// One serial gate for a host-owned automation session.
 ///
-/// Sequence state advances only after identity, payload and capability checks all succeed. This
-/// rejects replay/out-of-order model output without consuming the expected sequence on a denied
-/// request, so a corrected request can still occupy that deterministic slot.
+/// Sequence and interaction-budget state advance only after identity, payload and capability checks
+/// all succeed. Denied/invalid requests therefore consume neither deterministic sequence slots nor
+/// the host-owned interaction budget. The budget is enforced before integer state advances.
 public struct ForgeRuntimeSemanticInteractionGate: Sendable {
     public let session: ForgeRuntimeAutomationSession
     public private(set) var nextExpectedSequence: Int
+    public private(set) var authorizedInteractionCount: Int
     private let decoder: ForgeRuntimeSemanticInteractionDecoder
 
     public init(
@@ -460,6 +482,7 @@ public struct ForgeRuntimeSemanticInteractionGate: Sendable {
     ) {
         self.session = session
         self.nextExpectedSequence = max(0, startingSequence)
+        self.authorizedInteractionCount = 0
         self.decoder = decoder
     }
 
@@ -476,7 +499,16 @@ public struct ForgeRuntimeSemanticInteractionGate: Sendable {
         guard session.grantedCapabilities.contains(required) else {
             throw ForgeRuntimeSemanticInteractionError.capabilityNotAuthorized(required)
         }
+        guard authorizedInteractionCount < session.maximumInteractions else {
+            throw ForgeRuntimeSemanticInteractionError.interactionBudgetExhausted(
+                maximum: session.maximumInteractions
+            )
+        }
+        guard nextExpectedSequence < Int.max else {
+            throw ForgeRuntimeSemanticInteractionError.sequenceExhausted
+        }
 
+        authorizedInteractionCount += 1
         nextExpectedSequence += 1
         return ForgeRuntimeAuthorizedSemanticInteraction(request: request)
     }
@@ -490,6 +522,25 @@ public struct ForgeRuntimeAuthorizedSemanticInteraction: Equatable, Sendable {
         self.request = request
     }
 
+    /// Deterministic proof that this exact request crossed the host automation gate.
+    ///
+    /// This is intentionally an authorization receipt, not a runtime-delivery receipt. A future
+    /// canonical runtime adapter must separately prove revision-bound delivery/execution before
+    /// Full Forge or playtest acceptance may count the interaction as runtime evidence.
+    public func authorizationReceipt() -> ForgeRuntimeSemanticInteractionAuthorizationReceipt {
+        ForgeRuntimeSemanticInteractionAuthorizationReceipt(
+            protocolVersion: request.protocolVersion,
+            requestID: request.requestID,
+            sessionID: request.sessionID,
+            projectID: request.projectID,
+            checkpointID: request.checkpointID,
+            sequence: request.sequence,
+            interaction: request.interaction
+        )
+    }
+
+    /// Creates dispatch evidence only from an already gate-authorized request. Runtime adapters must
+    /// validate their own delivery boundary before calling this method.
     public func receipt(
         disposition: ForgeRuntimeSemanticInteractionDisposition
     ) -> ForgeRuntimeSemanticInteractionReceipt {
@@ -506,7 +557,40 @@ public struct ForgeRuntimeAuthorizedSemanticInteraction: Equatable, Sendable {
     }
 }
 
-/// Runtime delivery outcome only. Even `.delivered` does not mean the gameplay goal, visual bar,
+/// Producer-only deterministic receipt for one semantic automation authorization.
+///
+/// No wall-clock timestamp is embedded so identical deterministic runs can compare receipt streams.
+/// This value is Encodable but intentionally not Decodable, and its initializer is internal, so
+/// persisted/untrusted bytes cannot mint host authorization evidence by shape alone.
+public struct ForgeRuntimeSemanticInteractionAuthorizationReceipt: Encodable, Equatable, Sendable {
+    public let protocolVersion: Int
+    public let requestID: String
+    public let sessionID: String
+    public let projectID: String
+    public let checkpointID: String
+    public let sequence: Int
+    public let interaction: ForgeRuntimeSemanticInteraction
+
+    init(
+        protocolVersion: Int,
+        requestID: String,
+        sessionID: String,
+        projectID: String,
+        checkpointID: String,
+        sequence: Int,
+        interaction: ForgeRuntimeSemanticInteraction
+    ) {
+        self.protocolVersion = protocolVersion
+        self.requestID = requestID
+        self.sessionID = sessionID
+        self.projectID = projectID
+        self.checkpointID = checkpointID
+        self.sequence = sequence
+        self.interaction = interaction
+    }
+}
+
+/// Runtime page-dispatch outcome only. Even `.delivered` does not mean the gameplay goal, visual bar,
 /// performance target, accessibility target, or Mission Constitution passed.
 public enum ForgeRuntimeSemanticInteractionDisposition: String, Codable, CaseIterable, Sendable {
     case delivered
@@ -515,23 +599,26 @@ public enum ForgeRuntimeSemanticInteractionDisposition: String, Codable, CaseIte
     case runtimeUnavailable
 }
 
-/// Deterministic receipt for one semantic automation attempt.
+/// Producer-only deterministic receipt for a validated runtime delivery result.
 ///
-/// No wall-clock timestamp is embedded so identical deterministic runs can compare receipt streams.
-/// A higher-level evidence store may attach observation time, screenshots, state assertions and
-/// performance samples without changing this replay identity.
-public struct ForgeRuntimeSemanticInteractionReceipt: Codable, Equatable, Sendable {
+/// The initializer is internal and the value is Encodable-only. Public runtime adapters may return
+/// receipts after validating their own trusted delivery boundary, but arbitrary importing code and
+/// decoded bytes cannot mint `.delivered` evidence by shape alone. This receipt intentionally does
+/// not claim a checkpoint/source revision until Forge Runtime owns a canonical revision-bound launch
+/// receipt that can prove the exact launched bytes.
+public struct ForgeRuntimeSemanticInteractionReceipt: Encodable, Equatable, Sendable {
     public let protocolVersion: Int
     public let requestID: String
     public let sessionID: String
     public let projectID: String
+    /// Correlation label only; not proof of launched source revision.
     public let checkpointID: String
     public let sequence: Int
     public let interaction: ForgeRuntimeSemanticInteraction
     public let disposition: ForgeRuntimeSemanticInteractionDisposition
 
-    public init(
-        protocolVersion: Int = 1,
+    init(
+        protocolVersion: Int,
         requestID: String,
         sessionID: String,
         projectID: String,
