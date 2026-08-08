@@ -214,6 +214,41 @@ public struct LocalAIBenchmarkScore: Codable, Equatable, Sendable {
     }
 }
 
+/// Durable benchmark evidence. Decode recomputes the score from the exact suite
+/// and observations so persisted/tampered aggregates cannot become authority.
+public struct LocalAIBenchmarkRunReceipt: Codable, Equatable, Sendable {
+    public let suite: LocalAIBenchmarkSuite
+    public let observations: [LocalAIBenchmarkObservation]
+    public let score: LocalAIBenchmarkScore
+
+    public init(suite: LocalAIBenchmarkSuite,
+                observations: [LocalAIBenchmarkObservation]) throws {
+        self.suite = suite
+        self.observations = observations
+        self.score = try LocalAIBenchmarkEvaluator.evaluate(
+            suite: suite, observations: observations
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey { case suite, observations, score }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let suite = try c.decode(LocalAIBenchmarkSuite.self, forKey: .suite)
+        let observations = try c.decode([LocalAIBenchmarkObservation].self, forKey: .observations)
+        let persistedScore = try c.decode(LocalAIBenchmarkScore.self, forKey: .score)
+        let recomputed = try LocalAIBenchmarkEvaluator.evaluate(
+            suite: suite, observations: observations
+        )
+        guard persistedScore == recomputed else {
+            throw LocalAIBenchmarkError.invalidPersistedReceipt
+        }
+        self.suite = suite
+        self.observations = observations
+        self.score = recomputed
+    }
+}
+
 public struct LocalAIBenchmarkComparison: Codable, Equatable, Sendable {
     public let suiteID: String
     public let suiteVersion: Int
@@ -281,19 +316,22 @@ public enum LocalAIBenchmarkEvaluator {
         )
     }
 
-    /// Same-suite comparison only. A positive delta is not a latency/memory/energy claim.
-    public static func compare(baseline: LocalAIBenchmarkScore,
-                               candidate: LocalAIBenchmarkScore) throws -> LocalAIBenchmarkComparison {
-        guard baseline.suiteID == candidate.suiteID else { throw LocalAIBenchmarkError.suiteIDMismatch }
-        guard baseline.suiteVersion == candidate.suiteVersion else { throw LocalAIBenchmarkError.suiteVersionMismatch }
-        guard baseline.eligibleForExactComparison, candidate.eligibleForExactComparison else {
+    /// Exact-suite comparison only. Full suite equality protects against two
+    /// different fixture definitions accidentally reusing the same ID/version.
+    /// A positive delta is not a latency/memory/energy claim.
+    public static func compare(baseline: LocalAIBenchmarkRunReceipt,
+                               candidate: LocalAIBenchmarkRunReceipt) throws -> LocalAIBenchmarkComparison {
+        guard baseline.suite.id == candidate.suite.id else { throw LocalAIBenchmarkError.suiteIDMismatch }
+        guard baseline.suite.version == candidate.suite.version else { throw LocalAIBenchmarkError.suiteVersionMismatch }
+        guard baseline.suite == candidate.suite else { throw LocalAIBenchmarkError.suiteDefinitionMismatch }
+        guard baseline.score.eligibleForExactComparison, candidate.score.eligibleForExactComparison else {
             throw LocalAIBenchmarkError.incompleteComparison
         }
         return .init(
-            suiteID: baseline.suiteID, suiteVersion: baseline.suiteVersion,
-            baselineWeightedSuccess: baseline.weightedSuccess,
-            candidateWeightedSuccess: candidate.weightedSuccess,
-            weightedSuccessDelta: candidate.weightedSuccess - baseline.weightedSuccess
+            suiteID: baseline.suite.id, suiteVersion: baseline.suite.version,
+            baselineWeightedSuccess: baseline.score.weightedSuccess,
+            candidateWeightedSuccess: candidate.score.weightedSuccess,
+            weightedSuccessDelta: candidate.score.weightedSuccess - baseline.score.weightedSuccess
         )
     }
 }
@@ -314,7 +352,8 @@ public enum LocalAIBenchmarkError: Error, Equatable, Sendable {
     case unknownTaskID(String), duplicateObservation(String)
     case taskRevisionMismatch(taskID: String, expected: Int, actual: Int)
     case missingOrInvalidEvidenceDigest(String), notRunCannotCarryEvidence(String)
-    case suiteIDMismatch, suiteVersionMismatch, incompleteComparison, invalidPersistedScore
+    case suiteIDMismatch, suiteVersionMismatch, suiteDefinitionMismatch, incompleteComparison
+    case invalidPersistedScore, invalidPersistedReceipt
 }
 
 private enum Digest {
