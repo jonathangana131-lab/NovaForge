@@ -246,6 +246,49 @@ final class ForgeRuntimeSemanticAutomationTests: XCTestCase {
         }
     }
 
+    func testInvalidRequestIDCannotBorrowSemanticTargetPathCharacters() throws {
+        let session = try makeSession(capabilities: [.activateControl])
+        let decoder = ForgeRuntimeSemanticInteractionDecoder()
+        let data = try encode(
+            .init(
+                requestID: "../../receipt",
+                sessionID: session.sessionID,
+                projectID: session.projectID,
+                checkpointID: session.checkpointID,
+                sequence: 0,
+                kind: "control.activate",
+                targetID: "menu/play"
+            )
+        )
+
+        XCTAssertThrowsError(try decoder.decode(data, session: session)) { error in
+            XCTAssertEqual(error as? ForgeRuntimeSemanticInteractionError, .invalidRequestID)
+        }
+    }
+
+    func testReceiptPreservesAuthorizedProtocolVersion() throws {
+        let session = try makeSession(capabilities: [.activateControl])
+        var gate = ForgeRuntimeSemanticInteractionGate(
+            session: session,
+            decoder: ForgeRuntimeSemanticInteractionDecoder(supportedProtocolVersion: 2)
+        )
+        let data = try encode(
+            .init(
+                protocolVersion: 2,
+                requestID: "req-v2",
+                sessionID: session.sessionID,
+                projectID: session.projectID,
+                checkpointID: session.checkpointID,
+                sequence: 0,
+                kind: "control.activate",
+                targetID: "menu/play"
+            )
+        )
+
+        let receipt = try gate.authorize(data).receipt(disposition: .delivered)
+        XCTAssertEqual(receipt.protocolVersion, 2)
+    }
+
     func testOversizedEnvelopeFailsBeforeJSONDecode() throws {
         let session = try makeSession(capabilities: [.activateControl])
         let decoder = ForgeRuntimeSemanticInteractionDecoder(maximumRequestBytes: 8)
