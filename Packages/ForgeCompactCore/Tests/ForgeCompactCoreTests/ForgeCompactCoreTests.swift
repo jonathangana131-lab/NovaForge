@@ -158,6 +158,45 @@ struct ForgeCompactCoreTests {
         #expect(capsule.receipt.omissions == [.init(entryID: "estimated", reason: .estimatedCostDisallowed)])
     }
 
+    @Test func mixedTokenizerBasesAreRejectedBeforeBudgetComparison() throws {
+        let first = try entry("first", units: 5)
+        let second = try ForgeCompactEntry(
+            id: "second",
+            projectID: "project-1",
+            kind: .relevantSource,
+            text: "Second accepted source",
+            authority: .sourceBacked,
+            source: source(),
+            cost: .init(
+                units: 3,
+                basis: .exactTokenizer(tokenizerID: "other-tokenizer", tokenizerRevision: "r2")
+            )
+        )
+
+        #expect(throws: ForgeCompactError.incompatibleCostBasis) {
+            try ForgeCompactPlanner.build(
+                projectID: "project-1",
+                missionID: "mission-1",
+                authorityRevision: 1,
+                entries: [first, second],
+                policy: try .init(maximumUnits: 100)
+            )
+        }
+    }
+
+    @Test func receiptBindsSelectedAccountingBasis() throws {
+        let accepted = try entry("accepted", units: 9)
+        let capsule = try ForgeCompactPlanner.build(
+            projectID: "project-1",
+            missionID: "mission-1",
+            authorityRevision: 1,
+            entries: [accepted],
+            policy: try .init(maximumUnits: 100)
+        )
+
+        #expect(capsule.receipt.costBasis == .exactTokenizer(tokenizerID: "tok", tokenizerRevision: "r1"))
+    }
+
     @Test func heuristicCostRemainsExplicitInReceipt() throws {
         let estimated = try entry("estimated", units: 2, exactCost: false)
         let capsule = try ForgeCompactPlanner.build(
@@ -167,6 +206,7 @@ struct ForgeCompactCoreTests {
             entries: [estimated],
             policy: try .init(maximumUnits: 100)
         )
+        #expect(capsule.receipt.costBasis == .heuristic(name: "chars-div-4"))
         #expect(capsule.receipt.costTruth == .includesEstimates)
     }
 
