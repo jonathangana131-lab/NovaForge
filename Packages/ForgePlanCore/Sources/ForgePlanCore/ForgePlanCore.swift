@@ -98,6 +98,9 @@ public struct NormalizedForgeControl: Hashable, Codable, Sendable {
     }
 }
 
+/// Legacy V13 compatibility shape only. Canonical V14 Composer/Plan Space state uses
+/// `ForgeComposerV14ControlProfile`; this legacy profile no longer flows through
+/// `PlanSpaceProposal` or `ReadyToForgeSummary`.
 public struct ForgeControlProfile: Hashable, Codable, Sendable {
     public var intelligence: ForgeIntelligence
     public var buildDepth: ForgeBuildDepth
@@ -377,7 +380,6 @@ public enum PlanAnswer: Hashable, Codable, Sendable {
             try container.encode(upper, forKey: .upper)
         case .text(let value):
             try container.encode(Kind.text, forKey: .type)
-            try container.encode(value, forKey: .text)
         case .decideForMe:
             try container.encode(Kind.decideForMe, forKey: .type)
         }
@@ -415,9 +417,13 @@ public struct PlanResolvedDecision: Identifiable, Hashable, Codable, Sendable {
 public struct ReadyToForgeSummary: Hashable, Codable, Sendable {
     public var intentSummary: String
     public var decisions: [PlanResolvedDecision]
-    public var controls: ForgeControlProfile
+    public var controls: ForgeComposerV14ControlProfile
 
-    public init(intentSummary: String, decisions: [PlanResolvedDecision], controls: ForgeControlProfile) {
+    public init(
+        intentSummary: String,
+        decisions: [PlanResolvedDecision],
+        controls: ForgeComposerV14ControlProfile
+    ) {
         self.intentSummary = intentSummary
         self.decisions = decisions
         self.controls = controls
@@ -440,12 +446,12 @@ public struct ReadyToForgeSummary: Hashable, Codable, Sendable {
 public struct PlanSpaceProposal: Hashable, Codable, Sendable {
     public var intentSummary: String
     public var questions: [PlanQuestion]
-    public var controls: ForgeControlProfile
+    public var controls: ForgeComposerV14ControlProfile
 
     public init(
         intentSummary: String,
         questions: [PlanQuestion],
-        controls: ForgeControlProfile = .init()
+        controls: ForgeComposerV14ControlProfile = .init()
     ) {
         self.intentSummary = intentSummary
         self.questions = questions
