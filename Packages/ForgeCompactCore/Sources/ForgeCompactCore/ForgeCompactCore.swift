@@ -7,6 +7,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case invalidRevision(String)
     case invalidPriority(Int)
     case invalidTokenEstimate(Int)
+    case invalidContextCapacity(Int)
     case duplicateContextItemID(String)
     case duplicateReferenceID(String)
     case mandatoryItemRequiresAcceptedProvenance(String)
@@ -291,6 +292,11 @@ public struct ForgeCompactPrefixReuseIdentity: Codable, Equatable, Hashable, Sen
     public let tokenizerRevision: String
     public let runtimeID: String
     public let runtimeRevision: String
+    public let backendProfileID: String
+    public let weightProfileID: String
+    public let keyCacheType: String
+    public let valueCacheType: String
+    public let contextCapacityTokens: Int
     public let promptTemplateRevision: String
     public let toolSchemaRevision: String
     public let capsuleSourceRevision: String
@@ -303,12 +309,18 @@ public struct ForgeCompactPrefixReuseIdentity: Codable, Equatable, Hashable, Sen
         tokenizerRevision: String,
         runtimeID: String,
         runtimeRevision: String,
+        backendProfileID: String,
+        weightProfileID: String,
+        keyCacheType: String,
+        valueCacheType: String,
+        contextCapacityTokens: Int,
         promptTemplateRevision: String,
         toolSchemaRevision: String,
         capsuleSourceRevision: String,
         capsuleMissionRevision: Int,
         capsuleAuthorityEpoch: Int
     ) throws {
+        guard (1...1_000_000).contains(contextCapacityTokens) else { throw ForgeCompactError.invalidContextCapacity(contextCapacityTokens) }
         guard capsuleMissionRevision >= 0 else { throw ForgeCompactError.invalidRevision("capsuleMissionRevision") }
         guard capsuleAuthorityEpoch >= 0 else { throw ForgeCompactError.invalidRevision("capsuleAuthorityEpoch") }
         self.modelID = try ForgeCompactValidation.identifier(modelID, field: "modelID")
@@ -316,6 +328,11 @@ public struct ForgeCompactPrefixReuseIdentity: Codable, Equatable, Hashable, Sen
         self.tokenizerRevision = try ForgeCompactValidation.identifier(tokenizerRevision, field: "tokenizerRevision")
         self.runtimeID = try ForgeCompactValidation.identifier(runtimeID, field: "runtimeID")
         self.runtimeRevision = try ForgeCompactValidation.identifier(runtimeRevision, field: "runtimeRevision")
+        self.backendProfileID = try ForgeCompactValidation.identifier(backendProfileID, field: "backendProfileID")
+        self.weightProfileID = try ForgeCompactValidation.identifier(weightProfileID, field: "weightProfileID")
+        self.keyCacheType = try ForgeCompactValidation.identifier(keyCacheType, field: "keyCacheType")
+        self.valueCacheType = try ForgeCompactValidation.identifier(valueCacheType, field: "valueCacheType")
+        self.contextCapacityTokens = contextCapacityTokens
         self.promptTemplateRevision = try ForgeCompactValidation.identifier(promptTemplateRevision, field: "promptTemplateRevision")
         self.toolSchemaRevision = try ForgeCompactValidation.identifier(toolSchemaRevision, field: "toolSchemaRevision")
         self.capsuleSourceRevision = try ForgeCompactValidation.identifier(capsuleSourceRevision, field: "capsuleSourceRevision")
@@ -325,6 +342,7 @@ public struct ForgeCompactPrefixReuseIdentity: Codable, Equatable, Hashable, Sen
 
     private enum CodingKeys: CodingKey {
         case modelID, modelRevision, tokenizerRevision, runtimeID, runtimeRevision
+        case backendProfileID, weightProfileID, keyCacheType, valueCacheType, contextCapacityTokens
         case promptTemplateRevision, toolSchemaRevision, capsuleSourceRevision
         case capsuleMissionRevision, capsuleAuthorityEpoch
     }
@@ -337,6 +355,11 @@ public struct ForgeCompactPrefixReuseIdentity: Codable, Equatable, Hashable, Sen
             tokenizerRevision: container.decode(String.self, forKey: .tokenizerRevision),
             runtimeID: container.decode(String.self, forKey: .runtimeID),
             runtimeRevision: container.decode(String.self, forKey: .runtimeRevision),
+            backendProfileID: container.decode(String.self, forKey: .backendProfileID),
+            weightProfileID: container.decode(String.self, forKey: .weightProfileID),
+            keyCacheType: container.decode(String.self, forKey: .keyCacheType),
+            valueCacheType: container.decode(String.self, forKey: .valueCacheType),
+            contextCapacityTokens: container.decode(Int.self, forKey: .contextCapacityTokens),
             promptTemplateRevision: container.decode(String.self, forKey: .promptTemplateRevision),
             toolSchemaRevision: container.decode(String.self, forKey: .toolSchemaRevision),
             capsuleSourceRevision: container.decode(String.self, forKey: .capsuleSourceRevision),
