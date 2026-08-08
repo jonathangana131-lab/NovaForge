@@ -190,24 +190,34 @@ public enum ForgeComposerPrivacyIntent: Hashable, Codable, Sendable {
     }
 }
 
-/// The one V14 control authority shared by the Composer and Plan Space. These fields capture user
-/// preferences only. Mission policy, provider permission, and model/device qualification remain
-/// external authorities; in particular `privacy == .localOnly` never contains a cloud fallback.
+/// The one V14 control authority shared by the Composer and Plan Space. The profile is immutable;
+/// custom profiles can only be created through `validated(...)`, so direct associated enum cases
+/// cannot smuggle malformed model/provider identities into a ready Plan Space summary.
 public struct ForgeComposerV14ControlProfile: Hashable, Codable, Sendable {
-    public var intelligence: ForgeComposerIntelligenceIntent
-    public var buildDepth: ForgeComposerBuildDepthIntent
-    public var creativity: ForgeComposerUnitInterval
-    public var refactorRisk: ForgeComposerUnitInterval
-    public var autonomy: ForgeComposerAutonomyIntent
-    public var privacy: ForgeComposerPrivacyIntent
+    public let intelligence: ForgeComposerIntelligenceIntent
+    public let buildDepth: ForgeComposerBuildDepthIntent
+    public let creativity: ForgeComposerUnitInterval
+    public let refactorRisk: ForgeComposerUnitInterval
+    public let autonomy: ForgeComposerAutonomyIntent
+    public let privacy: ForgeComposerPrivacyIntent
 
-    public init(
-        intelligence: ForgeComposerIntelligenceIntent = .automatic,
-        buildDepth: ForgeComposerBuildDepthIntent = .complete,
-        creativity: ForgeComposerUnitInterval = .standardCreativity,
-        refactorRisk: ForgeComposerUnitInterval = .cautiousRefactorRisk,
-        autonomy: ForgeComposerAutonomyIntent = .collaborate,
-        privacy: ForgeComposerPrivacyIntent = .localOnly
+    /// Calm, local-first V14 default for a new Composer/Plan Space session.
+    public init() {
+        intelligence = .automatic
+        buildDepth = .complete
+        creativity = .standardCreativity
+        refactorRisk = .cautiousRefactorRisk
+        autonomy = .collaborate
+        privacy = .localOnly
+    }
+
+    private init(
+        intelligence: ForgeComposerIntelligenceIntent,
+        buildDepth: ForgeComposerBuildDepthIntent,
+        creativity: ForgeComposerUnitInterval,
+        refactorRisk: ForgeComposerUnitInterval,
+        autonomy: ForgeComposerAutonomyIntent,
+        privacy: ForgeComposerPrivacyIntent
     ) {
         self.intelligence = intelligence
         self.buildDepth = buildDepth
@@ -215,6 +225,40 @@ public struct ForgeComposerV14ControlProfile: Hashable, Codable, Sendable {
         self.refactorRisk = refactorRisk
         self.autonomy = autonomy
         self.privacy = privacy
+    }
+
+    public static func validated(
+        intelligence: ForgeComposerIntelligenceIntent = .automatic,
+        buildDepth: ForgeComposerBuildDepthIntent = .complete,
+        creativity: ForgeComposerUnitInterval = .standardCreativity,
+        refactorRisk: ForgeComposerUnitInterval = .cautiousRefactorRisk,
+        autonomy: ForgeComposerAutonomyIntent = .collaborate,
+        privacy: ForgeComposerPrivacyIntent = .localOnly
+    ) throws -> Self {
+        let validatedIntelligence: ForgeComposerIntelligenceIntent
+        switch intelligence {
+        case .automatic:
+            validatedIntelligence = .automatic
+        case .explicitModel(let referenceID):
+            validatedIntelligence = try .explicit(referenceID: referenceID)
+        }
+
+        let validatedPrivacy: ForgeComposerPrivacyIntent
+        switch privacy {
+        case .localOnly:
+            validatedPrivacy = .localOnly
+        case .providerAllowlist(let providerIDs):
+            validatedPrivacy = try .providers(providerIDs)
+        }
+
+        return .init(
+            intelligence: validatedIntelligence,
+            buildDepth: buildDepth,
+            creativity: creativity,
+            refactorRisk: refactorRisk,
+            autonomy: autonomy,
+            privacy: validatedPrivacy
+        )
     }
 
     public var requestsFullForge: Bool { autonomy == .fullForge }
@@ -251,7 +295,7 @@ public struct ForgeComposerIntentEnvelope: Hashable, Codable, Sendable {
     ) throws {
         self.schemaVersion = Self.currentSchemaVersion
         self.intentSummary = try ForgeComposerIntentValidation.intentSummary(intentSummary)
-        self.controls = try Self.validatedControls(controls)
+        self.controls = controls
         self.creationKind = creationKind
         self.runTargetID = try runTargetID.map(ForgeComposerIntentValidation.identifier)
     }
@@ -280,35 +324,6 @@ public struct ForgeComposerIntentEnvelope: Hashable, Codable, Sendable {
     }
 
     public var requestsFullForge: Bool { controls.requestsFullForge }
-
-    private static func validatedControls(
-        _ controls: ForgeComposerV14ControlProfile
-    ) throws -> ForgeComposerV14ControlProfile {
-        let intelligence: ForgeComposerIntelligenceIntent
-        switch controls.intelligence {
-        case .automatic:
-            intelligence = .automatic
-        case .explicitModel(let referenceID):
-            intelligence = try .explicit(referenceID: referenceID)
-        }
-
-        let privacy: ForgeComposerPrivacyIntent
-        switch controls.privacy {
-        case .localOnly:
-            privacy = .localOnly
-        case .providerAllowlist(let providerIDs):
-            privacy = try .providers(providerIDs)
-        }
-
-        return .init(
-            intelligence: intelligence,
-            buildDepth: controls.buildDepth,
-            creativity: controls.creativity,
-            refactorRisk: controls.refactorRisk,
-            autonomy: controls.autonomy,
-            privacy: privacy
-        )
-    }
 }
 
 public enum ForgeComposerMaterialControl: String, CaseIterable, Codable, Hashable, Sendable {
