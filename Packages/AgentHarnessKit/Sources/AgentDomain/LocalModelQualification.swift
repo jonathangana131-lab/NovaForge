@@ -245,14 +245,20 @@ public struct LocalModelQualificationDecision: Codable, Equatable, Sendable {
 /// benchmark that produced that classification.
 public enum LocalModelQualificationGate {
     public static func qualify(
-        compatibility: LocalModelCompatibilityResult,
         descriptor: LocalModelCatalogDescriptor,
         device: LocalModelDeviceProfile,
         requirements: LocalModelMissionRequirements = .init(),
         benchmark: LocalModelBenchmarkObservation,
-        receipt: LocalModelQualificationReceipt
+        receipt: LocalModelQualificationReceipt,
+        policy: LocalModelCompatibilityPolicy = .conservativeV1
     ) -> LocalModelQualificationDecision {
-        var blockers: [LocalModelQualificationBlocker] = []
+        let compatibility = LocalModelCompatibilityEvaluator.evaluate(
+            descriptor: descriptor,
+            device: device,
+            requirements: requirements,
+            benchmark: benchmark,
+            policy: policy
+        )
 
         guard isMeasuredPerformanceLabel(compatibility.label),
               compatibility.hasMeasuredEvidence,
@@ -260,6 +266,26 @@ public enum LocalModelQualificationGate {
         else {
             return .init(badge: nil, blockers: [.compatibilityNotMeasured])
         }
+
+        return qualifyMeasured(
+            compatibility: compatibility,
+            descriptor: descriptor,
+            device: device,
+            requirements: requirements,
+            benchmark: benchmark,
+            receipt: receipt
+        )
+    }
+
+    private static func qualifyMeasured(
+        compatibility: LocalModelCompatibilityResult,
+        descriptor: LocalModelCatalogDescriptor,
+        device: LocalModelDeviceProfile,
+        requirements: LocalModelMissionRequirements,
+        benchmark: LocalModelBenchmarkObservation,
+        receipt: LocalModelQualificationReceipt
+    ) -> LocalModelQualificationDecision {
+        var blockers: [LocalModelQualificationBlocker] = []
 
         if !receipt.identity.hasCompleteIdentity {
             blockers.append(.executionIdentityIncomplete)
