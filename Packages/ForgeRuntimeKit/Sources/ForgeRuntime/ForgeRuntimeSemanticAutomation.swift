@@ -57,6 +57,50 @@ public struct ForgeRuntimeAutomationPolicy: Equatable, Sendable {
     }
 }
 
+fileprivate final class ForgeRuntimeAutomationSessionGateState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isInitialized = false
+    private var nextSequence = 0
+
+    var nextExpectedSequence: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return isInitialized ? nextSequence : 0
+    }
+
+    func initializeIfNeeded(startingSequence: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isInitialized else { return }
+        nextSequence = max(0, startingSequence)
+        isInitialized = true
+    }
+
+    func consume(sequence: Int, maximumInteractions: Int) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if !isInitialized {
+            nextSequence = 0
+            isInitialized = true
+        }
+
+        guard sequence == nextSequence else {
+            throw ForgeRuntimeSemanticInteractionError.sequenceMismatch(
+                expected: nextSequence,
+                actual: sequence
+            )
+        }
+        guard nextSequence < maximumInteractions else {
+            throw ForgeRuntimeSemanticInteractionError.interactionBudgetExceeded(
+                maximum: maximumInteractions
+            )
+        }
+
+        nextSequence += 1
+    }
+}
+
 /// Exact host-created authority for autonomous interaction with one launched project checkpoint.
 ///
 /// The initializer is intentionally internal. App/runtime code obtains this through
@@ -71,6 +115,7 @@ public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
     public let maximumTextUTF8Bytes: Int
     public let maximumGestureDurationMilliseconds: Int
     public let maximumInteractions: Int
+    fileprivate let gateState: ForgeRuntimeAutomationSessionGateState
 
     init(
         sessionID: String,
@@ -90,6 +135,18 @@ public struct ForgeRuntimeAutomationSession: Equatable, Sendable {
         self.maximumTextUTF8Bytes = maximumTextUTF8Bytes
         self.maximumGestureDurationMilliseconds = maximumGestureDurationMilliseconds
         self.maximumInteractions = maximumInteractions
+        self.gateState = ForgeRuntimeAutomationSessionGateState()
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.sessionID == rhs.sessionID
+            && lhs.projectID == rhs.projectID
+            && lhs.checkpointID == rhs.checkpointID
+            && lhs.runtimeVersion == rhs.runtimeVersion
+            && lhs.grantedCapabilities == rhs.grantedCapabilities
+            && lhs.maximumTextUTF8Bytes == rhs.maximumTextUTF8Bytes
+            && lhs.maximumGestureDurationMilliseconds == rhs.maximumGestureDurationMilliseconds
+            && lhs.maximumInteractions == rhs.maximumInteractions
     }
 }
 
@@ -463,8 +520,11 @@ public struct ForgeRuntimeSemanticInteractionDecoder: Sendable {
 /// request, so a corrected request can still occupy that deterministic slot.
 public struct ForgeRuntimeSemanticInteractionGate: Sendable {
     public let session: ForgeRuntimeAutomationSession
-    public private(set) var nextExpectedSequence: Int
     private let decoder: ForgeRuntimeSemanticInteractionDecoder
+
+    public var nextExpectedSequence: Int {
+        session.gateState.nextExpectedSequence
+    }
 
     public init(
         session: ForgeRuntimeAutomationSession,
@@ -472,31 +532,22 @@ public struct ForgeRuntimeSemanticInteractionGate: Sendable {
         decoder: ForgeRuntimeSemanticInteractionDecoder = .init()
     ) {
         self.session = session
-        self.nextExpectedSequence = max(0, startingSequence)
         self.decoder = decoder
+        self.session.gateState.initializeIfNeeded(startingSequence: startingSequence)
     }
 
     public mutating func authorize(_ data: Data) throws -> ForgeRuntimeAuthorizedSemanticInteraction {
         let request = try decoder.decode(data, session: session)
-        guard request.sequence == nextExpectedSequence else {
-            throw ForgeRuntimeSemanticInteractionError.sequenceMismatch(
-                expected: nextExpectedSequence,
-                actual: request.sequence
-            )
-        }
 
         let required = request.interaction.kind.requiredCapability
         guard session.grantedCapabilities.contains(required) else {
             throw ForgeRuntimeSemanticInteractionError.capabilityNotAuthorized(required)
         }
 
-        guard nextExpectedSequence < session.maximumInteractions else {
-            throw ForgeRuntimeSemanticInteractionError.interactionBudgetExceeded(
-                maximum: session.maximumInteractions
-            )
-        }
-
-        nextExpectedSequence += 1
+        try session.gateState.consume(
+            sequence: request.sequence,
+            maximumInteractions: session.maximumInteractions
+        )
         return ForgeRuntimeAuthorizedSemanticInteraction(request: request)
     }
 }
