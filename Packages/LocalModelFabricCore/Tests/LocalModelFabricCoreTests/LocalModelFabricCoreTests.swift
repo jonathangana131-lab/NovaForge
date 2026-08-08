@@ -83,6 +83,34 @@ final class LocalModelFabricCoreTests: XCTestCase {
         XCTAssertTrue(decision.rejections[0].reasons.contains(.qualificationMissing))
     }
 
+    func testStaleOSBuildQualificationCannotAuthorizeCurrentEnvironment() throws {
+        let descriptor = descriptor(model: "model", sha: shaA)
+        let device = deviceProfile()
+        let staleIdentity = try LocalModelRuntimeIdentity(
+            descriptor: descriptor,
+            tokenizerID: "tok",
+            tokenizerRevision: "tok-r1",
+            runtimeID: "llama.cpp",
+            runtimeRevision: "runtime-r1",
+            kvCacheType: "q8_0",
+            contextTokens: 4096,
+            deviceProfileID: device.profileID,
+            osBuild: "older-ios-build"
+        )
+        let candidate = try LocalModelFabricCandidate(
+            tier: .core,
+            descriptor: descriptor,
+            device: device,
+            benchmark: benchmark(descriptor: descriptor, device: device),
+            runtimeIdentity: staleIdentity,
+            qualifications: [try qualification(identity: staleIdentity)]
+        )
+
+        let decision = LocalModelFabricSelector.select(candidates: [candidate], request: try request(preferred: [.core]))
+        XCTAssertNil(decision.selection)
+        XCTAssertTrue(decision.rejections[0].reasons.contains(.osBuildMismatch))
+    }
+
     func testOldTaskSuiteCannotAuthorizeCurrentMission() throws {
         let descriptor = descriptor(model: "model", sha: shaA)
         let device = deviceProfile()
@@ -318,6 +346,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
             role: .toolAgent,
             mode: mode,
             deviceProfileID: "iphone12-ios27",
+            osBuild: "iOS-27-build",
             requirements: .init(requiresToolCalling: true, requiresStructuredOutput: true, minimumContextTokens: 2_048),
             qualificationSuiteID: "forge-tools",
             qualificationSuiteRevision: "suite-r1",
