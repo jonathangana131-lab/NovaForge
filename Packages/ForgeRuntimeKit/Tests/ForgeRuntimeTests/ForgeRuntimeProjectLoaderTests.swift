@@ -16,7 +16,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
         let request = try ForgeRuntimeProjectLoader().load(
             projectRootURL: fixture.root,
             expectedProjectID: "neon-racer",
-            host: hostSupport()
+            host: hostSupport(),
+            projectGrant: .init(projectID: "neon-racer", grantedCapabilityIDs: ["haptics"])
         )
 
         XCTAssertEqual(request.authorization.projectID, "neon-racer")
@@ -40,7 +41,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try loader.load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: .denyAll(projectID: "neon-racer")
             )
         ) { error in
             XCTAssertEqual(
@@ -65,7 +67,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: .denyAll(projectID: "neon-racer")
             )
         ) { error in
             XCTAssertEqual(
@@ -90,7 +93,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: .denyAll(projectID: "neon-racer")
             )
         ) { error in
             XCTAssertEqual(
@@ -110,7 +114,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: .denyAll(projectID: "neon-racer")
             )
         ) { error in
             XCTAssertEqual(
@@ -129,7 +134,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport()
+                host: hostSupport(),
+                projectGrant: .denyAll(projectID: "neon-racer")
             )
         ) { error in
             XCTAssertEqual(
@@ -148,7 +154,8 @@ final class ForgeRuntimeProjectLoaderTests: XCTestCase {
             try ForgeRuntimeProjectLoader().load(
                 projectRootURL: fixture.root,
                 expectedProjectID: "neon-racer",
-                host: hostSupport(supportedCapabilityIDs: [])
+                host: hostSupport(supportedCapabilityIDs: []),
+                projectGrant: .denyAll(projectID: "neon-racer")
             )
         ) { error in
             guard case let ForgeRuntimeProjectLoadingError.authorization(.manifestRejected(report)) = error else {

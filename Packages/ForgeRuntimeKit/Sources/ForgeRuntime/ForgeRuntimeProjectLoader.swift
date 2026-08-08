@@ -27,8 +27,8 @@ public enum ForgeRuntimeProjectLoadingError: Error, Equatable, Sendable {
 
 /// Loads a generated project into a bounded, host-authorized launch request.
 ///
-/// This layer performs no WebKit execution. It ensures the future runtime host receives only an
-/// already-authorized manifest plus canonical in-sandbox URLs for the exact launch files.
+/// This layer performs no WebKit execution. The caller must provide both host support facts and a
+/// separately owned grant bound to the exact project; generated manifest data cannot mint authority.
 public struct ForgeRuntimeProjectLoader: Sendable {
     public static let defaultManifestPath = "novaforge.runtime.json"
 
@@ -49,7 +49,8 @@ public struct ForgeRuntimeProjectLoader: Sendable {
     public func load(
         projectRootURL: URL,
         expectedProjectID: String,
-        host: ForgeRuntimeHostSupport
+        host: ForgeRuntimeHostSupport,
+        projectGrant: ForgeRuntimeProjectGrant
     ) throws -> ForgeRuntimeLaunchRequest {
         let sandbox = ForgeProjectSandbox(rootURL: projectRootURL)
 
@@ -88,7 +89,8 @@ public struct ForgeRuntimeProjectLoader: Sendable {
             authorization = try manifestValidator.authorize(
                 manifest,
                 expectedProjectID: expectedProjectID,
-                host: host
+                host: host,
+                projectGrant: projectGrant
             )
         } catch let error as ForgeRuntimeLaunchAuthorizationError {
             throw ForgeRuntimeProjectLoadingError.authorization(error)
