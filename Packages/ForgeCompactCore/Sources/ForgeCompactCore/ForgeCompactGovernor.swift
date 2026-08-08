@@ -45,20 +45,15 @@ public enum ForgeCompactComputeLocation: String, Codable, Hashable, Sendable {
     case remote
 }
 
-/// Qualification status is asserted by the external compatibility/evidence authority.
-/// ForgeCompactCore does not mint model support, device compatibility, or benchmark truth.
+/// Evidence metadata carried by an execution envelope. This field is not sufficient to authorize
+/// selection: the governor also requires a separate current host qualification grant.
 public enum ForgeCompactEvidenceStatus: String, Codable, Hashable, Sendable {
-    /// A durable receipt covers this exact execution envelope on this exact device profile.
     case exactDeviceMeasured
-    /// Exact-device experiment exists, but the envelope is still research-only.
     case experimentalExactDeviceMeasured
-    /// Source metadata, estimates, or missing/stale evidence cannot be treated as measured proof.
     case unverified
 }
 
-/// One externally-qualified local execution option. The binding and receipt identifiers are opaque:
-/// the authority that creates them owns the exact model/revision/tokenizer/runtime/quant/KV/context/
-/// device/OS tuple and its measurement provenance.
+/// One local execution option. These bytes are candidate data, not qualification authority.
 public struct ForgeCompactExecutionEnvelope: Codable, Hashable, Sendable {
     public let id: String
     public let profileID: String
@@ -90,6 +85,44 @@ public struct ForgeCompactExecutionEnvelope: Codable, Hashable, Sendable {
         self.evidenceStatus = evidenceStatus
         self.contextTokens = contextTokens
         self.observedPeakResidentBytes = observedPeakResidentBytes
+    }
+}
+
+/// Transient host acceptance projection for an exact qualified execution configuration.
+///
+/// This value is intentionally non-Codable. A persisted/model-authored execution envelope cannot
+/// authorize itself by copying an evidence status or receipt string; a current qualification
+/// adapter must provide a matching grant for each governor decision.
+public struct ForgeCompactQualificationGrant: Hashable, Sendable {
+    public let profileID: String
+    public let configurationBindingID: String
+    public let deviceProfileID: String
+    public let evidenceReceiptID: String
+
+    public init(
+        profileID: String,
+        configurationBindingID: String,
+        deviceProfileID: String,
+        evidenceReceiptID: String
+    ) throws {
+        guard ForgeCompactGovernor.isCanonicalIdentity(profileID),
+              ForgeCompactGovernor.isCanonicalIdentity(configurationBindingID),
+              ForgeCompactGovernor.isCanonicalIdentity(deviceProfileID),
+              ForgeCompactGovernor.isCanonicalIdentity(evidenceReceiptID)
+        else {
+            throw ForgeCompactError.invalidIdentifier(field: "qualificationGrant")
+        }
+        self.profileID = profileID
+        self.configurationBindingID = configurationBindingID
+        self.deviceProfileID = deviceProfileID
+        self.evidenceReceiptID = evidenceReceiptID
+    }
+
+    fileprivate func matches(_ envelope: ForgeCompactExecutionEnvelope) -> Bool {
+        profileID == envelope.profileID
+            && configurationBindingID == envelope.configurationBindingID
+            && deviceProfileID == envelope.deviceProfileID
+            && evidenceReceiptID == envelope.evidenceReceiptID
     }
 }
 
@@ -166,6 +199,7 @@ public enum ForgeCompactCandidateRejectionReason: String, CaseIterable, Codable,
     case invalidIdentity
     case nonLocalCompute
     case unverifiedEvidence
+    case qualificationGrantMissing
     case experimentalDisallowed
     case deviceProfileMismatch
     case contextBelowMissionMinimum
@@ -174,7 +208,7 @@ public enum ForgeCompactCandidateRejectionReason: String, CaseIterable, Codable,
     case insufficientMeasuredHeadroom
 }
 
-/// Stable per-candidate evidence for why a decision did or did not admit an envelope.
+/// Stable per-candidate diagnostics for why a decision did or did not admit an envelope.
 public struct ForgeCompactCandidateVerdict: Codable, Equatable, Sendable {
     public let envelopeID: String
     public let rejectionReasons: [ForgeCompactCandidateRejectionReason]
@@ -208,23 +242,27 @@ public enum ForgeCompactDecisionAction: Codable, Equatable, Sendable {
     case block(reason: ForgeCompactBlockReason)
 }
 
-/// Durable, serializable proof of a deterministic policy decision. It is not a benchmark receipt;
-/// it references benchmark/qualification receipts supplied in the candidate envelopes.
-public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
+/// Ephemeral derived governor projection. It is deliberately non-Codable and cannot be directly
+/// constructed by callers. Persist snapshot/policy/candidate + qualification authority inputs and
+/// recompute after relaunch instead of restoring a previously serialized keep/switch verdict.
+public struct ForgeCompactDecisionReceipt: Equatable, Sendable {
     public let snapshot: ForgeCompactRuntimeSnapshot
     public let policy: ForgeCompactGovernorPolicy
     public let action: ForgeCompactDecisionAction
+    public let selectedEnvelope: ForgeCompactExecutionEnvelope?
     public let candidateVerdicts: [ForgeCompactCandidateVerdict]
 
-    public init(
+    fileprivate init(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         action: ForgeCompactDecisionAction,
+        selectedEnvelope: ForgeCompactExecutionEnvelope?,
         candidateVerdicts: [ForgeCompactCandidateVerdict]
     ) {
         self.snapshot = snapshot
         self.policy = policy
         self.action = action
+        self.selectedEnvelope = selectedEnvelope
         self.candidateVerdicts = candidateVerdicts
     }
 }
@@ -233,21 +271,24 @@ public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
 ///
 /// Safety boundaries:
 /// - remote compute is never selected;
-/// - production accepts only externally asserted exact-device measured evidence;
+/// - candidate evidence metadata cannot authorize itself;
+/// - production requires a current matching qualification grant from the host adapter;
 /// - context never drops below the mission minimum;
 /// - critical/configured pressure fails closed by suspending;
-/// - no eligible envelope blocks rather than guessing or silently escalating to cloud.
+/// - no eligible local envelope blocks rather than silently escalating to cloud.
 public enum ForgeCompactGovernor {
     public static func decide(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
-        envelopes: [ForgeCompactExecutionEnvelope]
+        envelopes: [ForgeCompactExecutionEnvelope],
+        qualificationGrants: Set<ForgeCompactQualificationGrant>
     ) -> ForgeCompactDecisionReceipt {
         guard isValid(snapshot) else {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidRuntimeSnapshot),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -257,6 +298,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidPolicy),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -266,6 +308,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .suspend(reason: .memoryPressureThresholdReached),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -275,6 +318,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .suspend(reason: .thermalPressureThresholdReached),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -288,7 +332,8 @@ public enum ForgeCompactGovernor {
                     snapshot: snapshot,
                     policy: policy,
                     reserveBytes: reserveBytes,
-                    isDuplicate: duplicateIDs.contains(envelope.id)
+                    isDuplicate: duplicateIDs.contains(envelope.id),
+                    qualificationGrants: qualificationGrants
                 )
             }
             .sorted { lhs, rhs in
@@ -302,12 +347,13 @@ public enum ForgeCompactGovernor {
         let eligible = envelopes.filter { eligibleIDs.contains($0.id) }
 
         if let activeEnvelopeID = snapshot.activeEnvelopeID,
-           eligible.contains(where: { $0.id == activeEnvelopeID })
+           let active = eligible.first(where: { $0.id == activeEnvelopeID })
         {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .keep(envelopeID: activeEnvelopeID),
+                selectedEnvelope: active,
                 candidateVerdicts: verdicts
             )
         }
@@ -317,6 +363,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .noEligibleLocalEnvelope),
+                selectedEnvelope: nil,
                 candidateVerdicts: verdicts
             )
         }
@@ -325,13 +372,14 @@ public enum ForgeCompactGovernor {
             snapshot: snapshot,
             policy: policy,
             action: .switchTo(envelopeID: selected.id),
+            selectedEnvelope: selected,
             candidateVerdicts: verdicts
         )
     }
 
     private static func isValid(_ snapshot: ForgeCompactRuntimeSnapshot) -> Bool {
         isCanonicalIdentity(snapshot.deviceProfileID)
-            && snapshot.activeEnvelopeID.map(isCanonicalIdentity) ?? true
+            && (snapshot.activeEnvelopeID.map(isCanonicalIdentity) ?? true)
             && snapshot.requestedContextTokens > 0
             && snapshot.minimumMissionContextTokens > 0
             && snapshot.minimumMissionContextTokens <= snapshot.requestedContextTokens
@@ -356,7 +404,8 @@ public enum ForgeCompactGovernor {
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         reserveBytes: UInt64,
-        isDuplicate: Bool
+        isDuplicate: Bool,
+        qualificationGrants: Set<ForgeCompactQualificationGrant>
     ) -> ForgeCompactCandidateVerdict {
         var reasons: [ForgeCompactCandidateRejectionReason] = []
 
@@ -386,6 +435,12 @@ public enum ForgeCompactGovernor {
             }
         case .unverified:
             reasons.append(.unverifiedEvidence)
+        }
+
+        if envelope.evidenceStatus != .unverified,
+           !qualificationGrants.contains(where: { $0.matches(envelope) })
+        {
+            reasons.append(.qualificationGrantMissing)
         }
 
         if envelope.deviceProfileID != snapshot.deviceProfileID {
@@ -438,14 +493,14 @@ public enum ForgeCompactGovernor {
         return lhs.id < rhs.id
     }
 
-    private static func isCanonicalIdentity(_ value: String) -> Bool {
-        guard let normalized = normalized(value) else { return false }
-        return normalized == value
-    }
-
-    private static func normalized(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty ? nil : normalized
+    fileprivate static func isCanonicalIdentity(_ value: String) -> Bool {
+        guard !value.isEmpty,
+              value.utf8.count <= 512,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else {
+            return false
+        }
+        return true
     }
 }
