@@ -40,21 +40,43 @@ struct ForgeQualityCoreTests {
         )
     }
 
-    private func policy(
-        _ targets: [ForgeQualityTarget],
+    private func completionTarget(
+        missionID: String = "mission-1",
         projectID: String = "project-a",
         sourceRevision: String = "source-r2",
-        acceptanceRevision: UInt64 = 4,
+        constitutionRevision: UInt64 = 4,
+        constitutionReceipt: String = "constitution-receipt-4"
+    ) -> ForgeQualityCompletionTarget {
+        ForgeQualityCompletionTarget(
+            missionID: id(missionID),
+            projectID: id(projectID),
+            sourceRevision: id(sourceRevision),
+            constitutionRevision: constitutionRevision,
+            constitutionReceiptID: id(constitutionReceipt)
+        )
+    }
+
+    private func policy(
+        _ targets: [ForgeQualityTarget],
+        missionID: String = "mission-1",
+        projectID: String = "project-a",
+        sourceRevision: String = "source-r2",
+        constitutionRevision: UInt64 = 4,
+        constitutionReceipt: String = "constitution-receipt-4",
         authorityReceipt: String = "quality-policy-authority-1",
         criterionID: String = "performance-criterion"
     ) -> ForgeQualityPolicy {
         try! ForgeQualityPolicy(
             policyID: id("quality-policy-1"),
-            authorityReceiptID: id(authorityReceipt),
+            policyAuthorityReceiptID: id(authorityReceipt),
             criterionID: id(criterionID),
-            projectID: id(projectID),
-            sourceRevision: id(sourceRevision),
-            acceptanceRevision: acceptanceRevision,
+            completionTarget: completionTarget(
+                missionID: missionID,
+                projectID: projectID,
+                sourceRevision: sourceRevision,
+                constitutionRevision: constitutionRevision,
+                constitutionReceipt: constitutionReceipt
+            ),
             targets: targets
         )
     }
@@ -62,14 +84,14 @@ struct ForgeQualityCoreTests {
     private func evaluate(
         policy: ForgeQualityPolicy,
         binding: ForgeQualityRunBinding? = nil,
-        acceptedAcceptanceRevision: UInt64 = 4,
+        acceptedCompletionTarget: ForgeQualityCompletionTarget? = nil,
         trustedPolicyAuthorityReceipt: String = "quality-policy-authority-1",
         measurements: [ForgeQualityMeasurement]
     ) throws -> ForgeQualityAssessment {
         try ForgeQualityEvaluator.evaluate(
             policy: policy,
             trustedPolicyAuthorityReceiptID: id(trustedPolicyAuthorityReceipt),
-            acceptedAcceptanceRevision: acceptedAcceptanceRevision,
+            acceptedCompletionTarget: acceptedCompletionTarget ?? completionTarget(),
             binding: binding ?? self.binding(),
             measurements: measurements
         )
@@ -104,11 +126,9 @@ struct ForgeQualityCoreTests {
         #expect(throws: ForgeQualityError.duplicateTarget(metric: .p95FrameTimeMilliseconds, scope: .run)) {
             try ForgeQualityPolicy(
                 policyID: id("p"),
-                authorityReceiptID: id("quality-policy-authority-1"),
+                policyAuthorityReceiptID: id("quality-policy-authority-1"),
                 criterionID: id("performance-criterion"),
-                projectID: id("project-a"),
-                sourceRevision: id("source-r2"),
-                acceptanceRevision: 1,
+                completionTarget: completionTarget(),
                 targets: [frame, frame]
             )
         }
@@ -372,7 +392,7 @@ struct ForgeQualityCoreTests {
             [target(.p95FrameTimeMilliseconds, atMost: 20)],
             sourceRevision: "source-r1"
         )
-        #expect(throws: ForgeQualityError.qualityTargetMismatch) {
+        #expect(throws: ForgeQualityError.completionTargetMismatch) {
             try evaluate(
                 policy: wrongTargetPolicy,
                 binding: binding(sourceRevision: "source-r2"),
@@ -381,13 +401,23 @@ struct ForgeQualityCoreTests {
         }
     }
 
-    @Test func acceptedAcceptanceRevisionMustMatchPolicy() throws {
-        #expect(throws: ForgeQualityError.acceptanceRevisionMismatch(expected: 4, actual: 5)) {
+    @Test func acceptedCompletionTargetMustMatchPolicy() throws {
+        #expect(throws: ForgeQualityError.completionTargetMismatch) {
             try evaluate(
                 policy: policy([target(.fatalRuntimeErrorCount, atMost: 0)]),
                 binding: binding(),
-                acceptedAcceptanceRevision: 5,
+                acceptedCompletionTarget: completionTarget(constitutionRevision: 5),
                 measurements: [measurement(.fatalRuntimeErrorCount, value: 0, receipt: "runtime-1")]
+            )
+        }
+    }
+
+    @Test func crossMissionCompletionTargetCannotReuseQualityPolicy() throws {
+        #expect(throws: ForgeQualityError.completionTargetMismatch) {
+            try evaluate(
+                policy: policy([target(.p95FrameTimeMilliseconds, atMost: 20)]),
+                acceptedCompletionTarget: completionTarget(missionID: "mission-2"),
+                measurements: [measurement(.p95FrameTimeMilliseconds, value: 16, receipt: "perf-1")]
             )
         }
     }
@@ -428,8 +458,8 @@ struct ForgeQualityCoreTests {
         )
         let data = try JSONEncoder().encode(snapshot)
         let decoded = try JSONDecoder().decode(ForgeQualitySnapshot.self, from: data)
-        #expect(try decoded.assessment(trustedPolicyAuthorityReceiptID: id("quality-policy-authority-1"), acceptedAcceptanceRevision: 4).status == .passed)
-        #expect(try decoded.assessment(trustedPolicyAuthorityReceiptID: id("quality-policy-authority-1"), acceptedAcceptanceRevision: 4).acceptedReceiptIDs == [id("a11y-1"), id("perf-1")])
+        #expect(try decoded.assessment(trustedPolicyAuthorityReceiptID: id("quality-policy-authority-1"), acceptedCompletionTarget: completionTarget()).status == .passed)
+        #expect(try decoded.assessment(trustedPolicyAuthorityReceiptID: id("quality-policy-authority-1"), acceptedCompletionTarget: completionTarget()).acceptedReceiptIDs == [id("a11y-1"), id("perf-1")])
     }
 
     @Test func snapshotDecodeRejectsCrossRunMeasurement() throws {
