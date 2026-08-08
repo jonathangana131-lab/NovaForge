@@ -43,7 +43,7 @@ public struct ForgeCompactFootprintMeasurement: Hashable, Sendable {
     }
 }
 
-/// Couples the accepted capsule bytes to the measurement derived during the same build operation.
+/// Couples the built capsule bytes to the measurement derived during the same build operation.
 /// It is intentionally not Codable: persisted benchmark evidence must retain its own accepted source
 /// set identity rather than treating a serialized derived percentage as authority.
 public struct ForgeCompactMeasuredCapsule: Hashable, Sendable {
