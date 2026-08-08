@@ -56,6 +56,12 @@ final class ForgeRuntimeSemanticPlaytestTests: XCTestCase {
         }
     }
 
+    func testTraceRejectsInvalidFrameLimit() throws {
+        XCTAssertThrowsError(try ForgeRuntimePlaytestTrace(header: makeHeader(), frames: [], maximumFrames: -1)) { error in
+            XCTAssertEqual(error as? ForgeRuntimePlaytestValidationError, .invalidFrameLimit(-1))
+        }
+    }
+
     func testTraceRoundTripsWithDeterministicIdentity() throws {
         let header = try makeHeader(persona: .chaosTester, seed: 42)
         let trace = try ForgeRuntimePlaytestTrace(
