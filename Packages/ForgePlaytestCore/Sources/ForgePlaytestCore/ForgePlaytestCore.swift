@@ -34,6 +34,7 @@ public enum ForgePlaytestError: Error, Equatable, Sendable {
     case unknownJourneyPlan(String)
     case traceMismatch
     case collectionTooLarge(field: String, maximum: Int)
+    case repairThresholdTooWeak
 }
 
 public struct ForgePlaytestProjectRevision: Hashable, Sendable {
@@ -505,6 +506,7 @@ public struct ForgePlaytestAcceptancePolicy: Hashable, Sendable {
         repairThreshold: ForgePlaytestDefectSeverity = .high
     ) throws {
         guard !requirements.isEmpty else { throw ForgePlaytestError.emptyRequirements }
+        guard repairThreshold <= .high else { throw ForgePlaytestError.repairThresholdTooWeak }
         var personas = Set<ForgePlaytestPersona>()
         for requirement in requirements {
             guard personas.insert(requirement.persona).inserted else {
@@ -681,7 +683,7 @@ public enum ForgePlaytestGateEvaluator {
             return .blocked(blockers)
         }
 
-        let repairItems = completed.flatMap { result in
+        let repairItems = results.flatMap { result in
             result.defects.compactMap { defect -> ForgePlaytestRepairItem? in
                 guard defect.severity >= policy.repairThreshold else { return nil }
                 return ForgePlaytestRepairItem(
