@@ -1,0 +1,539 @@
+NOVAFORGE V14 PROJECT SOURCES PACK
+=================================
+
+Repository: jonathangana131-lab/NovaForge
+Protocol: NF-SWARM-v14
+Product generation: NovaForge 2.0 — iPhone AI Creation OS
+Snapshot: 2026-08-08
+
+PURPOSE
+-------
+This is the compact all-in-one source file intended to be attached to the ChatGPT NovaForge Project as a Project Source.
+
+It does not replace live GitHub. Live repository code, current PRs, current Actions/Xcode evidence, accepted runtime/device evidence, and newer upstream model/runtime documentation always outrank stale text here.
+
+When the user says only `GO`, fresh-check GitHub and execute real work immediately.
+
+CANONICAL REPOSITORY SOURCES
+----------------------------
+Workers should use these files as canonical V14 context:
+
+1. AGENTS.md
+2. NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt
+3. docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md
+4. docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md
+5. docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md
+6. CONTINUATION_PROMPT.md
+7. docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md
+8. docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md
+9. docs/NOVAFORGE_V13_DESIGN_SYSTEM.md
+10. docs/NOVAFORGE_V13_ROADMAP.md
+11. GitHub issue #23 for live coordination context when useful.
+
+LIVE GITHUB OUTRANKS THIS PACK.
+
+======================================================================
+1. PRODUCT NORTH STAR
+======================================================================
+
+NovaForge must become an exceptional iPhone-native, local-first AI creation system — not a generic coding chatbot and not a mobile GitHub dashboard.
+
+Normal experience:
+
+DESCRIBE -> UNDERSTAND -> FORGE -> RUN -> EXPERIENCE -> CRITIQUE -> REPAIR -> POLISH -> COMPLETE
+
+The simple public promise:
+
+Describe what you want. NovaForge builds the real thing, runs it, checks it, improves it, and shows why the result is actually complete.
+
+Local-first is core identity. Cloud models can be optional accelerators only when explicitly enabled. Local-only must remain genuinely local-only.
+
+The quality target is intentionally beyond merely matching a generic chat app. NovaForge should feel like a first-party creation instrument with its own identity: calm, precise, fluid, fast, deeply interactive, and visually exceptional.
+
+Technically correct but visually unfinished = unfinished.
+Beautiful but fake, fragile, or unverifiable = unfinished.
+A model saying “done” = not completion evidence.
+
+======================================================================
+2. FLAGSHIP COMPOSER + PLAN SPACE
+======================================================================
+
+The Composer is the front door to the creation OS, not a plain text field.
+
+Resting state should be extremely calm and premium:
+
+WHAT DO YOU WANT TO MAKE?
+
+It can accept text, pasted code, files, screenshots/images, project references, and voice where available.
+
+Only useful runtime truth should be visible, e.g.:
+
+On-device • Ready
+
+Do not fill the main hierarchy with model internals, fake intelligence scores, unmeasured tokens/sec, raw Git state, or debug controls.
+
+ADAPTIVE COMPOSER
+-----------------
+As intent becomes clear, reveal only relevant controls:
+
+- Autonomy: Guide me / Collaborate / Full Forge
+- Build Depth: Quick / Complete / Obsessive
+- Intelligence: Auto or explicit qualified model
+- Privacy: Local only / allowed providers
+- Creativity: conservative -> exploratory
+- Refactor Risk: preserve -> rebuild if needed
+- Run target / creation type when material
+
+These should feel like one fluid instrument, not a settings form.
+
+PLAN SPACE
+----------
+When material decisions exist, the composer should bloom into a beautiful Plan Space instead of dumping a questionnaire into chat.
+
+Plan Space can include:
+
+- visual alternatives;
+- generated mini-previews;
+- sliders where a scalar choice is real;
+- side-by-side interaction concepts;
+- `Decide for me` for every safely delegable choice;
+- concise consequence explanations;
+- truthful resource implications when measured;
+- protected design decisions / Design DNA.
+
+Plan Space disappears when no real decision remains.
+
+PRIMARY ACTION MORPH
+--------------------
+The main action should morph with product state rather than remain a generic send arrow:
+
+Describe -> Plan -> Forge -> Watch -> Run -> Improve
+
+Exact wording is subject to visual/product testing. Principle: one obvious next action.
+
+======================================================================
+3. FULL FORGE — TRUE AUTONOMOUS MODE
+======================================================================
+
+Full Forge is a real user-visible autonomy mode.
+
+When enabled and permitted by the Mission Constitution, NovaForge continues through safe delegated work without stopping after every model/tool step.
+
+Core loop:
+
+PLAN
+-> IMPLEMENT
+-> BUILD
+-> RUN
+-> OBSERVE
+-> PLAY / INTERACT
+-> TEST
+-> VISUAL CRITIQUE
+-> REPAIR
+-> REGRESSION TEST
+-> PERFORMANCE / ACCESSIBILITY
+-> POLISH
+-> ACCEPT OR LOOP
+
+Requirements:
+
+- durable Mission Engine independent of raw chat transcript;
+- structured Project Brain with source/revision provenance;
+- bounded dynamic stage graph;
+- durable checkpoints and restart/relaunch recovery;
+- model hot-swap without losing accepted mission truth;
+- atomic/staged mutation semantics;
+- explicit interruption / steering;
+- resource, thermal and time budgets;
+- deterministic evidence receipts;
+- safe stop on unresolved material decisions;
+- no fabricated success.
+
+======================================================================
+4. COMPLETION CONSTITUTION
+======================================================================
+
+Every mission should have a machine-readable definition of done.
+
+For a generated game, completion can require:
+
+- successful build;
+- successful launch;
+- no fatal runtime errors across accepted test journeys;
+- controls reachable and responsive;
+- intended core gameplay loop reachable;
+- win/loss/restart or equivalent goals reachable when specified;
+- save/recovery correct when required;
+- safe areas/orientation correct;
+- visual acceptance on target viewports;
+- accessibility requirements satisfied where applicable;
+- measured performance within accepted target budget;
+- no unresolved critical/high defects;
+- known limitations explicitly recorded rather than hidden.
+
+`COMPLETE` is an evidence-backed product state, not an adjective emitted by a model.
+
+======================================================================
+5. AUTONOMOUS PLAYTEST ENGINE
+======================================================================
+
+Forge Runtime should expose safe semantic interaction inputs that the Playtest Engine can use without pretending arbitrary device automation is always available.
+
+Possible autonomous personas/journeys:
+
+- Goal Runner — tries to complete the intended loop.
+- Explorer — reaches screens/states/objects not exercised by the happy path.
+- Chaos Tester — rapid repeated controls, pause/resume, orientation changes, lifecycle interruptions.
+- New Player — evaluates discoverability and first-use comprehension.
+- Save/Reload Tester — verifies persistence and restart behavior.
+- Visual Reviewer — captures canonical screenshots and finds clipping, hierarchy, generic design, weak states.
+- Performance Runner — measures frame pacing/memory/thermal behavior where supported.
+- Accessibility Runner — checks focusability, labels, Dynamic Type, Reduce Motion/Transparency and reachable controls.
+
+The agent should patch defects, rerun the relevant journey, compare new evidence, and repeat until acceptance or a real blocker.
+
+======================================================================
+6. LOCAL MODEL FABRIC — LOCAL AI IS THE MAIN THING
+======================================================================
+
+NovaForge should not assume one huge model must do every task.
+
+Build a cooperative, device-aware Local Model Fabric.
+
+Suggested roles:
+
+- 200M–400M router / classifier / compactor / retrieval model;
+- tiny embedding/encoder tier for Project Brain retrieval;
+- ~1B fast agent/tool tier for cheap planning, extraction, structured calls and routine edits;
+- 2B–5B deeper coding/reasoning tier where device/runtime evidence permits;
+- sparse/MoE or beyond-RAM experimental tier for hard escalations;
+- optional explicit cloud escalation only when policy allows.
+
+Model selection should optimize task success, latency, energy, thermal pressure and memory — not parameter count prestige.
+
+A compatibility badge must bind exact:
+
+model + revision + tokenizer + runtime + runtime revision + quant + KV type + context + device + OS + memory + thermal + speed + task-suite evidence.
+
+Do not claim a model is supported because a family name looks familiar.
+
+======================================================================
+7. FORGE COMPACT — ADVANCED MEMORY / CONTEXT SYSTEM
+======================================================================
+
+Forge Compact is the fast/easy memory and context system that makes long local autonomous missions practical.
+
+Layer multiple methods rather than relying on one trick:
+
+A. WEIGHT COMPACTION
+- K/I GGUF quant profiles;
+- native low-bit/ternary architectures such as BitNet where supported;
+- device-qualified mixed precision;
+- sparse/MoE activation so inactive parameters do not all need equal hot memory.
+
+B. KV-CACHE COMPACTION
+- q8/q4 or other validated quantized KV;
+- adaptive per-token KV precision;
+- research TurboQuant-style compression;
+- preserve important system/tool/current-code tokens at higher precision when useful;
+- compress lower-value historical context more aggressively only after quality testing.
+
+C. PROJECT CAPSULES
+Do not keep re-feeding the entire old chat.
+
+Create compact structured mission capsules containing only accepted truth needed for the next step:
+- requirements;
+- current objective;
+- relevant files/symbols;
+- accepted decisions;
+- Design DNA;
+- test/runtime receipts;
+- known defects;
+- unresolved decisions;
+- current mission stage;
+- provenance.
+
+D. PROJECT BRAIN RETRIEVAL
+Use structured retrieval to pull only relevant project facts/source fragments into the active context.
+
+E. PREFIX / KV REUSE
+Reuse exact compatible prompt prefixes/KV state when runtime/model semantics prove it valid instead of repeatedly recomputing stable context.
+
+F. SPECULATIVE DECODING
+Use a tiny fast local drafter/router with a larger verifier where measured quality and runtime support justify it.
+
+G. MEMORY GOVERNOR
+Continuously observe available memory, app pressure, context size, KV growth, runtime state and thermal state. Degrade gracefully before iOS terminates the process.
+
+H. EXPERIMENTAL BEYOND-RAM MODES
+Optional research-only modes may explore:
+- flash-backed cold weight/neuron streaming;
+- sparse/MoE expert paging;
+- segmented neuron caches;
+- CPU + Metal + flash cooperative scheduling;
+- aggressive compressed KV;
+- mmap and demand loading.
+
+These must remain labeled experimental until exact-device evidence exists.
+
+======================================================================
+8. LOW-RAM / HIGH-SPEED RESEARCH SEEDS
+======================================================================
+
+IMPORTANT: These are research directions, not current product-support claims. Fresh-check upstream sources before implementation because this area changes rapidly.
+
+8.1 APPLE — LLM IN A FLASH
+----------------------------
+Source:
+https://machinelearning.apple.com/research/efficient-large-language
+
+Idea:
+Keep model parameters in flash and bring needed portions into DRAM on demand. Apple describes hardware-aware windowing that reuses activated neurons and row/column bundling to create larger contiguous flash reads. Their paper reports running models up to roughly 2x available DRAM in the evaluated setup, with large speedups relative to naive flash loading.
+
+NovaForge experiments:
+- flash-backed cold-weight/neuron loading on iOS;
+- small resident hot working set;
+- measure RAM, prefill, decode, energy, thermal and flash I/O;
+- reproduce on exact iPhone classes before surfacing claims.
+
+8.2 POWERINFER-2 — SMARTPHONE INFERENCE BEYOND MEMORY CAPACITY
+---------------------------------------------------------------
+Source:
+https://arxiv.org/abs/2406.06282
+
+Idea:
+Neuron-cluster scheduling across compute + storage, dense clusters on accelerator, sparse clusters on CPU, fine-grained I/O/computation pipelining, segmented neuron cache. The paper demonstrates a 47B model on a smartphone in its evaluated environment.
+
+NovaForge experiments:
+- map cluster/expert scheduling concepts to Apple CPU + Metal + flash;
+- prioritize sparse/MoE models where not all parameters are active per token;
+- compare to ordinary mmap/quantized GGUF baselines;
+- do not infer iPhone 12 performance from another phone/paper environment.
+
+8.3 GOOGLE TURBOQUANT — EXTREME KV COMPRESSION
+----------------------------------------------
+Source:
+https://research.google/blog/turboquant-redefining-ai-efficiency-with-extreme-compression/
+
+Idea:
+Aggressive vector/KV compression using PolarQuant + Quantized Johnson-Lindenstrauss. Google reports KV-cache memory reductions of at least roughly 6x in tested settings and extremely low-bit representations.
+
+NovaForge experiments:
+- isolated Metal/CPU KV compression prototype;
+- coding/tool-call long-context accuracy suite;
+- measure real iPhone RAM savings and latency;
+- keep experimental until stable and quality-proven.
+
+8.4 ADAPTIVE KV PRECISION
+-------------------------
+Source:
+https://arxiv.org/abs/2604.04722
+
+Idea:
+Choose 2/4/8-bit or FP16 KV precision dynamically based on token importance instead of treating every token equally.
+
+NovaForge experiments:
+- high precision for system/tool/schema/current-code tokens;
+- lower precision for less-important history;
+- test coding edits, structured tool calls, retrieval and long Full Forge missions.
+
+8.5 LLAMA.CPP METAL + QUANTIZED KV + MMAP
+-----------------------------------------
+Feature matrix:
+https://github.com/ggml-org/llama.cpp/wiki/Feature-matrix
+
+Relevant capabilities include Metal, model K/I quants, Flash Attention, quantized K-cache paths and memory-mapped loading.
+
+NovaForge experiments:
+- device/runtime qualification for q8/q4 KV profiles;
+- compare mmap vs eager loading under iOS memory pressure;
+- qualify exact backend combinations rather than exposing unsupported toggles.
+
+8.6 COMMUNITY METAL TURBOQUANT RESEARCH
+---------------------------------------
+Source:
+https://github.com/ggml-org/llama.cpp/discussions/21243
+
+Treat community Metal TurboQuant work as research signal only.
+
+NovaForge experiments:
+- inspect upstream/community implementation ideas;
+- independently reproduce in isolated benchmark branch;
+- require correctness + exact-device evidence before app integration.
+
+8.7 MICROSOFT BITNET / BITNET.CPP
+---------------------------------
+Runtime:
+https://github.com/microsoft/BitNet
+Paper:
+https://arxiv.org/abs/2504.12285
+
+BitNet b1.58 uses native ternary/1.58-bit weights rather than only post-training quantization. bitnet.cpp includes ARM CPU kernels.
+
+NovaForge experiments:
+- 2B-class BitNet models as tiny planning/tool/specialist agents;
+- task-specific coding/tool fine-tunes;
+- ARM CPU vs other acceleration paths;
+- memory, energy and thermal qualification.
+
+8.8 LIQUID LFM2.5 TINY EDGE MODEL LADDER
+----------------------------------------
+Sources:
+https://huggingface.co/collections/LiquidAI/lfm25
+https://huggingface.co/LiquidAI
+
+Research candidates include small 230M/350M models, 1.2B instruct/thinking models, small encoders, and LFM2.5-8B-A1B with about 8.3B total / roughly 1.5B active parameters and GGUF support.
+
+NovaForge experiments:
+- 230M/350M: routing, extraction, compaction, symbol ranking;
+- tiny encoders: Project Brain retrieval;
+- 1.2B: fast local agent/tool qualification;
+- 8B-A1B: experimental deep sparse tier, potentially combined with expert/flash paging;
+- never assume coding quality without NovaForge benchmark evidence.
+
+8.9 QWEN3.5 SMALL AGENT CANDIDATES
+---------------------------------
+Example upstream model card:
+https://huggingface.co/Qwen/Qwen3.5-4B
+
+Qualification areas:
+- structured tool calls;
+- multi-file coding;
+- screenshot/visual understanding;
+- repair loops;
+- exact runtime/quant/device memory and thermal behavior.
+
+8.10 TINY-MODEL SPECIALIST STACK
+--------------------------------
+Do not wait for one miracle model.
+
+Test a cooperative local stack:
+- 200M–400M router/compactor/encoder;
+- ~1B fast agent/tool model;
+- 2B–5B code/reasoning model where feasible;
+- larger sparse/beyond-RAM tier only for hard escalations;
+- deterministic runtime/test infrastructure supplies truth.
+
+======================================================================
+9. IPHONE 12 / A14 BASELINE RESEARCH PROGRAM
+======================================================================
+
+The iPhone 12 is a binding baseline for qualification, but policy budgets are not physical-device proof.
+
+Priority experiments:
+
+1. llama.cpp Metal q8/q4 KV memory curve vs context length.
+2. Project Capsule + retrieval reduction in active prompt tokens per autonomous stage.
+3. LFM2.5 230M/350M router/retrieval latency + memory.
+4. LFM2.5 1.2B agent/tool quality vs RAM/thermal/speed.
+5. BitNet 2B ARM inference feasibility.
+6. flash-backed weight streaming prototype.
+7. sparse/MoE expert paging prototype.
+8. TurboQuant/adaptive-KV Metal prototype.
+9. tiny draft + larger verifier speculative decoding.
+10. Full Forge task-success-per-joule and task-success-per-GB, not just raw tokens/sec.
+
+Also measure:
+- cold start;
+- warm start;
+- time to first token;
+- prefill speed;
+- decode speed;
+- peak resident memory;
+- memory pressure events;
+- context/KV growth;
+- battery cost;
+- thermal behavior;
+- app suspension/relaunch behavior;
+- coding/tool benchmark success;
+- autonomous mission success rate.
+
+Every benchmark record should bind exact model/runtime/device identity.
+
+======================================================================
+10. VISUAL / PRODUCT QUALITY BAR
+======================================================================
+
+Do not settle for “ChatGPT-like.” ChatGPT/first-party iOS quality is a floor, not the final identity target.
+
+The Composer, Plan Space, Full Forge mission view, Local Model Center, Run mode, History/Time Machine, visual editing and completion/evidence surfaces must be treated as flagship experiences.
+
+Required process for major UI:
+
+IMPLEMENT
+-> RUN ON TARGET SIMULATOR
+-> INTERACT
+-> SCREENSHOT
+-> CRITIQUE
+-> FIX
+-> COMPARE
+-> ACCESSIBILITY
+-> PERFORMANCE
+-> REPEAT
+
+Reject:
+- card soup;
+- debug-console aesthetics;
+- giant header chrome;
+- generic AI gradients/theater;
+- duplicated information;
+- poor weak states;
+- source-only “looks good” acceptance.
+
+Design the loading, offline, local-model-missing, memory-pressure, error, suspended, interrupted, empty and completion states with equal care.
+
+======================================================================
+11. SWARM EXECUTION / GO
+======================================================================
+
+GO means:
+
+LIVE GITHUB
+-> RESOLVE CURRENT FLAGSHIP
+-> MAP ACTIVE OWNERSHIP
+-> CLAIM SAFE NON-CONFLICTING LANE
+-> IMPLEMENT
+-> TEST / RUN / SCREENSHOT / REVIEW
+-> FIX
+-> WRITE MATERIAL RESULT TO GITHUB
+-> REFRESH
+-> SELF-REASSIGN
+-> CONTINUE UNTIL REAL STOP.
+
+20+ workers must not wait behind one lane.
+If first-choice work is owned, self-reassign immediately.
+Feature gravity > PR gravity.
+A PR/test/merge/review is a checkpoint, not an endpoint.
+
+High-contention production files should normally have one active owner while other workers fan out across domain, integration, runtime, visual, accessibility, performance, QA, model qualification and test lanes.
+
+GitHub-or-it-did-not-happen:
+Any important finding only written in a worker chat is LOST WORK. Persist code, reviews, blockers, screenshots/visual findings, test failures and exact next actions to GitHub.
+
+No NovaForge scheduled workers are assumed/configured by this source pack. Normal GO workers must leave durable handoffs so another spawned chat can hot-swap cleanly.
+
+======================================================================
+12. TRUTH BOUNDARIES
+======================================================================
+
+Never fabricate:
+- model compatibility;
+- provider support;
+- tool support;
+- tokens/sec;
+- RAM savings;
+- thermal claims;
+- background execution;
+- device performance;
+- runtime completion;
+- playtest success;
+- visual acceptance;
+- local-only behavior.
+
+Research-paper results are not iPhone 12 results.
+Simulator evidence is not physical-device evidence.
+A model family name is not a compatibility guarantee.
+Cloud must never silently backstop Local Only.
+Experimental beyond-RAM modes must be clearly labeled.
+
+END OF NOVAFORGE V14 PROJECT SOURCES PACK
