@@ -487,7 +487,12 @@ public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
         }
     }
 
-    public func readiness(for claim: LocalModelQualificationClaim) -> LocalModelQualificationReadiness {
+    /// Evaluates a claim only against receipt IDs independently trusted by the host qualification boundary.
+    /// Persisted/model-authored JSON cannot promote itself merely by spelling `deterministicHarness`.
+    public func readiness(
+        for claim: LocalModelQualificationClaim,
+        trustedEvidenceIDs: Set<String>
+    ) -> LocalModelQualificationReadiness {
         var reasons: [String] = []
 
         func receipt(for evidenceClass: LocalModelEvidenceClass) -> LocalModelQualificationEvidence? {
@@ -502,6 +507,9 @@ public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
             guard let item = receipt(for: evidenceClass) else {
                 reasons.append("Missing \(evidenceClass.rawValue) evidence.")
                 return
+            }
+            if !trustedEvidenceIDs.contains(item.evidenceID) {
+                reasons.append("\(evidenceClass.rawValue) evidence is not trusted by the host qualification boundary.")
             }
             if item.status != .passed {
                 reasons.append("\(evidenceClass.rawValue) evidence did not pass.")
