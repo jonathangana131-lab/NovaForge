@@ -1,0 +1,149 @@
+name: Voltline iOS Game
+
+on:
+  push:
+    branches:
+      - codex/voltline-ios-foundation
+    paths:
+      - "Voltline/**"
+      - ".github/workflows/voltline-ios-game.yml"
+  pull_request:
+    paths:
+      - "Voltline/**"
+      - ".github/workflows/voltline-ios-game.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: voltline-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-game:
+    name: Native build, tests and screenshots
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+          xcrun simctl list runtimes
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate icon and Xcode project
+        working-directory: Voltline/App
+        run: |
+          chmod +x Scripts/bootstrap.sh
+          Scripts/bootstrap.sh
+          test -f Resources/Assets.xcassets/AppIcon.appiconset/VoltlineIcon-1024.png
+          test -f VoltlineGame.xcodeproj/project.pbxproj
+
+      - name: Create iPhone 12 simulator
+        id: simulator
+        shell: bash
+        run: |
+          RUNTIME=$(xcrun simctl list runtimes available -j | python3 -c '
+          import json,sys
+          runtimes=json.load(sys.stdin)["runtimes"]
+          ios=[r for r in runtimes if r.get("isAvailable") and "iOS" in r.get("name","")]
+          if not ios: raise SystemExit("No available iOS runtime")
+          print(ios[-1]["identifier"])
+          ')
+          DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-12"
+          if ! xcrun simctl list devicetypes | grep -q "iPhone 12"; then
+            DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-16"
+          fi
+          UDID=$(xcrun simctl create "Voltline CI iPhone" "$DEVICE_TYPE" "$RUNTIME")
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "runtime=$RUNTIME" >> "$GITHUB_OUTPUT"
+
+      - name: Build and run native tests
+        working-directory: Voltline/App
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project VoltlineGame.xcodeproj \
+            -scheme VoltlineGame \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath VoltlineTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test | tee xcodebuild-test.log
+
+      - name: Verify unsigned device compilation
+        working-directory: Voltline/App
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project VoltlineGame.xcodeproj \
+            -scheme VoltlineGame \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath DeviceDerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee xcodebuild-device.log
+
+      - name: Capture real simulator states
+        if: always()
+        working-directory: Voltline/App
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          mkdir -p Artifacts/Screenshots
+          APP="DerivedData/Build/Products/Debug-iphonesimulator/VoltlineGame.app"
+          if [ ! -d "$APP" ]; then
+            echo "Built app not found at $APP"
+            exit 0
+          fi
+          xcrun simctl install "$SIMULATOR_UDID" "$APP"
+
+          capture() {
+            local name="$1"
+            shift
+            xcrun simctl terminate "$SIMULATOR_UDID" com.joey.VoltlineGame >/dev/null 2>&1 || true
+            xcrun simctl launch --terminate-running-process "$SIMULATOR_UDID" com.joey.VoltlineGame "$@"
+            sleep 5
+            xcrun simctl io "$SIMULATOR_UDID" screenshot "Artifacts/Screenshots/${name}.png"
+          }
+
+          capture "01-ride-hud" --qa-rich
+          capture "02-garage" --qa-rich --qa-garage
+          capture "03-phone-bank" --qa-rich --qa-bank
+          capture "04-phone-vesc" --qa-rich --qa-vesc
+          capture "05-crash" --qa-crash
+
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Artifacts/Voltline-Simulator-App.zip
+          cp Resources/Assets.xcassets/AppIcon.appiconset/VoltlineIcon-1024.png Artifacts/Voltline-App-Icon.png
+
+      - name: Upload Voltline proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voltline-ios-build-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            Voltline/App/Artifacts
+            Voltline/App/VoltlineTests.xcresult
+            Voltline/App/xcodebuild-test.log
+            Voltline/App/xcodebuild-device.log
+
+      - name: Shutdown simulator
+        if: always()
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          if [ -n "${SIMULATOR_UDID:-}" ]; then
+            xcrun simctl shutdown "$SIMULATOR_UDID" >/dev/null 2>&1 || true
+            xcrun simctl delete "$SIMULATOR_UDID" >/dev/null 2>&1 || true
+          fi
