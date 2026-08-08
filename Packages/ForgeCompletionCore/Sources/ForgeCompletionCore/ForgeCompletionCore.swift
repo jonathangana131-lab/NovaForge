@@ -8,6 +8,7 @@ public enum ForgeCompletionError: Error, Equatable, Sendable {
     case collectionTooLarge(field: String, maximum: Int)
     case duplicateCriterionID(String)
     case duplicateEvidenceID(String)
+    case duplicateEvidenceAuthorityReceiptID(String)
     case duplicateEvidenceSlot(String)
     case duplicateDefectID(String)
     case duplicateLimitationID(String)
@@ -702,6 +703,7 @@ public enum ForgeCompletionEvaluator {
         let criteriaByID = Dictionary(uniqueKeysWithValues: constitution.criteria.map { ($0.id, $0) })
 
         var evidenceIDs = Set<String>()
+        var authorityReceiptIDs = Set<String>()
         var evidenceSlots = Set<String>()
         var evidenceBySlot: [String: ForgeCompletionEvidence] = [:]
 
@@ -711,6 +713,9 @@ public enum ForgeCompletionEvaluator {
             }
             guard evidenceIDs.insert(item.id).inserted else {
                 throw ForgeCompletionError.duplicateEvidenceID(item.id)
+            }
+            guard authorityReceiptIDs.insert(item.authorityReceiptID).inserted else {
+                throw ForgeCompletionError.duplicateEvidenceAuthorityReceiptID(item.authorityReceiptID)
             }
             guard let criterion = criteriaByID[item.criterionID] else {
                 throw ForgeCompletionError.unknownCriterion(item.criterionID)
