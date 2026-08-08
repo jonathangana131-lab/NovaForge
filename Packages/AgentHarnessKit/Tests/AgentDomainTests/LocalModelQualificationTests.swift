@@ -3,6 +3,7 @@ import XCTest
 
 final class LocalModelQualificationTests: XCTestCase {
     private let artifactDigest = String(repeating: "a", count: 64)
+    private let runtimeConfigurationDigest = String(repeating: "b", count: 64)
 
     func testPhysicalDeviceObservationIsEligibleForMeasuredClassification() {
         let assessment = LocalModelQualificationValidator.evaluate(makeObservation())
@@ -27,19 +28,32 @@ final class LocalModelQualificationTests: XCTestCase {
 
         XCTAssertNotEqual(baseline, makeIdentity(runtimeRevision: "runtime-rev-2"))
         XCTAssertNotEqual(baseline, makeIdentity(tokenizerRevision: "tokenizer-rev-2"))
-        XCTAssertNotEqual(baseline, makeIdentity(kvCacheType: "q4_0"))
+        XCTAssertNotEqual(baseline, makeIdentity(backendID: "cpu"))
+        XCTAssertNotEqual(
+            baseline,
+            makeIdentity(runtimeConfigurationSHA256: String(repeating: "c", count: 64))
+        )
+        XCTAssertNotEqual(baseline, makeIdentity(keyCacheType: "q4_0"))
+        XCTAssertNotEqual(baseline, makeIdentity(valueCacheType: "f16"))
         XCTAssertNotEqual(baseline, makeIdentity(contextWindowTokens: 16_384))
         XCTAssertNotEqual(baseline, makeIdentity(deviceModelIdentifier: "iPhone14,5"))
         XCTAssertNotEqual(baseline, makeIdentity(operatingSystemVersion: "27.1"))
     }
 
-    func testMalformedDigestAndZeroContextFailClosed() {
+    func testMalformedDigestsAndZeroContextFailClosed() {
         let assessment = LocalModelQualificationValidator.evaluate(
-            makeObservation(identity: makeIdentity(artifactSHA256: "invalid", contextWindowTokens: 0))
+            makeObservation(identity: makeIdentity(
+                artifactSHA256: "invalid",
+                runtimeConfigurationSHA256: "also-invalid",
+                contextWindowTokens: 0
+            ))
         )
 
         XCTAssertEqual(assessment.status, .invalid)
-        XCTAssertEqual(assessment.issues, [.malformedArtifactSHA256, .invalidContextWindow])
+        XCTAssertEqual(
+            assessment.issues,
+            [.malformedArtifactSHA256, .malformedRuntimeConfigurationSHA256, .invalidContextWindow]
+        )
     }
 
     func testInvalidMeasurementsFailClosed() {
@@ -72,6 +86,21 @@ final class LocalModelQualificationTests: XCTestCase {
         )
         XCTAssertEqual(duplicate.status, .invalid)
         XCTAssertEqual(duplicate.issues, [.duplicateTaskSuiteIdentity])
+    }
+
+    func testControlCharactersCannotCreateAmbiguousTaskSuiteIdentity() {
+        let malformed = LocalModelTaskSuiteObservation(
+            suiteID: "suite\u{001F}id",
+            suiteRevision: "v1",
+            successfulTasks: 1,
+            failedTasks: 0
+        )
+        let assessment = LocalModelQualificationValidator.evaluate(
+            makeObservation(taskSuites: [malformed])
+        )
+
+        XCTAssertEqual(assessment.status, .invalid)
+        XCTAssertEqual(assessment.issues, [.invalidTaskSuiteEvidence])
     }
 
     func testTaskFailureIsRecordedInsteadOfConvertedIntoAValidationFailure() {
@@ -120,7 +149,10 @@ final class LocalModelQualificationTests: XCTestCase {
         artifactSHA256: String? = nil,
         tokenizerRevision: String = "tokenizer-rev-1",
         runtimeRevision: String = "runtime-rev-1",
-        kvCacheType: String = "q8_0",
+        backendID: String = "metal",
+        runtimeConfigurationSHA256: String? = nil,
+        keyCacheType: String = "q8_0",
+        valueCacheType: String = "q8_0",
         contextWindowTokens: UInt64 = 8_192,
         deviceModelIdentifier: String = "iPhone13,2",
         operatingSystemVersion: String = "27.0",
@@ -135,8 +167,11 @@ final class LocalModelQualificationTests: XCTestCase {
             tokenizerRevision: tokenizerRevision,
             runtimeID: "llama.cpp",
             runtimeRevision: runtimeRevision,
+            backendID: backendID,
+            runtimeConfigurationSHA256: runtimeConfigurationSHA256 ?? runtimeConfigurationDigest,
             quantization: "Q4_K_M",
-            kvCacheType: kvCacheType,
+            keyCacheType: keyCacheType,
+            valueCacheType: valueCacheType,
             contextWindowTokens: contextWindowTokens,
             deviceModelIdentifier: deviceModelIdentifier,
             operatingSystemVersion: operatingSystemVersion,
