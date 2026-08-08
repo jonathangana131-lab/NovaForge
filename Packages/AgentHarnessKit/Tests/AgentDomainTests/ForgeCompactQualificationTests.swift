@@ -36,6 +36,55 @@ final class ForgeCompactQualificationTests: XCTestCase {
         XCTAssertFalse(result.isProductBadgeEligible)
     }
 
+    func testPhysicalDeviceEvidenceWithoutRequiredMetricsCannotQualify() {
+        let profile = profile()
+        let result = ForgeCompactQualifier.evaluate(
+            profile: profile,
+            observation: .init(
+                profile: profile,
+                environment: .physicalDevice,
+                receiptID: "receipt-002",
+                taskSuiteID: "forge-compact-smoke",
+                taskSuiteRevision: "suite-r1",
+                successfulRuns: 2,
+                failedRuns: 0,
+                peakResidentMemoryBytes: 1_500_000_000,
+                thermalStart: .nominal,
+                thermalEnd: .fair
+            )
+        )
+
+        XCTAssertEqual(result.status, .unverified)
+        XCTAssertEqual(result.reasons, [.missingRequiredDeviceMeasurements])
+        XCTAssertFalse(result.isProductBadgeEligible)
+    }
+
+    func testUnknownThermalStateCannotQualifyPhysicalDeviceEvidence() {
+        let profile = profile()
+        let result = ForgeCompactQualifier.evaluate(
+            profile: profile,
+            observation: .init(
+                profile: profile,
+                environment: .physicalDevice,
+                receiptID: "receipt-003",
+                taskSuiteID: "forge-compact-smoke",
+                taskSuiteRevision: "suite-r1",
+                successfulRuns: 2,
+                failedRuns: 0,
+                peakResidentMemoryBytes: 1_500_000_000,
+                timeToFirstTokenMilliseconds: 850,
+                prefillTokensPerSecond: 45,
+                decodeTokensPerSecond: 8,
+                thermalStart: .nominal,
+                thermalEnd: .unknown
+            )
+        )
+
+        XCTAssertEqual(result.status, .unverified)
+        XCTAssertEqual(result.reasons, [.missingRequiredDeviceMeasurements])
+        XCTAssertFalse(result.isProductBadgeEligible)
+    }
+
     func testRuntimeRevisionDriftFailsClosed() {
         let expected = profile(runtimeRevision: "runtime-r1")
         let measured = profile(runtimeRevision: "runtime-r2")
