@@ -38,7 +38,6 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.decisions.count, 1)
     }
 
-
     func testDecideForMePlaceholderCannotBecomeAcceptedSemanticDecision() throws {
         var mission = try makeMission()
         let stageID = try XCTUnwrap(mission.runnableStageIDs.first)
@@ -242,7 +241,10 @@ final class ForgeMissionTests: XCTestCase {
         let id = mission.runnableStageIDs[0]
         let lease = try mission.beginWork(on: [id])[0]
         try mission.acceptWorkerResult(.init(lease: lease, outcome: .completed, summary: "done", evidenceReceiptIDs: .init(["r"])), at: instant(2))
-        let replacement = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [])
+        let replacementID = MissionStageID()
+        let replacement = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [
+            MissionStage(stageID: replacementID, kind: .test, title: "Replacement pending stage", order: 1),
+        ])
         XCTAssertThrowsError(try mission.replaceStageGraph(replacement)) {
             XCTAssertEqual($0 as? ForgeMissionError, .acceptedCompletedStageWouldBeLost(id))
         }
@@ -319,7 +321,6 @@ final class ForgeMissionTests: XCTestCase {
         _ = try mission.beginWork(on: [newStage.stageID])
         XCTAssertEqual(mission.phase, .executing)
     }
-
 
     func testDecisionRequestAndWorkerReceiptSurviveArchiveRoundTrip() throws {
         var mission = try makeMission()
@@ -471,7 +472,6 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
     }
 
-
     func testDecisionGatedOptionalStageCannotBypassReceiptViaDeferral() throws {
         let missionID = MissionID(); let projectID = ProjectID(); let optionalID = MissionStageID()
         var mission = try ForgeMissionState(
@@ -610,7 +610,10 @@ final class ForgeMissionTests: XCTestCase {
             decisionReceiptID: "decision:camera:history",
             at: instant(79)
         )
-        let replacement = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [])
+        let replacementID = MissionStageID()
+        let replacement = MissionStageGraph(missionID: mission.missionID, revision: mission.graph.revision + 1, stages: [
+            MissionStage(stageID: replacementID, kind: .test, title: "Replacement pending stage", order: 1),
+        ])
 
         XCTAssertThrowsError(try mission.replaceStageGraph(replacement)) { error in
             XCTAssertEqual(error as? ForgeMissionError, .acceptedRecordedStageWouldBeLost(stageID))
@@ -652,7 +655,6 @@ final class ForgeMissionTests: XCTestCase {
         XCTAssertEqual(mission.phase, .blockedExternal)
         XCTAssertNoThrow(try ForgeMissionArchive(state: mission))
     }
-
 
     func testCompletionRejectsCheckpointFromStaleMissionAuthority() throws {
         var mission = try completedReadyMission()
