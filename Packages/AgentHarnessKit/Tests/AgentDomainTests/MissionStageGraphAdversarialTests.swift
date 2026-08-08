@@ -11,6 +11,25 @@ final class MissionStageGraphAdversarialTests: XCTestCase {
         XCTAssertEqual(graph.validationError, .emptyGraph)
     }
 
+    func testAllOptionalGraphCannotVacuouslySatisfyRequiredWork() {
+        let graph = MissionStageGraph(
+            missionID: MissionID(),
+            stages: [
+                MissionStage(
+                    stageID: MissionStageID(),
+                    kind: .polish,
+                    title: "Optional polish",
+                    order: 1,
+                    required: false,
+                    status: .deferred
+                ),
+            ]
+        )
+
+        XCTAssertNil(graph.validationError)
+        XCTAssertFalse(graph.requiredWorkIsSatisfied)
+    }
+
     func testRequiredStageCannotHardDependOnDeferrableOptionalStage() {
         let missionID = MissionID()
         let optionalID = MissionStageID()
