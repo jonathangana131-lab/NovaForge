@@ -5,14 +5,63 @@ public enum LocalAICompatibilityBadge: String, Codable, Hashable, Sendable {
     case unverified
 }
 
+/// Current product qualification authority. This is intentionally not Codable:
+/// persisted evidence must be re-evaluated against the app's current standard.
+public struct LocalAIQualificationStandard: Hashable, Sendable {
+    public let standardID: String
+    public let standardRevision: String
+    public let taskSuiteID: String
+    public let taskSuiteRevision: String
+    public let requiredTaskIDs: [String]
+
+    public init(
+        standardID: String,
+        standardRevision: String,
+        taskSuiteID: String,
+        taskSuiteRevision: String,
+        requiredTaskIDs: [String]
+    ) throws {
+        self.standardID = try validatedIdentifier(standardID, field: "standardID")
+        self.standardRevision = try validatedIdentifier(standardRevision, field: "standardRevision")
+        self.taskSuiteID = try validatedIdentifier(taskSuiteID, field: "taskSuiteID")
+        self.taskSuiteRevision = try validatedIdentifier(taskSuiteRevision, field: "taskSuiteRevision")
+        guard !requiredTaskIDs.isEmpty else { throw LocalAIQualificationError.invalidTaskSuite }
+
+        var seen = Set<String>()
+        var canonical: [String] = []
+        for rawID in requiredTaskIDs {
+            let taskID = try validatedIdentifier(rawID, field: "requiredTaskID")
+            guard seen.insert(taskID).inserted else {
+                throw LocalAIQualificationError.duplicateTaskID(taskID)
+            }
+            canonical.append(taskID)
+        }
+        self.requiredTaskIDs = canonical.sorted()
+    }
+}
+
 public enum LocalAIQualificationEvaluator {
-    public static func badge(for receipt: LocalAIQualificationReceipt?) -> LocalAICompatibilityBadge {
+    public static func badge(
+        for receipt: LocalAIQualificationReceipt?,
+        against standard: LocalAIQualificationStandard
+    ) -> LocalAICompatibilityBadge {
         guard let receipt else { return .unverified }
+
+        guard receipt.taskSuite.suiteID == standard.taskSuiteID,
+              receipt.taskSuite.suiteRevision == standard.taskSuiteRevision
+        else {
+            return .unverified
+        }
+
+        let taskOutcomes = Dictionary(uniqueKeysWithValues: receipt.taskSuite.results.map { ($0.taskID, $0.outcome) })
+        guard standard.requiredTaskIDs.allSatisfy({ taskOutcomes[$0] != nil }) else {
+            return .unverified
+        }
 
         if receipt.measurements.memoryPressure == .terminated ||
             receipt.measurements.memoryPressure == .critical ||
             receipt.measurements.thermalEnd == .critical ||
-            !receipt.taskSuite.allPassed ||
+            receipt.taskSuite.results.contains(where: { $0.outcome == .failed }) ||
             (receipt.localityPolicy == .localOnly && receipt.networkAudit == .externalAccessObserved) {
             return .unsupported
         }
@@ -52,7 +101,10 @@ public struct LocalAIQualificationArchive: Codable, Hashable, Sendable {
     }
 
     public var latestReceipt: LocalAIQualificationReceipt { receipts[receipts.count - 1] }
-    public var badge: LocalAICompatibilityBadge { LocalAIQualificationEvaluator.badge(for: latestReceipt) }
+
+    public func badge(against standard: LocalAIQualificationStandard) -> LocalAICompatibilityBadge {
+        LocalAIQualificationEvaluator.badge(for: latestReceipt, against: standard)
+    }
 
     private enum CodingKeys: String, CodingKey { case schemaVersion, profile, receipts }
 
