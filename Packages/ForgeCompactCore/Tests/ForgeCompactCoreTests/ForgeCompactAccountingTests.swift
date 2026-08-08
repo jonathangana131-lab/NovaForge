@@ -5,6 +5,7 @@ import XCTest
 final class ForgeCompactAccountingTests: XCTestCase {
     func testExactTokenizerMeasurementPreservesIdentityAndCanSupportExactTokenTruth() throws {
         let capsule = try makeCapsule()
+        let baseline = try baselineIdentity()
         let counter = MarkerCounter(
             basis: try .exactTokenizer(tokenizerID: "tokenizer-a", tokenizerRevision: "rev-7"),
             provenance: .runtimeTokenizer,
@@ -15,6 +16,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
 
         let receipt = try ForgeCompactAccounting.measure(
             baselineContext: "BASELINE raw project context",
+            baselineIdentity: baseline,
             capsule: capsule,
             counter: counter
         )
@@ -24,6 +26,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
         XCTAssertTrue(receipt.hasExactTokenizerProvenance)
         XCTAssertEqual(receipt.change, .reduced(units: 29))
         XCTAssertTrue(receipt.matches(capsule: capsule))
+        XCTAssertTrue(receipt.matches(baselineIdentity: baseline))
         XCTAssertEqual(receipt.capsuleUTF8Bytes, UInt64(capsule.renderedContext.utf8.count))
     }
 
@@ -39,6 +42,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
 
         let receipt = try ForgeCompactAccounting.measure(
             baselineContext: "BASELINE estimated context",
+            baselineIdentity: try baselineIdentity(),
             capsule: capsule,
             counter: counter
         )
@@ -60,6 +64,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
 
         let receipt = try ForgeCompactAccounting.measure(
             baselineContext: "BASELINE model reported context",
+            baselineIdentity: try baselineIdentity(),
             capsule: capsule,
             counter: counter
         )
@@ -81,6 +86,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
         XCTAssertThrowsError(
             try ForgeCompactAccounting.measure(
                 baselineContext: "BASELINE context",
+                baselineIdentity: try baselineIdentity(),
                 capsule: capsule,
                 counter: counter
             )
@@ -102,12 +108,16 @@ final class ForgeCompactAccountingTests: XCTestCase {
         XCTAssertThrowsError(
             try ForgeCompactAccounting.measure(
                 baselineContext: "BASELINE definitely more than one byte",
+                baselineIdentity: try baselineIdentity(),
                 capsule: capsule,
                 counter: counter
             )
         ) { error in
-            guard case .utf8ByteCountMismatch = error as? ForgeCompactAccountingError else {
-                return XCTFail("Expected UTF-8 byte mismatch, got \(error)")
+            guard let accountingError = error as? ForgeCompactAccountingError else {
+                return XCTFail("Expected accounting error, got \(error)")
+            }
+            guard case .utf8ByteCountMismatch = accountingError else {
+                return XCTFail("Expected UTF-8 byte mismatch, got \(accountingError)")
             }
         }
     }
@@ -118,6 +128,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
 
         let receipt = try ForgeCompactAccounting.measureUTF8Bytes(
             baselineContext: baseline,
+            baselineIdentity: try baselineIdentity(),
             capsule: capsule,
             measurementReceiptID: "receipt-bytes-001"
         )
@@ -139,6 +150,20 @@ final class ForgeCompactAccountingTests: XCTestCase {
         }
     }
 
+    func testBaselineIdentityRejectsNonCanonicalRevision() {
+        XCTAssertThrowsError(
+            try ForgeCompactAccountingBaselineIdentity(
+                contextID: "raw-history",
+                contextRevision: " rev-1"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeCompactAccountingError,
+                .invalidIdentifier(field: "baseline.contextRevision")
+            )
+        }
+    }
+
     func testCounterFailureDoesNotLeakArbitraryErrorIntoDomain() throws {
         let capsule = try makeCapsule()
         let counter = ThrowingCounter(
@@ -148,6 +173,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
         XCTAssertThrowsError(
             try ForgeCompactAccounting.measure(
                 baselineContext: "BASELINE",
+                baselineIdentity: try baselineIdentity(),
                 capsule: capsule,
                 counter: counter
             )
@@ -162,6 +188,21 @@ final class ForgeCompactAccountingTests: XCTestCase {
         var basis = try XCTUnwrap(json["basis"] as? [String: Any])
         basis["counterID"] = " tokenizer-a"
         json["basis"] = basis
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                ForgeCompactAccountingReceipt.self,
+                from: JSONSerialization.data(withJSONObject: json)
+            )
+        )
+    }
+
+    func testReceiptDecodeRevalidatesBaselineIdentity() throws {
+        let receipt = try exactReceipt()
+        var json = try jsonObject(receipt)
+        var baseline = try XCTUnwrap(json["baselineIdentity"] as? [String: Any])
+        baseline["contextRevision"] = " forged-revision"
+        json["baselineIdentity"] = baseline
 
         XCTAssertThrowsError(
             try JSONDecoder().decode(
@@ -194,6 +235,7 @@ final class ForgeCompactAccountingTests: XCTestCase {
         let capsule = try makeCapsule()
         let receipt = try ForgeCompactAccounting.measureUTF8Bytes(
             baselineContext: "baseline",
+            baselineIdentity: try baselineIdentity(),
             capsule: capsule,
             measurementReceiptID: "receipt-bytes-002"
         )
@@ -208,26 +250,32 @@ final class ForgeCompactAccountingTests: XCTestCase {
         )
     }
 
-    func testReceiptMustBeMatchedBackToExactCapsuleAuthorityAndSelection() throws {
+    func testReceiptMustBeMatchedBackToExactCapsuleAndBaselineRevision() throws {
         let capsule = try makeCapsule(capsuleRevision: 1)
+        let baseline = try baselineIdentity(revision: "history-r1")
         let receipt = try ForgeCompactAccounting.measureUTF8Bytes(
             baselineContext: "baseline",
+            baselineIdentity: baseline,
             capsule: capsule,
             measurementReceiptID: "receipt-bytes-003"
         )
         let newerCapsule = try makeCapsule(capsuleRevision: 2)
+        let newerBaseline = try baselineIdentity(revision: "history-r2")
 
         XCTAssertTrue(receipt.matches(capsule: capsule))
         XCTAssertFalse(receipt.matches(capsule: newerCapsule))
+        XCTAssertTrue(receipt.matches(baselineIdentity: baseline))
+        XCTAssertFalse(receipt.matches(baselineIdentity: newerBaseline))
     }
 
-    func testReceiptRoundTripPreservesAccountingTruth() throws {
+    func testReceiptRoundTripPreservesAccountingTruthAndBaseline() throws {
         let receipt = try exactReceipt()
         let data = try JSONEncoder().encode(receipt)
         let decoded = try JSONDecoder().decode(ForgeCompactAccountingReceipt.self, from: data)
 
         XCTAssertEqual(decoded, receipt)
         XCTAssertEqual(decoded.truth, .exactTokenizerTokens)
+        XCTAssertEqual(decoded.baselineIdentity, try baselineIdentity())
     }
 
     private func exactReceipt() throws -> ForgeCompactAccountingReceipt {
@@ -241,9 +289,16 @@ final class ForgeCompactAccountingTests: XCTestCase {
         )
         return try ForgeCompactAccounting.measure(
             baselineContext: "BASELINE round trip",
+            baselineIdentity: try baselineIdentity(),
             capsule: capsule,
             counter: counter
         )
+    }
+
+    private func baselineIdentity(
+        revision: String = "history-r1"
+    ) throws -> ForgeCompactAccountingBaselineIdentity {
+        try .init(contextID: "raw-history", contextRevision: revision)
     }
 
     private func makeCapsule(capsuleRevision: Int = 1) throws -> ProjectCapsule {
