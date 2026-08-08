@@ -1,0 +1,45 @@
+name: V14 Plan Space current-main recovery check
+
+on:
+  push:
+    branches:
+      - worker/GPT56-NF-V14-PLANUI-8A8L/plan-space-current-main/e1
+
+jobs:
+  forge-plan-core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Show Swift version
+        run: swift --version
+      - name: Verify diff
+        run: git diff --check origin/main...HEAD
+      - name: Check test runner syntax
+        run: bash -n scripts/codex-test.sh
+      - name: Test ForgePlanCore
+        shell: bash
+        run: |
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            swift test -c release --package-path Packages/ForgePlanCore -Xswiftc -warnings-as-errors
+          else
+            swift test --package-path Packages/ForgePlanCore -Xswiftc -warnings-as-errors
+          fi
+
+  plan-space-ui:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify diff
+        run: git diff --check origin/main...HEAD
+      - name: Check test runner syntax
+        run: bash -n scripts/codex-test.sh
+      - name: Run focused Plan Space lane
+        run: ./scripts/codex-test.sh plan-space
