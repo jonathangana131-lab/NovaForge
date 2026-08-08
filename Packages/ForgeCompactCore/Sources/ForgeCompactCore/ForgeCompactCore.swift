@@ -209,22 +209,26 @@ public enum ForgeCompactDecisionAction: Codable, Equatable, Sendable {
 }
 
 /// Durable, serializable proof of a deterministic policy decision. It is not a benchmark receipt;
-/// it references benchmark/qualification receipts supplied in the candidate envelopes.
+/// it preserves the exact selected envelope and therefore the opaque configuration + qualification
+/// receipt bindings that the external evidence authority supplied at decision time.
 public struct ForgeCompactDecisionReceipt: Codable, Equatable, Sendable {
     public let snapshot: ForgeCompactRuntimeSnapshot
     public let policy: ForgeCompactGovernorPolicy
     public let action: ForgeCompactDecisionAction
+    public let selectedEnvelope: ForgeCompactExecutionEnvelope?
     public let candidateVerdicts: [ForgeCompactCandidateVerdict]
 
     public init(
         snapshot: ForgeCompactRuntimeSnapshot,
         policy: ForgeCompactGovernorPolicy,
         action: ForgeCompactDecisionAction,
+        selectedEnvelope: ForgeCompactExecutionEnvelope?,
         candidateVerdicts: [ForgeCompactCandidateVerdict]
     ) {
         self.snapshot = snapshot
         self.policy = policy
         self.action = action
+        self.selectedEnvelope = selectedEnvelope
         self.candidateVerdicts = candidateVerdicts
     }
 }
@@ -248,6 +252,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidRuntimeSnapshot),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -257,6 +262,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .invalidPolicy),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -266,6 +272,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .suspend(reason: .memoryPressureThresholdReached),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -275,6 +282,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .suspend(reason: .thermalPressureThresholdReached),
+                selectedEnvelope: nil,
                 candidateVerdicts: []
             )
         }
@@ -302,12 +310,13 @@ public enum ForgeCompactGovernor {
         let eligible = envelopes.filter { eligibleIDs.contains($0.id) }
 
         if let activeEnvelopeID = snapshot.activeEnvelopeID,
-           eligible.contains(where: { $0.id == activeEnvelopeID })
+           let activeEnvelope = eligible.first(where: { $0.id == activeEnvelopeID })
         {
             return .init(
                 snapshot: snapshot,
                 policy: policy,
                 action: .keep(envelopeID: activeEnvelopeID),
+                selectedEnvelope: activeEnvelope,
                 candidateVerdicts: verdicts
             )
         }
@@ -317,6 +326,7 @@ public enum ForgeCompactGovernor {
                 snapshot: snapshot,
                 policy: policy,
                 action: .block(reason: .noEligibleLocalEnvelope),
+                selectedEnvelope: nil,
                 candidateVerdicts: verdicts
             )
         }
@@ -325,6 +335,7 @@ public enum ForgeCompactGovernor {
             snapshot: snapshot,
             policy: policy,
             action: .switchTo(envelopeID: selected.id),
+            selectedEnvelope: selected,
             candidateVerdicts: verdicts
         )
     }
