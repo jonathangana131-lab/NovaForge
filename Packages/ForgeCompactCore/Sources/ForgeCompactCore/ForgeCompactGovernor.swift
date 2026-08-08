@@ -88,41 +88,29 @@ public struct ForgeCompactExecutionEnvelope: Codable, Hashable, Sendable {
     }
 }
 
-/// Transient host acceptance projection for an exact qualified execution configuration.
+/// Transient host acceptance projection for one exact qualified execution envelope.
 ///
-/// This value is intentionally non-Codable and its initializer is package-internal. External
-/// callers may consume a grant but cannot mint one from candidate strings. A future adapter in
-/// this package must translate canonical qualification authority into these grants.
+/// The full envelope is bound, not just opaque IDs, so a caller cannot keep a trusted receipt and
+/// rewrite measured context/peak-memory values before selection. This value is intentionally
+/// non-Codable and its initializer is package-internal. A future adapter in this package must
+/// translate canonical qualification authority into grants.
 public struct ForgeCompactQualificationGrant: Hashable, Sendable {
-    public let profileID: String
-    public let configurationBindingID: String
-    public let deviceProfileID: String
-    public let evidenceReceiptID: String
+    public let acceptedEnvelope: ForgeCompactExecutionEnvelope
 
-    init(
-        profileID: String,
-        configurationBindingID: String,
-        deviceProfileID: String,
-        evidenceReceiptID: String
-    ) throws {
-        guard ForgeCompactGovernor.isCanonicalIdentity(profileID),
-              ForgeCompactGovernor.isCanonicalIdentity(configurationBindingID),
-              ForgeCompactGovernor.isCanonicalIdentity(deviceProfileID),
-              ForgeCompactGovernor.isCanonicalIdentity(evidenceReceiptID)
+    init(acceptedEnvelope: ForgeCompactExecutionEnvelope) throws {
+        guard ForgeCompactGovernor.hasCanonicalIdentity(acceptedEnvelope),
+              acceptedEnvelope.computeLocation == .local,
+              acceptedEnvelope.evidenceStatus != .unverified,
+              acceptedEnvelope.contextTokens > 0,
+              acceptedEnvelope.observedPeakResidentBytes > 0
         else {
             throw ForgeCompactError.invalidIdentifier(field: "qualificationGrant")
         }
-        self.profileID = profileID
-        self.configurationBindingID = configurationBindingID
-        self.deviceProfileID = deviceProfileID
-        self.evidenceReceiptID = evidenceReceiptID
+        self.acceptedEnvelope = acceptedEnvelope
     }
 
     fileprivate func matches(_ envelope: ForgeCompactExecutionEnvelope) -> Bool {
-        profileID == envelope.profileID
-            && configurationBindingID == envelope.configurationBindingID
-            && deviceProfileID == envelope.deviceProfileID
-            && evidenceReceiptID == envelope.evidenceReceiptID
+        acceptedEnvelope == envelope
     }
 }
 
@@ -413,12 +401,7 @@ public enum ForgeCompactGovernor {
             reasons.append(.duplicateEnvelopeID)
         }
 
-        if !isCanonicalIdentity(envelope.id)
-            || !isCanonicalIdentity(envelope.profileID)
-            || !isCanonicalIdentity(envelope.configurationBindingID)
-            || !isCanonicalIdentity(envelope.deviceProfileID)
-            || !isCanonicalIdentity(envelope.evidenceReceiptID)
-        {
+        if !hasCanonicalIdentity(envelope) {
             reasons.append(.invalidIdentity)
         }
 
@@ -491,6 +474,14 @@ public enum ForgeCompactGovernor {
             return lhs.observedPeakResidentBytes < rhs.observedPeakResidentBytes
         }
         return lhs.id < rhs.id
+    }
+
+    fileprivate static func hasCanonicalIdentity(_ envelope: ForgeCompactExecutionEnvelope) -> Bool {
+        isCanonicalIdentity(envelope.id)
+            && isCanonicalIdentity(envelope.profileID)
+            && isCanonicalIdentity(envelope.configurationBindingID)
+            && isCanonicalIdentity(envelope.deviceProfileID)
+            && isCanonicalIdentity(envelope.evidenceReceiptID)
     }
 
     fileprivate static func isCanonicalIdentity(_ value: String) -> Bool {
