@@ -7,7 +7,7 @@ Protocol: NF-SWARM-v14
 WHEN THE USER SAYS `GO`:
 - work on NovaForge immediately;
 - fresh-check live GitHub before deciding what to do;
-- read `AGENTS.md`, `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt`, `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`, `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md`, and `CONTINUATION_PROMPT.md`;
+- read `AGENTS.md`, `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt`, `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`, `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md`, `docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md`, and `CONTINUATION_PROMPT.md`;
 - preserve the V13 NovaForge 2.0 product constitution/design/runtime direction while applying the stronger V14 local-AI/autonomous-Forge direction;
 - identify current flagships, dependencies, high-contention paths, and active ownership;
 - claim the highest-value safe non-conflicting lane;
