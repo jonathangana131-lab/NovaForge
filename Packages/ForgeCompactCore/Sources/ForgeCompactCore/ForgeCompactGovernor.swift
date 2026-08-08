@@ -249,7 +249,6 @@ public enum ForgeCompactDecisionArchiveError: Error, Equatable, Sendable {
 /// authority. Call `restore(qualificationGrants:)` to re-run the governor against current host trust.
 public struct ForgeCompactDecisionArchive: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
-    private static let maximumEnvelopeCount = 512
 
     public let schemaVersion: Int
     public let snapshot: ForgeCompactRuntimeSnapshot
@@ -296,10 +295,7 @@ public struct ForgeCompactDecisionArchive: Codable, Equatable, Sendable {
             forKey: .evaluatedEnvelopes
         )
 
-        guard candidateVerdicts.count <= Self.maximumEnvelopeCount,
-              evaluatedEnvelopes.count <= Self.maximumEnvelopeCount,
-              Self.hasBasicActionShape(action: action, selectedEnvelope: selectedEnvelope)
-        else {
+        guard Self.hasBasicActionShape(action: action, selectedEnvelope: selectedEnvelope) else {
             throw ForgeCompactDecisionArchiveError.invalidShape
         }
 
