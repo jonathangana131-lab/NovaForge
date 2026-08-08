@@ -2,12 +2,11 @@ import AgentDomain
 import ForgeMission
 import XCTest
 
-/// Review-only regression for PR #110.
-///
-/// Accepted evidence is keyed by MissionStageID, so a graph revision must not be able to
-/// redefine the semantic work behind an already-accepted ID while retaining its status.
+/// Review-only reproducer for PR #110. This file intentionally demonstrates the
+/// current unsafe behavior; it is not a merge-candidate regression until the reducer
+/// is hardened and these assertions are inverted to require rejection.
 final class MissionStageSemanticIdentityReviewTests: XCTestCase {
-    func testCompletedStageCannotBeRelabeledWhileKeepingAcceptedEvidence() throws {
+    func testCurrentHeadRelabelsCompletedStageWhileKeepingAcceptedEvidence() throws {
         let missionID = MissionID()
         let projectID = ProjectID()
         let stageID = MissionStageID()
@@ -63,9 +62,16 @@ final class MissionStageSemanticIdentityReviewTests: XCTestCase {
             ]
         )
 
-        XCTAssertThrowsError(try mission.replaceStageGraph(relabeled))
-        XCTAssertEqual(mission.graph.stages[0].kind, .implement)
-        XCTAssertEqual(mission.graph.stages[0].title, "Implement")
+        XCTAssertNoThrow(try mission.replaceStageGraph(relabeled))
+        XCTAssertEqual(mission.graph.stages[0].kind, .accessibility)
+        XCTAssertEqual(mission.graph.stages[0].title, "Accessibility acceptance")
+        XCTAssertEqual(mission.graph.stages[0].status, .completed)
+
+        // The receipt was accepted for implementation work but remains attached only by
+        // stage ID after that ID has been redefined as accessibility acceptance.
+        XCTAssertEqual(mission.stageEvidence[0].stageID, stageID)
         XCTAssertEqual(mission.stageEvidence[0].receiptIDs.values, ["receipt:implementation"])
+        XCTAssertEqual(mission.workerReceipts.last?.stageID, stageID)
+        XCTAssertEqual(mission.workerReceipts.last?.evidenceReceiptIDs.values, ["receipt:implementation"])
     }
 }
