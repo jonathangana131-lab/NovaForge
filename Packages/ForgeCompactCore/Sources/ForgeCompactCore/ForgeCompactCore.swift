@@ -93,12 +93,14 @@ public struct ForgeCompactExecutionEnvelope: Codable, Hashable, Sendable {
     }
 }
 
-/// Live inputs for one deterministic governor decision.
+/// Live inputs for one deterministic governor decision. `memoryBudgetBytes` is the host's
+/// current safe process budget after observing memory availability and pressure; it is not a
+/// physical-RAM claim and is intentionally compared with measured peak resident usage.
 public struct ForgeCompactRuntimeSnapshot: Codable, Equatable, Sendable {
     public let deviceProfileID: String
     public let requestedContextTokens: UInt64
     public let minimumMissionContextTokens: UInt64
-    public let availableMemoryBytes: UInt64
+    public let memoryBudgetBytes: UInt64
     public let activeEnvelopeID: String?
     public let memoryPressure: ForgeCompactMemoryPressure
     public let thermalPressure: ForgeCompactThermalPressure
@@ -107,7 +109,7 @@ public struct ForgeCompactRuntimeSnapshot: Codable, Equatable, Sendable {
         deviceProfileID: String,
         requestedContextTokens: UInt64,
         minimumMissionContextTokens: UInt64,
-        availableMemoryBytes: UInt64,
+        memoryBudgetBytes: UInt64,
         activeEnvelopeID: String? = nil,
         memoryPressure: ForgeCompactMemoryPressure,
         thermalPressure: ForgeCompactThermalPressure
@@ -115,7 +117,7 @@ public struct ForgeCompactRuntimeSnapshot: Codable, Equatable, Sendable {
         self.deviceProfileID = deviceProfileID
         self.requestedContextTokens = requestedContextTokens
         self.minimumMissionContextTokens = minimumMissionContextTokens
-        self.availableMemoryBytes = availableMemoryBytes
+        self.memoryBudgetBytes = memoryBudgetBytes
         self.activeEnvelopeID = activeEnvelopeID
         self.memoryPressure = memoryPressure
         self.thermalPressure = thermalPressure
@@ -333,7 +335,7 @@ public enum ForgeCompactGovernor {
             && snapshot.requestedContextTokens > 0
             && snapshot.minimumMissionContextTokens > 0
             && snapshot.minimumMissionContextTokens <= snapshot.requestedContextTokens
-            && snapshot.availableMemoryBytes > 0
+            && snapshot.memoryBudgetBytes > 0
     }
 
     private static func duplicateEnvelopeIDs(
@@ -402,7 +404,7 @@ public enum ForgeCompactGovernor {
             reasons.append(.invalidPeakMemoryMeasurement)
         } else if !hasMeasuredHeadroom(
             peakResidentBytes: envelope.observedPeakResidentBytes,
-            availableMemoryBytes: snapshot.availableMemoryBytes,
+            memoryBudgetBytes: snapshot.memoryBudgetBytes,
             reserveBytes: reserveBytes
         ) {
             reasons.append(.insufficientMeasuredHeadroom)
@@ -416,11 +418,11 @@ public enum ForgeCompactGovernor {
 
     private static func hasMeasuredHeadroom(
         peakResidentBytes: UInt64,
-        availableMemoryBytes: UInt64,
+        memoryBudgetBytes: UInt64,
         reserveBytes: UInt64
     ) -> Bool {
-        guard availableMemoryBytes >= reserveBytes else { return false }
-        return peakResidentBytes <= availableMemoryBytes - reserveBytes
+        guard memoryBudgetBytes >= reserveBytes else { return false }
+        return peakResidentBytes <= memoryBudgetBytes - reserveBytes
     }
 
     private static func preferredEnvelopeOrder(
