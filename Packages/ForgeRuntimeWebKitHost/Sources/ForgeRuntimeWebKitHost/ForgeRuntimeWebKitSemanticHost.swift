@@ -125,7 +125,7 @@ public final class ForgeRuntimeWebKitSemanticHost {
         let value = try await webView.evaluateJavaScript(
             plan.javaScript,
             in: nil,
-            in: Self.contentWorld
+            contentWorld: Self.contentWorld
         )
 
         guard !processTerminated,
