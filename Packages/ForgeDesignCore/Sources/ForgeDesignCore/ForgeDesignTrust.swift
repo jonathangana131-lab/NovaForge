@@ -3,8 +3,9 @@ import Foundation
 /// Complete Design DNA subject that a host has authenticated as accepted project truth.
 ///
 /// This type is intentionally non-Codable. Persisted `DesignDNA` remains durable evidence, but
-/// restoring bytes must never restore a trusted bit. The host should construct this binding only
-/// after authenticating the receipts/decisions that make the complete snapshot authoritative.
+/// restoring bytes must never restore a trusted bit. Only package-owned authenticated adapters may
+/// construct a binding; external consumers cannot mint accepted Design DNA authority from candidate
+/// bytes merely by calling an initializer.
 public struct DesignDNATrustBinding: Equatable, Sendable {
     private let authenticatedSnapshot: DesignDNA
 
@@ -20,9 +21,10 @@ public struct DesignDNATrustBinding: Equatable, Sendable {
     public var lastChangeReceiptID: DesignReceiptID { authenticatedSnapshot.lastChangeReceiptID }
     public var updatedAt: Date { authenticatedSnapshot.updatedAt }
 
-    /// Captures the complete subject of a Design DNA snapshot the host has already authenticated.
-    /// Constructing this value does not itself authenticate the snapshot.
-    public init(authenticatedSnapshot snapshot: DesignDNA) {
+    /// Package-owned construction seam for a snapshot already authenticated by a canonical host
+    /// adapter. Keeping this initializer internal prevents ordinary external callers from turning
+    /// serialized/model-authored candidate state into accepted truth by assertion alone.
+    init(authenticatedSnapshot snapshot: DesignDNA) {
         authenticatedSnapshot = snapshot
     }
 
@@ -32,9 +34,9 @@ public struct DesignDNATrustBinding: Equatable, Sendable {
 }
 
 public extension DesignDNA {
-    /// Accepted project truth requires a host-authenticated binding for this complete snapshot.
-    /// Structural provenance such as `.userDecision` is evidence metadata and cannot authorize
-    /// itself merely because it was constructed or decoded from persisted/model-shaped bytes.
+    /// Accepted project truth requires a package-owned host-authenticated binding for this complete
+    /// snapshot. Structural provenance such as `.userDecision` is evidence metadata and cannot
+    /// authorize itself merely because it was constructed or decoded from persisted/model-shaped bytes.
     func canSupportAcceptedDesignTruth(
         trustedSnapshots: [DesignDNATrustBinding]
     ) -> Bool {
