@@ -1,5 +1,7 @@
 import Foundation
 
+/// Host code must authenticate the complete observation subject against the canonical producer receipt.
+/// Decoding an observation, seeing a known producer enum, or matching a receipt ID is never sufficient.
 public protocol ForgeAccessibilityEvidenceAuthenticating: Sendable {
     func authenticates(_ observation: ForgeAccessibilityObservation) -> Bool
 }
