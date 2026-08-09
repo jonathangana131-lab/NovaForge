@@ -36,7 +36,16 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         }
     }
 
-    func testProjectorPreservesQualityEvidenceInCanonicalCheckpointOrder() throws {
+    func testPublicQualityReferenceIsExplicitlyUnverified() throws {
+        let reference = ForgeHistoryQualityEvidenceReference(
+            kind: .accessibility,
+            producerReceiptReference: try ForgeHistoryProducerReceiptReference("a11y-1")
+        )
+
+        XCTAssertEqual(reference.verificationStatus, .unverifiedReference)
+    }
+
+    func testProjectorPreservesQualityReferencesInCanonicalCheckpointOrder() throws {
         let project = try ForgeHistoryProjectID("project-a")
         let first = try makeCheckpoint("c1", sequence: 1)
         let second = try makeCheckpoint("c2", parent: first.id, sequence: 2)
@@ -45,9 +54,9 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
             checkpoints: [second, first]
         )
 
-        let projection = try ForgeHistoryAcceptedQualityTimelineProjector.project(
+        let projection = try ForgeHistoryQualityReferenceTimelineProjector.project(
             timeline: timeline,
-            acceptedQuality: [
+            qualityReferences: [
                 try binding(project: project, checkpoint: second.id, kind: .performance, receipt: "perf-2"),
                 try binding(project: project, checkpoint: first.id, kind: .accessibility, receipt: "a11y-1"),
             ]
@@ -61,6 +70,10 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         XCTAssertEqual(
             projection.qualityState(for: second.id)?.evidence(kind: .performance)?.producerReceiptReference.rawValue,
             "perf-2"
+        )
+        XCTAssertEqual(
+            projection.qualityState(for: first.id)?.evidence(kind: .accessibility)?.verificationStatus,
+            .unverifiedReference
         )
     }
 
@@ -77,9 +90,9 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         )
 
         XCTAssertThrowsError(
-            try ForgeHistoryAcceptedQualityTimelineProjector.project(
+            try ForgeHistoryQualityReferenceTimelineProjector.project(
                 timeline: timeline,
-                acceptedQuality: [quality]
+                qualityReferences: [quality]
             )
         ) { error in
             XCTAssertEqual(
@@ -100,9 +113,9 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         let ghost = try ForgeHistoryCheckpointID("ghost")
 
         XCTAssertThrowsError(
-            try ForgeHistoryAcceptedQualityTimelineProjector.project(
+            try ForgeHistoryQualityReferenceTimelineProjector.project(
                 timeline: timeline,
-                acceptedQuality: [
+                qualityReferences: [
                     try binding(project: project, checkpoint: ghost, kind: .performance, receipt: "perf-ghost"),
                 ]
             )
@@ -120,9 +133,9 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         let timeline = try ForgeHistoryTimeline(projectID: project, checkpoints: [checkpoint])
 
         XCTAssertThrowsError(
-            try ForgeHistoryAcceptedQualityTimelineProjector.project(
+            try ForgeHistoryQualityReferenceTimelineProjector.project(
                 timeline: timeline,
-                acceptedQuality: [
+                qualityReferences: [
                     try binding(project: project, checkpoint: checkpoint.id, kind: .accessibility, receipt: "a11y-1"),
                     try binding(project: project, checkpoint: checkpoint.id, kind: .performance, receipt: "perf-1"),
                 ]
@@ -140,7 +153,7 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         let checkpoint = try ForgeHistoryCheckpointID("c1")
 
         XCTAssertThrowsError(
-            try ForgeHistoryCheckpointQualityBinding(
+            try ForgeHistoryCheckpointQualityReferenceBinding(
                 projectID: project,
                 checkpointID: checkpoint,
                 evidence: []
@@ -152,16 +165,16 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
             )
         }
 
-        let first = ForgeHistoryAcceptedQualityEvidenceReference(
+        let first = ForgeHistoryQualityEvidenceReference(
             kind: .accessibility,
             producerReceiptReference: try ForgeHistoryProducerReceiptReference("a11y-1")
         )
-        let second = ForgeHistoryAcceptedQualityEvidenceReference(
+        let second = ForgeHistoryQualityEvidenceReference(
             kind: .accessibility,
             producerReceiptReference: try ForgeHistoryProducerReceiptReference("a11y-2")
         )
         XCTAssertThrowsError(
-            try ForgeHistoryCheckpointQualityBinding(
+            try ForgeHistoryCheckpointQualityReferenceBinding(
                 projectID: project,
                 checkpointID: checkpoint,
                 evidence: [first, second]
@@ -183,18 +196,18 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         let checkpoint = try makeCheckpoint("c1", sequence: 1, artifacts: [attached])
         let timeline = try ForgeHistoryTimeline(projectID: project, checkpoints: [checkpoint])
 
-        let accepted = ForgeHistoryAcceptedQualityEvidenceReference(
+        let reference = ForgeHistoryQualityEvidenceReference(
             kind: .performance,
             producerReceiptReference: try ForgeHistoryProducerReceiptReference("perf-1"),
             artifactReference: attached
         )
-        let projection = try ForgeHistoryAcceptedQualityTimelineProjector.project(
+        let projection = try ForgeHistoryQualityReferenceTimelineProjector.project(
             timeline: timeline,
-            acceptedQuality: [
-                try ForgeHistoryCheckpointQualityBinding(
+            qualityReferences: [
+                try ForgeHistoryCheckpointQualityReferenceBinding(
                     projectID: project,
                     checkpointID: checkpoint.id,
-                    evidence: [accepted]
+                    evidence: [reference]
                 ),
             ]
         )
@@ -208,10 +221,10 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
             id: try ForgeHistoryArtifactID("perf-report-other")
         )
         XCTAssertThrowsError(
-            try ForgeHistoryAcceptedQualityTimelineProjector.project(
+            try ForgeHistoryQualityReferenceTimelineProjector.project(
                 timeline: timeline,
-                acceptedQuality: [
-                    try ForgeHistoryCheckpointQualityBinding(
+                qualityReferences: [
+                    try ForgeHistoryCheckpointQualityReferenceBinding(
                         projectID: project,
                         checkpointID: checkpoint.id,
                         evidence: [
@@ -246,9 +259,9 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
             ]
         )
         let timeline = try ForgeHistoryTimeline(projectID: project, checkpoints: [checkpoint])
-        let projection = try ForgeHistoryAcceptedQualityTimelineProjector.project(
+        let projection = try ForgeHistoryQualityReferenceTimelineProjector.project(
             timeline: timeline,
-            acceptedQuality: []
+            qualityReferences: []
         )
 
         XCTAssertTrue(projection.qualityStates.isEmpty)
@@ -259,7 +272,7 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         let project = try ForgeHistoryProjectID("project-a")
         let checkpoint = try makeCheckpoint("c1", sequence: 1)
         let receipt = try ForgeHistoryProducerReceiptReference("quality-bundle-1")
-        let binding = try ForgeHistoryCheckpointQualityBinding(
+        let binding = try ForgeHistoryCheckpointQualityReferenceBinding(
             projectID: project,
             checkpointID: checkpoint.id,
             evidence: [
@@ -270,6 +283,7 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
 
         XCTAssertEqual(binding.evidence.map(\.kind), [.accessibility, .performance])
         XCTAssertEqual(Set(binding.evidence.map(\.producerReceiptReference)), [receipt])
+        XCTAssertTrue(binding.evidence.allSatisfy { $0.verificationStatus == .unverifiedReference })
     }
 
     private func binding(
@@ -277,8 +291,8 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         checkpoint: ForgeHistoryCheckpointID,
         kind: ForgeHistoryQualityEvidenceKind,
         receipt: String
-    ) throws -> ForgeHistoryCheckpointQualityBinding {
-        try ForgeHistoryCheckpointQualityBinding(
+    ) throws -> ForgeHistoryCheckpointQualityReferenceBinding {
+        try ForgeHistoryCheckpointQualityReferenceBinding(
             projectID: project,
             checkpointID: checkpoint,
             evidence: [
