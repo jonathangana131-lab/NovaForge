@@ -18,10 +18,12 @@ jobs:
         configuration: [debug, release]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Toolchain
         run: swift --version
       - name: Diff check
-        run: git diff --check HEAD~4..HEAD
+        run: git diff --check 77dd3e4a1f681bbb424170945539427534442c21..HEAD
       - name: Test package
         shell: bash
         run: |
@@ -31,3 +33,29 @@ jobs:
           else
             swift test --package-path Packages/ForgeAccessibilityCore -Xswiftc -warnings-as-errors
           fi
+      - name: Prove external code cannot mint producer trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          module_file="$(find Packages/ForgeAccessibilityCore/.build -type f -name 'ForgeAccessibilityCore.swiftmodule' -print -quit)"
+          test -n "$module_file"
+          module_dir="$(dirname "$module_file")"
+          snippet="$RUNNER_TEMP/external-accessibility-trust-mint.swift"
+          diagnostics="$RUNNER_TEMP/external-accessibility-trust-mint.err"
+          cat > "$snippet" <<'SWIFT'
+          import ForgeAccessibilityCore
+
+          func attemptMint(_ run: ForgeAccessibilityRunEvidence) {
+              _ = ForgeAccessibilityTrustedProducerReceipt(authenticatedRun: run)
+          }
+          SWIFT
+          set +e
+          swiftc -typecheck "$snippet" -I "$module_dir" 2>"$diagnostics"
+          status=$?
+          set -e
+          cat "$diagnostics"
+          if [[ $status -eq 0 ]]; then
+            echo "External code unexpectedly compiled a trusted producer receipt" >&2
+            exit 1
+          fi
+          grep -qi "inaccessible" "$diagnostics"
