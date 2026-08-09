@@ -21,16 +21,7 @@ final class ForgeAccessibilityStaticTrustBoundaryTests: XCTestCase {
         }
         """.write(to: sourceURL, atomically: true, encoding: .utf8)
 
-        let modulesURL = Bundle(for: ForgeAccessibilityStaticTrustBoundaryTests.self)
-            .bundleURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("Modules", isDirectory: true)
-        let moduleURL = modulesURL.appendingPathComponent("ForgeAccessibilityCore.swiftmodule")
-        guard FileManager.default.fileExists(atPath: moduleURL.path) else {
-            XCTFail("ForgeAccessibilityCore module is missing from active SwiftPM build at \(modulesURL.path)")
-            return
-        }
-
+        let modulesURL = try activeModulesURL()
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -62,6 +53,34 @@ final class ForgeAccessibilityStaticTrustBoundaryTests: XCTestCase {
             diagnostics.localizedCaseInsensitiveContains("inaccessible")
                 || diagnostics.localizedCaseInsensitiveContains("internal protection level"),
             "Expected access-control rejection, got: \(diagnostics)"
+        )
+    }
+
+    private func activeModulesURL() throws -> URL {
+        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
+            .deletingLastPathComponent()
+
+        for _ in 0..<10 {
+            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+            let moduleURL = modulesURL.appendingPathComponent("ForgeAccessibilityCore.swiftmodule")
+            if FileManager.default.fileExists(atPath: moduleURL.path) {
+                return modulesURL
+            }
+
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path {
+                break
+            }
+            directory = parent
+        }
+
+        throw NSError(
+            domain: "ForgeAccessibilityStaticTrustBoundaryTests",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "ForgeAccessibilityCore module is missing from the active SwiftPM test executable ancestry"
+            ]
         )
     }
 }
