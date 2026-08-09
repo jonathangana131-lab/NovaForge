@@ -101,12 +101,12 @@ class ForgeAccessibilityTestCase: XCTestCase {
         try policy.scenarios.map { try run(for: $0, target: policy.target) }
     }
 
-    func trust(_ run: ForgeAccessibilityRunEvidence) -> ForgeAccessibilityTrustedProducerReceipt {
+    func trust(_ run: ForgeAccessibilityRunEvidence) throws -> ForgeAccessibilityTrustedProducerReceipt {
         ForgeAccessibilityTrustedProducerReceipt(authenticatedRun: run)
     }
 
-    func trusts(_ runs: [ForgeAccessibilityRunEvidence]) -> [ForgeAccessibilityTrustedProducerReceipt] {
-        runs.map(trust)
+    func trusts(_ runs: [ForgeAccessibilityRunEvidence]) throws -> [ForgeAccessibilityTrustedProducerReceipt] {
+        try runs.map { try trust($0) }
     }
 
 }
