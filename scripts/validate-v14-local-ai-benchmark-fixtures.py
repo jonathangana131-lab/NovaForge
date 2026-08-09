@@ -167,6 +167,7 @@ class ValidationResult:
     task_count: int
     corpus_sha256: str
     task_digests: dict[str, str]
+    suite_definition: dict[str, Any]
 
 
 def validate(root: pathlib.Path) -> ValidationResult:
@@ -259,12 +260,29 @@ def validate(root: pathlib.Path) -> ValidationResult:
         f"novaforge-v14-local-ai-fixture-pack\0{SCHEMA_VERSION}\n"
         f"manifest\0{manifest_digest}\n" + "".join(corpus_records)
     ).encode("utf-8")
+    suite_definition = {
+        "id": suite_id,
+        "version": suite_version,
+        "requiredCategories": required_categories,
+        "tasks": [
+            {
+                "id": task["id"],
+                "revision": task["revision"],
+                "category": task["category"],
+                "weight": task["weight"],
+                "isRequired": task["is_required"],
+                "fixtureDigest": task["fixture_sha256"],
+            }
+            for task in tasks
+        ],
+    }
     return ValidationResult(
         suite_id=suite_id,
         suite_version=suite_version,
         task_count=len(tasks),
         corpus_sha256=sha256(corpus_preimage),
         task_digests=task_digests,
+        suite_definition=suite_definition,
     )
 
 
@@ -272,6 +290,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", nargs="?", default="Benchmarks/LocalAI/v1")
     parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument(
+        "--suite-json",
+        action="store_true",
+        help="emit the validated LocalAIBenchmarkSuite Codable JSON shape from #108",
+    )
     args = parser.parse_args()
     try:
         result = validate(pathlib.Path(args.root))
@@ -285,7 +308,11 @@ def main() -> int:
         "task_count": result.task_count,
         "task_digests": dict(sorted(result.task_digests.items())),
     }
-    if args.as_json:
+    if args.as_json and args.suite_json:
+        parser.error("--json and --suite-json are mutually exclusive")
+    if args.suite_json:
+        print(json.dumps(result.suite_definition, sort_keys=True, separators=(",", ":")))
+    elif args.as_json:
         print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
     else:
         print(f"PASS {result.suite_id} v{result.suite_version} tasks={result.task_count} corpus_sha256={result.corpus_sha256}")
