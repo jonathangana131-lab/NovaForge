@@ -18,10 +18,12 @@ jobs:
         configuration: [debug, release]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Toolchain
         run: swift --version
       - name: Diff check
-        run: git diff --check HEAD~3..HEAD
+        run: git diff --check e60ff09f9b9bff42399608ca58b60d8e435634ff..HEAD
       - name: Test package
         shell: bash
         run: |
