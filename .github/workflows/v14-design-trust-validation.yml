@@ -1,6 +1,9 @@
 name: V14 Design trust validation
 
 on:
+  push:
+    branches:
+      - "validation/GPT56-NF-V14-DESIGN-8A08/external-trust-gate/e3"
   pull_request:
     paths:
       - "Packages/ForgeDesignCore/**"
