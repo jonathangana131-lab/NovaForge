@@ -156,6 +156,3 @@ public struct ForgeAccessibilityAssessment: Codable, Hashable, Sendable {
         )
     }
 }
-
-/// Host code must authenticate the complete observation subject against the canonical producer receipt.
-/// Decoding an observation, seeing a known producer enum, or matching a receipt ID is never sufficient.
