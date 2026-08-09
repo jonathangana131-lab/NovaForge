@@ -48,6 +48,7 @@
 		AA0000000000000000000146 /* LocalAgentPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000046 /* LocalAgentPlanner.swift */; };
 		AA0000000000000000000150 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000050 /* Assets.xcassets */; };
 		AA0000000000000000000163 /* SwiftLlama in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000001602 /* SwiftLlama */; };
+		FP1000000000000000000001 /* ForgePlanCore in Frameworks */ = {isa = PBXBuildFile; productRef = FP0000000000000000001602 /* ForgePlanCore */; };
 		AA0000000000000000000201 /* SandboxWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000021 /* SandboxWorkspaceTests.swift */; };
 		AA0000000000000000000202 /* CommandRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000022 /* CommandRunnerTests.swift */; };
 		AA0000000000000000000203 /* SandboxToolExecutorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000023 /* SandboxToolExecutorTests.swift */; };
@@ -533,6 +534,7 @@
 				D41000000000000000000105 /* AgentShadow in Frameworks */,
 				D41000000000000000000106 /* AgentTools in Frameworks */,
 				D41000000000000000000107 /* AgentPolicy in Frameworks */,
+				FP1000000000000000000001 /* ForgePlanCore in Frameworks */,
 				AA0000000000000000000163 /* SwiftLlama in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -915,6 +917,7 @@
 				D41000000000000000001605 /* AgentShadow */,
 				D41000000000000000001606 /* AgentTools */,
 				D41000000000000000001607 /* AgentPolicy */,
+				FP0000000000000000001602 /* ForgePlanCore */,
 				AA0000000000000000001602 /* SwiftLlama */,
 			);
 			productName = AgentPad;
@@ -1018,6 +1021,7 @@
 			packageReferences = (
 				AA0000000000000000001601 /* XCLocalSwiftPackageReference "Vendor/swift-llama-cpp" */,
 				D40000000000000000001601 /* XCLocalSwiftPackageReference "Packages/AgentHarnessKit" */,
+				FP0000000000000000001601 /* XCLocalSwiftPackageReference "Packages/ForgePlanCore" */,
 			);
 			productRefGroup = AA0000000000000000000940 /* Products */;
 			projectDirPath = "";
@@ -1746,6 +1750,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AgentHarnessKit;
 		};
+		FP0000000000000000001601 /* XCLocalSwiftPackageReference "Packages/ForgePlanCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/ForgePlanCore;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1753,6 +1761,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA0000000000000000001601 /* XCLocalSwiftPackageReference "Vendor/swift-llama-cpp" */;
 			productName = SwiftLlama;
+		};
+		FP0000000000000000001602 /* ForgePlanCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FP0000000000000000001601 /* XCLocalSwiftPackageReference "Packages/ForgePlanCore" */;
+			productName = ForgePlanCore;
 		};
 		D41000000000000000001601 /* AgentDomain */ = {
 			isa = XCSwiftPackageProductDependency;
