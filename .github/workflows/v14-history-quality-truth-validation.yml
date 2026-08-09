@@ -1,0 +1,35 @@
+name: ForgeHistoryCore quality truth hardening validation
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-history-quality-truth:
+    name: ForgeHistoryCore quality truth debug + release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact product ancestry and blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "646040aea026f0b94473e92676a921047a2e7acc"
+          test "$(git rev-parse HEAD^:Packages/ForgeHistoryCore/Sources/ForgeHistoryCore/ForgeHistoryQualityEvidence.swift)" = "7fe54ae0a548ea58113ba7197960af91053669ca"
+          test "$(git rev-parse HEAD^:Packages/ForgeHistoryCore/Tests/ForgeHistoryCoreTests/ForgeHistoryQualityEvidenceTests.swift)" = "e908f3b7073c63d4a91bc57811fbd4394c8fa4ba"
+          git diff --check e60ff09f9b9bff42399608ca58b60d8e435634ff HEAD^
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Test ForgeHistoryCore debug with warnings as errors
+        run: swift test --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
+
+      - name: Test ForgeHistoryCore release with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
