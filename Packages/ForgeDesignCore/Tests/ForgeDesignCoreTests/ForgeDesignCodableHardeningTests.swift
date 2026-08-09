@@ -95,9 +95,7 @@ private func hardeningJSONData(_ object: [String: Any]) throws -> Data {
 @Test func decodedProvenanceRejectsBlankReceiptIdentity() throws {
     let provenanceValue = try hardeningProvenance(.acceptedRuntimeCapture, "receipt.runtime")
     var object = try hardeningJSONObject(provenanceValue)
-    var receiptID = try #require(object["receiptID"] as? [String: Any])
-    receiptID["rawValue"] = "   "
-    object["receiptID"] = receiptID
+    object["receiptID"] = "   "
 
     #expect(throws: ForgeDesignValidationError.blankIdentifier("provenance.receiptID")) {
         _ = try JSONDecoder().decode(DesignProvenance.self, from: hardeningJSONData(object))
