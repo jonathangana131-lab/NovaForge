@@ -61,6 +61,45 @@ final class ForgeHistoryAcceptedProjectionTests: XCTestCase {
         )
     }
 
+    func testProjectWideProjectionAllowsAcceptedCheckpointsAcrossMissions() throws {
+        let project = try ForgeHistoryProjectID("project-a")
+        let missionA = try ForgeHistoryMissionID("mission-a")
+        let missionB = try ForgeHistoryMissionID("mission-b")
+        let first = try makeCheckpoint("c1", missionID: missionA, sequence: 1)
+        let second = try makeCheckpoint(
+            "c2",
+            parent: first.id,
+            missionID: missionB,
+            sequence: 2
+        )
+
+        let projection = try ForgeHistoryAcceptedTimelineProjector.project(
+            projectID: project,
+            acceptedCheckpoints: [
+                .init(
+                    projectID: project,
+                    acceptedProjectStateID: try .init("state-2"),
+                    checkpoint: second
+                ),
+                .init(
+                    projectID: project,
+                    acceptedProjectStateID: try .init("state-1"),
+                    checkpoint: first
+                ),
+            ]
+        )
+
+        XCTAssertNil(projection.timeline.missionID)
+        XCTAssertEqual(
+            projection.timeline.checkpoints.map(\.originatingMissionID?.rawValue),
+            ["mission-a", "mission-b"]
+        )
+        XCTAssertEqual(
+            projection.acceptedProjectStates.map(\.acceptedProjectStateID.rawValue),
+            ["state-1", "state-2"]
+        )
+    }
+
     func testProjectorRejectsDuplicateBindingBeforeTimelineProjection() throws {
         let project = try ForgeHistoryProjectID("project-a")
         let checkpoint = try makeCheckpoint("c1", sequence: 1)
