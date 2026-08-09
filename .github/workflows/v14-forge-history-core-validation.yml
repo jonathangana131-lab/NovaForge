@@ -1,0 +1,37 @@
+name: ForgeHistoryCore exact SwiftPM validation
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-history-core:
+    name: ForgeHistoryCore debug + release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact product ancestry and blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "4967aa68fa555e0395ac351f7a507431d4490c03"
+          test "$(git rev-parse HEAD^:Packages/ForgeHistoryCore/Sources/ForgeHistoryCore/ForgeHistoryAcceptedProjection.swift)" = "099f2834c7571876ddbabfdacfa675fe1719e6fe"
+          test "$(git rev-parse HEAD^:Packages/ForgeHistoryCore/Tests/ForgeHistoryCoreTests/ForgeHistoryAcceptedProjectionTests.swift)" = "d8c3f26ded08c2eb77b88f9fdf0807a54c74be6b"
+          test "$(git rev-parse HEAD^:Packages/ForgeHistoryCore/Tests/ForgeHistoryCoreTests/ForgeHistoryAcceptedAuthorityTests.swift)" = "2baa3c4592abde48adea869ca632eb7ffe61281b"
+          git diff --check 4ff0f9a44dbf03dd7039f4982b014c9ab9f54ff7 HEAD^
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Test ForgeHistoryCore debug with warnings as errors
+        run: swift test --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
+
+      - name: Test ForgeHistoryCore release with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
