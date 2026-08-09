@@ -1,12 +1,16 @@
 import Foundation
 
-/// Quality evidence shown by History is an exact reference to a canonical producer receipt.
-/// History does not re-score accessibility or performance, authenticate producer receipts, or
-/// collapse richer producer identity (device, OS build, policy, budget, source revision) into a
-/// weaker local badge.
+/// Quality domains that History may link to. The kind alone never says that the producer evidence
+/// passed, is current, or satisfies completion.
 public enum ForgeHistoryQualityEvidenceKind: String, CaseIterable, Hashable, Sendable {
     case accessibility
     case performance
+}
+
+/// Public History quality references are deliberately non-authoritative until a canonical producer
+/// bridge can supply a trust-bearing type that external/model-authored code cannot mint.
+public enum ForgeHistoryQualityEvidenceVerificationStatus: String, CaseIterable, Hashable, Sendable {
+    case unverifiedReference
 }
 
 public enum ForgeHistoryQualityProjectionError: Error, Equatable, Sendable {
@@ -18,12 +22,12 @@ public enum ForgeHistoryQualityProjectionError: Error, Equatable, Sendable {
     case duplicateCheckpointBinding(String)
 }
 
-/// Exact opaque identity emitted by a canonical quality producer.
+/// Exact opaque identity emitted by a quality producer.
 ///
 /// This deliberately does not reuse `ForgeHistoryReceiptID`: History's own durable receipt IDs have
 /// a tighter ASCII/length grammar, while producer domains may legitimately use a broader canonical
-/// identifier. History only enforces transport-safety bounds and requires the producer-normalized
-/// value to arrive already canonical, so it never silently rewrites producer identity.
+/// identifier. Preserving the string only creates a reference; it does not authenticate the named
+/// producer receipt or make it completion evidence.
 public struct ForgeHistoryProducerReceiptReference: Hashable, Sendable, CustomStringConvertible {
     public static let maximumLength = 4_096
 
@@ -42,13 +46,18 @@ public struct ForgeHistoryProducerReceiptReference: Hashable, Sendable, CustomSt
     public var description: String { rawValue }
 }
 
-/// Ephemeral reference to one already-accepted canonical quality receipt. This value is
-/// deliberately non-Codable: persisted/model-authored bytes must not become accepted quality truth
-/// merely by naming a receipt. A host adapter must reconstruct it from current producer authority.
-public struct ForgeHistoryAcceptedQualityEvidenceReference: Hashable, Sendable {
+/// Ephemeral link to producer evidence. This is intentionally named and typed as an unverified
+/// reference: any external caller can construct it, so it must never be rendered as accepted or
+/// passed merely because it appears in History. A future producer bridge must use an unforgeable
+/// trusted producer type before introducing accepted-quality semantics.
+public struct ForgeHistoryQualityEvidenceReference: Hashable, Sendable {
     public let kind: ForgeHistoryQualityEvidenceKind
     public let producerReceiptReference: ForgeHistoryProducerReceiptReference
     public let artifactReference: ForgeHistoryArtifactReference?
+
+    public var verificationStatus: ForgeHistoryQualityEvidenceVerificationStatus {
+        .unverifiedReference
+    }
 
     public init(
         kind: ForgeHistoryQualityEvidenceKind,
@@ -70,18 +79,18 @@ public struct ForgeHistoryAcceptedQualityEvidenceReference: Hashable, Sendable {
     }
 }
 
-/// Host-supplied accepted quality references for one canonical History checkpoint. The binding
-/// carries project identity explicitly so an adapter cannot accidentally mix quality evidence from
-/// another project into an otherwise-valid timeline.
-public struct ForgeHistoryCheckpointQualityBinding: Hashable, Sendable {
+/// Project/checkpoint-scoped references supplied by a host. The binding only proves that History can
+/// associate the references with an existing checkpoint; it does not prove the producer receipt is
+/// authentic, current, passing, or sufficient for completion.
+public struct ForgeHistoryCheckpointQualityReferenceBinding: Hashable, Sendable {
     public let projectID: ForgeHistoryProjectID
     public let checkpointID: ForgeHistoryCheckpointID
-    public let evidence: [ForgeHistoryAcceptedQualityEvidenceReference]
+    public let evidence: [ForgeHistoryQualityEvidenceReference]
 
     public init(
         projectID: ForgeHistoryProjectID,
         checkpointID: ForgeHistoryCheckpointID,
-        evidence: [ForgeHistoryAcceptedQualityEvidenceReference]
+        evidence: [ForgeHistoryQualityEvidenceReference]
     ) throws {
         guard !evidence.isEmpty else {
             throw ForgeHistoryQualityProjectionError.emptyQualityEvidence(
@@ -103,16 +112,14 @@ public struct ForgeHistoryCheckpointQualityBinding: Hashable, Sendable {
     }
 }
 
-/// Presentation state for a checkpoint whose current canonical quality receipts were accepted by
-/// the host. This is a reference projection only; the producer remains authoritative for what the
-/// receipt proves and whether it is still current.
-public struct ForgeHistoryCheckpointQualityState: Hashable, Sendable {
+/// Presentation state containing only unverified producer references for one checkpoint.
+public struct ForgeHistoryCheckpointQualityReferenceState: Hashable, Sendable {
     public let checkpointID: ForgeHistoryCheckpointID
-    public let evidence: [ForgeHistoryAcceptedQualityEvidenceReference]
+    public let evidence: [ForgeHistoryQualityEvidenceReference]
 
     fileprivate init(
         checkpointID: ForgeHistoryCheckpointID,
-        evidence: [ForgeHistoryAcceptedQualityEvidenceReference]
+        evidence: [ForgeHistoryQualityEvidenceReference]
     ) {
         self.checkpointID = checkpointID
         self.evidence = evidence
@@ -120,21 +127,20 @@ public struct ForgeHistoryCheckpointQualityState: Hashable, Sendable {
 
     public func evidence(
         kind: ForgeHistoryQualityEvidenceKind
-    ) -> ForgeHistoryAcceptedQualityEvidenceReference? {
+    ) -> ForgeHistoryQualityEvidenceReference? {
         evidence.first(where: { $0.kind == kind })
     }
 }
 
-/// Ephemeral quality overlay for the canonical History timeline. Checkpoint chronology and identity
-/// remain owned by `ForgeHistoryTimeline`; this wrapper only retains host-accepted producer receipt
-/// references in the same canonical order.
-public struct ForgeHistoryAcceptedQualityTimelineProjection: Hashable, Sendable {
+/// Ephemeral unverified-reference overlay for the canonical History timeline. Checkpoint chronology
+/// and identity remain owned by `ForgeHistoryTimeline`; this wrapper cannot express accepted quality.
+public struct ForgeHistoryQualityReferenceTimelineProjection: Hashable, Sendable {
     public let timeline: ForgeHistoryTimeline
-    public let qualityStates: [ForgeHistoryCheckpointQualityState]
+    public let qualityStates: [ForgeHistoryCheckpointQualityReferenceState]
 
     fileprivate init(
         timeline: ForgeHistoryTimeline,
-        qualityStates: [ForgeHistoryCheckpointQualityState]
+        qualityStates: [ForgeHistoryCheckpointQualityReferenceState]
     ) {
         self.timeline = timeline
         self.qualityStates = qualityStates
@@ -142,23 +148,23 @@ public struct ForgeHistoryAcceptedQualityTimelineProjection: Hashable, Sendable 
 
     public func qualityState(
         for checkpointID: ForgeHistoryCheckpointID
-    ) -> ForgeHistoryCheckpointQualityState? {
+    ) -> ForgeHistoryCheckpointQualityReferenceState? {
         qualityStates.first(where: { $0.checkpointID == checkpointID })
     }
 }
 
-public enum ForgeHistoryAcceptedQualityTimelineProjector {
+public enum ForgeHistoryQualityReferenceTimelineProjector {
     public static func project(
         timeline: ForgeHistoryTimeline,
-        acceptedQuality: [ForgeHistoryCheckpointQualityBinding]
-    ) throws -> ForgeHistoryAcceptedQualityTimelineProjection {
+        qualityReferences: [ForgeHistoryCheckpointQualityReferenceBinding]
+    ) throws -> ForgeHistoryQualityReferenceTimelineProjection {
         let checkpointsByID = Dictionary(
             uniqueKeysWithValues: timeline.checkpoints.map { ($0.id, $0) }
         )
         var seenCheckpointIDs = Set<ForgeHistoryCheckpointID>()
-        var qualityByCheckpoint = [ForgeHistoryCheckpointID: [ForgeHistoryAcceptedQualityEvidenceReference]]()
+        var qualityByCheckpoint = [ForgeHistoryCheckpointID: [ForgeHistoryQualityEvidenceReference]]()
 
-        for binding in acceptedQuality {
+        for binding in qualityReferences {
             guard binding.projectID == timeline.projectID else {
                 throw ForgeHistoryQualityProjectionError.projectMismatch(
                     checkpointID: binding.checkpointID.rawValue,
@@ -188,14 +194,14 @@ public enum ForgeHistoryAcceptedQualityTimelineProjector {
 
         let orderedStates = timeline.checkpoints.compactMap { checkpoint in
             qualityByCheckpoint[checkpoint.id].map {
-                ForgeHistoryCheckpointQualityState(
+                ForgeHistoryCheckpointQualityReferenceState(
                     checkpointID: checkpoint.id,
                     evidence: $0
                 )
             }
         }
 
-        return ForgeHistoryAcceptedQualityTimelineProjection(
+        return ForgeHistoryQualityReferenceTimelineProjection(
             timeline: timeline,
             qualityStates: orderedStates
         )
