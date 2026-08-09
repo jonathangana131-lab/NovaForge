@@ -1,0 +1,33 @@
+name: Validate V14 History Quality Trust
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-GO-8A08/history-quality-trust/e1
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ForgeHistoryCore (${{ matrix.configuration }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Diff check
+        run: git diff --check HEAD~3..HEAD
+      - name: Test package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            swift test --package-path Packages/ForgeHistoryCore --configuration release -Xswiftc -warnings-as-errors
+          else
+            swift test --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
+          fi
