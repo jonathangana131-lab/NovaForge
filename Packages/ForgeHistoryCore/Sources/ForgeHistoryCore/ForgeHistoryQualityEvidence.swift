@@ -1,3 +1,5 @@
+import Foundation
+
 /// Quality evidence shown by History is an exact reference to a canonical producer receipt.
 /// History does not re-score accessibility or performance, authenticate producer receipts, or
 /// collapse richer producer identity (device, OS build, policy, budget, source revision) into a
@@ -8,6 +10,7 @@ public enum ForgeHistoryQualityEvidenceKind: String, CaseIterable, Hashable, Sen
 }
 
 public enum ForgeHistoryQualityProjectionError: Error, Equatable, Sendable {
+    case invalidProducerReceiptReference
     case emptyQualityEvidence(checkpointID: String)
     case duplicateQualityKind(checkpointID: String, kind: ForgeHistoryQualityEvidenceKind)
     case projectMismatch(checkpointID: String, expectedProjectID: String, actualProjectID: String)
@@ -15,17 +18,41 @@ public enum ForgeHistoryQualityProjectionError: Error, Equatable, Sendable {
     case duplicateCheckpointBinding(String)
 }
 
+/// Exact opaque identity emitted by a canonical quality producer.
+///
+/// This deliberately does not reuse `ForgeHistoryReceiptID`: History's own durable receipt IDs have
+/// a tighter ASCII/length grammar, while producer domains may legitimately use a broader canonical
+/// identifier. History only enforces transport-safety bounds and requires the producer-normalized
+/// value to arrive already canonical, so it never silently rewrites producer identity.
+public struct ForgeHistoryProducerReceiptReference: Hashable, Sendable, CustomStringConvertible {
+    public static let maximumLength = 4_096
+
+    public let rawValue: String
+
+    public init(_ rawValue: String) throws {
+        guard !rawValue.isEmpty,
+              rawValue.count <= Self.maximumLength,
+              rawValue == rawValue.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw ForgeHistoryQualityProjectionError.invalidProducerReceiptReference
+        }
+        self.rawValue = rawValue
+    }
+
+    public var description: String { rawValue }
+}
+
 /// Ephemeral reference to one already-accepted canonical quality receipt. This value is
 /// deliberately non-Codable: persisted/model-authored bytes must not become accepted quality truth
 /// merely by naming a receipt. A host adapter must reconstruct it from current producer authority.
 public struct ForgeHistoryAcceptedQualityEvidenceReference: Hashable, Sendable {
     public let kind: ForgeHistoryQualityEvidenceKind
-    public let producerReceiptReference: ForgeHistoryReceiptID
+    public let producerReceiptReference: ForgeHistoryProducerReceiptReference
     public let artifactReference: ForgeHistoryArtifactReference?
 
     public init(
         kind: ForgeHistoryQualityEvidenceKind,
-        producerReceiptReference: ForgeHistoryReceiptID,
+        producerReceiptReference: ForgeHistoryProducerReceiptReference,
         artifactReference: ForgeHistoryArtifactReference? = nil
     ) {
         self.kind = kind
