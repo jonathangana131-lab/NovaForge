@@ -1,0 +1,44 @@
+name: V14 Local AI benchmark fixtures
+
+on:
+  pull_request:
+    paths:
+      - "Benchmarks/LocalAI/**"
+      - "scripts/validate-v14-local-ai-benchmark-fixtures.py"
+      - "scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py"
+      - ".github/workflows/v14-local-ai-benchmark-fixtures.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Benchmarks/LocalAI/**"
+      - "scripts/validate-v14-local-ai-benchmark-fixtures.py"
+      - "scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py"
+      - ".github/workflows/v14-local-ai-benchmark-fixtures.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-local-ai-benchmark-fixtures-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Canonical fixture proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate canonical corpus and digests
+        run: python3 scripts/validate-v14-local-ai-benchmark-fixtures.py Benchmarks/LocalAI/v1
+      - name: Validate benchmark-suite export
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/validate-v14-local-ai-benchmark-fixtures.py --suite-json Benchmarks/LocalAI/v1 \
+            | python3 -m json.tool >/dev/null
+      - name: Run adversarial validator tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_validate_v14_local_ai_benchmark_fixtures.py' -v
+      - name: Compile validator modules
+        run: python3 -m py_compile scripts/validate-v14-local-ai-benchmark-fixtures.py scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py
