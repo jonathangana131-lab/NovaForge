@@ -16,7 +16,6 @@ class ForgeAccessibilityTestCase: XCTestCase {
         )
     }
 
-
     func executionContext(
         kind: ForgeAccessibilityExecutionKind = .simulator,
         deviceIdentifier: String = "iPhone13,2-Simulator",
@@ -131,18 +130,11 @@ class ForgeAccessibilityTestCase: XCTestCase {
     }
 
     func trust(_ run: ForgeAccessibilityRunEvidence) throws -> ForgeAccessibilityTrustedProducerReceipt {
-        try ForgeAccessibilityTrustedProducerReceipt(
-            runID: run.runID,
-            target: run.target,
-            executionContext: run.executionContext,
-            scenarioID: run.scenarioID,
-            authority: run.authority,
-            producerReceiptID: run.producerReceiptID
-        )
+        ForgeAccessibilityTrustedProducerReceipt(authenticatedRun: run)
     }
 
     func trusts(_ runs: [ForgeAccessibilityRunEvidence]) throws -> [ForgeAccessibilityTrustedProducerReceipt] {
-        try runs.map(trust)
+        try runs.map { try trust($0) }
     }
 
 }
