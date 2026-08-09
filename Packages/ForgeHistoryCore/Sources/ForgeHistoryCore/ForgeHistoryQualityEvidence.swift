@@ -42,15 +42,19 @@ public struct ForgeHistoryProducerReceiptReference: Hashable, Sendable, CustomSt
     public var description: String { rawValue }
 }
 
-/// Ephemeral reference to one already-accepted canonical quality receipt. This value is
-/// deliberately non-Codable: persisted/model-authored bytes must not become accepted quality truth
-/// merely by naming a receipt. A host adapter must reconstruct it from current producer authority.
+/// Ephemeral reference to one already-accepted canonical quality receipt.
+///
+/// This value is deliberately non-Codable, and its constructor is module-internal: persisted or
+/// model-authored bytes must not become accepted quality truth merely by naming a receipt, and
+/// ordinary external consumers cannot recreate the accepted wrapper from public candidate fields.
+/// A future canonical adapter inside this module must mint it only after validating current producer
+/// authority and the complete quality-evidence subject.
 public struct ForgeHistoryAcceptedQualityEvidenceReference: Hashable, Sendable {
     public let kind: ForgeHistoryQualityEvidenceKind
     public let producerReceiptReference: ForgeHistoryProducerReceiptReference
     public let artifactReference: ForgeHistoryArtifactReference?
 
-    public init(
+    init(
         kind: ForgeHistoryQualityEvidenceKind,
         producerReceiptReference: ForgeHistoryProducerReceiptReference,
         artifactReference: ForgeHistoryArtifactReference? = nil
@@ -73,12 +77,17 @@ public struct ForgeHistoryAcceptedQualityEvidenceReference: Hashable, Sendable {
 /// Host-supplied accepted quality references for one canonical History checkpoint. The binding
 /// carries project identity explicitly so an adapter cannot accidentally mix quality evidence from
 /// another project into an otherwise-valid timeline.
+///
+/// Construction is module-internal for the same reason as the accepted evidence reference: History
+/// must not let arbitrary consumers attach an opaque producer ID to a project/checkpoint and thereby
+/// mint an `AcceptedQuality` projection. A canonical adapter must verify producer authority before
+/// constructing the complete checkpoint binding.
 public struct ForgeHistoryCheckpointQualityBinding: Hashable, Sendable {
     public let projectID: ForgeHistoryProjectID
     public let checkpointID: ForgeHistoryCheckpointID
     public let evidence: [ForgeHistoryAcceptedQualityEvidenceReference]
 
-    public init(
+    init(
         projectID: ForgeHistoryProjectID,
         checkpointID: ForgeHistoryCheckpointID,
         evidence: [ForgeHistoryAcceptedQualityEvidenceReference]
