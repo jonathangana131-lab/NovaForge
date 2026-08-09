@@ -85,7 +85,7 @@ public struct ForgeAccessibilityCheckResult: Codable, Equatable, Sendable {
 }
 
 /// Producer evidence is structurally validated, but the `authority` field cannot authorize itself.
-/// Acceptance separately requires `producerReceiptID` to be present in the caller's host-trusted set.
+/// Acceptance separately requires a host-authenticated binding to this exact complete run subject.
 public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
     public static let maximumCheckResults = 32
 
@@ -166,51 +166,27 @@ public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
     }
 }
 
-/// Exact host-trust binding for one producer receipt. This is intentionally non-Codable:
-/// callers must rebuild trusted bindings from the current host authority rather than restoring
-/// a serialized "trusted" bit.
-public struct ForgeAccessibilityTrustedProducerReceipt: Equatable, Hashable, Sendable {
-    public let runID: String
-    public let target: ForgeAccessibilityTarget
-    public let executionContext: ForgeAccessibilityExecutionContext
-    public let scenarioID: String
-    public let authority: ForgeAccessibilityEvidenceAuthority
-    public let producerReceiptID: String
+/// Exact host-trust binding for one complete producer run.
+///
+/// This type is intentionally non-Codable, and its initializer is module-internal. Persisted or
+/// model-shaped `ForgeAccessibilityRunEvidence` therefore cannot directly mint trusted producer
+/// authority merely by copying its public fields. A canonical host adapter inside this module must
+/// construct the binding only after independently authenticating the producer evidence.
+public struct ForgeAccessibilityTrustedProducerReceipt: Equatable, Sendable {
+    private let authenticatedRun: ForgeAccessibilityRunEvidence
 
-    public init(
-        runID: String,
-        target: ForgeAccessibilityTarget,
-        executionContext: ForgeAccessibilityExecutionContext,
-        scenarioID: String,
-        authority: ForgeAccessibilityEvidenceAuthority,
-        producerReceiptID: String
-    ) throws {
-        self.runID = try ForgeAccessibilityValidation.identifier(
-            runID,
-            field: "trustedReceipt.runID",
-            maximumLength: 256
-        )
-        self.target = target
-        self.executionContext = executionContext
-        self.scenarioID = try ForgeAccessibilityValidation.identifier(
-            scenarioID,
-            field: "trustedReceipt.scenarioID",
-            maximumLength: 256
-        )
-        self.authority = authority
-        self.producerReceiptID = try ForgeAccessibilityValidation.identifier(
-            producerReceiptID,
-            field: "trustedReceipt.producerReceiptID",
-            maximumLength: 512
-        )
+    public var runID: String { authenticatedRun.runID }
+    public var target: ForgeAccessibilityTarget { authenticatedRun.target }
+    public var executionContext: ForgeAccessibilityExecutionContext { authenticatedRun.executionContext }
+    public var scenarioID: String { authenticatedRun.scenarioID }
+    public var authority: ForgeAccessibilityEvidenceAuthority { authenticatedRun.authority }
+    public var producerReceiptID: String { authenticatedRun.producerReceiptID }
+
+    init(authenticatedRun: ForgeAccessibilityRunEvidence) {
+        self.authenticatedRun = authenticatedRun
     }
 
     func exactlyMatches(_ run: ForgeAccessibilityRunEvidence) -> Bool {
-        runID == run.runID
-            && target == run.target
-            && executionContext == run.executionContext
-            && scenarioID == run.scenarioID
-            && authority == run.authority
-            && producerReceiptID == run.producerReceiptID
+        authenticatedRun == run
     }
 }
