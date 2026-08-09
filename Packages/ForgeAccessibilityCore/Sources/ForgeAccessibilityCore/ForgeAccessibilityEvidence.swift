@@ -91,6 +91,7 @@ public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
 
     public let runID: String
     public let target: ForgeAccessibilityTarget
+    public let executionContext: ForgeAccessibilityExecutionContext
     public let scenarioID: String
     public let authority: ForgeAccessibilityEvidenceAuthority
     public let producerReceiptID: String
@@ -99,6 +100,7 @@ public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
     public init(
         runID: String,
         target: ForgeAccessibilityTarget,
+        executionContext: ForgeAccessibilityExecutionContext,
         scenarioID: String,
         authority: ForgeAccessibilityEvidenceAuthority,
         producerReceiptID: String,
@@ -110,6 +112,7 @@ public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
             maximumLength: 256
         )
         self.target = target
+        self.executionContext = executionContext
         self.scenarioID = try ForgeAccessibilityValidation.identifier(
             scenarioID,
             field: "run.scenarioID",
@@ -142,6 +145,7 @@ public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case runID
         case target
+        case executionContext
         case scenarioID
         case authority
         case producerReceiptID
@@ -153,6 +157,7 @@ public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
         try self.init(
             runID: container.decode(String.self, forKey: .runID),
             target: container.decode(ForgeAccessibilityTarget.self, forKey: .target),
+            executionContext: container.decode(ForgeAccessibilityExecutionContext.self, forKey: .executionContext),
             scenarioID: container.decode(String.self, forKey: .scenarioID),
             authority: container.decode(ForgeAccessibilityEvidenceAuthority.self, forKey: .authority),
             producerReceiptID: container.decode(String.self, forKey: .producerReceiptID),
@@ -167,6 +172,7 @@ public struct ForgeAccessibilityRunEvidence: Codable, Equatable, Sendable {
 public struct ForgeAccessibilityTrustedProducerReceipt: Equatable, Hashable, Sendable {
     public let runID: String
     public let target: ForgeAccessibilityTarget
+    public let executionContext: ForgeAccessibilityExecutionContext
     public let scenarioID: String
     public let authority: ForgeAccessibilityEvidenceAuthority
     public let producerReceiptID: String
@@ -174,6 +180,7 @@ public struct ForgeAccessibilityTrustedProducerReceipt: Equatable, Hashable, Sen
     public init(
         runID: String,
         target: ForgeAccessibilityTarget,
+        executionContext: ForgeAccessibilityExecutionContext,
         scenarioID: String,
         authority: ForgeAccessibilityEvidenceAuthority,
         producerReceiptID: String
@@ -184,6 +191,7 @@ public struct ForgeAccessibilityTrustedProducerReceipt: Equatable, Hashable, Sen
             maximumLength: 256
         )
         self.target = target
+        self.executionContext = executionContext
         self.scenarioID = try ForgeAccessibilityValidation.identifier(
             scenarioID,
             field: "trustedReceipt.scenarioID",
@@ -200,6 +208,7 @@ public struct ForgeAccessibilityTrustedProducerReceipt: Equatable, Hashable, Sen
     func exactlyMatches(_ run: ForgeAccessibilityRunEvidence) -> Bool {
         runID == run.runID
             && target == run.target
+            && executionContext == run.executionContext
             && scenarioID == run.scenarioID
             && authority == run.authority
             && producerReceiptID == run.producerReceiptID

@@ -1,5 +1,64 @@
 import Foundation
 
+
+public struct ForgeAccessibilityExecutionPolicy: Codable, Equatable, Sendable {
+    public let allowedKinds: [ForgeAccessibilityExecutionKind]
+    public let requiredDeviceIdentifier: String?
+    public let requiredOSBuild: String?
+
+    public init(
+        allowedKinds: [ForgeAccessibilityExecutionKind],
+        requiredDeviceIdentifier: String? = nil,
+        requiredOSBuild: String? = nil
+    ) throws {
+        guard !allowedKinds.isEmpty else {
+            throw ForgeAccessibilityError.emptyExecutionKinds
+        }
+        var seen = Set<ForgeAccessibilityExecutionKind>()
+        for kind in allowedKinds {
+            guard seen.insert(kind).inserted else {
+                throw ForgeAccessibilityError.duplicateExecutionKind(kind)
+            }
+        }
+        self.allowedKinds = allowedKinds.sorted { $0.rawValue < $1.rawValue }
+        self.requiredDeviceIdentifier = try Self.optionalIdentifier(
+            requiredDeviceIdentifier,
+            field: "executionPolicy.requiredDeviceIdentifier"
+        )
+        self.requiredOSBuild = try Self.optionalIdentifier(
+            requiredOSBuild,
+            field: "executionPolicy.requiredOSBuild"
+        )
+    }
+
+    public func accepts(_ context: ForgeAccessibilityExecutionContext) -> Bool {
+        guard allowedKinds.contains(context.kind) else { return false }
+        if let requiredDeviceIdentifier, requiredDeviceIdentifier != context.deviceIdentifier { return false }
+        if let requiredOSBuild, requiredOSBuild != context.osBuild { return false }
+        return true
+    }
+
+    private static func optionalIdentifier(_ value: String?, field: String) throws -> String? {
+        guard let value else { return nil }
+        return try ForgeAccessibilityValidation.identifier(value, field: field, maximumLength: 128)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case allowedKinds
+        case requiredDeviceIdentifier
+        case requiredOSBuild
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            allowedKinds: container.decode([ForgeAccessibilityExecutionKind].self, forKey: .allowedKinds),
+            requiredDeviceIdentifier: container.decodeIfPresent(String.self, forKey: .requiredDeviceIdentifier),
+            requiredOSBuild: container.decodeIfPresent(String.self, forKey: .requiredOSBuild)
+        )
+    }
+}
+
 /// Host-authored accessibility acceptance policy for one exact product state.
 /// A policy that omits the baseline accessibility surfaces cannot mint an accepted projection.
 public struct ForgeAccessibilityPolicy: Codable, Equatable, Sendable {
@@ -8,9 +67,14 @@ public struct ForgeAccessibilityPolicy: Codable, Equatable, Sendable {
 
     public let schemaVersion: Int
     public let target: ForgeAccessibilityTarget
+    public let executionPolicy: ForgeAccessibilityExecutionPolicy
     public let scenarios: [ForgeAccessibilityScenario]
 
-    public init(target: ForgeAccessibilityTarget, scenarios: [ForgeAccessibilityScenario]) throws {
+    public init(
+        target: ForgeAccessibilityTarget,
+        executionPolicy: ForgeAccessibilityExecutionPolicy,
+        scenarios: [ForgeAccessibilityScenario]
+    ) throws {
         guard !scenarios.isEmpty else {
             throw ForgeAccessibilityError.insufficientBaselineCoverage("policy.scenarios")
         }
@@ -30,6 +94,7 @@ public struct ForgeAccessibilityPolicy: Codable, Equatable, Sendable {
 
         self.schemaVersion = Self.currentSchemaVersion
         self.target = target
+        self.executionPolicy = executionPolicy
         self.scenarios = scenarios.sorted { $0.id < $1.id }
     }
 
@@ -95,6 +160,7 @@ public struct ForgeAccessibilityPolicy: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case target
+        case executionPolicy
         case scenarios
     }
 
@@ -106,6 +172,7 @@ public struct ForgeAccessibilityPolicy: Codable, Equatable, Sendable {
         }
         try self.init(
             target: container.decode(ForgeAccessibilityTarget.self, forKey: .target),
+            executionPolicy: container.decode(ForgeAccessibilityExecutionPolicy.self, forKey: .executionPolicy),
             scenarios: container.decode([ForgeAccessibilityScenario].self, forKey: .scenarios)
         )
     }

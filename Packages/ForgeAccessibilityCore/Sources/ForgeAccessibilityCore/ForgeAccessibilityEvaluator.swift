@@ -2,6 +2,7 @@ import Foundation
 
 public enum ForgeAccessibilityBlocker: Equatable, Sendable {
     case missingScenario(scenarioID: String)
+    case executionEnvironmentMismatch(scenarioID: String)
     case untrustedProducerReceipt(scenarioID: String, producerReceiptID: String)
     case missingRequiredCheck(scenarioID: String, check: ForgeAccessibilityCheckKind)
     case checkNotPassed(
@@ -14,12 +15,14 @@ public enum ForgeAccessibilityBlocker: Equatable, Sendable {
         switch self {
         case let .missingScenario(scenarioID):
             return "0|\(scenarioID)"
+        case let .executionEnvironmentMismatch(scenarioID):
+            return "1|\(scenarioID)"
         case let .untrustedProducerReceipt(scenarioID, receiptID):
-            return "1|\(scenarioID)|\(receiptID)"
+            return "2|\(scenarioID)|\(receiptID)"
         case let .missingRequiredCheck(scenarioID, check):
-            return "2|\(scenarioID)|\(check.rawValue)"
+            return "3|\(scenarioID)|\(check.rawValue)"
         case let .checkNotPassed(scenarioID, check, outcome):
-            return "3|\(scenarioID)|\(check.rawValue)|\(outcome.rawValue)"
+            return "4|\(scenarioID)|\(check.rawValue)|\(outcome.rawValue)"
         }
     }
 }
@@ -101,6 +104,10 @@ public enum ForgeAccessibilityEvaluator {
             guard let run = evidenceByScenarioID[scenario.id] else {
                 blockers.append(.missingScenario(scenarioID: scenario.id))
                 continue
+            }
+
+            if !policy.executionPolicy.accepts(run.executionContext) {
+                blockers.append(.executionEnvironmentMismatch(scenarioID: scenario.id))
             }
 
             if trustedReceiptsByID[run.producerReceiptID]?.exactlyMatches(run) != true {

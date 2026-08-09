@@ -16,6 +16,9 @@ public enum ForgeAccessibilityError: Error, Equatable, Sendable {
     case unknownScenario(String)
     case invalidCheckResult(String)
     case insufficientBaselineCoverage(String)
+    case emptyExecutionKinds
+    case duplicateExecutionKind(ForgeAccessibilityExecutionKind)
+    case invalidExecutionEnvironment(String)
 }
 
 enum ForgeAccessibilityValidation {
@@ -97,6 +100,71 @@ public struct ForgeAccessibilityTarget: Codable, Equatable, Hashable, Sendable {
             sourceRevision: container.decode(String.self, forKey: .sourceRevision),
             checkpointID: container.decode(String.self, forKey: .checkpointID),
             runtimeVersion: container.decode(String.self, forKey: .runtimeVersion)
+        )
+    }
+}
+
+
+public enum ForgeAccessibilityExecutionKind: String, Codable, CaseIterable, Hashable, Sendable {
+    case simulator
+    case physicalDevice
+}
+
+/// Concrete host execution environment that produced accessibility observations.
+/// Simulator evidence and physical-device evidence remain structurally distinct.
+public struct ForgeAccessibilityExecutionContext: Codable, Equatable, Hashable, Sendable {
+    public let kind: ForgeAccessibilityExecutionKind
+    public let deviceIdentifier: String
+    public let osName: String
+    public let osVersion: String
+    public let osBuild: String
+
+    public init(
+        kind: ForgeAccessibilityExecutionKind,
+        deviceIdentifier: String,
+        osName: String,
+        osVersion: String,
+        osBuild: String
+    ) throws {
+        self.kind = kind
+        self.deviceIdentifier = try ForgeAccessibilityValidation.identifier(
+            deviceIdentifier,
+            field: "execution.deviceIdentifier",
+            maximumLength: 128
+        )
+        self.osName = try ForgeAccessibilityValidation.identifier(
+            osName,
+            field: "execution.osName",
+            maximumLength: 64
+        )
+        self.osVersion = try ForgeAccessibilityValidation.identifier(
+            osVersion,
+            field: "execution.osVersion",
+            maximumLength: 64
+        )
+        self.osBuild = try ForgeAccessibilityValidation.identifier(
+            osBuild,
+            field: "execution.osBuild",
+            maximumLength: 128
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case deviceIdentifier
+        case osName
+        case osVersion
+        case osBuild
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            kind: container.decode(ForgeAccessibilityExecutionKind.self, forKey: .kind),
+            deviceIdentifier: container.decode(String.self, forKey: .deviceIdentifier),
+            osName: container.decode(String.self, forKey: .osName),
+            osVersion: container.decode(String.self, forKey: .osVersion),
+            osBuild: container.decode(String.self, forKey: .osBuild)
         )
     }
 }

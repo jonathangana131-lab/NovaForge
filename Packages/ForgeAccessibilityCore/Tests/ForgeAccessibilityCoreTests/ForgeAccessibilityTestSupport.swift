@@ -16,6 +16,29 @@ class ForgeAccessibilityTestCase: XCTestCase {
         )
     }
 
+
+    func executionContext(
+        kind: ForgeAccessibilityExecutionKind = .simulator,
+        deviceIdentifier: String = "iPhone13,2-Simulator",
+        osBuild: String = "27A123"
+    ) throws -> ForgeAccessibilityExecutionContext {
+        try ForgeAccessibilityExecutionContext(
+            kind: kind,
+            deviceIdentifier: deviceIdentifier,
+            osName: "iOS",
+            osVersion: "27.0",
+            osBuild: osBuild
+        )
+    }
+
+    func executionPolicy() throws -> ForgeAccessibilityExecutionPolicy {
+        try ForgeAccessibilityExecutionPolicy(
+            allowedKinds: [.simulator],
+            requiredDeviceIdentifier: "iPhone13,2-Simulator",
+            requiredOSBuild: "27A123"
+        )
+    }
+
     func environment(
         assistiveTechnology: ForgeAccessibilityAssistiveTechnology = .none,
         contentSize: ForgeAccessibilityContentSize = .large,
@@ -69,7 +92,11 @@ class ForgeAccessibilityTestCase: XCTestCase {
     }
 
     func policy() throws -> ForgeAccessibilityPolicy {
-        try ForgeAccessibilityPolicy(target: target(), scenarios: baselineScenarios())
+        try ForgeAccessibilityPolicy(
+            target: target(),
+            executionPolicy: executionPolicy(),
+            scenarios: baselineScenarios()
+        )
     }
 
     func passed(_ kind: ForgeAccessibilityCheckKind) throws -> ForgeAccessibilityCheckResult {
@@ -84,12 +111,14 @@ class ForgeAccessibilityTestCase: XCTestCase {
     func run(
         for scenario: ForgeAccessibilityScenario,
         target: ForgeAccessibilityTarget? = nil,
+        executionContext: ForgeAccessibilityExecutionContext? = nil,
         receiptID: String? = nil,
         checkResults: [ForgeAccessibilityCheckResult]? = nil
     ) throws -> ForgeAccessibilityRunEvidence {
         try ForgeAccessibilityRunEvidence(
             runID: "run-\(scenario.id)",
             target: target ?? self.target(),
+            executionContext: try executionContext ?? self.executionContext(),
             scenarioID: scenario.id,
             authority: .hostRuntimeHarness,
             producerReceiptID: receiptID ?? "receipt-\(scenario.id)",
@@ -105,6 +134,7 @@ class ForgeAccessibilityTestCase: XCTestCase {
         try ForgeAccessibilityTrustedProducerReceipt(
             runID: run.runID,
             target: run.target,
+            executionContext: run.executionContext,
             scenarioID: run.scenarioID,
             authority: run.authority,
             producerReceiptID: run.producerReceiptID

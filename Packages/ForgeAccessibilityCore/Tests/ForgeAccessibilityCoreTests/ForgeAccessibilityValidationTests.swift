@@ -30,6 +30,7 @@ final class ForgeAccessibilityValidationTests: ForgeAccessibilityTestCase {
         XCTAssertThrowsError(try ForgeAccessibilityRunEvidence(
             runID: "duplicate-check",
             target: target(),
+            executionContext: try executionContext(),
             scenarioID: scenario.id,
             authority: .hostRuntimeHarness,
             producerReceiptID: "receipt-1",
@@ -51,7 +52,7 @@ final class ForgeAccessibilityValidationTests: ForgeAccessibilityTestCase {
             requiredChecks: [.voiceOverReachability, .semanticNameRoleValue, .focusOrder]
         )
 
-        XCTAssertThrowsError(try ForgeAccessibilityPolicy(target: target(), scenarios: scenarios)) { error in
+        XCTAssertThrowsError(try ForgeAccessibilityPolicy(target: target(), executionPolicy: executionPolicy(), scenarios: scenarios)) { error in
             XCTAssertEqual(
                 error as? ForgeAccessibilityError,
                 .insufficientBaselineCoverage("voiceOverEnvironment")
@@ -68,7 +69,7 @@ final class ForgeAccessibilityValidationTests: ForgeAccessibilityTestCase {
             requiredChecks: [.reduceMotionBehavior]
         )
 
-        XCTAssertThrowsError(try ForgeAccessibilityPolicy(target: target(), scenarios: scenarios)) { error in
+        XCTAssertThrowsError(try ForgeAccessibilityPolicy(target: target(), executionPolicy: executionPolicy(), scenarios: scenarios)) { error in
             XCTAssertEqual(
                 error as? ForgeAccessibilityError,
                 .insufficientBaselineCoverage("reduceMotionEnvironment")
@@ -79,7 +80,7 @@ final class ForgeAccessibilityValidationTests: ForgeAccessibilityTestCase {
     func testPolicyRejectsMissingBaselineCheckKind() throws {
         let scenarios = try baselineScenarios().filter { $0.id != "baseline-touch" }
 
-        XCTAssertThrowsError(try ForgeAccessibilityPolicy(target: target(), scenarios: scenarios)) { error in
+        XCTAssertThrowsError(try ForgeAccessibilityPolicy(target: target(), executionPolicy: executionPolicy(), scenarios: scenarios)) { error in
             XCTAssertEqual(
                 error as? ForgeAccessibilityError,
                 .insufficientBaselineCoverage("missing:touchTargetGeometry")
@@ -92,6 +93,7 @@ final class ForgeAccessibilityValidationTests: ForgeAccessibilityTestCase {
         let evidence = try ForgeAccessibilityRunEvidence(
             runID: "unknown-run",
             target: policy.target,
+            executionContext: try executionContext(),
             scenarioID: "not-in-policy",
             authority: .hostRuntimeHarness,
             producerReceiptID: "unknown-receipt",
@@ -142,4 +144,22 @@ final class ForgeAccessibilityValidationTests: ForgeAccessibilityTestCase {
             XCTAssertEqual(error as? ForgeAccessibilityError, .invalidIdentifier("target.projectID"))
         }
     }
+    func testExecutionPolicyRejectsDuplicateKinds() {
+        XCTAssertThrowsError(try ForgeAccessibilityExecutionPolicy(
+            allowedKinds: [.simulator, .simulator]
+        )) { error in
+            XCTAssertEqual(error as? ForgeAccessibilityError, .duplicateExecutionKind(.simulator))
+        }
+    }
+
+    func testExecutionContextDecodeRevalidatesIdentity() throws {
+        let context = try executionContext()
+        let encoded = try JSONEncoder().encode(context)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["osBuild"] = "\n"
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeAccessibilityExecutionContext.self, from: tampered))
+    }
+
 }

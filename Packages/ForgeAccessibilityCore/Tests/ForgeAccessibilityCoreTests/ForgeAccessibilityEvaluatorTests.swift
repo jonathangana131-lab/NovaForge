@@ -57,6 +57,7 @@ final class ForgeAccessibilityEvaluatorTests: ForgeAccessibilityTestCase {
         trusted.append(try ForgeAccessibilityTrustedProducerReceipt(
             runID: "different-run",
             target: first.target,
+            executionContext: first.executionContext,
             scenarioID: first.scenarioID,
             authority: first.authority,
             producerReceiptID: first.producerReceiptID
@@ -82,6 +83,7 @@ final class ForgeAccessibilityEvaluatorTests: ForgeAccessibilityTestCase {
         let conflictingTrust = try ForgeAccessibilityTrustedProducerReceipt(
             runID: "different-run",
             target: first.target,
+            executionContext: first.executionContext,
             scenarioID: first.scenarioID,
             authority: first.authority,
             producerReceiptID: first.producerReceiptID
@@ -232,6 +234,7 @@ final class ForgeAccessibilityEvaluatorTests: ForgeAccessibilityTestCase {
         let second = try ForgeAccessibilityRunEvidence(
             runID: "run-second",
             target: policy.target,
+            executionContext: try executionContext(),
             scenarioID: scenario.id,
             authority: .xctestHarness,
             producerReceiptID: "receipt-b",
@@ -259,6 +262,76 @@ final class ForgeAccessibilityEvaluatorTests: ForgeAccessibilityTestCase {
         )) { error in
             XCTAssertEqual(error as? ForgeAccessibilityError, .duplicateProducerReceiptID("shared-receipt"))
         }
+    }
+
+    func testPhysicalEvidenceCannotSatisfySimulatorOnlyPolicy() throws {
+        let policy = try policy()
+        let scenario = policy.scenarios[0]
+        let physical = try run(
+            for: scenario,
+            target: policy.target,
+            executionContext: executionContext(
+                kind: .physicalDevice,
+                deviceIdentifier: "iPhone13,2",
+                osBuild: "27A123"
+            )
+        )
+        var runs = try allPassingRuns(policy: policy).filter { $0.scenarioID != scenario.id }
+        runs.append(physical)
+
+        let evaluation = try ForgeAccessibilityEvaluator.evaluate(
+            policy: policy,
+            runs: runs,
+            trustedProducerReceipts: try trusts(runs)
+        )
+
+        XCTAssertTrue(evaluation.blockers.contains(.executionEnvironmentMismatch(scenarioID: scenario.id)))
+    }
+
+    func testWrongOSBuildCannotSatisfyExactEnvironmentPolicy() throws {
+        let policy = try policy()
+        let scenario = policy.scenarios[0]
+        let wrongBuild = try run(
+            for: scenario,
+            target: policy.target,
+            executionContext: executionContext(osBuild: "27A999")
+        )
+        var runs = try allPassingRuns(policy: policy).filter { $0.scenarioID != scenario.id }
+        runs.append(wrongBuild)
+
+        let evaluation = try ForgeAccessibilityEvaluator.evaluate(
+            policy: policy,
+            runs: runs,
+            trustedProducerReceipts: try trusts(runs)
+        )
+
+        XCTAssertTrue(evaluation.blockers.contains(.executionEnvironmentMismatch(scenarioID: scenario.id)))
+    }
+
+    func testTrustedReceiptMustMatchExactExecutionContext() throws {
+        let policy = try policy()
+        let runs = try allPassingRuns(policy: policy)
+        let first = runs[0]
+        var trusted = try trusts(Array(runs.dropFirst()))
+        trusted.append(try ForgeAccessibilityTrustedProducerReceipt(
+            runID: first.runID,
+            target: first.target,
+            executionContext: executionContext(osBuild: "27A999"),
+            scenarioID: first.scenarioID,
+            authority: first.authority,
+            producerReceiptID: first.producerReceiptID
+        ))
+
+        let evaluation = try ForgeAccessibilityEvaluator.evaluate(
+            policy: policy,
+            runs: runs,
+            trustedProducerReceipts: trusted
+        )
+
+        XCTAssertTrue(evaluation.blockers.contains(.untrustedProducerReceipt(
+            scenarioID: first.scenarioID,
+            producerReceiptID: first.producerReceiptID
+        )))
     }
 
 }
