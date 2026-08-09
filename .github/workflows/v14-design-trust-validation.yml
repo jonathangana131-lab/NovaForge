@@ -1,0 +1,63 @@
+name: V14 Design trust validation
+
+on:
+  pull_request:
+    paths:
+      - "Packages/ForgeDesignCore/**"
+      - ".github/workflows/v14-design-trust-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  design-core:
+    name: ForgeDesignCore (${{ matrix.configuration }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Test ForgeDesignCore
+        run: >-
+          swift test
+          --package-path Packages/ForgeDesignCore
+          --configuration ${{ matrix.configuration }}
+          -Xswiftc -warnings-as-errors
+
+  external-trust-gate:
+    name: External callers cannot mint Design trust
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build ForgeDesignCore module
+        run: >-
+          swift build
+          --package-path Packages/ForgeDesignCore
+          --configuration debug
+          -Xswiftc -warnings-as-errors
+      - name: Prove binding initializer is inaccessible outside module
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN_PATH="$(swift build --package-path Packages/ForgeDesignCore --configuration debug --show-bin-path)"
+          cat > /tmp/ExternalMintProbe.swift <<'SWIFT'
+          import ForgeDesignCore
+
+          func mintTrustFromCandidate(_ snapshot: DesignDNA) {
+              _ = DesignDNATrustBinding(authenticatedSnapshot: snapshot)
+          }
+          SWIFT
+          if swiftc -typecheck -I "$BIN_PATH/Modules" /tmp/ExternalMintProbe.swift > /tmp/mint.out 2>&1; then
+              echo "::error::External code unexpectedly compiled a DesignDNATrustBinding initializer call"
+              exit 1
+          fi
+          cat /tmp/mint.out
+          grep -q "DesignDNATrustBinding" /tmp/mint.out
+          grep -q "inaccessible" /tmp/mint.out
