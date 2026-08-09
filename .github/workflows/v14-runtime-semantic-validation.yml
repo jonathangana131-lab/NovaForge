@@ -1,0 +1,25 @@
+name: V14 ForgeRuntime Semantic Validation
+
+on:
+  pull_request:
+    paths:
+      - "Packages/ForgeRuntimeKit/**"
+      - ".github/workflows/v14-runtime-semantic-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forge-runtime-package:
+    name: ForgeRuntimeKit debug + release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
