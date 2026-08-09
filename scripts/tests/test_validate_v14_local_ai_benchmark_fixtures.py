@@ -131,6 +131,28 @@ class FixturePackValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(validator.ValidationError, "requires suite version 1"):
             validator.validate(self.root)
 
+    def test_suite_definition_matches_local_ai_benchmark_core_codable_shape(self) -> None:
+        result = validator.validate(FIXTURES)
+        suite = result.suite_definition
+        self.assertEqual(set(suite), {"id", "version", "requiredCategories", "tasks"})
+        self.assertEqual(suite["id"], "novaforge.local-ai.general-agent")
+        self.assertEqual(suite["version"], 1)
+        self.assertEqual(
+            suite["requiredCategories"],
+            sorted(validator.REQUIRED_GENERAL_AGENT_CATEGORIES),
+        )
+        self.assertEqual(len(suite["tasks"]), 8)
+        self.assertEqual(
+            set(suite["tasks"][0]),
+            {"id", "revision", "category", "weight", "isRequired", "fixtureDigest"},
+        )
+        task = next(item for item in suite["tasks"] if item["id"] == "v14.repair.restart-counter")
+        self.assertEqual(
+            task["fixtureDigest"],
+            "84bfe34b9ae312a2b691ff4d3eb066d4980455560ad71afca89dffc88c2a078f",
+        )
+        self.assertTrue(task["isRequired"])
+
 
 if __name__ == "__main__":
     unittest.main()
