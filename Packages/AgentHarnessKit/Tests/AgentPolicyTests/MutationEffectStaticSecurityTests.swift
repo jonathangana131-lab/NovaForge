@@ -275,6 +275,28 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             .deletingLastPathComponent()
     }
 
+    private func activeModulesPath() throws -> String {
+        let modulesURL = Bundle(for: MutationEffectStaticSecurityTests.self)
+            .bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Modules", isDirectory: true)
+        let agentPolicyModule = modulesURL.appendingPathComponent(
+            "AgentPolicy.swiftmodule",
+            isDirectory: true
+        )
+        guard FileManager.default.fileExists(atPath: agentPolicyModule.path) else {
+            throw NSError(
+                domain: "MutationEffectStaticSecurityTests",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "AgentPolicy module is missing from active SwiftPM build at \(modulesURL.path)"
+                ]
+            )
+        }
+        return modulesURL.path
+    }
+
     private func compileMisuse(
         _ misuse: (name: String, source: String),
         packageRoot: URL,
@@ -297,7 +319,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             "-swift-version",
             "6",
             "-I",
-            packageRoot.appendingPathComponent(".build/debug/Modules").path,
+            try activeModulesPath(),
             "-o",
             "/dev/null",
             sourceURL.path,
