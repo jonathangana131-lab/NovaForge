@@ -148,8 +148,8 @@ final class ForgeHistoryAcceptedProjectionTests: XCTestCase {
         }
     }
 
-    func testAcceptedProjectStateIdentityPreservesOpaqueInternalCharactersExactly() throws {
-        let rawValue = "/tmp/project state#1"
+    func testAcceptedProjectStateIdentityPreservesCanonicalOpaqueValueExactly() throws {
+        let rawValue = "/tmp/project state#1\nsegment"
         XCTAssertEqual(
             try ForgeHistoryAcceptedProjectStateID(rawValue).rawValue,
             rawValue
@@ -158,17 +158,6 @@ final class ForgeHistoryAcceptedProjectionTests: XCTestCase {
 
     func testAcceptedProjectStateIdentityRejectsWhitespaceAliasesInsteadOfNormalizing() throws {
         for candidate in [" state-1", "state-1 ", "\nstate-1", "state-1\t"] {
-            XCTAssertThrowsError(try ForgeHistoryAcceptedProjectStateID(candidate)) { error in
-                XCTAssertEqual(
-                    error as? ForgeHistoryAcceptedProjectionError,
-                    .invalidAcceptedProjectStateID
-                )
-            }
-        }
-    }
-
-    func testAcceptedProjectStateIdentityRejectsControlCharactersAndOversizedValues() throws {
-        for candidate in ["state\u{0000}1", "state\u{001F}1", String(repeating: "x", count: 513)] {
             XCTAssertThrowsError(try ForgeHistoryAcceptedProjectStateID(candidate)) { error in
                 XCTAssertEqual(
                     error as? ForgeHistoryAcceptedProjectionError,

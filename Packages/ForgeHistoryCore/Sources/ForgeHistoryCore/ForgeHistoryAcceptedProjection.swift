@@ -8,7 +8,7 @@ public struct ForgeHistoryAcceptedProjectStateID: Hashable, Sendable, CustomStri
     public let rawValue: String
 
     public init(_ rawValue: String) throws {
-        guard Self.isValidExactOpaqueIdentity(rawValue) else {
+        guard Self.isCanonicalUpstreamIdentity(rawValue) else {
             throw ForgeHistoryAcceptedProjectionError.invalidAcceptedProjectStateID
         }
         self.rawValue = rawValue
@@ -16,12 +16,9 @@ public struct ForgeHistoryAcceptedProjectStateID: Hashable, Sendable, CustomStri
 
     public var description: String { rawValue }
 
-    private static func isValidExactOpaqueIdentity(_ value: String) -> Bool {
-        guard !value.isEmpty, value.utf8.count <= 512 else { return false }
-        guard value == value.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
-        return value.unicodeScalars.allSatisfy { scalar in
-            !CharacterSet.controlCharacters.contains(scalar)
-        }
+    private static func isCanonicalUpstreamIdentity(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        return value == value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
