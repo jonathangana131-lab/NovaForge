@@ -54,14 +54,16 @@ final class ForgeAccessibilityEvaluatorTests: ForgeAccessibilityTestCase {
         let runs = try allPassingRuns(policy: policy)
         let first = runs[0]
         var trusted = try trusts(Array(runs.dropFirst()))
-        trusted.append(try ForgeAccessibilityTrustedProducerReceipt(
+        let mismatchedRun = try ForgeAccessibilityRunEvidence(
             runID: "different-run",
             target: first.target,
             executionContext: first.executionContext,
             scenarioID: first.scenarioID,
             authority: first.authority,
-            producerReceiptID: first.producerReceiptID
-        ))
+            producerReceiptID: first.producerReceiptID,
+            checkResults: first.checkResults
+        )
+        trusted.append(try trust(mismatchedRun))
 
         let evaluation = try ForgeAccessibilityEvaluator.evaluate(
             policy: policy,
@@ -75,19 +77,65 @@ final class ForgeAccessibilityEvaluatorTests: ForgeAccessibilityTestCase {
         )))
     }
 
+    func testTrustedReceiptBindsCompleteCheckResultPayload() throws {
+        let policy = try policy()
+        let scenario = try XCTUnwrap(policy.scenarios.first { $0.id == "baseline-touch" })
+        let failedResult = try ForgeAccessibilityCheckResult(
+            kind: .touchTargetGeometry,
+            outcome: .failed,
+            inspectedElementCount: 12,
+            failureCount: 1,
+            note: "One target is below the accepted geometry"
+        )
+        let authenticatedFailedRun = try run(
+            for: scenario,
+            target: policy.target,
+            checkResults: [failedResult]
+        )
+        let relabeledPassedRun = try ForgeAccessibilityRunEvidence(
+            runID: authenticatedFailedRun.runID,
+            target: authenticatedFailedRun.target,
+            executionContext: authenticatedFailedRun.executionContext,
+            scenarioID: authenticatedFailedRun.scenarioID,
+            authority: authenticatedFailedRun.authority,
+            producerReceiptID: authenticatedFailedRun.producerReceiptID,
+            checkResults: [try passed(.touchTargetGeometry)]
+        )
+
+        let otherRuns = try allPassingRuns(policy: policy)
+            .filter { $0.scenarioID != scenario.id }
+        var trusted = try trusts(otherRuns)
+        trusted.append(try trust(authenticatedFailedRun))
+
+        let evaluation = try ForgeAccessibilityEvaluator.evaluate(
+            policy: policy,
+            runs: otherRuns + [relabeledPassedRun],
+            trustedProducerReceipts: trusted
+        )
+
+        XCTAssertEqual(evaluation.status, .blocked)
+        XCTAssertTrue(evaluation.blockers.contains(.untrustedProducerReceipt(
+            scenarioID: scenario.id,
+            producerReceiptID: authenticatedFailedRun.producerReceiptID
+        )))
+        XCTAssertFalse(evaluation.acceptedProducerReceiptIDs.contains(authenticatedFailedRun.producerReceiptID))
+    }
+
     func testDuplicateTrustedProducerReceiptIDFailsClosed() throws {
         let policy = try policy()
         let runs = try allPassingRuns(policy: policy)
         let first = runs[0]
         let firstTrust = try trust(first)
-        let conflictingTrust = try ForgeAccessibilityTrustedProducerReceipt(
+        let conflictingRun = try ForgeAccessibilityRunEvidence(
             runID: "different-run",
             target: first.target,
             executionContext: first.executionContext,
             scenarioID: first.scenarioID,
             authority: first.authority,
-            producerReceiptID: first.producerReceiptID
+            producerReceiptID: first.producerReceiptID,
+            checkResults: first.checkResults
         )
+        let conflictingTrust = try trust(conflictingRun)
 
         XCTAssertThrowsError(try ForgeAccessibilityEvaluator.evaluate(
             policy: policy,
@@ -313,14 +361,16 @@ final class ForgeAccessibilityEvaluatorTests: ForgeAccessibilityTestCase {
         let runs = try allPassingRuns(policy: policy)
         let first = runs[0]
         var trusted = try trusts(Array(runs.dropFirst()))
-        trusted.append(try ForgeAccessibilityTrustedProducerReceipt(
+        let mismatchedExecutionRun = try ForgeAccessibilityRunEvidence(
             runID: first.runID,
             target: first.target,
             executionContext: executionContext(osBuild: "27A999"),
             scenarioID: first.scenarioID,
             authority: first.authority,
-            producerReceiptID: first.producerReceiptID
-        ))
+            producerReceiptID: first.producerReceiptID,
+            checkResults: first.checkResults
+        )
+        trusted.append(try trust(mismatchedExecutionRun))
 
         let evaluation = try ForgeAccessibilityEvaluator.evaluate(
             policy: policy,
