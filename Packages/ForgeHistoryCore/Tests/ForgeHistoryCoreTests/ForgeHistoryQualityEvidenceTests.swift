@@ -2,6 +2,40 @@ import ForgeHistoryCore
 import XCTest
 
 final class ForgeHistoryQualityEvidenceTests: XCTestCase {
+    func testProducerReceiptReferencePreservesBroaderCanonicalProducerIdentity() throws {
+        let accessibilitySizedReceipt = String(repeating: "a", count: 512)
+        XCTAssertEqual(
+            try ForgeHistoryProducerReceiptReference(accessibilitySizedReceipt).rawValue,
+            accessibilitySizedReceipt
+        )
+
+        let unicodeReceipt = "producer/receipt café exact id"
+        XCTAssertEqual(
+            try ForgeHistoryProducerReceiptReference(unicodeReceipt).rawValue,
+            unicodeReceipt
+        )
+
+        for invalid in [" receipt", "receipt ", "\nreceipt", "receipt\t", ""] {
+            XCTAssertThrowsError(try ForgeHistoryProducerReceiptReference(invalid)) { error in
+                XCTAssertEqual(
+                    error as? ForgeHistoryQualityProjectionError,
+                    .invalidProducerReceiptReference
+                )
+            }
+        }
+
+        XCTAssertThrowsError(
+            try ForgeHistoryProducerReceiptReference(
+                String(repeating: "x", count: ForgeHistoryProducerReceiptReference.maximumLength + 1)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeHistoryQualityProjectionError,
+                .invalidProducerReceiptReference
+            )
+        }
+    }
+
     func testProjectorPreservesQualityEvidenceInCanonicalCheckpointOrder() throws {
         let project = try ForgeHistoryProjectID("project-a")
         let first = try makeCheckpoint("c1", sequence: 1)
@@ -120,11 +154,11 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
 
         let first = ForgeHistoryAcceptedQualityEvidenceReference(
             kind: .accessibility,
-            producerReceiptReference: try ForgeHistoryReceiptID("a11y-1")
+            producerReceiptReference: try ForgeHistoryProducerReceiptReference("a11y-1")
         )
         let second = ForgeHistoryAcceptedQualityEvidenceReference(
             kind: .accessibility,
-            producerReceiptReference: try ForgeHistoryReceiptID("a11y-2")
+            producerReceiptReference: try ForgeHistoryProducerReceiptReference("a11y-2")
         )
         XCTAssertThrowsError(
             try ForgeHistoryCheckpointQualityBinding(
@@ -151,7 +185,7 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
 
         let accepted = ForgeHistoryAcceptedQualityEvidenceReference(
             kind: .performance,
-            producerReceiptReference: try ForgeHistoryReceiptID("perf-1"),
+            producerReceiptReference: try ForgeHistoryProducerReceiptReference("perf-1"),
             artifactReference: attached
         )
         let projection = try ForgeHistoryAcceptedQualityTimelineProjector.project(
@@ -183,7 +217,7 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
                         evidence: [
                             .init(
                                 kind: .performance,
-                                producerReceiptReference: try ForgeHistoryReceiptID("perf-2"),
+                                producerReceiptReference: try ForgeHistoryProducerReceiptReference("perf-2"),
                                 artifactReference: unattached
                             ),
                         ]
@@ -224,7 +258,7 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
     func testOneProducerReceiptCanRemainOpaqueAcrossDistinctQualityKinds() throws {
         let project = try ForgeHistoryProjectID("project-a")
         let checkpoint = try makeCheckpoint("c1", sequence: 1)
-        let receipt = try ForgeHistoryReceiptID("quality-bundle-1")
+        let receipt = try ForgeHistoryProducerReceiptReference("quality-bundle-1")
         let binding = try ForgeHistoryCheckpointQualityBinding(
             projectID: project,
             checkpointID: checkpoint.id,
@@ -250,7 +284,7 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
             evidence: [
                 .init(
                     kind: kind,
-                    producerReceiptReference: ForgeHistoryReceiptID(receipt)
+                    producerReceiptReference: ForgeHistoryProducerReceiptReference(receipt)
                 ),
             ]
         )
