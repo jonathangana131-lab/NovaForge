@@ -1,0 +1,34 @@
+name: ForgeHistoryCore external quality trust validation
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-history-static-trust:
+    name: ForgeHistoryCore external trust debug + release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact product ancestry and test blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "4e85ddfe14bad07884f2d204d1ac4d91e860530d"
+          test "$(git rev-parse HEAD^:Packages/ForgeHistoryCore/Tests/ForgeHistoryCoreTests/ForgeHistoryQualityStaticTrustBoundaryTests.swift)" = "cabd3a41fcad2a70ac1eb435d388653f8d946a4c"
+          git diff --check 99cd96ea45667c2dec0248a375c362aef51d20b9 HEAD^
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Test ForgeHistoryCore debug with warnings as errors
+        run: swift test --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
+
+      - name: Test ForgeHistoryCore release with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
