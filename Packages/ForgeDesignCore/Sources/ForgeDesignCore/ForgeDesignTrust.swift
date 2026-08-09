@@ -6,40 +6,28 @@ import Foundation
 /// restoring bytes must never restore a trusted bit. The host should construct this binding only
 /// after authenticating the receipts/decisions that make the complete snapshot authoritative.
 public struct DesignDNATrustBinding: Equatable, Sendable {
-    public let schemaVersion: Int
-    public let projectID: DesignProjectID
-    public let revision: Int
-    public let intentCore: IntentCore
-    public let rules: [DesignRule]
-    public let protectedComponents: [ProtectedDesignComponent]
-    public let neverRules: [NeverRule]
-    public let lastChangeReceiptID: DesignReceiptID
-    public let updatedAt: Date
+    private let authenticatedSnapshot: DesignDNA
+
+    /// Inspection projections only. Authorization always compares `authenticatedSnapshot` as a
+    /// whole value so future semantically relevant `DesignDNA` fields automatically participate.
+    public var schemaVersion: Int { authenticatedSnapshot.schemaVersion }
+    public var projectID: DesignProjectID { authenticatedSnapshot.projectID }
+    public var revision: Int { authenticatedSnapshot.revision }
+    public var intentCore: IntentCore { authenticatedSnapshot.intentCore }
+    public var rules: [DesignRule] { authenticatedSnapshot.rules }
+    public var protectedComponents: [ProtectedDesignComponent] { authenticatedSnapshot.protectedComponents }
+    public var neverRules: [NeverRule] { authenticatedSnapshot.neverRules }
+    public var lastChangeReceiptID: DesignReceiptID { authenticatedSnapshot.lastChangeReceiptID }
+    public var updatedAt: Date { authenticatedSnapshot.updatedAt }
 
     /// Captures the complete subject of a Design DNA snapshot the host has already authenticated.
     /// Constructing this value does not itself authenticate the snapshot.
     public init(authenticatedSnapshot snapshot: DesignDNA) {
-        schemaVersion = snapshot.schemaVersion
-        projectID = snapshot.projectID
-        revision = snapshot.revision
-        intentCore = snapshot.intentCore
-        rules = snapshot.rules
-        protectedComponents = snapshot.protectedComponents
-        neverRules = snapshot.neverRules
-        lastChangeReceiptID = snapshot.lastChangeReceiptID
-        updatedAt = snapshot.updatedAt
+        authenticatedSnapshot = snapshot
     }
 
     fileprivate func matches(_ snapshot: DesignDNA) -> Bool {
-        schemaVersion == snapshot.schemaVersion
-            && projectID == snapshot.projectID
-            && revision == snapshot.revision
-            && intentCore == snapshot.intentCore
-            && rules == snapshot.rules
-            && protectedComponents == snapshot.protectedComponents
-            && neverRules == snapshot.neverRules
-            && lastChangeReceiptID == snapshot.lastChangeReceiptID
-            && updatedAt == snapshot.updatedAt
+        authenticatedSnapshot == snapshot
     }
 }
 
