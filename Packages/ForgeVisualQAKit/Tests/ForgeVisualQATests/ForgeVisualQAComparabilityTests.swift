@@ -5,8 +5,8 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     func testScreenshotAndFrameSequenceAreNotInterchangeableRegressionEvidence() throws {
-        let screenshot = try capture(kind: .runtimeScreenshot)
-        let sequence = try capture(kind: .runtimeFrameSequence)
+        let screenshot = try trustedCapture(kind: .runtimeScreenshot, digestByte: "a")
+        let sequence = try trustedCapture(kind: .runtimeFrameSequence, digestByte: "b")
         XCTAssertEqual(
             VisualRegressionComparator.compare(baseline: screenshot, candidate: sequence),
             .notComparable(.differentEvidenceKind)
@@ -14,8 +14,8 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
     }
 
     func testAutoPolishRejectsMixedViewportHistory() throws {
-        let portrait = try capture(frame: 1)
-        let landscape = try capture(
+        let portrait = try trustedCapture(frame: 1, digestByte: "a")
+        let landscape = try trustedCapture(
             frame: 2,
             viewport: VisualViewport(
                 width: 844,
@@ -23,7 +23,8 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
                 scale: 3,
                 orientation: .landscape,
                 safeArea: .init(top: 0, leading: 47, bottom: 21, trailing: 47)
-            )
+            ),
+            digestByte: "b"
         )
         let passes = [
             AutoPolishPass(
@@ -40,12 +41,13 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
         XCTAssertEqual(AutoPolishPlanner.decide(passes: passes), .stop(.insufficientVisualEvidence))
     }
 
-    private func capture(
+    private func trustedCapture(
         frame: UInt64 = 0,
         viewport: VisualViewport? = nil,
-        kind: VisualEvidenceKind = .runtimeScreenshot
-    ) throws -> VisualCaptureReceipt {
-        try VisualCaptureReceipt(
+        kind: VisualEvidenceKind = .runtimeScreenshot,
+        digestByte: String
+    ) throws -> VisualTrustedCapture {
+        let capture = try VisualCaptureReceipt(
             project: .init(projectID: "project-1", sourceRevision: "r1"),
             runtimeSessionID: "session-1",
             frameOrdinal: frame,
@@ -65,6 +67,10 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
             ),
             evidenceKind: kind,
             capturedAt: now
+        )
+        return try VisualTrustedCapture(
+            authenticatedCapture: capture,
+            artifactSHA256: String(repeating: digestByte, count: 64)
         )
     }
 
