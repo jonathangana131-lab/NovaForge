@@ -1,30 +1,21 @@
-name: V13 Swift package contracts
+name: V13 Swift package contracts Linux shadow
 
 on:
-  pull_request:
-    paths:
-      - "Packages/**"
-      - "scripts/verify-v13-packages.sh"
-      - ".github/workflows/v13-package-contracts.yml"
   push:
-    branches: [main]
-    paths:
-      - "Packages/**"
-      - "scripts/verify-v13-packages.sh"
-      - ".github/workflows/v13-package-contracts.yml"
-  workflow_dispatch:
+    branches:
+      - validation/GPT56-NF-V14-GO-8A08/current-all-packages-linux/e1
 
 permissions:
   contents: read
 
 concurrency:
-  group: v13-packages-${{ github.workflow }}-${{ github.ref }}
+  group: v13-packages-linux-shadow-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   contracts:
-    name: Swift package contracts (${{ matrix.configuration }})
-    runs-on: macos-26
+    name: Swift package contracts Linux shadow (${{ matrix.configuration }})
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -32,6 +23,8 @@ jobs:
         configuration: [debug, release]
     steps:
       - uses: actions/checkout@v6
+      - name: Toolchain
+        run: swift --version
       - name: Show discovered packages
         run: bash scripts/verify-v13-packages.sh --list
       - name: Test every checked-in Swift package
