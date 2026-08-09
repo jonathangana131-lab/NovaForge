@@ -96,11 +96,17 @@ public enum VisualEvidenceKind: String, Codable, CaseIterable, Sendable {
     case runtimeFrameSequence
     case sourceInspection
 
-    public var isRuntimeVisualProof: Bool {
+    /// Structural claim carried by candidate metadata. This is not producer authentication.
+    public var claimsRuntimeVisualEvidence: Bool {
         self == .runtimeScreenshot || self == .runtimeFrameSequence
     }
 }
 
+/// Codable candidate metadata describing a visual capture.
+///
+/// `evidenceKind` is caller-provided metadata and does not prove that screenshot/frame artifacts
+/// exist. Evidence-authoritative APIs in this package therefore consume `VisualTrustedCapture`
+/// instead of this candidate value directly.
 public struct VisualCaptureReceipt: Codable, Equatable, Hashable, Sendable, Identifiable {
     public let id: UUID
     public let project: VisualProjectIdentity
@@ -137,7 +143,45 @@ public struct VisualCaptureReceipt: Codable, Equatable, Hashable, Sendable, Iden
         self.capturedAt = capturedAt
     }
 
-    public var isRuntimeVisualProof: Bool { evidenceKind.isRuntimeVisualProof }
+    public var claimsRuntimeVisualEvidence: Bool { evidenceKind.claimsRuntimeVisualEvidence }
+}
+
+/// Non-Codable host-accepted binding between complete capture metadata and an immutable artifact.
+///
+/// Construction is module-internal on purpose. Candidate/model-authored `VisualCaptureReceipt`
+/// bytes cannot mint trusted visual proof merely by declaring `.runtimeScreenshot` or
+/// `.runtimeFrameSequence`. A future canonical host capture adapter inside this module must create
+/// this value only after authenticating the runtime producer and SHA-256 artifact identity.
+public struct VisualTrustedCapture: Equatable, Hashable, Sendable, Identifiable {
+    public let capture: VisualCaptureReceipt
+    public let artifactSHA256: String
+
+    public var id: UUID { capture.id }
+    public var project: VisualProjectIdentity { capture.project }
+    public var runtimeSessionID: String { capture.runtimeSessionID }
+    public var frameOrdinal: UInt64 { capture.frameOrdinal }
+    public var viewport: VisualViewport { capture.viewport }
+    public var accessibility: VisualAccessibilityState { capture.accessibility }
+    public var evidenceKind: VisualEvidenceKind { capture.evidenceKind }
+    public var capturedAt: Date { capture.capturedAt }
+
+    init(authenticatedCapture: VisualCaptureReceipt, artifactSHA256: String) throws {
+        guard authenticatedCapture.claimsRuntimeVisualEvidence else {
+            throw VisualQAInvariantError.nonRuntimeCaptureCannotBeTrusted
+        }
+        guard Self.isCanonicalSHA256(artifactSHA256) else {
+            throw VisualQAInvariantError.invalidArtifactDigest
+        }
+        self.capture = authenticatedCapture
+        self.artifactSHA256 = artifactSHA256
+    }
+
+    private static func isCanonicalSHA256(_ value: String) -> Bool {
+        guard value.utf8.count == 64 else { return false }
+        return value.utf8.allSatisfy { byte in
+            (48...57).contains(byte) || (97...102).contains(byte)
+        }
+    }
 }
 
 public enum VisualQAInvariantError: Error, Equatable, Sendable {
@@ -147,6 +191,8 @@ public enum VisualQAInvariantError: Error, Equatable, Sendable {
     case invalidAccessibilityState
     case invalidSourceLocation
     case invalidRuntimeNode
+    case invalidArtifactDigest
+    case nonRuntimeCaptureCannotBeTrusted
 }
 
 public enum VisualComparisonMismatch: String, Codable, Equatable, Sendable {
@@ -164,12 +210,9 @@ public enum VisualComparisonDecision: Equatable, Sendable {
 
 public enum VisualRegressionComparator {
     public static func compare(
-        baseline: VisualCaptureReceipt,
-        candidate: VisualCaptureReceipt
+        baseline: VisualTrustedCapture,
+        candidate: VisualTrustedCapture
     ) -> VisualComparisonDecision {
-        guard baseline.isRuntimeVisualProof, candidate.isRuntimeVisualProof else {
-            return .notComparable(.insufficientVisualEvidence)
-        }
         guard baseline.project.projectID == candidate.project.projectID else {
             return .notComparable(.differentProject)
         }
@@ -288,11 +331,13 @@ public struct FirstMinuteObservation: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-public struct FirstMinuteAssessment: Codable, Equatable, Sendable {
-    public let capture: VisualCaptureReceipt
+/// Evidence-backed first-minute assessment. Deliberately non-Codable because trusted capture
+/// authority must be reacquired from the canonical runtime producer after relaunch.
+public struct FirstMinuteAssessment: Equatable, Sendable {
+    public let capture: VisualTrustedCapture
     public let observations: [FirstMinuteObservation]
 
-    public init(capture: VisualCaptureReceipt, observations: [FirstMinuteObservation]) {
+    public init(capture: VisualTrustedCapture, observations: [FirstMinuteObservation]) {
         self.capture = capture
         self.observations = observations
     }
@@ -316,15 +361,13 @@ public struct FirstMinuteAssessment: Codable, Equatable, Sendable {
             .safeAreasAreRespected,
             .textIsReadable,
         ]
-        guard capture.isRuntimeVisualProof else { return false }
         return observations
             .filter { visualCriteria.contains($0.criterion) }
             .allSatisfy { $0.captureID == capture.id }
     }
 
     public var passes: Bool {
-        capture.isRuntimeVisualProof &&
-            missingCriteria.isEmpty &&
+        missingCriteria.isEmpty &&
             failedCriteria.isEmpty &&
             hasRuntimeVisualEvidenceForVisualCriteria
     }
@@ -379,9 +422,8 @@ public struct VisualSelectionIdentity: Codable, Equatable, Hashable, Sendable {
         self.source = source
     }
 
-    public func isValid(for capture: VisualCaptureReceipt) -> Bool {
-        capture.isRuntimeVisualProof &&
-            capture.project == project &&
+    public func isValid(for capture: VisualTrustedCapture) -> Bool {
+        capture.project == project &&
             capture.runtimeSessionID == runtimeSessionID
     }
 }
@@ -402,13 +444,15 @@ public struct AutoPolishPolicy: Codable, Equatable, Sendable {
     }
 }
 
-public struct AutoPolishPass: Codable, Equatable, Sendable {
-    public let capture: VisualCaptureReceipt
+/// One visual-polish pass over authenticated runtime capture evidence. Non-Codable so accepted
+/// capture authority cannot be restored from candidate bytes after relaunch.
+public struct AutoPolishPass: Equatable, Sendable {
+    public let capture: VisualTrustedCapture
     public let findings: [VisualFinding]
     public let improvementScore: Double
 
     public init(
-        capture: VisualCaptureReceipt,
+        capture: VisualTrustedCapture,
         findings: [VisualFinding],
         improvementScore: Double
     ) {
@@ -444,7 +488,6 @@ public enum AutoPolishPlanner {
         if userPaused { return .stop(.userPaused) }
         if dependencyBlocked { return .stop(.dependencyBlocked) }
         guard let latest = passes.last else { return .stop(.insufficientVisualEvidence) }
-        guard latest.capture.isRuntimeVisualProof else { return .stop(.insufficientVisualEvidence) }
         guard passes.dropLast().allSatisfy({ prior in
             VisualRegressionComparator.compare(baseline: prior.capture, candidate: latest.capture) == .comparable
         }) else {
