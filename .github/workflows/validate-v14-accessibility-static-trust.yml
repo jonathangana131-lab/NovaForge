@@ -1,0 +1,31 @@
+name: Validate V14 Accessibility Static Trust
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-GO-8A08/accessibility-static-gate/e1
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ForgeAccessibilityCore (${{ matrix.configuration }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Test package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            swift test --package-path Packages/ForgeAccessibilityCore --configuration release -Xswiftc -warnings-as-errors
+          else
+            swift test --package-path Packages/ForgeAccessibilityCore -Xswiftc -warnings-as-errors
+          fi
