@@ -1,4 +1,4 @@
-import ForgeHistoryCore
+@testable import ForgeHistoryCore
 import XCTest
 
 final class ForgeHistoryQualityEvidenceTests: XCTestCase {
