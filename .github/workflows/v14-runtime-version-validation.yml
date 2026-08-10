@@ -1,0 +1,32 @@
+name: V14 Runtime Version Validation
+
+on:
+  push:
+    branches:
+      - worker/GPT56SOL-NF-V14-RUNTIMEVER-8A10/semantic-runtime-version/e1
+
+permissions:
+  contents: read
+
+jobs:
+  forge-runtime-kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert narrow stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check 2a0daf26b3f754d487c112d5f846ad6e5cccbdec...HEAD
+          mapfile -t changed < <(git diff --name-only 2a0daf26b3f754d487c112d5f846ad6e5cccbdec...HEAD | grep -v '^.github/workflows/v14-runtime-version-validation.yml$')
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 2
+          test "${changed[0]}" = 'Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeSessionBoundSemanticAuthorization.swift'
+          test "${changed[1]}" = 'Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeSessionBoundSemanticAuthorizationTests.swift'
+      - name: Debug package tests
+        working-directory: Packages/ForgeRuntimeKit
+        run: swift test -Xswiftc -warnings-as-errors
+      - name: Release package tests
+        working-directory: Packages/ForgeRuntimeKit
+        run: swift test -c release -Xswiftc -warnings-as-errors
