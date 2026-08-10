@@ -22,6 +22,32 @@ final class ForgeHomeStaticTrustBoundaryTests: XCTestCase {
         )
     }
 
+    func testExternalConsumerCannotConstructRunnableHomeState() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "HomeRunStateMint.swift",
+            source: """
+            import Foundation
+            import ForgeHomeCore
+
+            let evidence = ForgeRuntimeEvidence(
+                artifactID: ForgeArtifactID(rawValue: "runtime-r1"),
+                runtimeKind: .forgeWeb,
+                verificationLevel: .runtimeTested,
+                sourceRevision: "r1",
+                recordedAt: Date()
+            )
+            _ = ForgeCreationRunState(acceptedRuntimeEvidence: evidence)
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible")
+                || diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection")
+                || diagnostics.localizedCaseInsensitiveContains("extra argument 'acceptedruntimeevidence'"),
+            "Expected Home run-state construction to be inaccessible, got: \(diagnostics)"
+        )
+    }
+
     private func typecheckExternalConsumer(named fileName: String, source: String) throws -> String {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("forge-home-static-trust-\(UUID().uuidString)", isDirectory: true)
