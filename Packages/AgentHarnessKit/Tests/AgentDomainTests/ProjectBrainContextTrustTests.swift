@@ -3,8 +3,9 @@ import XCTest
 @testable import AgentDomain
 
 final class ProjectBrainContextTrustTests: XCTestCase {
-    func testTrustedSnapshotBindsAuthorityIntoSelectedContext() throws {
+    func testTrustedSnapshotBindsSourceAndWholeSnapshotIdentityIntoSelectedContext() throws {
         let projectID = ProjectID()
+        let identity = try sourceIdentity()
         let fact = makeFact(
             projectID: projectID,
             kind: .acceptedDecision,
@@ -12,19 +13,122 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         )
         let snapshot = try ProjectBrainTrustedSnapshot(
             authenticatedProjectID: projectID,
-            revision: 9,
+            brainRevision: 9,
+            sourceIdentity: identity,
             authorityReceiptID: "brain-receipt-9",
+            snapshotDigest: "sha256:whole-snapshot-9",
             facts: [fact]
         )
 
         let slice = try ProjectBrainContextSelector.select(
             from: snapshot,
-            request: .init(projectID: projectID)
+            request: .init(
+                projectID: projectID,
+                expectedSourceIdentity: identity
+            )
         )
 
-        XCTAssertEqual(slice.snapshotRevision, 9)
+        XCTAssertEqual(slice.snapshotBrainRevision, 9)
+        XCTAssertEqual(slice.sourceIdentity, identity)
         XCTAssertEqual(slice.snapshotAuthorityReceiptID, "brain-receipt-9")
+        XCTAssertEqual(slice.snapshotDigest, "sha256:whole-snapshot-9")
+        XCTAssertTrue(slice.isTrustedSnapshotBound)
         XCTAssertEqual(slice.facts, [fact])
+    }
+
+    func testSourceIdentityDriftFailsClosedWithSameProjectFactsAndBrainRevision() throws {
+        let projectID = ProjectID()
+        let accepted = try sourceIdentity(
+            acceptedProjectStateID: "project-state-A",
+            checkpointReferenceID: "checkpoint-A",
+            projectRootRevisionID: "source-revision-A"
+        )
+        let current = try sourceIdentity(
+            acceptedProjectStateID: "project-state-B",
+            checkpointReferenceID: "checkpoint-B",
+            projectRootRevisionID: "source-revision-B"
+        )
+        let fact = makeFact(
+            projectID: projectID,
+            kind: .sourceStructure,
+            statement: "This source fact still says current"
+        )
+        let snapshot = try ProjectBrainTrustedSnapshot(
+            authenticatedProjectID: projectID,
+            brainRevision: 4,
+            sourceIdentity: accepted,
+            authorityReceiptID: "brain-receipt",
+            snapshotDigest: "sha256:old-source-snapshot",
+            facts: [fact]
+        )
+
+        XCTAssertThrowsError(
+            try ProjectBrainContextSelector.select(
+                from: snapshot,
+                request: .init(
+                    projectID: projectID,
+                    expectedSourceIdentity: current
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainContextSelectionError,
+                .trustedSnapshotSourceMismatch
+            )
+        }
+    }
+
+    func testTrustedSelectionRequiresExplicitCurrentSourceExpectation() throws {
+        let projectID = ProjectID()
+        let snapshot = try ProjectBrainTrustedSnapshot(
+            authenticatedProjectID: projectID,
+            brainRevision: 1,
+            sourceIdentity: try sourceIdentity(),
+            authorityReceiptID: "brain-receipt",
+            snapshotDigest: "sha256:snapshot",
+            facts: []
+        )
+
+        XCTAssertThrowsError(
+            try ProjectBrainContextSelector.select(
+                from: snapshot,
+                request: .init(projectID: projectID)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainContextSelectionError,
+                .missingExpectedSourceIdentity
+            )
+        }
+    }
+
+    func testSnapshotDigestDistinguishesOtherwiseMatchingAuthorityMetadata() throws {
+        let projectID = ProjectID()
+        let identity = try sourceIdentity()
+        let fact = makeFact(
+            projectID: projectID,
+            kind: .feature,
+            statement: "Feature"
+        )
+        let first = try ProjectBrainTrustedSnapshot(
+            authenticatedProjectID: projectID,
+            brainRevision: 2,
+            sourceIdentity: identity,
+            authorityReceiptID: "same-receipt",
+            snapshotDigest: "sha256:snapshot-A",
+            facts: [fact]
+        )
+        let second = try ProjectBrainTrustedSnapshot(
+            authenticatedProjectID: projectID,
+            brainRevision: 2,
+            sourceIdentity: identity,
+            authorityReceiptID: "same-receipt",
+            snapshotDigest: "sha256:snapshot-B",
+            facts: [fact]
+        )
+
+        XCTAssertNotEqual(first, second)
+        XCTAssertNotEqual(first.snapshotDigest, second.snapshotDigest)
     }
 
     func testTrustedSnapshotRejectsInvalidFactBeforeSelection() throws {
@@ -48,8 +152,10 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
-                revision: 1,
+                brainRevision: 1,
+                sourceIdentity: try sourceIdentity(),
                 authorityReceiptID: "brain-receipt",
+                snapshotDigest: "sha256:snapshot",
                 facts: [invalid]
             )
         ) { error in
@@ -71,8 +177,10 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
-                revision: 1,
+                brainRevision: 1,
+                sourceIdentity: try sourceIdentity(),
                 authorityReceiptID: "brain-receipt",
+                snapshotDigest: "sha256:snapshot",
                 facts: [foreign]
             )
         ) { error in
@@ -103,8 +211,10 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
-                revision: 1,
+                brainRevision: 1,
+                sourceIdentity: try sourceIdentity(),
                 authorityReceiptID: "brain-receipt",
+                snapshotDigest: "sha256:snapshot",
                 facts: [original, duplicate]
             )
         ) { error in
@@ -115,45 +225,110 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         }
     }
 
-    func testTrustedSnapshotRejectsInvalidRevisionAndReceiptIdentity() throws {
+    func testTrustedSnapshotRejectsInvalidBrainRevisionReceiptAndDigest() throws {
         let projectID = ProjectID()
+        let identity = try sourceIdentity()
 
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
-                revision: 0,
+                brainRevision: 0,
+                sourceIdentity: identity,
                 authorityReceiptID: "brain-receipt",
+                snapshotDigest: "sha256:snapshot",
                 facts: []
             )
         ) { error in
-            XCTAssertEqual(error as? ProjectBrainTrustedSnapshotError, .invalidRevision)
+            XCTAssertEqual(error as? ProjectBrainTrustedSnapshotError, .invalidBrainRevision)
         }
 
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
-                revision: 1,
+                brainRevision: 1,
+                sourceIdentity: identity,
                 authorityReceiptID: " padded ",
+                snapshotDigest: "sha256:snapshot",
                 facts: []
             )
         ) { error in
             XCTAssertEqual(error as? ProjectBrainTrustedSnapshotError, .invalidAuthorityReceiptID)
         }
+
+        XCTAssertThrowsError(
+            try ProjectBrainTrustedSnapshot(
+                authenticatedProjectID: projectID,
+                brainRevision: 1,
+                sourceIdentity: identity,
+                authorityReceiptID: "brain-receipt",
+                snapshotDigest: " padded ",
+                facts: []
+            )
+        ) { error in
+            XCTAssertEqual(error as? ProjectBrainTrustedSnapshotError, .invalidSnapshotDigest)
+        }
+    }
+
+    func testSourceIdentityRejectsNonCanonicalComponents() throws {
+        XCTAssertThrowsError(
+            try ProjectBrainSourceIdentity(
+                acceptedProjectStateID: " state ",
+                checkpointReferenceID: "checkpoint",
+                projectRootRevisionID: "revision"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainSourceIdentityError,
+                .invalidAcceptedProjectStateID
+            )
+        }
+
+        XCTAssertThrowsError(
+            try ProjectBrainSourceIdentity(
+                acceptedProjectStateID: "state",
+                checkpointReferenceID: "check\u{0000}point",
+                projectRootRevisionID: "revision"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainSourceIdentityError,
+                .invalidCheckpointReferenceID
+            )
+        }
+
+        XCTAssertThrowsError(
+            try ProjectBrainSourceIdentity(
+                acceptedProjectStateID: "state",
+                checkpointReferenceID: "checkpoint",
+                projectRootRevisionID: ""
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainSourceIdentityError,
+                .invalidProjectRootRevisionID
+            )
+        }
     }
 
     func testTrustedSnapshotCannotSelectForDifferentProject() throws {
         let projectID = ProjectID()
+        let identity = try sourceIdentity()
         let snapshot = try ProjectBrainTrustedSnapshot(
             authenticatedProjectID: projectID,
-            revision: 1,
+            brainRevision: 1,
+            sourceIdentity: identity,
             authorityReceiptID: "brain-receipt",
+            snapshotDigest: "sha256:snapshot",
             facts: []
         )
 
         XCTAssertThrowsError(
             try ProjectBrainContextSelector.select(
                 from: snapshot,
-                request: .init(projectID: ProjectID())
+                request: .init(
+                    projectID: ProjectID(),
+                    expectedSourceIdentity: identity
+                )
             )
         ) { error in
             XCTAssertEqual(
@@ -165,6 +340,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
 
     func testStructuralUserDecisionFactStillRequiresSnapshotAuthentication() throws {
         let projectID = ProjectID()
+        let identity = try sourceIdentity()
         let callerShapedAcceptedDecision = ProjectBrainFact(
             factID: ProjectBrainFactID(),
             projectID: projectID,
@@ -184,22 +360,75 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertNil(callerShapedAcceptedDecision.validationError)
 
         // @testable code can exercise the module-owned constructor, but ordinary importers cannot.
-        // The static compiler test below proves that external candidate bytes cannot perform this
-        // promotion themselves; a future host adapter must authenticate this complete subject first.
+        // The independent compiler tests below prove external candidate bytes cannot mint a trusted
+        // snapshot or bypass it by calling the raw-fact selector.
         let snapshot = try ProjectBrainTrustedSnapshot(
             authenticatedProjectID: projectID,
-            revision: 1,
+            brainRevision: 1,
+            sourceIdentity: identity,
             authorityReceiptID: "host-authenticated-after-verification",
+            snapshotDigest: "sha256:authenticated-whole-snapshot",
             facts: [callerShapedAcceptedDecision]
         )
         let slice = try ProjectBrainContextSelector.select(
             from: snapshot,
-            request: .init(projectID: projectID)
+            request: .init(
+                projectID: projectID,
+                expectedSourceIdentity: identity
+            )
         )
         XCTAssertEqual(slice.facts, [callerShapedAcceptedDecision])
+        XCTAssertTrue(slice.isTrustedSnapshotBound)
     }
 
-    func testExternalConsumerCannotMintSnapshotOrSelectRawFacts() throws {
+    func testExternalConsumerCannotMintTrustedSnapshot() throws {
+        try assertExternalCompilationFails(
+            sourceName: "ExternalProjectBrainSnapshotMint.swift",
+            source: """
+            import AgentDomain
+
+            func attemptMint(projectID: ProjectID, fact: ProjectBrainFact) throws {
+                let identity = try ProjectBrainSourceIdentity(
+                    acceptedProjectStateID: "state",
+                    checkpointReferenceID: "checkpoint",
+                    projectRootRevisionID: "root-revision"
+                )
+                _ = try ProjectBrainTrustedSnapshot(
+                    authenticatedProjectID: projectID,
+                    brainRevision: 1,
+                    sourceIdentity: identity,
+                    authorityReceiptID: "caller",
+                    snapshotDigest: "sha256:caller",
+                    facts: [fact]
+                )
+            }
+            """,
+            expectedSurface: "ProjectBrainTrustedSnapshot"
+        )
+    }
+
+    func testExternalConsumerCannotSelectRawFactArray() throws {
+        try assertExternalCompilationFails(
+            sourceName: "ExternalProjectBrainRawSelection.swift",
+            source: """
+            import AgentDomain
+
+            func attemptRawSelection(
+                fact: ProjectBrainFact,
+                request: ProjectBrainContextRequest
+            ) throws {
+                _ = try ProjectBrainContextSelector.select(from: [fact], request: request)
+            }
+            """,
+            expectedSurface: "ProjectBrainContextSelector"
+        )
+    }
+
+    private func assertExternalCompilationFails(
+        sourceName: String,
+        source: String,
+        expectedSurface: String
+    ) throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("project-brain-trust-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -208,24 +437,8 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
-        let sourceURL = temporaryDirectory.appendingPathComponent("ExternalProjectBrainMint.swift")
-        try """
-        import AgentDomain
-
-        func attemptMint(
-            projectID: ProjectID,
-            fact: ProjectBrainFact,
-            request: ProjectBrainContextRequest
-        ) throws {
-            _ = try ProjectBrainTrustedSnapshot(
-                authenticatedProjectID: projectID,
-                revision: 1,
-                authorityReceiptID: "caller",
-                facts: [fact]
-            )
-            _ = try ProjectBrainContextSelector.select(from: [fact], request: request)
-        }
-        """.write(to: sourceURL, atomically: true, encoding: .utf8)
+        let sourceURL = temporaryDirectory.appendingPathComponent(sourceName)
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
 
         let process = Process()
         let output = Pipe()
@@ -252,16 +465,15 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertNotEqual(
             process.terminationStatus,
             0,
-            "External Project Brain trust mint unexpectedly compiled"
+            "External Project Brain trust bypass unexpectedly compiled"
         )
         XCTAssertFalse(
             diagnostics.localizedCaseInsensitiveContains("no such module 'AgentDomain'"),
             "Static boundary probe failed before reaching Project Brain access control: \(diagnostics)"
         )
         XCTAssertTrue(
-            diagnostics.contains("ProjectBrainTrustedSnapshot")
-                || diagnostics.contains("ProjectBrainContextSelector"),
-            "Expected Project Brain trust-boundary diagnostic: \(diagnostics)"
+            diagnostics.contains(expectedSurface),
+            "Expected \(expectedSurface) trust-boundary diagnostic: \(diagnostics)"
         )
         XCTAssertTrue(
             diagnostics.localizedCaseInsensitiveContains("inaccessible")
@@ -307,6 +519,18 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         }
 
         throw ProjectBrainTrustTestError.agentDomainModuleNotFound
+    }
+
+    private func sourceIdentity(
+        acceptedProjectStateID: String = "accepted-project-state-1",
+        checkpointReferenceID: String = "checkpoint-1",
+        projectRootRevisionID: String = "project-root-revision-1"
+    ) throws -> ProjectBrainSourceIdentity {
+        try ProjectBrainSourceIdentity(
+            acceptedProjectStateID: acceptedProjectStateID,
+            checkpointReferenceID: checkpointReferenceID,
+            projectRootRevisionID: projectRootRevisionID
+        )
     }
 
     private func makeFact(
