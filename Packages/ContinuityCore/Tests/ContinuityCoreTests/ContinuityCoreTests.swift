@@ -38,7 +38,7 @@ final class ContinuityCoreTests: XCTestCase {
         XCTAssertEqual(cloud.state, .executing(.verifiedCloud))
 
         let decision = ContinuitySnapshot(identity: s.identity, state: .needsDecision, activeLease: nil, epoch: 4)
-        XCTAssertThrowsError(try ContinuityReducer.handoffToPairedMac(from: decision, grant: executionGrant(.verifiedPairedMac))) {
+        XCTAssertThrowsError(try ContinuityReducer.handoffToPairedMac(from: decision, grant: executionGrant(.verifiedPairedMac, issuedForEpoch: decision.epoch))) {
             XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
         }
     }
@@ -49,10 +49,10 @@ final class ContinuityCoreTests: XCTestCase {
         let advanced = try ContinuityReducer.advanceCheckpoint(authority: checkpointAuthority(newer), in: s)
         XCTAssertEqual(advanced.identity, newer)
 
-        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: s.identity), in: advanced)) {
+        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: s.identity, issuedForEpoch: advanced.epoch), in: advanced)) {
             XCTAssertEqual($0 as? ContinuityMutationError, .missionCompletionIdentityMismatch)
         }
-        XCTAssertEqual(try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: newer), in: advanced).state, .completed)
+        XCTAssertEqual(try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: newer, issuedForEpoch: advanced.epoch), in: advanced).state, .completed)
     }
 
     func testMissionAuthorityPurposeCannotBeReplayedAcrossOperations() throws {
@@ -71,7 +71,7 @@ final class ContinuityCoreTests: XCTestCase {
         let s = ready()
         let completed = try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: s.identity), in: s)
         let newer = ContinuityIdentity(missionID: s.identity.missionID, projectID: s.identity.projectID, checkpointID: "checkpoint-2", missionRevision: 2)
-        let advanced = try ContinuityReducer.advanceCheckpoint(authority: checkpointAuthority(newer), in: completed)
+        let advanced = try ContinuityReducer.advanceCheckpoint(authority: checkpointAuthority(newer, issuedForEpoch: completed.epoch), in: completed)
 
         XCTAssertEqual(advanced.identity, newer)
         XCTAssertEqual(advanced.state, .suspended(.missionStateRevalidationRequired))
@@ -83,19 +83,19 @@ final class ContinuityCoreTests: XCTestCase {
         let restored = try ContinuityArchive(snapshot: completed).restore()
         XCTAssertEqual(restored.state, .suspended(.missionStateRevalidationRequired))
 
-        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: restored, grant: executionGrant(.foregroundOnDevice))) {
+        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: restored, grant: executionGrant(.foregroundOnDevice, issuedForEpoch: restored.epoch))) {
             XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
         }
-        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: restored, grant: executionGrant(.verifiedCloud))) {
+        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: restored, grant: executionGrant(.verifiedCloud, issuedForEpoch: restored.epoch))) {
             XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
         }
 
         let revalidated = try ContinuityReducer.reflectMissionState(
-            authority: projectionAuthority(.ready, identity: restored.identity),
+            authority: projectionAuthority(.ready, identity: restored.identity, issuedForEpoch: restored.epoch),
             in: restored
         )
         XCTAssertEqual(revalidated.state, .ready)
-        XCTAssertNoThrow(try ContinuityReducer.startForeground(from: revalidated, grant: executionGrant(.foregroundOnDevice)))
+        XCTAssertNoThrow(try ContinuityReducer.startForeground(from: revalidated, grant: executionGrant(.foregroundOnDevice, issuedForEpoch: revalidated.epoch)))
     }
 
 
@@ -104,16 +104,106 @@ final class ContinuityCoreTests: XCTestCase {
         let paused = try ContinuityReducer.pauseByUser(running)
         XCTAssertEqual(paused.state, .suspended(.userPaused))
 
-        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: paused, grant: executionGrant(.foregroundOnDevice))) {
+        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: paused, grant: executionGrant(.foregroundOnDevice, issuedForEpoch: paused.epoch))) {
             XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
         }
-        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: paused, grant: executionGrant(.verifiedCloud))) {
+        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: paused, grant: executionGrant(.verifiedCloud, issuedForEpoch: paused.epoch))) {
             XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
         }
 
-        let resumed = try ContinuityReducer.resumeAfterUserPause(authority: userResumeAuthority(paused.identity), in: paused)
+        let resumed = try ContinuityReducer.resumeAfterUserPause(authority: userResumeAuthority(paused.identity, issuedForEpoch: paused.epoch), in: paused)
         XCTAssertEqual(resumed.state, .ready)
-        XCTAssertNoThrow(try ContinuityReducer.startForeground(from: resumed, grant: executionGrant(.foregroundOnDevice)))
+        XCTAssertNoThrow(try ContinuityReducer.startForeground(from: resumed, grant: executionGrant(.foregroundOnDevice, issuedForEpoch: resumed.epoch)))
+    }
+
+
+    func testExecutionGrantCannotReplayAfterSystemExpiration() throws {
+        let seed = ready()
+        let (foreground, _) = try ContinuityReducer.startForeground(from: seed, grant: executionGrant(.foregroundOnDevice))
+        let oldSystemGrant = executionGrant(.systemManagedOnDevice, issuedForEpoch: foreground.epoch)
+        let (background, _) = try ContinuityReducer.enterBackground(from: foreground, systemGrant: oldSystemGrant)
+        let expired = try ContinuityReducer.systemContinuationExpired(in: background)
+        let (newForeground, _) = try ContinuityReducer.startForeground(
+            from: expired,
+            grant: executionGrant(.foregroundOnDevice, issuedForEpoch: expired.epoch)
+        )
+
+        XCTAssertThrowsError(try ContinuityReducer.enterBackground(from: newForeground, systemGrant: oldSystemGrant)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .executionGrantMissing)
+        }
+    }
+
+    func testExecutionGrantCannotReplayAfterPauseEnvironmentLossAcceptedResultOrMissionProjection() throws {
+        let seed = ready()
+        let oldForegroundGrant = executionGrant(.foregroundOnDevice)
+        let (runningForPause, _) = try ContinuityReducer.startForeground(from: seed, grant: oldForegroundGrant)
+        let paused = try ContinuityReducer.pauseByUser(runningForPause)
+        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: paused, grant: oldForegroundGrant)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .executionGrantMissing)
+        }
+
+        let (runningForLoss, _) = try ContinuityReducer.startForeground(from: seed, grant: oldForegroundGrant)
+        let lost = try ContinuityReducer.executionEnvironmentLost(in: runningForLoss)
+        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: lost, grant: oldForegroundGrant)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .executionGrantMissing)
+        }
+
+        let (runningForResult, lease) = try ContinuityReducer.startForeground(from: seed, grant: oldForegroundGrant)
+        let oldCloudGrant = executionGrant(.verifiedCloud, issuedForEpoch: runningForResult.epoch)
+        let (afterResult, _) = try ContinuityReducer.accept(
+            .init(lease: lease, outcome: .succeeded, summary: "done"),
+            in: runningForResult
+        )
+        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: afterResult, grant: oldCloudGrant)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .executionGrantMissing)
+        }
+
+        let projectionCloudGrant = executionGrant(.verifiedCloud)
+        let projected = try ContinuityReducer.reflectMissionState(
+            authority: projectionAuthority(.ready, identity: seed.identity),
+            in: seed
+        )
+        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: projected, grant: projectionCloudGrant)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .executionGrantMissing)
+        }
+    }
+
+    func testExecutionGrantCannotReplayAcrossCheckpointAdvance() throws {
+        let seed = ready()
+        let oldCloudGrant = executionGrant(.verifiedCloud)
+        let newer = ContinuityIdentity(
+            missionID: seed.identity.missionID,
+            projectID: seed.identity.projectID,
+            checkpointID: "checkpoint-2",
+            missionRevision: 2
+        )
+        let advanced = try ContinuityReducer.advanceCheckpoint(authority: checkpointAuthority(newer), in: seed)
+
+        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: advanced, grant: oldCloudGrant)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .executionGrantMissing)
+        }
+    }
+
+    func testMissionAndUserAuthoritiesCannotReplayAcrossEpochChanges() throws {
+        let seed = ready()
+        let completionAuthority = projectionAuthority(.completed, identity: seed.identity)
+        let completed = try ContinuityReducer.reflectMissionCompletion(authority: completionAuthority, in: seed)
+        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(authority: completionAuthority, in: completed)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .invalidAuthority)
+        }
+
+        let (running, _) = try ContinuityReducer.startForeground(from: seed, grant: executionGrant(.foregroundOnDevice))
+        let firstPause = try ContinuityReducer.pauseByUser(running)
+        let resumeAuthority = userResumeAuthority(firstPause.identity, issuedForEpoch: firstPause.epoch)
+        let resumed = try ContinuityReducer.resumeAfterUserPause(authority: resumeAuthority, in: firstPause)
+        let (runningAgain, _) = try ContinuityReducer.startForeground(
+            from: resumed,
+            grant: executionGrant(.foregroundOnDevice, issuedForEpoch: resumed.epoch)
+        )
+        let secondPause = try ContinuityReducer.pauseByUser(runningAgain)
+        XCTAssertThrowsError(try ContinuityReducer.resumeAfterUserPause(authority: resumeAuthority, in: secondPause)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .invalidAuthority)
+        }
     }
 
     func testCanonicalIdentityRejectsWhitespaceAliasesAndControls() {
@@ -139,7 +229,7 @@ final class ContinuityCoreTests: XCTestCase {
 
     func testEnvironmentLossAndExpirationCannotKeepWorkingPresentationAlive() throws {
         let (running, _) = try ContinuityReducer.startForeground(from: ready(), grant: executionGrant(.foregroundOnDevice))
-        let (background, _) = try ContinuityReducer.enterBackground(from: running, systemGrant: executionGrant(.systemManagedOnDevice))
+        let (background, _) = try ContinuityReducer.enterBackground(from: running, systemGrant: executionGrant(.systemManagedOnDevice, issuedForEpoch: running.epoch))
         XCTAssertTrue(try ContinuityPresentation.activity(for: background).isActivelyExecuting)
         let expired = try ContinuityReducer.systemContinuationExpired(in: background)
         XCTAssertFalse(try ContinuityPresentation.activity(for: expired).isActivelyExecuting)
@@ -219,16 +309,16 @@ final class ContinuityCoreTests: XCTestCase {
 
     private func identity() -> ContinuityIdentity { .init(missionID: "mission-1", projectID: "project-1", checkpointID: "checkpoint-1", missionRevision: 1) }
     private func ready() -> ContinuitySnapshot { .init(identity: identity()) }
-    private func executionGrant(_ mode: ContinuityExecutionMode, identity: ContinuityIdentity? = nil) -> ContinuityExecutionGrant {
-        .init(identity: identity ?? self.identity(), mode: mode, authorityReceiptID: "host-receipt-\(mode)")
+    private func executionGrant(_ mode: ContinuityExecutionMode, identity: ContinuityIdentity? = nil, issuedForEpoch: UInt64 = 0) -> ContinuityExecutionGrant {
+        .init(identity: identity ?? self.identity(), mode: mode, issuedForEpoch: issuedForEpoch, authorityReceiptID: "host-receipt-\(mode)-e\(issuedForEpoch)")
     }
-    private func userResumeAuthority(_ identity: ContinuityIdentity) -> ContinuityUserResumeAuthority {
-        .init(identity: identity, authorityReceiptID: "user-resume-authority")
+    private func userResumeAuthority(_ identity: ContinuityIdentity, issuedForEpoch: UInt64) -> ContinuityUserResumeAuthority {
+        .init(identity: identity, issuedForEpoch: issuedForEpoch, authorityReceiptID: "user-resume-authority-e\(issuedForEpoch)")
     }
-    private func checkpointAuthority(_ identity: ContinuityIdentity) -> ContinuityMissionAuthority {
-        .init(identity: identity, purpose: .checkpointAdvance, authorityReceiptID: "mission-checkpoint-authority")
+    private func checkpointAuthority(_ identity: ContinuityIdentity, issuedForEpoch: UInt64 = 0) -> ContinuityMissionAuthority {
+        .init(identity: identity, purpose: .checkpointAdvance, issuedForEpoch: issuedForEpoch, authorityReceiptID: "mission-checkpoint-authority-e\(issuedForEpoch)")
     }
-    private func projectionAuthority(_ projection: ContinuityMissionProjection, identity: ContinuityIdentity) -> ContinuityMissionAuthority {
-        .init(identity: identity, purpose: .stateProjection(projection), authorityReceiptID: "mission-projection-authority-\(projection.rawValue)")
+    private func projectionAuthority(_ projection: ContinuityMissionProjection, identity: ContinuityIdentity, issuedForEpoch: UInt64 = 0) -> ContinuityMissionAuthority {
+        .init(identity: identity, purpose: .stateProjection(projection), issuedForEpoch: issuedForEpoch, authorityReceiptID: "mission-projection-authority-\(projection.rawValue)-e\(issuedForEpoch)")
     }
 }

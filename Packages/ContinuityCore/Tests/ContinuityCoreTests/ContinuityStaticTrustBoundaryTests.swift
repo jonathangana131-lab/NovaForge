@@ -18,6 +18,7 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
             let _ = ContinuityExecutionGrant(
                 identity: identity,
                 mode: .verifiedCloud,
+                issuedForEpoch: 0,
                 authorityReceiptID: "forged"
             )
             """
@@ -45,6 +46,7 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
             let _ = ContinuityMissionAuthority(
                 identity: identity,
                 purpose: .stateProjection(.completed),
+                issuedForEpoch: 0,
                 authorityReceiptID: "forged"
             )
             """
@@ -72,6 +74,7 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
             )
             let _ = ContinuityUserResumeAuthority(
                 identity: identity,
+                issuedForEpoch: 0,
                 authorityReceiptID: "forged"
             )
             """
