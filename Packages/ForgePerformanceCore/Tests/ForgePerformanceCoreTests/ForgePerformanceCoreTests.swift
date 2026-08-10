@@ -80,10 +80,23 @@ private func run(
     )
 }
 
+private func trustedEvaluate(
+    policy: ForgePerformancePolicy,
+    runs: [ForgePerformanceRunEvidence],
+    trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt]
+) throws -> ForgePerformanceEvaluation {
+    try ForgePerformanceEvaluator.evaluate(
+        policy: policy,
+        trustedPolicyReceipt: ForgePerformanceTrustedPolicyReceipt(authenticatedPolicy: policy),
+        runs: runs,
+        trustedProducerReceipts: trustedProducerReceipts
+    )
+}
+
 @Test func acceptsOnlyExactTrustedPassingRun() throws {
     let p = try policy()
     let r = try run()
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: p,
         runs: [r],
         trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
@@ -93,8 +106,21 @@ private func run(
     #expect(evaluation.acceptedProducerReceiptIDs == ["producer-1"])
 }
 
+@Test func candidatePolicyCannotSelfAuthorizeRelaxedDefinitionOfDone() throws {
+    let relaxed = try policy()
+    let r = try run()
+    let evaluation = try ForgePerformanceEvaluator.evaluate(
+        policy: relaxed,
+        runs: [r],
+        trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
+    )
+    #expect(!evaluation.isAccepted)
+    #expect(evaluation.blockers.contains(.untrustedPolicy(policyRevision: "perf-policy-1")))
+    #expect(evaluation.acceptedProducerReceiptIDs.isEmpty)
+}
+
 @Test func candidateAuthorityCannotSelfAuthorize() throws {
-    let evaluation = try ForgePerformanceEvaluator.evaluate(policy: policy(), runs: [run()], trustedProducerReceipts: [])
+    let evaluation = try trustedEvaluate(policy: policy(), runs: [run()], trustedProducerReceipts: [])
     #expect(!evaluation.isAccepted)
     #expect(evaluation.blockers == [.untrustedProducerReceipt(scenarioID: "core-loop", producerReceiptID: "producer-1")])
 }
@@ -102,7 +128,7 @@ private func run(
 @Test func exactTrustRejectsSameReceiptWithChangedMetrics() throws {
     let trustedRun = try run()
     let changed = try run(metrics: metrics(p95: 19))
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: policy(),
         runs: [changed],
         trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: trustedRun)]
@@ -112,7 +138,7 @@ private func run(
 
 @Test func crossRevisionEvidenceFailsClosed() throws {
     #expect(throws: ForgePerformanceError.targetMismatch("run:run-1")) {
-        _ = try ForgePerformanceEvaluator.evaluate(
+        _ = try trustedEvaluate(
             policy: policy(),
             runs: [run(target: target("src-2"))],
             trustedProducerReceipts: []
@@ -122,7 +148,7 @@ private func run(
 
 @Test func policyAndScenarioRevisionDriftBlockAcceptance() throws {
     let r = try run(policyRevision: "old-policy", scenarioRevision: "journey-2")
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: policy(),
         runs: [r],
         trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
@@ -135,7 +161,7 @@ private func run(
     let physical = try context(.physicalDevice)
     let p = try policy(context: physical)
     let r = try run()
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: p,
         runs: [r],
         trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
@@ -146,7 +172,7 @@ private func run(
 @Test func osBuildDriftBlocksAcceptance() throws {
     let p = try policy(context: context(.simulator, build: "24A2"))
     let r = try run()
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: p,
         runs: [r],
         trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
@@ -156,7 +182,7 @@ private func run(
 
 @Test func frameThresholdsAreDerivedFromMeasurements() throws {
     let r = try run(metrics: metrics(frames: 100, p95: 25, p99: 35))
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: policy(), runs: [r], trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
     )
     #expect(evaluation.blockers.contains(.insufficientFrameSamples(scenarioID: "core-loop", observed: 100, required: 120)))
@@ -166,7 +192,7 @@ private func run(
 
 @Test func requiredMeasuredMetricsCannotBeOmitted() throws {
     let r = try run(metrics: metrics(memory: nil, interactions: nil, latency: nil, launch: nil))
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: policy(), runs: [r], trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
     )
     #expect(evaluation.blockers.contains(.missingPeakResidentMemory(scenarioID: "core-loop")))
@@ -176,7 +202,7 @@ private func run(
 
 @Test func memoryLatencyAndLaunchThresholdsBlock() throws {
     let r = try run(metrics: metrics(memory: 700_000_000, interactions: 10, latency: 150, launch: 2_000))
-    let evaluation = try ForgePerformanceEvaluator.evaluate(
+    let evaluation = try trustedEvaluate(
         policy: policy(), runs: [r], trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)]
     )
     #expect(evaluation.blockers.contains(.peakResidentMemoryExceeded(scenarioID: "core-loop", observed: 700_000_000, maximum: 600_000_000)))
@@ -229,7 +255,7 @@ private func run(
     let a = try ForgePerformanceRunEvidence(runID: "run-a", target: target(), policyRevision: "perf-policy-1", scenarioID: "a", scenarioRevision: "1", executionContext: context(), authority: .hostRuntimeProfiler, producerReceiptID: "same", metrics: metrics())
     let b = try ForgePerformanceRunEvidence(runID: "run-b", target: target(), policyRevision: "perf-policy-1", scenarioID: "b", scenarioRevision: "1", executionContext: context(), authority: .hostRuntimeProfiler, producerReceiptID: "same", metrics: metrics())
     #expect(throws: ForgePerformanceError.duplicateProducerReceiptID("same")) {
-        _ = try ForgePerformanceEvaluator.evaluate(policy: p, runs: [a, b], trustedProducerReceipts: [])
+        _ = try trustedEvaluate(policy: p, runs: [a, b], trustedProducerReceipts: [])
     }
 }
 
@@ -242,7 +268,7 @@ private func run(
             ForgePerformanceScenario(id: "a", revision: "1", executionContext: context(), thresholds: thresholds()),
         ]
     )
-    let evaluation = try ForgePerformanceEvaluator.evaluate(policy: p, runs: [], trustedProducerReceipts: [])
+    let evaluation = try trustedEvaluate(policy: p, runs: [], trustedProducerReceipts: [])
     #expect(evaluation.blockers == [.missingScenario(scenarioID: "a"), .missingScenario(scenarioID: "z")])
 }
 
