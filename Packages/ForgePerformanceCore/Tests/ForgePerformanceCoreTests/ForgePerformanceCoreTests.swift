@@ -2,10 +2,20 @@ import Foundation
 import Testing
 @testable import ForgePerformanceCore
 
-@Suite("ForgePerformanceCore")
+@Suite("ForgePerformanceCore", .serialized)
 struct ForgePerformanceCoreTests {
-    private func target(_ source: String = "source-1") throws -> ForgePerformanceTarget {
-        try ForgePerformanceTarget(missionID: "mission-1", projectID: "project-1", sourceRevision: source, checkpointID: "checkpoint-1", constitutionRevision: 4)
+    private func target(
+        _ source: String = "source-1",
+        constitutionReceiptID: String = "constitution-receipt-1"
+    ) throws -> ForgePerformanceTarget {
+        try ForgePerformanceTarget(
+            missionID: "mission-1",
+            projectID: "project-1",
+            sourceRevision: source,
+            checkpointID: "checkpoint-1",
+            constitutionRevision: 4,
+            constitutionReceiptID: constitutionReceiptID
+        )
     }
 
     private func context(_ runtimeRevision: String = "runtime-7") throws -> ForgePerformanceExecutionContext {
@@ -77,6 +87,19 @@ struct ForgePerformanceCoreTests {
         let stale = try run(target: target("source-old"))
         #expect(throws: ForgePerformanceError.targetMismatch) {
             _ = try ForgePerformanceEvaluator.evaluate(policy: p, run: stale, trustedPolicy: .init(authenticatedPolicy: p), trustedProducer: .init(authenticatedRun: stale))
+        }
+    }
+
+    @Test func crossConstitutionReceiptReplayFailsClosed() throws {
+        let p = try policy()
+        let stale = try run(target: target(constitutionReceiptID: "constitution-receipt-old"))
+        #expect(throws: ForgePerformanceError.targetMismatch) {
+            _ = try ForgePerformanceEvaluator.evaluate(
+                policy: p,
+                run: stale,
+                trustedPolicy: .init(authenticatedPolicy: p),
+                trustedProducer: .init(authenticatedRun: stale)
+            )
         }
     }
 
@@ -235,6 +258,18 @@ struct ForgePerformanceCoreTests {
         #expect(throws: ForgePerformanceError.targetMismatch) {
             _ = try JSONDecoder().decode(ForgePerformanceArchive.self, from: data)
         }
+    }
+
+    @Test func policyRoundTripPreservesCandidateInputs() throws {
+        let value = try policy()
+        let data = try JSONEncoder().encode(value)
+        #expect(try JSONDecoder().decode(ForgePerformancePolicy.self, from: data) == value)
+    }
+
+    @Test func targetRoundTripPreservesCompletionBinding() throws {
+        let value = try target()
+        let data = try JSONEncoder().encode(value)
+        #expect(try JSONDecoder().decode(ForgePerformanceTarget.self, from: data) == value)
     }
 
     @Test func candidateRunRoundTripDoesNotContainAcceptanceBit() throws {
