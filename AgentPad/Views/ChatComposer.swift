@@ -61,7 +61,7 @@ struct ComposerReasoningControl: View {
         case .ultra:
             "Extra High"
         case .ultraCode:
-            "UltraCode"
+            "Ultra"
         }
     }
 
@@ -157,7 +157,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Medium"
             case .high: "High"
             case .extraHigh: "Extra High"
-            case .ultraCode: "UltraCode"
+            case .ultraCode: "Ultra"
             }
         }
 
@@ -171,7 +171,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Balanced thinking for everyday agent work"
             case .high: "Deeper reasoning for difficult tasks"
             case .extraHigh: "Extended reasoning for complex plans and debugging"
-            case .ultraCode: "Max reasoning + isolated workspace agents"
+            case .ultraCode: "Strongest orchestration with isolated specialist agents"
             }
         }
     }
@@ -194,7 +194,7 @@ private struct ComposerReasoningPicker: View {
                 reasoningSlider
 
                 Text(selection == .ultraCode
-                     ? "Max reasoning + isolated workspace agents"
+                     ? ultraDetail
                      : selection.detail)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(AgentPalette.secondaryText)
@@ -210,6 +210,13 @@ private struct ComposerReasoningPicker: View {
 
     private var activeTint: Color {
         selection == .ultraCode ? AgentPalette.indigo : provider.tint
+    }
+
+    private var ultraDetail: String {
+        if provider == .openAICodex {
+            return "Strongest available model reasoning + isolated specialist agents"
+        }
+        return "Isolated specialist agents + lead verification"
     }
 
     private var selection: Level {
@@ -437,6 +444,18 @@ struct AgentOrchestrationStatusCard: View {
         presentation.mode == .ultraCode ? AgentPalette.indigo : AgentPalette.lilac
     }
 
+    private var presentationTitle: String {
+        presentation.mode == .ultraCode ? "Ultra" : presentation.mode.title
+    }
+
+    private var presentationHeadline: String {
+        guard presentation.mode == .ultraCode else { return presentation.headline }
+        return presentation.headline.replacingOccurrences(
+            of: "UltraCode",
+            with: "Ultra"
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 11) {
@@ -447,9 +466,9 @@ struct AgentOrchestrationStatusCard: View {
                     .frame(width: 38, height: 38)
                     .background(tint.opacity(0.13), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(presentation.mode.title)
+                    Text(presentationTitle)
                         .font(.headline.weight(.bold))
-                    Text(presentation.headline)
+                    Text(presentationHeadline)
                         .font(.caption)
                         .foregroundStyle(AgentPalette.secondaryText)
                 }

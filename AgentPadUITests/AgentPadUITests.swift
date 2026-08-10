@@ -665,7 +665,7 @@ final class AgentPadUITests: XCTestCase {
         let restoredReasoning = app.buttons["composerReasoningPickerButton"]
         XCTAssertTrue(restoredReasoning.waitForExistence(timeout: 8))
         XCTAssertTrue(
-            restoredReasoning.label.localizedCaseInsensitiveContains("UltraCode"),
+            restoredReasoning.label.localizedCaseInsensitiveContains("Ultra"),
             "The completed route must retain the explicitly selected UltraCode mode."
         )
 
@@ -2082,15 +2082,15 @@ final class AgentPadUITests: XCTestCase {
             app.staticTexts.containing(
                 NSPredicate(format: "label CONTAINS[c] %@", "workspace")
             ).firstMatch.waitForExistence(timeout: 5),
-            "UltraCode should compactly explain its maximum-reasoning workspace behavior."
+            "Ultra should compactly explain its strongest real workspace orchestration behavior."
         )
         capture("23-reasoning-ultracode-liquid-glass", app: app)
 
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.08)).tap()
         XCTAssertTrue(reasoningButton.waitForExistence(timeout: 5))
         XCTAssertTrue(
-            reasoningButton.label.localizedCaseInsensitiveContains("UltraCode"),
-            "The collapsed liquid-glass control should retain the selected UltraCode mode."
+            reasoningButton.label.localizedCaseInsensitiveContains("Ultra"),
+            "The collapsed liquid-glass control should retain the selected Ultra mode."
         )
     }
 
@@ -2160,7 +2160,7 @@ final class AgentPadUITests: XCTestCase {
         let restoredMode = app.buttons["composerReasoningPickerButton"]
         XCTAssertTrue(restoredMode.waitForExistence(timeout: 5))
         XCTAssertTrue(
-            restoredMode.label.localizedCaseInsensitiveContains("UltraCode"),
+            restoredMode.label.localizedCaseInsensitiveContains("Ultra"),
             "Stop must preserve the selected UltraCode mode for an explicit retry."
         )
 
@@ -4070,13 +4070,13 @@ final class AgentPadUITests: XCTestCase {
             withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
         ).tap()
         let ultraSelected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "UltraCode"),
+            predicate: NSPredicate(format: "value == %@", "Ultra"),
             object: reasoningSlider
         )
         XCTAssertEqual(
             XCTWaiter.wait(for: [ultraSelected], timeout: 8),
             .completed,
-            "The exact UltraCode stop must become the active mode.",
+            "The exact Ultra stop must become the active mode.",
             file: file,
             line: line
         )
@@ -4094,7 +4094,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertEqual(
             XCTWaiter.wait(for: [collapsedUltra], timeout: 8),
             .completed,
-            "The collapsed composer must visibly retain UltraCode.",
+            "The collapsed composer must visibly retain Ultra.",
             file: file,
             line: line
         )
