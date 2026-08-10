@@ -1,0 +1,58 @@
+name: V14 Forge3D semantic self-play validation
+
+on:
+  push:
+    branches:
+      - 'validation/v14-forge3d-semantic-self-play-0575'
+
+permissions:
+  contents: read
+
+jobs:
+  forge3d-ubuntu:
+    name: Forge3DKit Ubuntu ${{ matrix.configuration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='0575b3fa353002ae10ef601e36aa23e8e453d968'
+          test "$(git rev-parse HEAD^)" = "$expected"
+          git diff --exit-code "$expected" HEAD -- Packages/Forge3DKit
+          git diff --check "$expected" HEAD
+      - name: Show Swift version
+        run: swift --version
+      - name: Test Forge3DKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            swift test --package-path Packages/Forge3DKit -c release -Xswiftc -warnings-as-errors
+          else
+            swift test --package-path Packages/Forge3DKit -Xswiftc -warnings-as-errors
+          fi
+
+  forge3d-macos:
+    name: Forge3DKit macOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='0575b3fa353002ae10ef601e36aa23e8e453d968'
+          test "$(git rev-parse HEAD^)" = "$expected"
+          git diff --exit-code "$expected" HEAD -- Packages/Forge3DKit
+          git diff --check "$expected" HEAD
+      - name: Show Swift version
+        run: swift --version
+      - name: Test Forge3DKit
+        shell: bash
+        run: swift test --package-path Packages/Forge3DKit -Xswiftc -warnings-as-errors
