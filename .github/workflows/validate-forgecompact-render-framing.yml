@@ -25,6 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # This validation head contains the post-review full-C1 framing fix.
           swift test \
             --package-path Packages/ForgeCompactCore \
             -c "${{ matrix.configuration }}" \
