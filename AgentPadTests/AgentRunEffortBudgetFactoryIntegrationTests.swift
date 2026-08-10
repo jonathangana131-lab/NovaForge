@@ -108,10 +108,10 @@ final class AgentRunEffortBudgetFactoryIntegrationTests: XCTestCase {
         prompt: String
     ) throws -> AgentSystemFreshRunRequest {
         let conversation = Conversation(title: "Preview effort")
-        let variant = LocalModelCatalog.defaultVariant
+        let modelID = try XCTUnwrap(AIProvider.local.modelOptions.first)
         let settings = AgentSettings(
             provider: .local,
-            modelID: variant.id,
+            modelID: modelID,
             activeWorkspaceName: AgentRunWorkspaceScope.generalWorkspaceName,
             temperature: 0.2
         )
