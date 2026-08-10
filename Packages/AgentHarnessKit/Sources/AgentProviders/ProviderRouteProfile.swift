@@ -182,6 +182,8 @@ public struct ProviderRouteEvidence: Codable, Equatable, Sendable {
 public enum ProviderRouteProfileValidationError: Error, Equatable, Sendable {
     case emptyEndpointAuthority
     case emptyEvidenceRevision
+    case emptyCatalogSourceID
+    case emptyHealthSourceID
     case emptyDataHandlingPolicyID
     case emptyDataHandlingSourceID
     case emptyDataHandlingVerifiedAt
@@ -231,6 +233,12 @@ public struct ProviderRouteProfile: Equatable, Sendable {
         guard !evidence.revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderRouteProfileValidationError.emptyEvidenceRevision
         }
+        guard !evidence.catalogSourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProviderRouteProfileValidationError.emptyCatalogSourceID
+        }
+        guard !evidence.healthSourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProviderRouteProfileValidationError.emptyHealthSourceID
+        }
         guard !dataHandling.policyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderRouteProfileValidationError.emptyDataHandlingPolicyID
         }
@@ -250,10 +258,11 @@ public struct ProviderRouteProfile: Equatable, Sendable {
            !descriptor.route.capabilities.features.contains(.cancellation) {
             throw ProviderRouteProfileValidationError.cancellationCapabilityMismatch
         }
-        if supportState == .supported, authenticationMode == .unverified {
+        let canBecomeSelectable = supportState.isSelectable(allowExperimental: true)
+        if canBecomeSelectable, authenticationMode == .unverified {
             throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedAuthentication
         }
-        if supportState == .supported, dataHandling.classification == .unverified {
+        if canBecomeSelectable, dataHandling.classification == .unverified {
             throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedDataHandling
         }
         if descriptor.route.deployment == .onDevice {
