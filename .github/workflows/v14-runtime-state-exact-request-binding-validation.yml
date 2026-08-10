@@ -1,0 +1,48 @@
+name: V14 Runtime State Exact Request Binding Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-RSTATE-TRUST-0810/exact-request-binding-gate/e1
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-state-request-binding:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert exact product parent, blobs, and stacked diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "2a1d79972d3537853acebbdb25c72f4f1b29d368"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservationSubject.swift)" = "d76dd3d5dae11f397a84170bb544ae5f9eff75b0"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationSubjectTests.swift)" = "e648052f162fdfe5b8ecbc5360c4fbaf74cddc22"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateStaticTrustBoundaryTests.swift)" = "fc5e05c4061327fb25bc90a066fd47a40e6ab113"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/v14-runtime-state-exact-request-binding-validation.yml"
+          printf '%s\n' \
+            'Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservationSubject.swift' \
+            'Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationSubjectTests.swift' \
+            'Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateStaticTrustBoundaryTests.swift' > /tmp/expected
+          git diff --name-only 5bda297c516b644794bdbc1b10608729c9b0cd07 HEAD^ > /tmp/actual
+          diff -u /tmp/expected /tmp/actual
+          git diff --check 5bda297c516b644794bdbc1b10608729c9b0cd07 HEAD^
+
+      - name: Swift version
+        run: swift --version
+
+      - name: ForgeRuntimeKit debug tests
+        run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
+
+      - name: ForgeRuntimeKit release tests
+        run: swift test --package-path Packages/ForgeRuntimeKit -c release -Xswiftc -warnings-as-errors
