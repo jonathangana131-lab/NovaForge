@@ -77,6 +77,14 @@ enum Forge2DV14Hardening {
       }, 180);
     }
 
+    function isolateNativeButtonKeys(button) {
+      button.addEventListener("keydown", event => {
+        if (event.code === "Space" || event.code === "Enter") event.stopPropagation();
+      });
+    }
+
+    [controls.left, controls.right, controls.jump, pauseButton].forEach(isolateNativeButtonKeys);
+
     function registerAssistiveActivation(button, action) {
       button.addEventListener("pointerdown", () => {
         pointerActivationControls.add(button.id);
