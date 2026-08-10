@@ -1,0 +1,58 @@
+name: Preview Forge Compact integration one-shot
+
+on:
+  push:
+    branches:
+      - agent/preview-forgecompact-context-integration
+    paths:
+      - .github/workflows/zz-preview-forgecompact-context-integration-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/preview-forgecompact-context-integration
+          fetch-depth: 0
+
+      - name: Apply fail-closed canonical-context patch
+        run: python3 scripts/apply_preview_forgecompact_context_patch.py
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Build AgentEngine with warnings as errors
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentEngine -Xswiftc -warnings-as-errors
+
+      - name: Typecheck AgentEngine projector tests with warnings as errors
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentEngineTests -Xswiftc -warnings-as-errors
+
+      - name: Validate Forge Compact package baseline
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+
+      - name: Verify product integration contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'let text = try supplementalContextText(state: state)' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'novaforge_forge_compact_supplement_v1' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'compactText.utf8.count < legacyBytes' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'while itemIndex < state.modelItems.count' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F '[L1][workingNote][advisory]' Packages/AgentHarnessKit/Tests/AgentEngineTests/AgentForgeCompactSupplementProjectorTests.swift
+
+      - name: Commit tested product bytes and remove one-shot machinery
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/zz-preview-forgecompact-context-integration-once.yml
+          rm scripts/apply_preview_forgecompact_context_patch.py
+          git add -A
+          git config user.name 'NovaForge Swarm'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Wire Forge Compact into canonical provider context'
+          git push origin HEAD:agent/preview-forgecompact-context-integration
