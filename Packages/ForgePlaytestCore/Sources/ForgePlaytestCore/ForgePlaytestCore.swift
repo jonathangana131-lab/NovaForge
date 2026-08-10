@@ -198,7 +198,7 @@ public struct ForgePlaytestJourney: Codable, Equatable, Sendable {
     public let runtimeVersion: String
     public let persona: ForgePlaytestPersona
     public let deterministicSeed: UInt64
-    public let maximumAuthorizedActions: Int
+    public let maximumPlannedActions: Int
     public let milestones: [ForgePlaytestMilestone]
     public let actions: [ForgePlaytestAction]
 
@@ -211,7 +211,7 @@ public struct ForgePlaytestJourney: Codable, Equatable, Sendable {
         runtimeVersion: String,
         persona: ForgePlaytestPersona,
         deterministicSeed: UInt64,
-        maximumAuthorizedActions: Int,
+        maximumPlannedActions: Int,
         milestones: [ForgePlaytestMilestone],
         actions: [ForgePlaytestAction]
     ) throws {
@@ -223,9 +223,9 @@ public struct ForgePlaytestJourney: Codable, Equatable, Sendable {
         try ForgePlaytestValidation.validateIdentifier(sourceRevision, field: "journey.sourceRevision")
         try ForgePlaytestValidation.validateIdentifier(checkpointID, field: "journey.checkpointID")
         try ForgePlaytestValidation.validateIdentifier(runtimeVersion, field: "journey.runtimeVersion")
-        guard (1 ... Self.maximumActions).contains(maximumAuthorizedActions),
+        guard (1 ... Self.maximumActions).contains(maximumPlannedActions),
               !actions.isEmpty,
-              actions.count <= maximumAuthorizedActions,
+              actions.count <= maximumPlannedActions,
               milestones.count <= Self.maximumMilestones else {
             throw ForgePlaytestValidationError.invalidLimit(field: "journey")
         }
@@ -267,14 +267,14 @@ public struct ForgePlaytestJourney: Codable, Equatable, Sendable {
         self.runtimeVersion = runtimeVersion
         self.persona = persona
         self.deterministicSeed = deterministicSeed
-        self.maximumAuthorizedActions = maximumAuthorizedActions
+        self.maximumPlannedActions = maximumPlannedActions
         self.milestones = milestones
         self.actions = actions
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, journeyID, projectID, sourceRevision, checkpointID, runtimeVersion
-        case persona, deterministicSeed, maximumAuthorizedActions, milestones, actions
+        case persona, deterministicSeed, maximumPlannedActions, milestones, actions
     }
 
     public init(from decoder: Decoder) throws {
@@ -288,7 +288,7 @@ public struct ForgePlaytestJourney: Codable, Equatable, Sendable {
             runtimeVersion: container.decode(String.self, forKey: .runtimeVersion),
             persona: container.decode(ForgePlaytestPersona.self, forKey: .persona),
             deterministicSeed: container.decode(UInt64.self, forKey: .deterministicSeed),
-            maximumAuthorizedActions: container.decode(Int.self, forKey: .maximumAuthorizedActions),
+            maximumPlannedActions: container.decode(Int.self, forKey: .maximumPlannedActions),
             milestones: container.decode([ForgePlaytestMilestone].self, forKey: .milestones),
             actions: container.decode([ForgePlaytestAction].self, forKey: .actions)
         )
