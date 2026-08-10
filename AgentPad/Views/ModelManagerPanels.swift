@@ -222,7 +222,7 @@ struct ModelBenchmarkPanel: View {
             switch phase {
             case .idle:
                 Text(runtime.localModels.isDownloaded
-                     ? "Measure real generation speed on this device. Takes a few seconds."
+                     ? "Run a local timing sample on this device. Results are session diagnostics, not qualification evidence."
                      : "Download the local model to benchmark it.")
                     .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.secondaryText)
@@ -232,11 +232,11 @@ struct ModelBenchmarkPanel: View {
                     .foregroundStyle(AgentPalette.secondaryText)
             case .finished(let result):
                 HStack(spacing: 8) {
-                    benchmarkMetric(value: String(format: "≈%.1f", result.tokensPerSecond), unit: "tok/s", tint: AgentPalette.green)
-                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "first token", tint: AgentPalette.cyan)
+                    benchmarkMetric(value: String(format: "%.0f", endToEndCharactersPerSecond(result)), unit: "e2e chars/s", tint: AgentPalette.green)
+                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "first output", tint: AgentPalette.cyan)
                     benchmarkMetric(value: String(format: "%.1fs", result.totalDuration), unit: "total", tint: AgentPalette.lilac)
                 }
-                Text("\(result.modelName) · \(result.generatedCharacters) characters · token count estimated")
+                Text("\(result.modelName) · \(result.generatedCharacters) observed characters · not qualification evidence")
                     .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.tertiaryText)
             case .failed(let message):
@@ -266,6 +266,11 @@ struct ModelBenchmarkPanel: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .agentControlSurface(radius: 11, tint: tint.opacity(0.08), selected: false)
+    }
+
+    private func endToEndCharactersPerSecond(_ result: LocalModelBenchmarkResult) -> Double {
+        guard result.totalDuration > 0 else { return 0 }
+        return Double(result.generatedCharacters) / result.totalDuration
     }
 
     private func runBenchmark() {
