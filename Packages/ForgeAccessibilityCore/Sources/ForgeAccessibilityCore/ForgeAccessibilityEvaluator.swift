@@ -1,6 +1,7 @@
 import Foundation
 
 public enum ForgeAccessibilityBlocker: Equatable, Sendable {
+    case untrustedPolicy
     case missingScenario(scenarioID: String)
     case executionEnvironmentMismatch(scenarioID: String)
     case untrustedProducerReceipt(scenarioID: String, producerReceiptID: String)
@@ -13,16 +14,18 @@ public enum ForgeAccessibilityBlocker: Equatable, Sendable {
 
     fileprivate var sortKey: String {
         switch self {
+        case .untrustedPolicy:
+            return "0|policy"
         case let .missingScenario(scenarioID):
-            return "0|\(scenarioID)"
-        case let .executionEnvironmentMismatch(scenarioID):
             return "1|\(scenarioID)"
+        case let .executionEnvironmentMismatch(scenarioID):
+            return "2|\(scenarioID)"
         case let .untrustedProducerReceipt(scenarioID, receiptID):
-            return "2|\(scenarioID)|\(receiptID)"
+            return "3|\(scenarioID)|\(receiptID)"
         case let .missingRequiredCheck(scenarioID, check):
-            return "3|\(scenarioID)|\(check.rawValue)"
+            return "4|\(scenarioID)|\(check.rawValue)"
         case let .checkNotPassed(scenarioID, check, outcome):
-            return "4|\(scenarioID)|\(check.rawValue)|\(outcome.rawValue)"
+            return "5|\(scenarioID)|\(check.rawValue)|\(outcome.rawValue)"
         }
     }
 }
@@ -47,7 +50,33 @@ public enum ForgeAccessibilityEvaluator {
     public static let maximumRuns = 64
     public static let maximumTrustedProducerReceipts = 256
 
+    /// Authoritative accessibility acceptance requires both the exact accepted policy and exact
+    /// producer-run trust. Public/Codable policy bytes are candidate transport data only.
     public static func evaluate(
+        policy: ForgeAccessibilityPolicy,
+        runs: [ForgeAccessibilityRunEvidence],
+        trustedProducerReceipts: [ForgeAccessibilityTrustedProducerReceipt],
+        trustedPolicy: ForgeAccessibilityTrustedPolicy
+    ) throws -> ForgeAccessibilityEvaluation {
+        guard trustedPolicy.exactlyMatches(policy) else {
+            return ForgeAccessibilityEvaluation(
+                target: policy.target,
+                status: .blocked,
+                blockers: [.untrustedPolicy],
+                acceptedProducerReceiptIDs: []
+            )
+        }
+
+        return try evaluate(
+            policy: policy,
+            runs: runs,
+            trustedProducerReceipts: trustedProducerReceipts
+        )
+    }
+
+    /// Module-only structural evaluator retained for focused package tests and future canonical
+    /// adapters. External consumers must use the public overload carrying trusted policy authority.
+    static func evaluate(
         policy: ForgeAccessibilityPolicy,
         runs: [ForgeAccessibilityRunEvidence],
         trustedProducerReceipts: [ForgeAccessibilityTrustedProducerReceipt]
