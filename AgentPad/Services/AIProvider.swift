@@ -551,7 +551,7 @@ enum AgentOrchestrationMode: String, CaseIterable, Codable, Identifiable, Sendab
         switch self {
         case .standard: "Standard"
         case .ultra: "Ultra"
-        case .ultraCode: "UltraCode"
+        case .ultraCode: "Ultra"
         }
     }
 
@@ -559,7 +559,7 @@ enum AgentOrchestrationMode: String, CaseIterable, Codable, Identifiable, Sendab
         switch self {
         case .standard: "Think"
         case .ultra: "Ultra"
-        case .ultraCode: "UltraCode"
+        case .ultraCode: "Ultra"
         }
     }
 
