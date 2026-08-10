@@ -31,10 +31,25 @@ jobs:
       - name: Test Forge2DKit
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           swift --version
           if [[ "${{ matrix.configuration }}" == "release" ]]; then
-            swift test --package-path Packages/Forge2DKit -c release -Xswiftc -warnings-as-errors
+            command=(swift test --package-path Packages/Forge2DKit -c release -Xswiftc -warnings-as-errors)
           else
-            swift test --package-path Packages/Forge2DKit -Xswiftc -warnings-as-errors
+            command=(swift test --package-path Packages/Forge2DKit -Xswiftc -warnings-as-errors)
+          fi
+          set +e
+          output="$("${command[@]}" 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $status -ne 0 ]]; then
+            while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              safe="${line//'%'/'%25'}"
+              safe="${safe//$'\r'/'%0D'}"
+              safe="${safe//$'\n'/'%0A'}"
+              echo "::error title=Forge2D validation::$safe"
+            done < <(printf '%s\n' "$output" | tail -n 30)
+            exit "$status"
           fi
