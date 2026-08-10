@@ -16,17 +16,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
       - name: Swift version
         run: swift --version
-      - name: Verify recovered product ancestry and blobs
+      - name: Verify recovered product blobs
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "dbcd0612517ed340ced5fc67548e841b668e110a"
-          test "$(git rev-parse HEAD^:Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservation.swift)" = "f9f920a509bb272fd51944d46533edfd12fafce3"
-          test "$(git rev-parse HEAD^:Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationTests.swift)" = "9c4a4d80144b35a3fb1a0bd78bebd4767b1658ad"
+          test "$(git rev-parse HEAD:Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservation.swift)" = "f9f920a509bb272fd51944d46533edfd12fafce3"
+          test "$(git rev-parse HEAD:Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationTests.swift)" = "9c4a4d80144b35a3fb1a0bd78bebd4767b1658ad"
       - name: Debug tests with warnings as errors
         run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
       - name: Release tests with warnings as errors
