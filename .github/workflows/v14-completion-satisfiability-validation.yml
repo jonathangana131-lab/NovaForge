@@ -1,0 +1,25 @@
+name: V14 Completion Satisfiability Validation
+
+on:
+  pull_request:
+    paths:
+      - "Packages/ForgeCompletionCore/**"
+      - ".github/workflows/v14-completion-satisfiability-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  completion-package:
+    name: Completion debug + release
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeCompletionCore -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeCompletionCore -Xswiftc -warnings-as-errors
