@@ -5,6 +5,7 @@ import Foundation
 public enum ForgeHistoryQualityEvidenceKind: String, CaseIterable, Hashable, Sendable {
     case accessibility
     case performance
+    case visualQA
 }
 
 /// Public History quality references are deliberately non-authoritative until a canonical producer
