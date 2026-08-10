@@ -10,7 +10,8 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.entryPath, "index.html")
         XCTAssertEqual(first.files.map(\.path), ["index.html", "styles.css", "game.js"])
-        XCTAssertEqual(first.semanticCapabilities, [.localSave, .controller, .touch, .keyboard])
+        XCTAssertEqual(first.semanticCapabilities, [.localSave, .controller, .touch, .keyboard, .automation])
+        XCTAssertEqual(first.semanticTargets, Forge3DSelfPlayContract.targets)
     }
 
     func testGeneratedProjectDeniesNetworkAndUsesOnlyLocalAssets() throws {
@@ -36,7 +37,8 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(js.contains("localStorage.setItem"))
         XCTAssertTrue(js.contains("webglcontextlost"))
         XCTAssertTrue(js.contains("maximumMarkers: 40"))
-        XCTAssertTrue(js.contains("input.keyThrottle + input.touchThrottle + input.accessibleThrottle + input.padThrottle"))
+        XCTAssertTrue(js.contains("input.keyThrottle + input.touchThrottle + input.accessibleThrottle + input.padThrottle + input.automationThrottle"))
+        XCTAssertTrue(js.contains("input.keySteer + input.touchSteer + input.accessibleSteer + input.padSteer + input.automationSteer"))
         XCTAssertTrue(js.contains("accessible-throttle"))
         XCTAssertTrue(js.contains("accessible-steer"))
         XCTAssertFalse(js.contains("powerPreference: \"high-performance\""))
@@ -50,12 +52,48 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(html.contains("aria-live=\"polite\""))
         XCTAssertTrue(html.contains("aria-label=\"Drive joystick."))
         XCTAssertTrue(html.contains("aria-label=\"Pause scene\""))
-        XCTAssertTrue(html.contains("id=\"accessible-throttle\" type=\"range\""))
-        XCTAssertTrue(html.contains("id=\"accessible-steer\" type=\"range\""))
+        XCTAssertTrue(html.contains("id=\"accessible-throttle\" data-novaforge-action=\"drive-throttle\" type=\"range\""))
+        XCTAssertTrue(html.contains("id=\"accessible-steer\" data-novaforge-action=\"drive-steer\" type=\"range\""))
         XCTAssertTrue(css.contains("env(safe-area-inset-left)"))
         XCTAssertTrue(css.contains("env(safe-area-inset-bottom)"))
         XCTAssertTrue(css.contains("prefers-reduced-transparency"))
         XCTAssertTrue(css.contains(".assistive-driving"))
+    }
+
+    func testGeneratedProjectExposesCanonicalSemanticSelfPlayTargets() throws {
+        let project = try Forge3DGenerator.generate(blueprint)
+        let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
+        let js = try XCTUnwrap(project.files.first(where: { $0.path == "game.js" })?.contents)
+
+        XCTAssertTrue(html.contains("data-novaforge-control=\"pause\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive-throttle\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive-steer\""))
+        XCTAssertTrue(js.contains("document.querySelector('[data-novaforge-action=\"drive-throttle\"]')"))
+        XCTAssertTrue(js.contains("document.querySelector('[data-novaforge-action=\"drive-steer\"]')"))
+        XCTAssertTrue(js.contains("addEventListener(\"novaforge:action\""))
+        XCTAssertTrue(js.contains("detail.actionID !== \"drive-throttle\""))
+        XCTAssertTrue(js.contains("detail.actionID !== \"drive-steer\""))
+        XCTAssertTrue(js.contains("automationThrottle: 0, automationSteer: 0"))
+        XCTAssertTrue(js.contains("input.automationThrottle = clamp(detail.value, -1, 1)"))
+        XCTAssertTrue(js.contains("input.automationSteer = clamp(detail.value, -1, 1)"))
+        XCTAssertFalse(js.contains("__novaForgeHostSemanticAutomationV1"), "Starter must not duplicate Runtime host authority")
+
+        XCTAssertEqual(project.semanticTargets.count, 3)
+        XCTAssertEqual(project.semanticTargets[0], .init(id: "pause", interactionKind: .controlActivate))
+        XCTAssertEqual(
+            project.semanticTargets[1],
+            .init(id: "drive-throttle", interactionKind: .actionSetValue, minimumValue: -1, neutralValue: 0, maximumValue: 1)
+        )
+        XCTAssertEqual(
+            project.semanticTargets[2],
+            .init(id: "drive-steer", interactionKind: .actionSetValue, minimumValue: -1, neutralValue: 0, maximumValue: 1)
+        )
+    }
+
+    func testSemanticAutomationPatchFailsClosedWhenTemplateContractDrifts() {
+        XCTAssertThrowsError(try Forge3DSemanticAutomation.patch("const unrelated = true;")) { error in
+            XCTAssertNotNil(error as? Forge3DSemanticAutomationIssue)
+        }
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
