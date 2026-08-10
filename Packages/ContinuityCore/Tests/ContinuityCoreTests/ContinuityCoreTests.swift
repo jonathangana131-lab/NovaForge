@@ -37,7 +37,7 @@ final class ContinuityCoreTests: XCTestCase {
         let (cloud, _) = try ContinuityReducer.handoffToCloud(from: s, grant: executionGrant(.verifiedCloud))
         XCTAssertEqual(cloud.state, .executing(.verifiedCloud))
 
-        let decision = ContinuitySnapshot(identity: s.identity, state: .needsDecision, epoch: 4)
+        let decision = ContinuitySnapshot(identity: s.identity, state: .needsDecision, activeLease: nil, epoch: 4)
         XCTAssertThrowsError(try ContinuityReducer.handoffToPairedMac(from: decision, grant: executionGrant(.verifiedPairedMac))) {
             XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
         }
@@ -92,6 +92,21 @@ final class ContinuityCoreTests: XCTestCase {
         XCTAssertEqual(restored.state, .suspended(.executionEnvironmentLost))
         XCTAssertNil(restored.activeLease)
         XCTAssertFalse(try ContinuityPresentation.activity(for: restored).isActivelyExecuting)
+    }
+
+    func testArchiveNeverRestoresMissionOwnedCompletionProjection() throws {
+        let base = ready()
+        let completed = try ContinuityReducer.reflectMissionCompletion(authority: missionAuthority(base.identity), in: base)
+        let archive = try ContinuityArchive(snapshot: completed)
+        XCTAssertEqual(archive.snapshot.state, .suspended(.missionStateRevalidationRequired))
+        XCTAssertEqual(try archive.restore().state, .suspended(.missionStateRevalidationRequired))
+
+        let data = try JSONEncoder().encode(try ContinuityArchive(snapshot: ready()))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var snapshot = try XCTUnwrap(object["snapshot"] as? [String: Any])
+        snapshot["state"] = ["completed": [:]]
+        object["snapshot"] = snapshot
+        XCTAssertThrowsError(try JSONDecoder().decode(ContinuityArchive.self, from: JSONSerialization.data(withJSONObject: object)))
     }
 
     func testArchiveDecodeRejectsPersistedExecutingState() throws {
