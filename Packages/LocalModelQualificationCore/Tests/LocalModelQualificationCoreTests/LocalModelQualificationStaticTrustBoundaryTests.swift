@@ -4,12 +4,6 @@ import XCTest
 
 final class LocalModelQualificationStaticTrustBoundaryTests: XCTestCase {
     func testExternalConsumerCannotMintQualificationTrustBinding() throws {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("local-model-qualification-static-trust-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
-
-        let sourceURL = temporaryDirectory.appendingPathComponent("ExternalTrustMint.swift")
         let externalSource = [
             "import LocalModelQualificationCore",
             "",
@@ -17,7 +11,45 @@ final class LocalModelQualificationStaticTrustBoundaryTests: XCTestCase {
             "    _ = LocalModelQualificationTrustBinding(authenticatedEvidence: evidence)",
             "}",
         ].joined(separator: "\n")
-        try externalSource.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let diagnostics = try externalCompilerDiagnostics(for: externalSource, fileName: "ExternalTrustMint.swift")
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("inaccessible")
+                || diagnostics.localizedCaseInsensitiveContains("internal protection level"),
+            "Expected access-control rejection, got: \(diagnostics)"
+        )
+    }
+
+    func testExternalConsumerCannotCallRawTrustedEvidenceReadiness() throws {
+        let externalSource = [
+            "import LocalModelQualificationCore",
+            "",
+            "func attemptRawTrust(",
+            "    record: LocalModelQualificationRecord,",
+            "    evidence: LocalModelQualificationEvidence",
+            ") {",
+            "    _ = record.readiness(for: .artifactVerified, trustedEvidence: [evidence])",
+            "}",
+        ].joined(separator: "\n")
+
+        let diagnostics = try externalCompilerDiagnostics(for: externalSource, fileName: "ExternalRawTrust.swift")
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("inaccessible")
+                || diagnostics.localizedCaseInsensitiveContains("internal protection level"),
+            "Expected raw trust evaluator access-control rejection, got: \(diagnostics)"
+        )
+    }
+
+    private func externalCompilerDiagnostics(for source: String, fileName: String) throws -> String {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-model-qualification-static-trust-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let sourceURL = temporaryDirectory.appendingPathComponent(fileName)
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
 
         let modulesURL = try activeModulesURL()
         let process = Process()
@@ -38,16 +70,12 @@ final class LocalModelQualificationStaticTrustBoundaryTests: XCTestCase {
         process.waitUntilExit()
 
         let diagnostics = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        XCTAssertNotEqual(process.terminationStatus, 0, "External qualification trust mint unexpectedly compiled")
+        XCTAssertNotEqual(process.terminationStatus, 0, "External qualification trust probe unexpectedly compiled")
         XCTAssertFalse(
             diagnostics.localizedCaseInsensitiveContains("no such module 'LocalModelQualificationCore'"),
             "Static boundary probe failed before reaching the trust API: \(diagnostics)"
         )
-        XCTAssertTrue(
-            diagnostics.localizedCaseInsensitiveContains("inaccessible")
-                || diagnostics.localizedCaseInsensitiveContains("internal protection level"),
-            "Expected access-control rejection, got: \(diagnostics)"
-        )
+        return diagnostics
     }
 
     private func activeModulesURL() throws -> URL {
