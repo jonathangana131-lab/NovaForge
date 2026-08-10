@@ -665,7 +665,7 @@ final class AgentPadUITests: XCTestCase {
         let restoredReasoning = app.buttons["composerReasoningPickerButton"]
         XCTAssertTrue(restoredReasoning.waitForExistence(timeout: 8))
         XCTAssertTrue(
-            restoredReasoning.label.localizedCaseInsensitiveContains("UltraCode"),
+            restoredReasoning.label.localizedCaseInsensitiveContains("Ultra"),
             "The completed route must retain the explicitly selected UltraCode mode."
         )
 
@@ -2089,7 +2089,7 @@ final class AgentPadUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.08)).tap()
         XCTAssertTrue(reasoningButton.waitForExistence(timeout: 5))
         XCTAssertTrue(
-            reasoningButton.label.localizedCaseInsensitiveContains("UltraCode"),
+            reasoningButton.label.localizedCaseInsensitiveContains("Ultra"),
             "The collapsed liquid-glass control should retain the selected UltraCode mode."
         )
     }
@@ -2160,7 +2160,7 @@ final class AgentPadUITests: XCTestCase {
         let restoredMode = app.buttons["composerReasoningPickerButton"]
         XCTAssertTrue(restoredMode.waitForExistence(timeout: 5))
         XCTAssertTrue(
-            restoredMode.label.localizedCaseInsensitiveContains("UltraCode"),
+            restoredMode.label.localizedCaseInsensitiveContains("Ultra"),
             "Stop must preserve the selected UltraCode mode for an explicit retry."
         )
 
@@ -4070,7 +4070,7 @@ final class AgentPadUITests: XCTestCase {
             withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
         ).tap()
         let ultraSelected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "UltraCode"),
+            predicate: NSPredicate(format: "value == %@", "Ultra"),
             object: reasoningSlider
         )
         XCTAssertEqual(
@@ -4087,7 +4087,7 @@ final class AgentPadUITests: XCTestCase {
         let collapsedUltra = XCTNSPredicateExpectation(
             predicate: NSPredicate(
                 format: "label CONTAINS[c] %@",
-                "UltraCode"
+                "Ultra"
             ),
             object: reasoningButton
         )
