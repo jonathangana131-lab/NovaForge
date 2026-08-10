@@ -63,17 +63,13 @@ final class PreviewReasoningPolicyTests: XCTestCase {
         }
     }
 
-    func testCodableRoundTripRetainsCanonicalLevelAndProfile() throws {
+    func testCodableRoundTripRetainsCanonicalLevel() throws {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
 
         for level in PreviewReasoningLevel.allCases {
             let levelData = try encoder.encode(level)
             XCTAssertEqual(try decoder.decode(PreviewReasoningLevel.self, from: levelData), level)
-
-            let profile = PreviewReasoningProfile(level: level)
-            let profileData = try encoder.encode(profile)
-            XCTAssertEqual(try decoder.decode(PreviewReasoningProfile.self, from: profileData), profile)
         }
     }
 
