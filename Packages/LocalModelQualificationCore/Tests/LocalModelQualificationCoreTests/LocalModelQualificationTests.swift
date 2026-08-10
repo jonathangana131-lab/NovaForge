@@ -3,6 +3,42 @@ import XCTest
 @testable import LocalModelQualificationCore
 
 final class LocalModelQualificationTests: XCTestCase {
+
+    func testProtectedTrustBindingQualifiesOnlyExactWholeEvidence() throws {
+        let subject = try makeSubject()
+        let artifact = try evidence(.artifactIntegrity, subject: subject, source: .staticAnalysis)
+        let record = try LocalModelQualificationRecord(revision: 1, subject: subject, evidence: [artifact])
+        let binding = LocalModelQualificationTrustBinding(authenticatedEvidence: artifact)
+
+        let readiness = record.readiness(for: .artifactVerified, trustedBindings: [binding])
+
+        XCTAssertTrue(readiness.isQualified)
+        XCTAssertTrue(readiness.blockingReasons.isEmpty)
+    }
+
+    func testProtectedTrustBindingRejectsSameIDEvidenceMutation() throws {
+        let subject = try makeSubject()
+        let trusted = try evidence(
+            .artifactIntegrity,
+            subject: subject,
+            source: .staticAnalysis,
+            evidenceID: "same-id"
+        )
+        let mutated = try evidence(
+            .artifactIntegrity,
+            subject: subject,
+            source: .staticAnalysis,
+            authority: .manualObservation,
+            evidenceID: "same-id"
+        )
+        let record = try LocalModelQualificationRecord(revision: 1, subject: subject, evidence: [mutated])
+        let binding = LocalModelQualificationTrustBinding(authenticatedEvidence: trusted)
+
+        let readiness = record.readiness(for: .artifactVerified, trustedBindings: [binding])
+
+        XCTAssertFalse(readiness.isQualified)
+        XCTAssertTrue(readiness.blockingReasons.contains { $0.contains("host qualification boundary") })
+    }
     func testExactSubjectAcceptsFullyBoundPhysicalDeviceIdentity() throws {
         let subject = try makeSubject()
         XCTAssertEqual(subject.artifact.modelRevision, "model-rev-42")

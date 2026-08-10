@@ -487,9 +487,9 @@ public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
         }
     }
 
-    /// Evaluates a claim only against receipt IDs independently trusted by the host qualification boundary.
-    /// Persisted/model-authored JSON cannot promote itself merely by spelling `deterministicHarness`.
-    public func readiness(
+    /// Internal evaluator over complete evidence values already authenticated by the module-owned host boundary.
+    /// Persisted/model-authored JSON remains candidate data and cannot call this evaluator through a normal import.
+    func readiness(
         for claim: LocalModelQualificationClaim,
         trustedEvidence: Set<LocalModelQualificationEvidence>
     ) -> LocalModelQualificationReadiness {
