@@ -12,13 +12,16 @@ permissions:
 
 jobs:
   integrate-and-validate:
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/preview-forgecompact-context-integration
           fetch-depth: 0
+
+      - name: Record Swift toolchain
+        run: swift --version
 
       - name: Apply fail-closed canonical-context patch
         run: python3 scripts/apply_preview_forgecompact_context_patch.py
