@@ -386,6 +386,10 @@ public struct ForgePlaytestCandidateRun: Codable, Equatable, Sendable {
         guard (0 ... Self.maximumFatalRuntimeErrors).contains(reportedFatalRuntimeErrorCount) else {
             throw ForgePlaytestValidationError.invalidLimit(field: "run.reportedFatalRuntimeErrorCount")
         }
+        guard actionObservations.count <= ForgePlaytestJourney.maximumActions,
+              milestoneObservations.count <= ForgePlaytestJourney.maximumMilestones else {
+            throw ForgePlaytestValidationError.invalidLimit(field: "run.observations")
+        }
         guard Set(actionObservations.map(\.actionID)).count == actionObservations.count else {
             throw ForgePlaytestValidationError.duplicateIdentifier(field: "run.actionObservations")
         }
