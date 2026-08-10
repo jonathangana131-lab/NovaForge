@@ -86,25 +86,44 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(js.contains("Number.isFinite(value) ? clamp(value, -1.0, 1.0) : 0.0"))
     }
 
-    func testGeneratedProjectNormalizesAutomationCapabilityToDescriptorTruth() {
-        let withoutDescriptor = Forge3DGeneratedProject(
+    func testSemanticAutomationCapabilityMintingFailsClosedWithoutExactGeneratedContract() throws {
+        let generated = try Forge3DGenerator.generate(blueprint)
+
+        let publicConstruction = Forge3DGeneratedProject(
             blueprint: blueprint,
-            entryPath: "index.html",
-            files: [],
+            entryPath: generated.entryPath,
+            files: generated.files,
             semanticCapabilities: [.localSave, .semanticAutomation]
         )
-        XCTAssertEqual(withoutDescriptor.semanticCapabilities, [.localSave])
-        XCTAssertNil(withoutDescriptor.semanticAutomation)
+        XCTAssertEqual(publicConstruction.semanticCapabilities, [.localSave])
+        XCTAssertNil(publicConstruction.semanticAutomation)
 
-        let withDescriptor = Forge3DGeneratedProject(
+        let missingContract = Forge3DGeneratedProject(
             blueprint: blueprint,
             entryPath: "index.html",
             files: [],
-            semanticCapabilities: [.localSave],
+            semanticCapabilities: [.localSave, .semanticAutomation],
             semanticAutomation: Forge3DSemanticContract.descriptor
         )
-        XCTAssertEqual(withDescriptor.semanticCapabilities, [.localSave, .semanticAutomation])
-        XCTAssertEqual(withDescriptor.semanticAutomation, Forge3DSemanticContract.descriptor)
+        XCTAssertEqual(missingContract.semanticCapabilities, [.localSave])
+        XCTAssertNil(missingContract.semanticAutomation)
+
+        let tamperedFiles = generated.files.map { file in
+            guard file.path == "game.js" else { return file }
+            return Forge3DGeneratedFile(
+                path: file.path,
+                contents: file.contents.replacingOccurrences(of: "novaforge:action", with: "tampered:action")
+            )
+        }
+        let tamperedContract = Forge3DGeneratedProject(
+            blueprint: blueprint,
+            entryPath: generated.entryPath,
+            files: tamperedFiles,
+            semanticCapabilities: generated.semanticCapabilities,
+            semanticAutomation: Forge3DSemanticContract.descriptor
+        )
+        XCTAssertFalse(tamperedContract.semanticCapabilities.contains(.semanticAutomation))
+        XCTAssertNil(tamperedContract.semanticAutomation)
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
