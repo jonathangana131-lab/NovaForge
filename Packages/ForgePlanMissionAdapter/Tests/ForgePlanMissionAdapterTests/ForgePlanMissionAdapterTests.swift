@@ -8,13 +8,21 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
     private let missionID = MissionID(rawValue: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!)
     private let projectID = ProjectID(rawValue: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!)
 
-    private func authority() throws -> ForgePlanMissionAuthority {
+    private func context() throws -> ForgePlanMissionContext {
         try .init(
             missionID: missionID,
             projectID: projectID,
             constitutionRevision: 7,
-            acceptedAt: .init(rawValue: 1234),
+            projectedAcceptedAt: .init(rawValue: 1234),
             planAcceptanceReceiptID: "plan-accept-7"
+        )
+    }
+
+    private func sourceBinding() throws -> ForgePlanMissionSourceBinding {
+        try .init(
+            composerDraftRevision: 11,
+            planRevision: 4,
+            planReferenceID: "plan-space-4"
         )
     }
 
@@ -45,13 +53,26 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
     }
 
     private func summary(
-        controls: ForgeComposerV14ControlProfile? = nil,
+        profile: ForgeComposerV14ControlProfile? = nil,
         decisions: [PlanResolvedDecision] = []
     ) throws -> ReadyToForgeSummary {
-        .init(
+        let resolvedProfile = try profile ?? controls()
+        return .init(
             intentSummary: "Build a calm local-first timer",
             decisions: decisions,
-            controls: try controls ?? self.controls()
+            controls: resolvedProfile
+        )
+    }
+
+    private func makeHandoff(
+        summary: ReadyToForgeSummary,
+        supplement: ForgePlanMissionSupplement? = nil
+    ) throws -> ForgePlanMissionHandoff {
+        try ForgePlanMissionAdapter.makeHandoff(
+            summary: summary,
+            context: context(),
+            sourceBinding: sourceBinding(),
+            supplement: supplement ?? self.supplement()
         )
     }
 
@@ -63,11 +84,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             autonomy: .fullForge,
             privacy: .localOnly
         )
-        let handoff = try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary(controls: profile),
-            authority: authority(),
-            supplement: supplement()
-        )
+        let handoff = try makeHandoff(summary: summary(profile: profile))
 
         XCTAssertEqual(handoff.constitution.missionID, missionID)
         XCTAssertEqual(handoff.constitution.projectID, projectID)
@@ -79,40 +96,65 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         XCTAssertEqual(handoff.privacyIntent, .localOnly)
         XCTAssertEqual(handoff.autonomyIntent, .fullForge)
         XCTAssertEqual(handoff.controlProfile, profile)
+        XCTAssertEqual(handoff.sourceBinding, try sourceBinding())
+        XCTAssertTrue(handoff.executionPreconditions.contains(.localOnlyRouting))
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .autonomyPolicyResolution(intent: .fullForge)
+            )
+        )
         XCTAssertFalse(handoff.requiresExternalModelQualification)
         XCTAssertFalse(handoff.requiresDelegatedDecisionResolution)
     }
 
-    func testProviderAllowlistRemainsExactAndDoesNotMasqueradeAsLocalOnly() throws {
+    func testReceiptAndSourceRevisionNeverSelfAuthenticate() throws {
+        let binding = try sourceBinding()
+        let handoff = try makeHandoff(summary: summary())
+
+        XCTAssertEqual(handoff.sourceBinding, binding)
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .sourceRevisionMatch(binding: binding)
+            )
+        )
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .planAcceptanceVerification(receiptID: "plan-accept-7")
+            )
+        )
+    }
+
+    func testProviderAllowlistRemainsExactAndRequiresEnforcement() throws {
         let privacy = try ForgeComposerPrivacyIntent.providers(["openai", "anthropic"])
         let profile = try controls(privacy: privacy)
-        let handoff = try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary(controls: profile),
-            authority: authority(),
-            supplement: supplement()
-        )
+        let handoff = try makeHandoff(summary: summary(profile: profile))
 
         XCTAssertEqual(handoff.constitution.localityPreference, .unspecified)
         XCTAssertEqual(handoff.privacyIntent, try .providers(["anthropic", "openai"]))
         XCTAssertTrue(handoff.privacyIntent.allowsProvider("openai"))
         XCTAssertTrue(handoff.privacyIntent.allowsProvider("anthropic"))
         XCTAssertFalse(handoff.privacyIntent.allowsProvider("other-cloud"))
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .providerAllowlistEnforcement(providerIDs: ["anthropic", "openai"])
+            )
+        )
+        XCTAssertFalse(handoff.executionPreconditions.contains(.localOnlyRouting))
     }
 
     func testExplicitModelReferenceCreatesQualificationPrecondition() throws {
-        let modelIntent = try ForgeComposerIntelligenceIntent.explicit(referenceID: "model.local.qwen35-4b")
-        let profile = try controls(intelligence: modelIntent)
-        let handoff = try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary(controls: profile),
-            authority: authority(),
-            supplement: supplement()
+        let modelIntent = try ForgeComposerIntelligenceIntent.explicit(
+            referenceID: "model.local.qwen35-4b"
         )
+        let profile = try controls(intelligence: modelIntent)
+        let handoff = try makeHandoff(summary: summary(profile: profile))
 
         XCTAssertTrue(handoff.requiresExternalModelQualification)
         XCTAssertEqual(handoff.requestedExplicitModelReferenceID, "model.local.qwen35-4b")
-        XCTAssertEqual(
-            handoff.executionPreconditions,
-            [.explicitModelQualification(referenceID: "model.local.qwen35-4b")]
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .explicitModelQualification(referenceID: "model.local.qwen35-4b")
+            )
         )
         XCTAssertEqual(handoff.controlProfile.intelligence, modelIntent)
     }
@@ -123,22 +165,19 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             prompt: "Which storage approach?",
             value: .delegatedToNovaForge
         )
-        let handoff = try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary(decisions: [decision]),
-            authority: authority(),
-            supplement: supplement()
-        )
+        let handoff = try makeHandoff(summary: summary(decisions: [decision]))
 
         XCTAssertEqual(handoff.delegatedDecisionIDs, ["storage"])
         XCTAssertTrue(handoff.requiresDelegatedDecisionResolution)
-        XCTAssertEqual(handoff.acceptedPlanDecisions, [decision])
-        XCTAssertEqual(
-            handoff.executionPreconditions,
-            [.delegatedDecisionResolution(decisionID: "storage")]
+        XCTAssertEqual(handoff.planDecisions, [decision])
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .delegatedDecisionResolution(decisionID: "storage")
+            )
         )
     }
 
-    func testExplicitModelAndDelegatedDecisionBothRemainUnresolved() throws {
+    func testExplicitModelFullForgeAndDelegationRemainSeparateRequirements() throws {
         let profile = try controls(
             intelligence: try .explicit(referenceID: "model.deep.local"),
             autonomy: .fullForge
@@ -148,18 +187,24 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             prompt: "Choose handling style",
             value: .delegatedToNovaForge
         )
-        let handoff = try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary(controls: profile, decisions: [decision]),
-            authority: authority(),
-            supplement: supplement()
+        let handoff = try makeHandoff(
+            summary: summary(profile: profile, decisions: [decision])
         )
 
-        XCTAssertEqual(
-            handoff.executionPreconditions,
-            [
-                .explicitModelQualification(referenceID: "model.deep.local"),
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .autonomyPolicyResolution(intent: .fullForge)
+            )
+        )
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .explicitModelQualification(referenceID: "model.deep.local")
+            )
+        )
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
                 .delegatedDecisionResolution(decisionID: "physics")
-            ]
+            )
         )
         XCTAssertEqual(handoff.autonomyIntent, .fullForge)
     }
@@ -170,23 +215,17 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             prompt: "Theme?",
             value: .selected(optionID: "dark", label: "Dark")
         )
-        let handoff = try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary(decisions: [decision]),
-            authority: authority(),
-            supplement: supplement()
-        )
+        let handoff = try makeHandoff(summary: summary(decisions: [decision]))
 
-        XCTAssertEqual(handoff.acceptedPlanDecisions, [decision])
+        XCTAssertEqual(handoff.planDecisions, [decision])
         XCTAssertTrue(handoff.constitution.constraints.values.isEmpty)
-        XCTAssertTrue(handoff.executionPreconditions.isEmpty)
+        XCTAssertFalse(handoff.requiresDelegatedDecisionResolution)
     }
 
     func testV14BuildDepthMappingsAreDeterministic() throws {
         func mapped(_ depth: ForgeComposerBuildDepthIntent) throws -> MissionBuildDepth {
-            let handoff = try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(controls: controls(buildDepth: depth)),
-                authority: authority(),
-                supplement: supplement()
+            let handoff = try makeHandoff(
+                summary: summary(profile: controls(buildDepth: depth))
             )
             return handoff.constitution.buildDepth
         }
@@ -198,10 +237,10 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
 
     func testThresholdMappingsAreDeterministicAtEdges() throws {
         func mapped(_ creativity: Double, _ risk: Double) throws -> (MissionCreativity, MissionRefactorRisk) {
-            let handoff = try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(controls: controls(creativity: creativity, refactorRisk: risk)),
-                authority: authority(),
-                supplement: supplement()
+            let handoff = try makeHandoff(
+                summary: summary(
+                    profile: controls(creativity: creativity, refactorRisk: risk)
+                )
             )
             return (handoff.constitution.creativity, handoff.constitution.refactorRisk)
         }
@@ -225,13 +264,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             decisions: [],
             controls: try controls()
         )
-        XCTAssertThrowsError(
-            try ForgePlanMissionAdapter.makeHandoff(
-                summary: bad,
-                authority: authority(),
-                supplement: supplement()
-            )
-        ) {
+        XCTAssertThrowsError(try makeHandoff(summary: bad)) {
             XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSummary("intentSummary"))
         }
     }
@@ -240,11 +273,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         let one = PlanResolvedDecision(id: "x", prompt: "One", value: .text("a"))
         let two = PlanResolvedDecision(id: "x", prompt: "Two", value: .text("b"))
         XCTAssertThrowsError(
-            try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(decisions: [one, two]),
-                authority: authority(),
-                supplement: supplement()
-            )
+            try makeHandoff(summary: summary(decisions: [one, two]))
         ) {
             XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .duplicateDecisionID("x"))
         }
@@ -253,11 +282,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
     func testInvalidNonFiniteDecisionFailsClosed() throws {
         let bad = PlanResolvedDecision(id: "risk", prompt: "Risk?", value: .scalar(.infinity))
         XCTAssertThrowsError(
-            try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(decisions: [bad]),
-                authority: authority(),
-                supplement: supplement()
-            )
+            try makeHandoff(summary: summary(decisions: [bad]))
         )
     }
 
@@ -268,11 +293,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             value: .selected(optionID: "dark\u{0000}", label: "Dark")
         )
         XCTAssertThrowsError(
-            try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(decisions: [bad]),
-                authority: authority(),
-                supplement: supplement()
-            )
+            try makeHandoff(summary: summary(decisions: [bad]))
         ) {
             XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("theme"))
         }
@@ -285,11 +306,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             expectedEvidence: MissionEvidenceSet([.compiled])
         )
         XCTAssertThrowsError(
-            try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(),
-                authority: authority(),
-                supplement: badSupplement
-            )
+            try makeHandoff(summary: summary(), supplement: badSupplement)
         ) {
             XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .missingAcceptanceJourneys)
         }
@@ -302,11 +319,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             expectedEvidence: MissionEvidenceSet([])
         )
         XCTAssertThrowsError(
-            try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(),
-                authority: authority(),
-                supplement: badSupplement
-            )
+            try makeHandoff(summary: summary(), supplement: badSupplement)
         ) {
             XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .missingExpectedEvidence)
         }
@@ -319,47 +332,63 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             expectedEvidence: MissionEvidenceSet([.compiled])
         )
         XCTAssertThrowsError(
-            try ForgePlanMissionAdapter.makeHandoff(
-                summary: summary(),
-                authority: authority(),
-                supplement: badSupplement
-            )
+            try makeHandoff(summary: summary(), supplement: badSupplement)
         ) {
             XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidConstitution(.missingProjectType))
         }
     }
 
-    func testAuthorityRejectsNonCanonicalReceiptIDAndZeroRevision() throws {
+    func testContextRejectsNonCanonicalReceiptIDAndZeroRevision() throws {
         XCTAssertThrowsError(
-            try ForgePlanMissionAuthority(
+            try ForgePlanMissionContext(
                 missionID: missionID,
                 projectID: projectID,
                 constitutionRevision: 0,
-                acceptedAt: .init(rawValue: 1),
+                projectedAcceptedAt: .init(rawValue: 1),
                 planAcceptanceReceiptID: "ok"
             )
         )
         XCTAssertThrowsError(
-            try ForgePlanMissionAuthority(
+            try ForgePlanMissionContext(
                 missionID: missionID,
                 projectID: projectID,
                 constitutionRevision: 1,
-                acceptedAt: .init(rawValue: 1),
+                projectedAcceptedAt: .init(rawValue: 1),
                 planAcceptanceReceiptID: " padded "
             )
         )
     }
 
-    func testDecisionOrderingAndPreconditionsAreCanonical() throws {
+    func testSourceBindingRejectsZeroRevisionAndNonCanonicalReference() throws {
+        XCTAssertThrowsError(
+            try ForgePlanMissionSourceBinding(
+                composerDraftRevision: 0,
+                planRevision: 1,
+                planReferenceID: "plan-1"
+            )
+        )
+        XCTAssertThrowsError(
+            try ForgePlanMissionSourceBinding(
+                composerDraftRevision: 1,
+                planRevision: 0,
+                planReferenceID: "plan-1"
+            )
+        )
+        XCTAssertThrowsError(
+            try ForgePlanMissionSourceBinding(
+                composerDraftRevision: 1,
+                planRevision: 1,
+                planReferenceID: " plan-1 "
+            )
+        )
+    }
+
+    func testDecisionOrderingAndDelegatedPreconditionsAreCanonical() throws {
         let z = PlanResolvedDecision(id: "z", prompt: "Z", value: .delegatedToNovaForge)
         let a = PlanResolvedDecision(id: "a", prompt: "A", value: .delegatedToNovaForge)
-        let handoff = try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary(decisions: [z, a]),
-            authority: authority(),
-            supplement: supplement()
-        )
+        let handoff = try makeHandoff(summary: summary(decisions: [z, a]))
 
-        XCTAssertEqual(handoff.acceptedPlanDecisions.map(\.id), ["a", "z"])
+        XCTAssertEqual(handoff.planDecisions.map(\.id), ["a", "z"])
         XCTAssertEqual(handoff.delegatedDecisionIDs, ["a", "z"])
     }
 }
