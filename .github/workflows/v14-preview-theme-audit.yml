@@ -1,4 +1,4 @@
-name: V14 Preview theme current-main sync
+name: V14 Preview theme validation
 
 on:
   push:
@@ -6,24 +6,95 @@ on:
       - agent/v14-preview-theme-durability-0810
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  sync-main:
+  targeted-theme-verification:
     if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: agent/v14-preview-theme-durability-0810
           fetch-depth: 0
-      - name: Merge current main without dropping theme repair
+
+      - name: Select newest Xcode and iPhone simulator
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main
-          git config user.name 'NovaForge V14 Preview Worker'
-          git config user.email 'actions@users.noreply.github.com'
-          git merge --no-edit origin/main
-          git diff --check origin/main...HEAD
-          git push origin HEAD:agent/v14-preview-theme-durability-0810
+          NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
+          test -n "$NEWEST_XCODE"
+          sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
+          xcodebuild -version
+          UDID=$(xcrun simctl list -j devices available | jq -r '
+            [.devices
+              | to_entries[]
+              | select(.key | contains("iOS"))
+              | .value[]
+              | select(.isAvailable == true and (.name | startswith("iPhone")))]
+            | last
+            | .udid // empty
+          ')
+          if [ -z "$UDID" ]; then
+            DEVICE_TYPE=$(xcrun simctl list -j devicetypes | jq -r '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
+            test -n "$DEVICE_TYPE"
+            UDID=$(xcrun simctl create "NovaForge Theme CI" "$DEVICE_TYPE")
+          fi
+          echo "SIMULATOR_ID=$UDID" >> "$GITHUB_ENV"
+          echo "Using simulator $UDID"
+
+      - name: Build test bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf DerivedData/ThemeCI artifacts/theme-ci
+          mkdir -p artifacts/theme-ci
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath DerivedData/ThemeCI \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            NOVAFORGE_SOURCE_COMMIT="$(git rev-parse HEAD)" \
+            build-for-testing | tee artifacts/theme-ci/build.log
+          XCTESTRUN=$(find DerivedData/ThemeCI/Build/Products -maxdepth 1 -name 'AgentPad_*.xctestrun' -print | head -1)
+          test -n "$XCTESTRUN"
+          echo "XCTESTRUN=$XCTESTRUN" >> "$GITHUB_ENV"
+
+      - name: Run five-theme identity and relaunch durability tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          set +e
+          xcodebuild \
+            -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -parallel-testing-enabled NO \
+            -maximum-concurrent-test-simulator-destinations 1 \
+            -only-testing:AgentPadTests/AgentRuntimeLifecycleTests/testThemeWorldPalettesExposeRequiredReadableTokens \
+            -only-testing:AgentPadUITests/AgentPadUITests/testThemeLaunchOverrideDoesNotReplacePersistedSelection \
+            test-without-building | tee artifacts/theme-ci/test.log
+          status=${PIPESTATUS[0]}
+          set -e
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          exit "$status"
+
+      - name: Upload targeted diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-theme-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/theme-ci
+          if-no-files-found: warn
+          retention-days: 14
