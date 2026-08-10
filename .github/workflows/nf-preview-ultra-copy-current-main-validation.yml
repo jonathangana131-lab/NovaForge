@@ -1,0 +1,71 @@
+name: NovaForge Preview Ultra copy current-main validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PREVIEW-ULTRA-COPY-0810/current-main-e2
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: validation/GPT56-SOL-NF-V14-PREVIEW-ULTRA-COPY-0810/current-main-e2
+      - name: Apply PR 217 product delta in worktree
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          composer = Path('AgentPad/Views/ChatComposer.swift')
+          text = composer.read_text()
+          replacements = [
+              (
+                  '            case .ultraCode: "Max reasoning + isolated workspace agents"',
+                  '            case .ultraCode: "Isolated specialist agents + lead verification"',
+              ),
+              (
+                  '''                Text(selection == .ultraCode\n                     ? "Max reasoning + isolated workspace agents"\n                     : selection.detail)''',
+                  '''                Text(selection == .ultraCode\n                     ? ultraDetail\n                     : selection.detail)''',
+              ),
+              (
+                  '''    private var activeTint: Color {\n        selection == .ultraCode ? AgentPalette.indigo : provider.tint\n    }\n\n    private var selection: Level {''',
+                  '''    private var activeTint: Color {\n        selection == .ultraCode ? AgentPalette.indigo : provider.tint\n    }\n\n    private var ultraDetail: String {\n        guard let effectiveEffort = preferences.effectiveReasoningEffort(\n            provider: provider,\n            modelID: modelID\n        ) else {\n            return "Isolated specialist agents + lead verification"\n        }\n        return "\\(effectiveEffort.title) model reasoning + isolated specialist agents"\n    }\n\n    private var selection: Level {''',
+              ),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ChatComposer current-main replacement mismatch: {count}: {old[:90]!r}')
+              text = text.replace(old, new, 1)
+          composer.write_text(text)
+
+          ui = Path('AgentPadUITests/AgentPadUITests.swift')
+          tests = ui.read_text()
+          old = '''        XCTAssertTrue(\n            app.staticTexts.containing(\n                NSPredicate(format: "label CONTAINS[c] %@", "workspace")\n            ).firstMatch.waitForExistence(timeout: 5),\n            "UltraCode should compactly explain its maximum-reasoning workspace behavior."\n        )'''
+          new = '''        let ultraCapabilityDetail = app.staticTexts.containing(\n            NSPredicate(\n                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@",\n                "Extra High model reasoning",\n                "isolated specialist agents"\n            )\n        ).firstMatch\n        XCTAssertTrue(\n            ultraCapabilityDetail.waitForExistence(timeout: 5),\n            "GPT-5.5 Ultra must describe the actual xhigh model ceiling plus real isolated-agent orchestration behavior."\n        )\n        XCTAssertFalse(\n            app.staticTexts.containing(\n                NSPredicate(format: "label CONTAINS[c] %@", "Max reasoning + isolated")\n            ).firstMatch.exists,\n            "GPT-5.5 Ultra must not claim provider-native Max reasoning when capability mapping clamps it to Extra High."\n        )'''
+          count = tests.count(old)
+          if count != 1:
+              raise SystemExit(f'UI regression current-main replacement mismatch: {count}')
+          tests = tests.replace(old, new, 1)
+          ui.write_text(tests)
+          PY
+      - name: Validate current Preview contract and diff hygiene
+        shell: bash
+        run: |
+          bash scripts/verify_v14_preview_effort_contract.sh
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          c = Path('AgentPad/Views/ChatComposer.swift').read_text()
+          t = Path('AgentPadUITests/AgentPadUITests.swift').read_text()
+          assert 'Max reasoning + isolated workspace agents' not in c
+          assert 'preferences.effectiveReasoningEffort(' in c
+          assert 'Text(presentation.mode.title)' in c
+          assert 'Extra High model reasoning' in t
+          assert 'Max reasoning + isolated' in t
+          PY
