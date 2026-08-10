@@ -1,0 +1,54 @@
+name: V14 Preview provider route profile E3 validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/provider-route-profile/e3
+
+permissions:
+  contents: read
+
+env:
+  PRODUCT_HEAD: 3e814d84a31a602dbc4dc2a33fcfc1acae644d87
+  PRODUCT_BASE: 70eeceb2c92fcb39962e02acd5bde85a8a0ccc81
+
+jobs:
+  composition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert exact current-main composition and validated blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$PRODUCT_BASE" "$PRODUCT_HEAD")" = "$PRODUCT_BASE"
+          test "$(git diff --name-only "$PRODUCT_BASE" "$PRODUCT_HEAD" | wc -l | tr -d ' ')" = "3"
+          test "$(git hash-object Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift)" = "a538f5e67b8725fdaa57f01bdcf8232c14dbf3a2"
+          test "$(git hash-object Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileTests.swift)" = "c4acd2bf991c90f5ab3fc87b0508997271c855eb"
+          test "$(git hash-object Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileStaticTrustBoundaryTests.swift)" = "27e81aed4204314ae65c7b20116a44f8838607df"
+          git diff --check "$PRODUCT_BASE" "$PRODUCT_HEAD"
+
+  macos-agentproviders:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert exact current product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$PRODUCT_BASE" "$PRODUCT_HEAD")" = "$PRODUCT_BASE"
+          git diff --check "$PRODUCT_BASE" "$PRODUCT_HEAD"
+      - name: Toolchain
+        run: swift --version
+      - name: Debug real AgentProviders contracts
+        run: swift test --package-path Packages/AgentHarnessKit --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
+      - name: Release real AgentProviders contracts
+        run: swift test --package-path Packages/AgentHarnessKit -c release --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
