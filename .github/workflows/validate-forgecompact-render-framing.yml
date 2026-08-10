@@ -1,0 +1,31 @@
+name: Validate Forge Compact render framing
+
+on:
+  push:
+    branches:
+      - 'validation/GPT56-SOL-NF-V14-CAPSULE-RENDER-0810/e1'
+
+permissions:
+  contents: read
+
+jobs:
+  forgecompact:
+    name: ForgeCompactCore (${{ matrix.configuration }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@v4
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Run ForgeCompactCore tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/ForgeCompactCore \
+            -c "${{ matrix.configuration }}" \
+            -Xswiftc -warnings-as-errors
