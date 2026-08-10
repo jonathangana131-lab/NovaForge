@@ -316,6 +316,7 @@ public struct ForgeCompletionCriterion: Codable, Equatable, Sendable {
 public struct ForgeCompletionConstitution: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
     public static let maximumCriteria = 128
+    public static let maximumRequiredEvidenceSlots = 4_096
 
     public let schemaVersion: Int
     public let target: ForgeCompletionTarget
@@ -332,15 +333,53 @@ public struct ForgeCompletionConstitution: Codable, Equatable, Sendable {
         )
 
         var seen = Set<String>()
+        var requiredEvidenceSlots = 0
         for criterion in criteria {
             guard seen.insert(criterion.id).inserted else {
                 throw ForgeCompletionError.duplicateCriterionID(criterion.id)
             }
+            guard criterion.isRequired else { continue }
+
+            requiredEvidenceSlots = try Self.checkedRequiredEvidenceSlotCount(
+                evidenceClassCount: criterion.requiredEvidenceClasses.count,
+                journeyCount: criterion.journeyIDs.isEmpty ? 1 : criterion.journeyIDs.count,
+                currentCount: requiredEvidenceSlots
+            )
         }
 
         self.schemaVersion = Self.currentSchemaVersion
         self.target = target
         self.criteria = criteria.sorted { $0.id < $1.id }
+    }
+
+    static func checkedRequiredEvidenceSlotCount(
+        evidenceClassCount: Int,
+        journeyCount: Int,
+        currentCount: Int
+    ) throws -> Int {
+        guard evidenceClassCount >= 0, journeyCount >= 0, currentCount >= 0 else {
+            throw ForgeCompletionError.collectionTooLarge(
+                field: "constitution.requiredEvidenceSlots",
+                maximum: Self.maximumRequiredEvidenceSlots
+            )
+        }
+
+        let (criterionSlots, multiplyOverflow) = evidenceClassCount.multipliedReportingOverflow(by: journeyCount)
+        guard !multiplyOverflow else {
+            throw ForgeCompletionError.collectionTooLarge(
+                field: "constitution.requiredEvidenceSlots",
+                maximum: Self.maximumRequiredEvidenceSlots
+            )
+        }
+
+        let (total, addOverflow) = currentCount.addingReportingOverflow(criterionSlots)
+        guard !addOverflow, total <= Self.maximumRequiredEvidenceSlots else {
+            throw ForgeCompletionError.collectionTooLarge(
+                field: "constitution.requiredEvidenceSlots",
+                maximum: Self.maximumRequiredEvidenceSlots
+            )
+        }
+        return total
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -556,7 +595,6 @@ public struct ForgeCompletionDefectInventory: Codable, Equatable, Sendable {
 
 public struct ForgeCompletionKnownLimitation: Codable, Equatable, Sendable {
     public static let maximumCoveredDefects = 256
-
     public let id: String
     public let target: ForgeCompletionTarget
     public let text: String
@@ -679,7 +717,7 @@ public struct ForgeCompletionEvaluation: Equatable, Sendable {
 }
 
 public enum ForgeCompletionEvaluator {
-    public static let maximumEvidence = 4_096
+    public static let maximumEvidence = ForgeCompletionConstitution.maximumRequiredEvidenceSlots
     public static let maximumKnownLimitations = 512
 
     public static func evaluate(
