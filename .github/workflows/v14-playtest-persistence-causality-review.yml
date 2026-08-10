@@ -1,0 +1,43 @@
+name: V14 Playtest persistence causality review
+
+on:
+  push:
+    branches:
+      - 'validation/GPT56-SOL-NF-V14-PLAYTEST-REVIEW-0810/persistence-causality'
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce-persistence-causality-gap:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 3
+      - name: Assert exact reviewed source ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^^)" = "30cd684358c40ab9c83a7f334fd2586d79f7d2c6"
+          test "$(git rev-parse HEAD:Packages/ForgePlaytestCore/Sources/ForgePlaytestCore/ForgePlaytestCore.swift)" = "1d001334fbecf3f34e31e21cef4bc4c79ea90e3c"
+          git diff --check HEAD^^
+      - name: Reproduce pre-restart milestone false satisfaction
+        shell: bash
+        run: |
+          set -uo pipefail
+          swift --version
+          set +e
+          output="$(swift test --package-path Packages/ForgePlaytestCore --filter requiredMilestoneObservedBeforeRestartCannotSatisfy -Xswiftc -warnings-as-errors 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $status -eq 0 ]]; then
+            echo "::error title=Review witness no longer reproduces::The reviewed source now rejects the pre-restart milestone candidate; re-review instead of carrying this finding forward."
+            exit 1
+          fi
+          if ! grep -Fq "required persistence milestone must be observed after restart" <<<"$output"; then
+            echo "::error title=Unexpected test failure::The targeted witness failed for a reason other than the reviewed persistence-causality expectation."
+            exit 1
+          fi
+          echo "Review witness reproduced: current #209 source can return satisfiedCandidate when the required persistence milestone was observed before runtimeRestart."
