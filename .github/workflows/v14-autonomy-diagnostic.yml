@@ -1,0 +1,37 @@
+name: V14 ForgeAutonomyCore Diagnostic
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-AUTONOMY-TRUST-0809/diagnostic/**
+jobs:
+  debug-diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Verify product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "1852dd519c4e50857b5db55d742dbe0108242f14"
+          git diff --check HEAD^
+      - name: Debug with surfaced diagnostics
+        shell: bash
+        run: |
+          set +e
+          swift test --package-path Packages/ForgeAutonomyCore -Xswiftc -warnings-as-errors > /tmp/autonomy.log 2>&1
+          status=$?
+          cat /tmp/autonomy.log
+          if [ "$status" -ne 0 ]; then
+            mapfile -t diagnostics < <(grep -E 'error:|fatal error:|failed - ' /tmp/autonomy.log | grep -v 'emit-module command failed' | head -n 12)
+            if [ "${#diagnostics[@]}" -eq 0 ]; then
+              diagnostics=("$(tail -n 30 /tmp/autonomy.log | tr '\n' ' ' | head -c 3000)")
+            fi
+            for diagnostic in "${diagnostics[@]}"; do
+              diagnostic="${diagnostic:0:3000}"
+              diagnostic="${diagnostic//'%'/'%25'}"
+              diagnostic="${diagnostic//$'\r'/'%0D'}"
+              diagnostic="${diagnostic//$'\n'/'%0A'}"
+              echo "::error title=ForgeAutonomyCore diagnostic::$diagnostic"
+            done
+            exit "$status"
+          fi
