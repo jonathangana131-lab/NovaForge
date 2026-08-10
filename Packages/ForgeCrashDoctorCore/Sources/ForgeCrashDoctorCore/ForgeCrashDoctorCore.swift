@@ -478,6 +478,29 @@ public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
     }
 }
 
+/// Non-Codable host-authenticated authority over the retry envelope that controls autonomous escalation.
+/// Persisted/model-authored policy bytes remain candidate configuration and cannot relax or tighten budgets directly.
+public struct ForgeCrashTrustedRetryPolicy: Hashable, Sendable {
+    private let authenticatedPolicy: ForgeCrashRetryPolicy
+    public let artifactIdentity: String
+
+    init(authenticatedPolicy: ForgeCrashRetryPolicy, artifactIdentity: String) throws {
+        let normalized = artifactIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowed = Set("0123456789abcdef")
+        guard normalized.count == 64, normalized.allSatisfy(allowed.contains) else {
+            throw ForgeCrashValidationError.invalidArtifactIdentity
+        }
+        self.authenticatedPolicy = authenticatedPolicy
+        self.artifactIdentity = normalized
+    }
+
+    public var policy: ForgeCrashRetryPolicy { authenticatedPolicy }
+
+    public func matches(_ candidate: ForgeCrashRetryPolicy) -> Bool {
+        authenticatedPolicy == candidate
+    }
+}
+
 public enum ForgeCrashNextAction: Hashable, Sendable {
     case focusedRepair(attemptNumber: Int)
     case rootCauseAnalysis(repeatedFailures: Int)
@@ -523,12 +546,12 @@ public enum ForgeCrashTriage {
     public static func makeSubmission(
         for trustedIncident: ForgeCrashTrustedIncident,
         failedHistory: ForgeCrashTrustedRepairHistory,
-        policy: ForgeCrashRetryPolicy
+        policy: ForgeCrashTrustedRetryPolicy
     ) -> ForgeCrashRepairSubmission {
         makeSubmission(
             for: trustedIncident,
             failedHistory: failedHistory.history,
-            policy: policy
+            policy: policy.policy
         )
     }
 }
