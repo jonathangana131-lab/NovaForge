@@ -1,0 +1,68 @@
+name: V14 Preview provider route real-source Linux
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/provider-route-real-source-linux
+
+permissions:
+  contents: read
+
+env:
+  PRODUCT_HEAD: 3e814d84a31a602dbc4dc2a33fcfc1acae644d87
+  PRODUCT_BASE: 70eeceb2c92fcb39962e02acd5bde85a8a0ccc81
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$PRODUCT_BASE" "$PRODUCT_HEAD")" = "$PRODUCT_BASE"
+          git diff --check "$PRODUCT_BASE" "$PRODUCT_HEAD"
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Real manifest AgentProviders Debug build
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentProviders -Xswiftc -warnings-as-errors
+
+      - name: Real manifest AgentProviders Release build
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target AgentProviders -Xswiftc -warnings-as-errors
+
+      - name: Assemble exact real-source provider test harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/agentproviders-real-source
+          mkdir -p /tmp/agentproviders-real-source/Sources
+          mkdir -p /tmp/agentproviders-real-source/Tests/AgentProviderContractTests
+          cp -R Packages/AgentHarnessKit/Sources/AgentProviders /tmp/agentproviders-real-source/Sources/AgentProviders
+          cp Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileTests.swift /tmp/agentproviders-real-source/Tests/AgentProviderContractTests/
+          cp Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileStaticTrustBoundaryTests.swift /tmp/agentproviders-real-source/Tests/AgentProviderContractTests/
+          cat > /tmp/agentproviders-real-source/Package.swift <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+          let package = Package(
+              name: "AgentProvidersRealSourceValidation",
+              products: [.library(name: "AgentProviders", targets: ["AgentProviders"])],
+              targets: [
+                  .target(name: "AgentProviders"),
+                  .testTarget(name: "AgentProviderContractTests", dependencies: ["AgentProviders"]),
+              ]
+          )
+          SWIFT
+
+      - name: Exact real-source Debug contracts
+        run: swift test --package-path /tmp/agentproviders-real-source -Xswiftc -warnings-as-errors
+
+      - name: Exact real-source Release contracts
+        run: swift test --package-path /tmp/agentproviders-real-source -c release -Xswiftc -warnings-as-errors
