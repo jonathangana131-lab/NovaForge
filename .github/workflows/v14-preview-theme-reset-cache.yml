@@ -1,0 +1,28 @@
+name: V14 Preview theme reset cache
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/App/AgentPadApp.swift'
+      - 'AgentPad/Design/AgentTheme.swift'
+      - 'scripts/verify_v14_preview_theme_reset_cache.sh'
+      - '.github/workflows/v14-preview-theme-reset-cache.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/App/AgentPadApp.swift'
+      - 'AgentPad/Design/AgentTheme.swift'
+      - 'scripts/verify_v14_preview_theme_reset_cache.sh'
+      - '.github/workflows/v14-preview-theme-reset-cache.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  reset-theme-cache-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify reset launch re-resolves stored theme before cache refresh
+        run: bash scripts/verify_v14_preview_theme_reset_cache.sh
