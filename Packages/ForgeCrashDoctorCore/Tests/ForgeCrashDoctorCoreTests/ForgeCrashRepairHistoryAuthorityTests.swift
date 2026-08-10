@@ -53,10 +53,14 @@ final class ForgeCrashRepairHistoryAuthorityTests: XCTestCase {
 
         XCTAssertFalse(trustedHistory.matches(rewrittenHistory))
 
+        let trustedPolicy = try ForgeCrashTrustedRetryPolicy(
+            authenticatedPolicy: try ForgeCrashRetryPolicy(),
+            artifactIdentity: String(repeating: "f", count: 64)
+        )
         let submission = ForgeCrashTriage.makeSubmission(
             for: trustedIncident,
             failedHistory: trustedHistory,
-            policy: try ForgeCrashRetryPolicy()
+            policy: trustedPolicy
         )
         XCTAssertEqual(submission.nextAction, .rootCauseAnalysis(repeatedFailures: 2))
     }
@@ -114,6 +118,35 @@ final class ForgeCrashRepairHistoryAuthorityTests: XCTestCase {
             try ForgeCrashTrustedRepairHistory(
                 authenticatedHistory: history,
                 failureArtifactIdentities: [String(repeating: "F", count: 64)]
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidArtifactIdentity)
+        }
+    }
+
+    func testTrustedPolicyPreventsCallerFromRelaxingEscalationBudget() throws {
+        let strictPolicy = try ForgeCrashRetryPolicy(
+            maximumFocusedFailuresPerRepeatKey: 2,
+            maximumTotalFailuresBeforeBlocker: 6
+        )
+        let relaxedCandidate = try ForgeCrashRetryPolicy(
+            maximumFocusedFailuresPerRepeatKey: 99,
+            maximumTotalFailuresBeforeBlocker: 99
+        )
+        let trustedPolicy = try ForgeCrashTrustedRetryPolicy(
+            authenticatedPolicy: strictPolicy,
+            artifactIdentity: String(repeating: "1", count: 64)
+        )
+
+        XCTAssertTrue(trustedPolicy.matches(strictPolicy))
+        XCTAssertFalse(trustedPolicy.matches(relaxedCandidate))
+    }
+
+    func testTrustedPolicyRejectsNonCanonicalArtifactIdentity() throws {
+        XCTAssertThrowsError(
+            try ForgeCrashTrustedRetryPolicy(
+                authenticatedPolicy: try ForgeCrashRetryPolicy(),
+                artifactIdentity: String(repeating: "A", count: 64)
             )
         ) { error in
             XCTAssertEqual(error as? ForgeCrashValidationError, .invalidArtifactIdentity)
