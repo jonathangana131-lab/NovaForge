@@ -81,20 +81,30 @@ final class ForgeRuntimeStateStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        let searchAnchors = [
+            Bundle(for: ForgeRuntimeStateStaticTrustBoundaryTests.self).bundleURL,
+            executableDirectory,
+        ]
+        var visitedDirectories = Set<String>()
 
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ForgeRuntime.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) {
-                return modulesURL
-            }
+        for anchor in searchAnchors {
+            var directory = anchor
+            for _ in 0..<12 {
+                if visitedDirectories.insert(directory.standardizedFileURL.path).inserted {
+                    let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+                    let moduleURL = modulesURL.appendingPathComponent("ForgeRuntime.swiftmodule")
+                    if FileManager.default.fileExists(atPath: moduleURL.path) {
+                        return modulesURL
+                    }
+                }
 
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path {
-                break
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path {
+                    break
+                }
+                directory = parent
             }
-            directory = parent
         }
 
         throw NSError(
@@ -102,7 +112,7 @@ final class ForgeRuntimeStateStaticTrustBoundaryTests: XCTestCase {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "ForgeRuntime module is missing from the active SwiftPM test executable ancestry"
+                    "ForgeRuntime module is missing from the active SwiftPM test bundle and executable ancestry"
             ]
         )
     }
