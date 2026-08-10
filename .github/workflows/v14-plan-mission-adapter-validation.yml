@@ -1,0 +1,28 @@
+name: V14 Plan Mission Adapter Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-PLANMISSION-0809/**
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Assert exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "45c1bcf36a657caf703792d82fd621f8a4ef915c"
+          git diff --check HEAD^
+
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -Xswiftc -warnings-as-errors
+
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -c release -Xswiftc -warnings-as-errors
