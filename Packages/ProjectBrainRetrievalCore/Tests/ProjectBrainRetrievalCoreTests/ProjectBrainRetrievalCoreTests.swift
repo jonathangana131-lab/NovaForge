@@ -97,7 +97,32 @@ final class ProjectBrainRetrievalCoreTests: XCTestCase {
 
         let plan = try ProjectBrainRetrievalPlanner.plan(request: request, candidates: [])
         XCTAssertTrue(plan.selected.isEmpty)
-        XCTAssertTrue(plan.omissions.isEmpty)
+        XCTAssertEqual(
+            plan.omissions,
+            [.init(factID: "not-present", reason: .requestedColdFactUnavailable)]
+        )
+    }
+
+    func testExplicitColdRequestRejectsNonColdCandidateTier() throws {
+        let request = try ProjectBrainRetrievalRequest(
+            requestID: "req",
+            projectID: "project",
+            sourceRevisionID: "rev-1",
+            explicitlyRequestedColdFactIDs: ["fact"],
+            budget: try .init(maximumItems: 2, maximumUTF8Bytes: 128)
+        )
+
+        XCTAssertThrowsError(
+            try ProjectBrainRetrievalPlanner.plan(
+                request: request,
+                candidates: [try candidate("fact", tier: .l2ProjectMemory)]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainRetrievalError,
+                .explicitColdRequestTierMismatch(factID: "fact")
+            )
+        }
     }
 
     func testCurrentFactsPrecedeUnknownAndStaleWithinSameTier() throws {
@@ -302,6 +327,23 @@ final class ProjectBrainRetrievalCoreTests: XCTestCase {
                 maximumUTF8Bytes: ProjectBrainRetrievalLimits.maximumContextUTF8Bytes + 1
             )
         )
+        XCTAssertThrowsError(
+            try ProjectBrainRetrievalRequest(
+                requestID: "req",
+                projectID: "project",
+                sourceRevisionID: "rev-1",
+                requiredFactIDs: Array(
+                    repeating: "same",
+                    count: ProjectBrainRetrievalLimits.maximumSelectedItems + 1
+                ),
+                budget: try .init(maximumItems: 1, maximumUTF8Bytes: 128)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainRetrievalError,
+                .tooManyRequestedFactIDs
+            )
+        }
     }
 
     private func request(maximumItems: Int, maximumBytes: Int) -> ProjectBrainRetrievalRequest {
