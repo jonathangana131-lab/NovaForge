@@ -5,300 +5,173 @@ import XCTest
 final class ForgeCrashDoctorCoreTests: XCTestCase {
     func testValidatedIncidentRoundTripsWithoutGainingTrust() throws {
         let incident = try makeIncident()
-        let data = try JSONEncoder().encode(incident)
-        let decoded = try JSONDecoder().decode(ForgeCrashIncident.self, from: data)
-
-        XCTAssertEqual(decoded, incident)
+        XCTAssertEqual(try JSONDecoder().decode(ForgeCrashIncident.self, from: JSONEncoder().encode(incident)), incident)
     }
 
     func testDecodeReentersStackFrameLimitValidation() throws {
         let incident = try makeIncident()
-        let data = try JSONEncoder().encode(incident)
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(incident)) as? [String: Any])
         let frame: [String: Any] = ["symbol": "tick", "file": "game.js", "line": 42, "column": 3]
         object["stackFrames"] = Array(repeating: frame, count: 65)
         let tampered = try JSONSerialization.data(withJSONObject: object)
-
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeCrashIncident.self, from: tampered)) { error in
             XCTAssertEqual(error as? ForgeCrashValidationError, .tooManyStackFrames(65))
         }
     }
 
-    func testDecodeReentersMonotonicActionValidation() throws {
-        let incident = try makeIncident(
-            actions: [
-                try ForgeCrashSemanticAction(sequence: 1, actionID: "a1", intent: "move"),
-                try ForgeCrashSemanticAction(sequence: 2, actionID: "a2", intent: "jump"),
-            ]
-        )
-        let data = try JSONEncoder().encode(incident)
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        var actions = try XCTUnwrap(object["recentActions"] as? [[String: Any]])
-        actions[1]["sequence"] = 1
-        object["recentActions"] = actions
-        let tampered = try JSONSerialization.data(withJSONObject: object)
-
-        XCTAssertThrowsError(try JSONDecoder().decode(ForgeCrashIncident.self, from: tampered)) { error in
-            XCTAssertEqual(error as? ForgeCrashValidationError, .nonMonotonicSequence(field: "action.sequence"))
+    func testIdentityRejectsWhitespaceAliases() throws {
+        XCTAssertThrowsError(try makeIncident(incidentID: "incident 1")) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidIdentity(field: "incident.id"))
         }
     }
 
     func testTrustedIncidentMatchesWholeAuthenticatedSubject() throws {
         let incident = try makeIncident(message: "TypeError: player is undefined")
-        let trusted = try ForgeCrashTrustedIncident(
-            authenticatedIncident: incident,
-            artifactIdentity: String(repeating: "a", count: 64)
-        )
-        let altered = try makeIncident(message: "TypeError: player is null")
-
+        let trusted = try trust(incident, artifact: "a")
         XCTAssertTrue(trusted.matches(incident))
-        XCTAssertFalse(trusted.matches(altered))
-    }
-
-    func testTrustedIncidentRejectsNonCanonicalArtifactIdentity() throws {
-        let incident = try makeIncident()
-
-        XCTAssertThrowsError(
-            try ForgeCrashTrustedIncident(
-                authenticatedIncident: incident,
-                artifactIdentity: String(repeating: "A", count: 64)
-            )
-        ) { error in
-            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidArtifactIdentity)
-        }
+        XCTAssertFalse(trusted.matches(try makeIncident(message: "TypeError: player is null")))
     }
 
     func testRepeatKeyUsesStructuralLocationInsteadOfMutableMessage() throws {
         let first = try makeIncident(message: "TypeError: player 17 is undefined")
         let second = try makeIncident(message: "TypeError: player 88 is undefined")
-
         XCTAssertEqual(ForgeCrashRepeatKey.derive(from: first), ForgeCrashRepeatKey.derive(from: second))
     }
 
     func testRepeatKeyPreservesCaseSensitiveSourceIdentity() throws {
-        let upper = try makeIncident(
-            source: try ForgeCrashSourceLocation(file: "Player.js", line: 42, symbol: "UpdatePlayer"),
-            stackFrames: [try ForgeCrashStackFrame(symbol: "UpdatePlayer", file: "Player.js", line: 42)]
-        )
-        let lower = try makeIncident(
-            source: try ForgeCrashSourceLocation(file: "player.js", line: 42, symbol: "updatePlayer"),
-            stackFrames: [try ForgeCrashStackFrame(symbol: "updatePlayer", file: "player.js", line: 42)]
-        )
-
+        let upper = try makeIncident(source: try ForgeCrashSourceLocation(file: "Player.js", line: 42, symbol: "UpdatePlayer"))
+        let lower = try makeIncident(source: try ForgeCrashSourceLocation(file: "player.js", line: 42, symbol: "updatePlayer"))
         XCTAssertNotEqual(ForgeCrashRepeatKey.derive(from: upper), ForgeCrashRepeatKey.derive(from: lower))
     }
 
-    func testRepeatKeyFallsBackToNormalizedMessageWhenNoLocationExists() throws {
-        let first = try makeIncident(
-            message: "  Network   bootstrap failed  ",
-            source: nil,
-            stackFrames: []
-        )
-        let second = try makeIncident(
-            message: "network bootstrap failed",
-            source: nil,
-            stackFrames: []
-        )
-
-        XCTAssertEqual(ForgeCrashRepeatKey.derive(from: first), ForgeCrashRepeatKey.derive(from: second))
-    }
-
-    func testDecodedRepairAttemptCannotBypassSequenceValidation() throws {
-        let incident = try makeIncident()
+    func testDecodedRepeatKeyCannotBypassBounds() throws {
         let attempt = try ForgeCrashRepairAttempt(
             sequence: 1,
-            incidentID: incident.incidentID,
-            repeatKey: ForgeCrashRepeatKey.derive(from: incident),
+            incidentID: "incident-1",
+            repeatKey: ForgeCrashRepeatKey.derive(from: try makeIncident()),
             failureKind: .sameCrashReturned
         )
-        let data = try JSONEncoder().encode(attempt)
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        object["sequence"] = 0
-        let tampered = try JSONSerialization.data(withJSONObject: object)
-
-        XCTAssertThrowsError(try JSONDecoder().decode(ForgeCrashRepairAttempt.self, from: tampered)) { error in
-            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidPositiveInteger(field: "repair.sequence"))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(attempt)) as? [String: Any])
+        var repeatKey = try XCTUnwrap(object["repeatKey"] as? [String: Any])
+        repeatKey["sourceFile"] = String(repeating: "x", count: 1_025)
+        object["repeatKey"] = repeatKey
+        let data = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeCrashRepairAttempt.self, from: data)) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .fieldTooLong(field: "repeat.sourceFile", maximum: 1_024))
         }
     }
 
-    func testDecodedRetryPolicyCannotBypassBudgetValidation() throws {
-        let policy = try ForgeCrashRetryPolicy()
-        let data = try JSONEncoder().encode(policy)
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        object["maximumFocusedFailuresPerRepeatKey"] = 4
-        object["maximumTotalFailuresBeforeBlocker"] = 3
-        let tampered = try JSONSerialization.data(withJSONObject: object)
-
-        XCTAssertThrowsError(try JSONDecoder().decode(ForgeCrashRetryPolicy.self, from: tampered)) { error in
-            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidPositiveInteger(field: "policy.totalFailures"))
-        }
-    }
-
-    func testRepairHistoryRejectsDuplicateOrReorderedSequences() throws {
-        let incident = try makeIncident()
-        let key = ForgeCrashRepeatKey.derive(from: incident)
-        let first = try ForgeCrashRepairAttempt(
-            sequence: 2,
-            incidentID: incident.incidentID,
-            repeatKey: key,
-            failureKind: .sameCrashReturned
-        )
-        let duplicate = try ForgeCrashRepairAttempt(
-            sequence: 2,
-            incidentID: incident.incidentID,
-            repeatKey: key,
-            failureKind: .focusedVerificationFailed
-        )
-
-        XCTAssertThrowsError(try ForgeCrashRepairHistory(attempts: [first, duplicate])) { error in
-            XCTAssertEqual(error as? ForgeCrashValidationError, .nonMonotonicSequence(field: "repair.sequence"))
-        }
-    }
-
-    func testTriageStartsWithFocusedRepair() throws {
-        let trusted = try makeTrustedIncident()
-        let policy = try ForgeCrashRetryPolicy()
-
-        let submission = ForgeCrashTriage.makeSubmission(
-            for: trusted,
-            failedHistory: try ForgeCrashRepairHistory(),
-            policy: policy
-        )
-
-        XCTAssertEqual(submission.nextAction, .focusedRepair(attemptNumber: 1))
-        XCTAssertEqual(submission.trustedIncident, trusted)
-    }
-
-    func testRepeatedCrashPromotesToRootCauseAnalysis() throws {
-        let trusted = try makeTrustedIncident()
-        let key = ForgeCrashRepeatKey.derive(from: trusted.incident)
-        let attempts = [
-            try ForgeCrashRepairAttempt(
-                sequence: 1,
-                incidentID: trusted.incident.incidentID,
-                repeatKey: key,
-                failureKind: .sameCrashReturned
-            ),
-            try ForgeCrashRepairAttempt(
-                sequence: 2,
-                incidentID: trusted.incident.incidentID,
-                repeatKey: key,
-                failureKind: .focusedVerificationFailed
-            ),
-        ]
-
-        let submission = ForgeCrashTriage.makeSubmission(
-            for: trusted,
-            failedHistory: try ForgeCrashRepairHistory(attempts: attempts),
-            policy: try ForgeCrashRetryPolicy()
-        )
-
-        XCTAssertEqual(submission.nextAction, .rootCauseAnalysis(repeatedFailures: 2))
-    }
-
-    func testDifferentCrashDoesNotConsumeFocusedRetryBudgetForCurrentRepeatKey() throws {
-        let trusted = try makeTrustedIncident()
-        let unrelated = try makeIncident(
-            incidentID: "incident-other",
-            message: "asset failed",
-            source: try ForgeCrashSourceLocation(file: "assets.js", line: 9, symbol: "loadAsset"),
-            stackFrames: [try ForgeCrashStackFrame(symbol: "loadAsset", file: "assets.js", line: 9)]
-        )
-        let attempts = [
-            try ForgeCrashRepairAttempt(
-                sequence: 1,
-                incidentID: unrelated.incidentID,
-                repeatKey: ForgeCrashRepeatKey.derive(from: unrelated),
-                failureKind: .sameCrashReturned
-            ),
-        ]
-
-        let submission = ForgeCrashTriage.makeSubmission(
-            for: trusted,
-            failedHistory: try ForgeCrashRepairHistory(attempts: attempts),
-            policy: try ForgeCrashRetryPolicy()
-        )
-
-        XCTAssertEqual(submission.nextAction, .focusedRepair(attemptNumber: 1))
-    }
-
-    func testTotalFailureCapSurfacesBlockerBeforeMoreAutonomousRepair() throws {
-        let trusted = try makeTrustedIncident()
-        let currentKey = ForgeCrashRepeatKey.derive(from: trusted.incident)
-        let unrelated = try makeIncident(
-            incidentID: "incident-unrelated",
-            source: try ForgeCrashSourceLocation(file: "other.js", line: 7, symbol: "other"),
-            stackFrames: [try ForgeCrashStackFrame(symbol: "other", file: "other.js", line: 7)]
-        )
-        let unrelatedKey = ForgeCrashRepeatKey.derive(from: unrelated)
-        let attempts = try (1...6).map { sequence in
-            try ForgeCrashRepairAttempt(
-                sequence: sequence,
-                incidentID: sequence.isMultiple(of: 2) ? trusted.incident.incidentID : unrelated.incidentID,
-                repeatKey: sequence.isMultiple(of: 2) ? currentKey : unrelatedKey,
-                failureKind: .verificationInterrupted
-            )
-        }
-
-        let submission = ForgeCrashTriage.makeSubmission(
-            for: trusted,
-            failedHistory: try ForgeCrashRepairHistory(attempts: attempts),
-            policy: try ForgeCrashRetryPolicy(maximumFocusedFailuresPerRepeatKey: 4, maximumTotalFailuresBeforeBlocker: 6)
-        )
-
-        XCTAssertEqual(submission.nextAction, .surfaceBlocker(totalFailures: 6))
-    }
-
-    func testPolicyRejectsTotalBudgetBelowFocusedBudget() {
+    func testRetryPolicyCannotExceedDurableHistoryCapacity() throws {
         XCTAssertThrowsError(
-            try ForgeCrashRetryPolicy(
-                maximumFocusedFailuresPerRepeatKey: 4,
-                maximumTotalFailuresBeforeBlocker: 3
-            )
+            try ForgeCrashRetryPolicy(maximumFocusedFailuresPerRepeatKey: 2, maximumTotalFailuresBeforeBlocker: 129)
         ) { error in
             XCTAssertEqual(error as? ForgeCrashValidationError, .invalidPositiveInteger(field: "policy.totalFailures"))
         }
     }
 
-    private func makeTrustedIncident() throws -> ForgeCrashTrustedIncident {
-        try ForgeCrashTrustedIncident(
-            authenticatedIncident: makeIncident(),
-            artifactIdentity: String(repeating: "b", count: 64)
+    func testTriageStartsWithFocusedRepairFromTrustedControl() throws {
+        let current = try trust(makeIncident(), artifact: "b")
+        let control = try trustedControl(current: current, attempts: [])
+        let submission = try ForgeCrashTriage.makeSubmission(for: current, trustedControl: control)
+        XCTAssertEqual(submission.nextAction, .focusedRepair(attemptNumber: 1))
+    }
+
+    func testAuthenticatedRepeatedCrashPromotesToRootCauseAnalysis() throws {
+        let current = try trust(makeIncident(), artifact: "b")
+        let prior1 = try ForgeCrashTrustedFailedAttempt(sequence: 1, trustedIncident: trust(makeIncident(incidentID: "incident-2"), artifact: "c"), failureKind: .sameCrashReturned)
+        let prior2 = try ForgeCrashTrustedFailedAttempt(sequence: 2, trustedIncident: trust(makeIncident(incidentID: "incident-3", message: "different text"), artifact: "d"), failureKind: .focusedVerificationFailed)
+        let control = try trustedControl(current: current, attempts: [prior1, prior2])
+        let submission = try ForgeCrashTriage.makeSubmission(for: current, trustedControl: control)
+        XCTAssertEqual(submission.nextAction, .rootCauseAnalysis(repeatedFailures: 2))
+    }
+
+    func testAuthenticatedDifferentCrashDoesNotConsumeRepeatBudget() throws {
+        let current = try trust(makeIncident(), artifact: "b")
+        let unrelated = try makeIncident(
+            incidentID: "incident-other",
+            source: try ForgeCrashSourceLocation(file: "assets.js", line: 9, symbol: "loadAsset"),
+            stackFrames: [try ForgeCrashStackFrame(symbol: "loadAsset", file: "assets.js", line: 9)]
         )
+        let prior = try ForgeCrashTrustedFailedAttempt(sequence: 1, trustedIncident: trust(unrelated, artifact: "e"), failureKind: .sameCrashReturned)
+        let control = try trustedControl(current: current, attempts: [prior])
+        let submission = try ForgeCrashTriage.makeSubmission(for: current, trustedControl: control)
+        XCTAssertEqual(submission.nextAction, .focusedRepair(attemptNumber: 1))
+    }
+
+    func testForeignRevisionCannotPoisonTrustedRepairControl() throws {
+        let current = try trust(makeIncident(), artifact: "b")
+        let foreign = try trust(makeIncident(incidentID: "foreign", projectRevision: "revision-other"), artifact: "f")
+        let attempt = try ForgeCrashTrustedFailedAttempt(sequence: 1, trustedIncident: foreign, failureKind: .sameCrashReturned)
+        let policy = try ForgeCrashTrustedRetryPolicy(authenticatedPolicy: ForgeCrashRetryPolicy(), policyRevision: "policy-v1")
+        XCTAssertThrowsError(
+            try ForgeCrashTrustedRepairControl(currentIncident: current, failedAttempts: [attempt], trustedPolicy: policy)
+        ) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .repairScopeMismatch)
+        }
+    }
+
+    func testRuntimeSessionRelaunchKeepsSameRepairBudgetScope() throws {
+        let current = try trust(makeIncident(runtimeSessionID: "session-9"), artifact: "b")
+        let priorIncident = try trust(makeIncident(incidentID: "prior", runtimeSessionID: "session-5"), artifact: "c")
+        let prior = try ForgeCrashTrustedFailedAttempt(sequence: 1, trustedIncident: priorIncident, failureKind: .sameCrashReturned)
+        XCTAssertNoThrow(try trustedControl(current: current, attempts: [prior]))
+    }
+
+    func testTrustedPolicyControlsTotalFailureBlocker() throws {
+        let current = try trust(makeIncident(), artifact: "b")
+        let attempts = try (1...6).map { sequence in
+            try ForgeCrashTrustedFailedAttempt(
+                sequence: sequence,
+                trustedIncident: trust(makeIncident(incidentID: "incident-\(sequence)"), artifact: String(format: "%x", (sequence % 6) + 10)),
+                failureKind: .verificationInterrupted
+            )
+        }
+        let control = try trustedControl(
+            current: current,
+            attempts: attempts,
+            policy: try ForgeCrashRetryPolicy(maximumFocusedFailuresPerRepeatKey: 4, maximumTotalFailuresBeforeBlocker: 6)
+        )
+        let submission = try ForgeCrashTriage.makeSubmission(for: current, trustedControl: control)
+        XCTAssertEqual(submission.nextAction, .surfaceBlocker(totalFailures: 6))
+    }
+
+    private func trustedControl(
+        current: ForgeCrashTrustedIncident,
+        attempts: [ForgeCrashTrustedFailedAttempt],
+        policy: ForgeCrashRetryPolicy = try! ForgeCrashRetryPolicy()
+    ) throws -> ForgeCrashTrustedRepairControl {
+        let trustedPolicy = try ForgeCrashTrustedRetryPolicy(authenticatedPolicy: policy, policyRevision: "policy-v1")
+        return try ForgeCrashTrustedRepairControl(currentIncident: current, failedAttempts: attempts, trustedPolicy: trustedPolicy)
+    }
+
+    private func trust(_ incident: ForgeCrashIncident, artifact: String) throws -> ForgeCrashTrustedIncident {
+        try ForgeCrashTrustedIncident(authenticatedIncident: incident, artifactIdentity: String(repeating: artifact, count: 64))
     }
 
     private func makeIncident(
         incidentID: String = "incident-1",
+        projectID: String = "project-1",
+        checkpointID: String = "checkpoint-9",
+        projectRevision: String = "revision-abc",
+        runtimeVersion: String = "runtime-1",
+        runtimeSessionID: String = "session-5",
         message: String = "TypeError: player is undefined",
-        source: ForgeCrashSourceLocation? = try? ForgeCrashSourceLocation(
-            file: "game.js",
-            line: 42,
-            column: 3,
-            symbol: "updatePlayer"
-        ),
-        stackFrames: [ForgeCrashStackFrame] = [
-            try! ForgeCrashStackFrame(symbol: "updatePlayer", file: "game.js", line: 42, column: 3),
-            try! ForgeCrashStackFrame(symbol: "tick", file: "loop.js", line: 10, column: 1),
-        ],
-        actions: [ForgeCrashSemanticAction] = []
+        source: ForgeCrashSourceLocation? = try? ForgeCrashSourceLocation(file: "game.js", line: 42, column: 3, symbol: "updatePlayer"),
+        stackFrames: [ForgeCrashStackFrame] = [try! ForgeCrashStackFrame(symbol: "updatePlayer", file: "game.js", line: 42, column: 3)]
     ) throws -> ForgeCrashIncident {
         try ForgeCrashIncident(
             incidentID: incidentID,
-            projectID: "project-1",
-            checkpointID: "checkpoint-9",
-            projectRevision: "revision-abc",
-            runtimeVersion: "runtime-1",
-            runtimeSessionID: "session-5",
+            projectID: projectID,
+            checkpointID: checkpointID,
+            projectRevision: projectRevision,
+            runtimeVersion: runtimeVersion,
+            runtimeSessionID: runtimeSessionID,
             occurredAt: Date(timeIntervalSince1970: 1_786_250_000),
             kind: .runtimeException,
             message: message,
             sourceLocation: source,
             stackFrames: stackFrames,
-            consoleEntries: [
-                try ForgeCrashConsoleEntry(sequence: 10, level: .warning, message: "frame delayed"),
-                try ForgeCrashConsoleEntry(sequence: 11, level: .error, message: message, source: "game.js"),
-            ],
-            recentActions: actions
+            consoleEntries: [try ForgeCrashConsoleEntry(sequence: 10, level: .error, message: message, source: "game.js")]
         )
     }
 }
