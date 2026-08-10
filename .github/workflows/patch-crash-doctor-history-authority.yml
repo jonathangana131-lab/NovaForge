@@ -1,0 +1,53 @@
+name: Patch Crash Doctor history authority
+
+on:
+  push:
+    branches:
+      - automation/GPT56SOL-NF-V14-CRASH-HISTORY-0810/patch-history-authority/e1
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: worker/GPT56SOL-NF-V14-CRASH-HISTORY-0810/history-authority/e1
+          fetch-depth: 0
+      - name: Apply narrowly-scoped source patch
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('Packages/ForgeCrashDoctorCore/Sources/ForgeCrashDoctorCore/ForgeCrashDoctorCore.swift')
+          text = path.read_text()
+
+          old = '    case invalidArtifactIdentity\n}'
+          new = '    case invalidArtifactIdentity\n    case repairHistoryEvidenceMismatch\n}'
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          marker = '''\n/// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own\n/// output as verification success; completion remains owned by runtime/test evidence.\npublic struct ForgeCrashRetryPolicy'''
+          trusted = '''\n/// Non-Codable host-authenticated authority over the complete failed repair history.\n/// Persisted/model-authored attempt bytes remain candidate metadata and cannot steer retry escalation directly.\n/// A verification adapter inside this module must validate each failure artifact against the exact attempt\n/// before constructing this binding.\npublic struct ForgeCrashTrustedRepairHistory: Hashable, Sendable {\n    private let authenticatedHistory: ForgeCrashRepairHistory\n    public let failureArtifactIdentities: [String]\n\n    init(\n        authenticatedHistory: ForgeCrashRepairHistory,\n        failureArtifactIdentities: [String]\n    ) throws {\n        guard failureArtifactIdentities.count == authenticatedHistory.attempts.count else {\n            throw ForgeCrashValidationError.repairHistoryEvidenceMismatch\n        }\n\n        let allowed = Set("0123456789abcdef")\n        var normalizedIdentities: [String] = []\n        normalizedIdentities.reserveCapacity(failureArtifactIdentities.count)\n        var uniqueIdentities = Set<String>()\n\n        for identity in failureArtifactIdentities {\n            let normalized = identity.trimmingCharacters(in: .whitespacesAndNewlines)\n            guard normalized.count == 64, normalized.allSatisfy(allowed.contains) else {\n                throw ForgeCrashValidationError.invalidArtifactIdentity\n            }\n            guard uniqueIdentities.insert(normalized).inserted else {\n                throw ForgeCrashValidationError.repairHistoryEvidenceMismatch\n            }\n            normalizedIdentities.append(normalized)\n        }\n\n        self.authenticatedHistory = authenticatedHistory\n        self.failureArtifactIdentities = normalizedIdentities\n    }\n\n    public var history: ForgeCrashRepairHistory { authenticatedHistory }\n\n    public func matches(_ candidate: ForgeCrashRepairHistory) -> Bool {\n        authenticatedHistory == candidate\n    }\n}\n\n/// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own\n/// output as verification success; completion remains owned by runtime/test evidence.\npublic struct ForgeCrashRetryPolicy'''
+          assert marker in text
+          text = text.replace(marker, '\n' + trusted, 1)
+
+          old_sig = '''public enum ForgeCrashTriage {\n    public static func makeSubmission(\n        for trustedIncident: ForgeCrashTrustedIncident,\n        failedHistory: ForgeCrashRepairHistory,\n        policy: ForgeCrashRetryPolicy\n    ) -> ForgeCrashRepairSubmission {'''
+          new_sig = '''public enum ForgeCrashTriage {\n    /// Module-internal primitive used by trusted adapters and package tests. Ordinary consumers cannot\n    /// feed Codable candidate history directly into the escalation decision.\n    static func makeSubmission(\n        for trustedIncident: ForgeCrashTrustedIncident,\n        failedHistory: ForgeCrashRepairHistory,\n        policy: ForgeCrashRetryPolicy\n    ) -> ForgeCrashRepairSubmission {'''
+          assert old_sig in text
+          text = text.replace(old_sig, new_sig, 1)
+
+          tail = '''        return ForgeCrashRepairSubmission(\n            trustedIncident: trustedIncident,\n            repeatKey: repeatKey,\n            nextAction: nextAction\n        )\n    }\n}\n'''
+          replacement = '''        return ForgeCrashRepairSubmission(\n            trustedIncident: trustedIncident,\n            repeatKey: repeatKey,\n            nextAction: nextAction\n        )\n    }\n\n    public static func makeSubmission(\n        for trustedIncident: ForgeCrashTrustedIncident,\n        failedHistory: ForgeCrashTrustedRepairHistory,\n        policy: ForgeCrashRetryPolicy\n    ) -> ForgeCrashRepairSubmission {\n        makeSubmission(\n            for: trustedIncident,\n            failedHistory: failedHistory.history,\n            policy: policy\n        )\n    }\n}\n'''
+          assert text.endswith(tail)
+          text = text[:-len(tail)] + replacement
+          path.write_text(text)
+      - name: Commit source repair
+        run: |
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Packages/ForgeCrashDoctorCore/Sources/ForgeCrashDoctorCore/ForgeCrashDoctorCore.swift
+          git commit -m "[V14] Bind Crash Doctor triage to trusted repair history"
+          git push origin HEAD:worker/GPT56SOL-NF-V14-CRASH-HISTORY-0810/history-authority/e1
