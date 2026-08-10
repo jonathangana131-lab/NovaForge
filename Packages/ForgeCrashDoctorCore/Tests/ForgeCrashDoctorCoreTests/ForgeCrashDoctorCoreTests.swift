@@ -75,6 +75,19 @@ final class ForgeCrashDoctorCoreTests: XCTestCase {
         XCTAssertEqual(ForgeCrashRepeatKey.derive(from: first), ForgeCrashRepeatKey.derive(from: second))
     }
 
+    func testRepeatKeyPreservesCaseSensitiveSourceIdentity() throws {
+        let upper = try makeIncident(
+            source: try ForgeCrashSourceLocation(file: "Player.js", line: 42, symbol: "UpdatePlayer"),
+            stackFrames: [try ForgeCrashStackFrame(symbol: "UpdatePlayer", file: "Player.js", line: 42)]
+        )
+        let lower = try makeIncident(
+            source: try ForgeCrashSourceLocation(file: "player.js", line: 42, symbol: "updatePlayer"),
+            stackFrames: [try ForgeCrashStackFrame(symbol: "updatePlayer", file: "player.js", line: 42)]
+        )
+
+        XCTAssertNotEqual(ForgeCrashRepeatKey.derive(from: upper), ForgeCrashRepeatKey.derive(from: lower))
+    }
+
     func testRepeatKeyFallsBackToNormalizedMessageWhenNoLocationExists() throws {
         let first = try makeIncident(
             message: "  Network   bootstrap failed  ",
@@ -90,13 +103,65 @@ final class ForgeCrashDoctorCoreTests: XCTestCase {
         XCTAssertEqual(ForgeCrashRepeatKey.derive(from: first), ForgeCrashRepeatKey.derive(from: second))
     }
 
+    func testDecodedRepairAttemptCannotBypassSequenceValidation() throws {
+        let incident = try makeIncident()
+        let attempt = try ForgeCrashRepairAttempt(
+            sequence: 1,
+            incidentID: incident.incidentID,
+            repeatKey: ForgeCrashRepeatKey.derive(from: incident),
+            failureKind: .sameCrashReturned
+        )
+        let data = try JSONEncoder().encode(attempt)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["sequence"] = 0
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeCrashRepairAttempt.self, from: tampered)) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidPositiveInteger(field: "repair.sequence"))
+        }
+    }
+
+    func testDecodedRetryPolicyCannotBypassBudgetValidation() throws {
+        let policy = try ForgeCrashRetryPolicy()
+        let data = try JSONEncoder().encode(policy)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["maximumFocusedFailuresPerRepeatKey"] = 4
+        object["maximumTotalFailuresBeforeBlocker"] = 3
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeCrashRetryPolicy.self, from: tampered)) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidPositiveInteger(field: "policy.totalFailures"))
+        }
+    }
+
+    func testRepairHistoryRejectsDuplicateOrReorderedSequences() throws {
+        let incident = try makeIncident()
+        let key = ForgeCrashRepeatKey.derive(from: incident)
+        let first = try ForgeCrashRepairAttempt(
+            sequence: 2,
+            incidentID: incident.incidentID,
+            repeatKey: key,
+            failureKind: .sameCrashReturned
+        )
+        let duplicate = try ForgeCrashRepairAttempt(
+            sequence: 2,
+            incidentID: incident.incidentID,
+            repeatKey: key,
+            failureKind: .focusedVerificationFailed
+        )
+
+        XCTAssertThrowsError(try ForgeCrashRepairHistory(attempts: [first, duplicate])) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .nonMonotonicSequence(field: "repair.sequence"))
+        }
+    }
+
     func testTriageStartsWithFocusedRepair() throws {
         let trusted = try makeTrustedIncident()
         let policy = try ForgeCrashRetryPolicy()
 
         let submission = ForgeCrashTriage.makeSubmission(
             for: trusted,
-            failedAttempts: [],
+            failedHistory: try ForgeCrashRepairHistory(),
             policy: policy
         )
 
@@ -124,7 +189,7 @@ final class ForgeCrashDoctorCoreTests: XCTestCase {
 
         let submission = ForgeCrashTriage.makeSubmission(
             for: trusted,
-            failedAttempts: attempts,
+            failedHistory: try ForgeCrashRepairHistory(attempts: attempts),
             policy: try ForgeCrashRetryPolicy()
         )
 
@@ -150,7 +215,7 @@ final class ForgeCrashDoctorCoreTests: XCTestCase {
 
         let submission = ForgeCrashTriage.makeSubmission(
             for: trusted,
-            failedAttempts: attempts,
+            failedHistory: try ForgeCrashRepairHistory(attempts: attempts),
             policy: try ForgeCrashRetryPolicy()
         )
 
@@ -177,7 +242,7 @@ final class ForgeCrashDoctorCoreTests: XCTestCase {
 
         let submission = ForgeCrashTriage.makeSubmission(
             for: trusted,
-            failedAttempts: attempts,
+            failedHistory: try ForgeCrashRepairHistory(attempts: attempts),
             policy: try ForgeCrashRetryPolicy(maximumFocusedFailuresPerRepeatKey: 4, maximumTotalFailuresBeforeBlocker: 6)
         )
 
