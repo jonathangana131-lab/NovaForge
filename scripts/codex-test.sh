@@ -415,11 +415,23 @@ run_critical_lane() {
 
   local result_prefix="${RESULT_BUNDLE_PATH%.xcresult}"
   echo "==> Running critical units in one fresh XCTest runner"
+  local unit_status=0
   run_xctest_selection \
     "$UNIT_TEST_TIMEOUT" \
     "$LOG_DIR/test-unit.log" \
     "$result_prefix-unit.xcresult" \
-    test-without-building -only-testing:AgentPadTests
+    test-without-building -only-testing:AgentPadTests || unit_status=$?
+  if (( unit_status != 0 )); then
+    if (( unit_status == 142 )) &&
+       grep -Fq "Test Suite 'AgentPadTests.xctest' passed" "$LOG_DIR/test-unit.log" &&
+       grep -Fq "Test Suite 'Selected tests' passed" "$LOG_DIR/test-unit.log" &&
+       grep -Eq "Executed [0-9]+ tests, with .*0 failures \(0 unexpected\)" "$LOG_DIR/test-unit.log" &&
+       ! grep -Eq "Test (Case|Suite).* failed|\*\* TEST FAILED \*\*" "$LOG_DIR/test-unit.log"; then
+      echo "PASS: all AgentPad unit tests completed; drained Xcode 27 after its post-suite exit hang."
+    else
+      return "$unit_status"
+    fi
+  fi
 
   local index=0
   local batch=1
@@ -434,12 +446,26 @@ run_critical_lane() {
     fi
     printf -v ordinal '%02d' "$index"
     echo "==> Running critical UI journey $index/${#critical_ui_tests}: $test_name"
+    local ui_status=0
+    local ui_log="$LOG_DIR/test-ui-$ordinal-$test_name.log"
     run_xctest_selection \
       "$UI_TEST_TIMEOUT" \
-      "$LOG_DIR/test-ui-$ordinal-$test_name.log" \
+      "$ui_log" \
       "$result_prefix-ui-$ordinal-$test_name.xcresult" \
       test-without-building \
-      "-only-testing:AgentPadUITests/AgentPadUITests/$test_name"
+      "-only-testing:AgentPadUITests/AgentPadUITests/$test_name" || ui_status=$?
+    if (( ui_status != 0 )); then
+      if (( ui_status == 142 )) &&
+         grep -Fq "Test Case '-[AgentPadUITests.AgentPadUITests $test_name]' passed" "$ui_log" &&
+         grep -Fq "Test Suite 'AgentPadUITests.xctest' passed" "$ui_log" &&
+         grep -Fq "Test Suite 'Selected tests' passed" "$ui_log" &&
+         grep -Eq "Executed 1 test, with 0 failures \(0 unexpected\)" "$ui_log" &&
+         ! grep -Eq "Test (Case|Suite).* failed|\*\* TEST FAILED \*\*" "$ui_log"; then
+        echo "PASS: $test_name completed; drained Xcode 27 after its post-suite exit hang."
+      else
+        return "$ui_status"
+      fi
+    fi
   done
 }
 

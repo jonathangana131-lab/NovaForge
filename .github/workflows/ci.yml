@@ -29,11 +29,11 @@ concurrency:
 jobs:
   verify:
     name: Critical verification
-    runs-on: macos-26
-    # The critical lane now builds once and exercises the expanded harness,
-    # provider-contract, persistence, and Simulator journey matrix. Recent
-    # healthy runs finish near 43 minutes, so leave enough headroom for normal
-    # hosted-runner variance instead of cancelling a correct verification.
+    runs-on: xcode-27
+    # Build and test against the same iOS 27 SDK generation used by the
+    # physical-device beta. GitHub's xcode-27 preview image includes Xcode 27
+    # and the iOS 27 Simulator; ci/verify.sh still prints the selected version
+    # into the job log so every run records its exact toolchain.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
@@ -56,7 +56,7 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.run_screenshot_tour)
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 90
     permissions:
       contents: write
@@ -73,7 +73,7 @@ jobs:
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.run_release_suite)
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6

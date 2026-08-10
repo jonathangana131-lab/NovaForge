@@ -18,7 +18,7 @@ public enum ProviderFailureCategory: String, Codable, CaseIterable, Hashable, Se
 }
 
 /// Sanitized provider failure. Raw response bodies, credentials, and request content are excluded.
-public struct ProviderFailure: Error, Codable, Equatable, Sendable {
+public struct ProviderFailure: LocalizedError, Codable, Equatable, Sendable {
     public let category: ProviderFailureCategory
     public let code: String
     public let publicMessage: String
@@ -44,6 +44,8 @@ public struct ProviderFailure: Error, Codable, Equatable, Sendable {
         self.statusCode = statusCode
         self.retryAfterMilliseconds = retryAfterMilliseconds
     }
+
+    public var errorDescription: String? { publicMessage }
 
     public var retryableOnSameRoute: Bool {
         switch category {
@@ -86,7 +88,10 @@ public enum ProviderFailureMapper {
             stableCode = "provider_content_filtered"
         } else {
             switch statusCode {
-            case 400, 404, 405, 409, 413, 422:
+            case 413:
+                category = .contextLimit
+                stableCode = "provider_context_limit"
+            case 400, 404, 405, 409, 422:
                 category = .invalidRequest
                 stableCode = "provider_invalid_request"
             case 401:
@@ -119,9 +124,11 @@ public enum ProviderFailureMapper {
         return ProviderFailure(
             category: category,
             code: stableCode,
-            publicMessage: stableCode == "provider_payment_required"
-                ? "The provider needs billing or credits to be configured for this model."
-                : publicMessage(for: category),
+            publicMessage: httpPublicMessage(
+                statusCode: statusCode,
+                category: category,
+                stableCode: stableCode
+            ),
             providerID: providerID,
             adapterID: adapterID,
             statusCode: statusCode,
@@ -196,6 +203,37 @@ public enum ProviderFailureMapper {
             providerID: descriptor.route.providerID,
             adapterID: descriptor.route.adapterID
         )
+    }
+
+    private static func httpPublicMessage(
+        statusCode: Int,
+        category: ProviderFailureCategory,
+        stableCode: String
+    ) -> String {
+        if stableCode == "provider_context_limit" {
+            return "This conversation is too large for the selected model. Start a new chat or use a larger-context model."
+        }
+        if stableCode == "provider_content_filtered" {
+            return "The provider blocked this response. Reword the request and try again."
+        }
+        switch statusCode {
+        case 400, 404, 405, 409, 413, 422:
+            return "The selected model or request format is not available on this provider. Refresh models in Control or choose Zen Free."
+        case 401:
+            return "The saved provider key or login was rejected. Reconnect it in Control, then retry."
+        case 402:
+            return "This provider needs API billing or credits. Add API credit or choose Zen Free in Control."
+        case 403:
+            return "This account does not have access to the selected model. Refresh models or choose Zen Free in Control."
+        case 408, 504:
+            return "The provider took too long to answer. Retry once or choose another model."
+        case 429:
+            return "The provider is rate limiting this account. Wait a moment or choose Zen Free in Control."
+        case 500 ... 599:
+            return "The provider is temporarily unavailable. Retry shortly or choose another provider."
+        default:
+            return publicMessage(for: category)
+        }
     }
 
     private static func publicMessage(for category: ProviderFailureCategory) -> String {
