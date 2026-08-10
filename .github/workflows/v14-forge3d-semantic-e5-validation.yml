@@ -1,0 +1,27 @@
+name: V14 Forge3D Semantic E5 Validation
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-3DRECOVER-8A10/semantic-e5
+permissions:
+  contents: read
+jobs:
+  exact-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Assert exact parent and isolated validation diff
+        run: |
+          test "$(git rev-parse HEAD^)" = "91be2a620efbf59b6e1eddb6b765d404995de255"
+          git diff --check HEAD^..HEAD
+          test "$(git diff --name-only HEAD^..HEAD)" = ".github/workflows/v14-forge3d-semantic-e5-validation.yml"
+      - name: Toolchain
+        run: |
+          swift --version
+          node --version
+      - name: Debug package tests
+        run: swift test --package-path Packages/Forge3DKit -Xswiftc -warnings-as-errors
+      - name: Release package tests
+        run: swift test --package-path Packages/Forge3DKit -c release -Xswiftc -warnings-as-errors
