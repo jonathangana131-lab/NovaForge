@@ -7,6 +7,26 @@ const accessibleSteer = document.getElementById("accessible-steer");
 accessibleThrottle.addEventListener("input", () => { input.accessibleThrottle = clamp(Number(accessibleThrottle.value) || 0, -1, 1); });
 accessibleSteer.addEventListener("input", () => { input.accessibleSteer = clamp(Number(accessibleSteer.value) || 0, -1, 1); });
 
+function semanticActionValue(event, expectedActionID) {
+  const detail = event?.detail;
+  if (!detail || detail.actionID !== expectedActionID || !Number.isFinite(detail.value)) return null;
+  return clamp(detail.value, -1, 1);
+}
+
+function applySemanticRange(event, expectedActionID, element, inputKey) {
+  const value = semanticActionValue(event, expectedActionID);
+  if (value === null) return;
+  input[inputKey] = value;
+  element.value = String(value);
+}
+
+accessibleThrottle.addEventListener("novaforge:action", event => {
+  applySemanticRange(event, "drive-throttle", accessibleThrottle, "accessibleThrottle");
+});
+accessibleSteer.addEventListener("novaforge:action", event => {
+  applySemanticRange(event, "drive-steering", accessibleSteer, "accessibleSteer");
+});
+
 function updateKeyboard() {
   input.keyThrottle = (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
   input.keySteer = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
