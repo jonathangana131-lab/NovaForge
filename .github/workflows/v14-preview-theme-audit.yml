@@ -1,4 +1,4 @@
-name: V14 Preview theme audit
+name: V14 Preview theme repair
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
       - agent/v14-preview-theme-durability-0810
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  audit:
+  repair:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -17,13 +17,224 @@ jobs:
         with:
           ref: agent/v14-preview-theme-durability-0810
           fetch-depth: 0
-      - name: Audit theme durability surfaces
+
+      - name: Apply Preview theme durability repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path_name: str, old: str, new: str) -> None:
+              path = Path(path_name)
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path_name}: expected exactly one match, found {count}: {old[:120]!r}")
+              path.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "AgentPad/Design/AgentTheme.swift",
+              '''        return nil
+              }
+
+              var title: String {''',
+              '''        return nil
+              }
+
+              static func resolvedForLaunch(
+                  storedRawValue: String?,
+                  arguments: [String]
+              ) -> AgentTheme {
+                  launchOverride(from: arguments) ?? resolved(from: storedRawValue)
+              }
+
+              var title: String {'''
+          )
+
+          replace_once(
+              "AgentPad/App/AgentPadApp.swift",
+              '''        let arguments = ProcessInfo.processInfo.arguments
+              if let launchTheme = AgentTheme.launchOverride(from: arguments) {
+                  UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)
+                  AgentPalette.refreshThemeCache(launchTheme)
+              } else {
+                  AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())
+              }
+              AgentThemeUIKit.apply(AgentTheme.current)''',
+              '''        let arguments = ProcessInfo.processInfo.arguments
+              let storedThemeRawValue = UserDefaults.standard.string(forKey: AgentTheme.storageKey)
+              let launchTheme = AgentTheme.resolvedForLaunch(
+                  storedRawValue: storedThemeRawValue,
+                  arguments: arguments
+              )
+              if AgentTheme.launchOverride(from: arguments) == nil {
+                  _ = AgentTheme.normalizeStoredTheme()
+              }
+              AgentPalette.refreshThemeCache(launchTheme)
+              AgentThemeUIKit.apply(launchTheme)'''
+          )
+
+          replace_once(
+              "AgentPad/App/AgentPadApp.swift",
+              '''            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)
+                  if let launchTheme = AgentTheme.launchOverride(from: arguments) {
+                      UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)
+                  }
+                  AgentPalette.refreshThemeCache(AgentTheme.current)
+                  AgentThemeUIKit.apply(AgentTheme.current)''',
+              '''            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)
+                  let resetLaunchTheme = AgentTheme.resolvedForLaunch(
+                      storedRawValue: AgentTheme.defaultTheme.rawValue,
+                      arguments: arguments
+                  )
+                  AgentPalette.refreshThemeCache(resetLaunchTheme)
+                  AgentThemeUIKit.apply(resetLaunchTheme)'''
+          )
+
+          replace_once(
+              "AgentPad/Views/AppRootView.swift",
+              '''            .onChange(of: selectedThemeRawValue, initial: true) { _, newValue in
+                      let theme = AgentTheme.resolved(from: newValue)
+                      if newValue != theme.rawValue {
+                          selectedThemeRawValue = theme.rawValue
+                      }
+                      AgentPalette.refreshThemeCache(theme)
+                      AgentThemeUIKit.apply(theme)
+                  }''',
+              '''            .onChange(of: selectedThemeRawValue, initial: true) { _, newValue in
+                      let storedTheme = AgentTheme.resolved(from: newValue)
+                      if newValue != storedTheme.rawValue {
+                          selectedThemeRawValue = storedTheme.rawValue
+                      }
+                      let activeTheme = AgentTheme.resolvedForLaunch(
+                          storedRawValue: storedTheme.rawValue,
+                          arguments: ProcessInfo.processInfo.arguments
+                      )
+                      AgentPalette.refreshThemeCache(activeTheme)
+                      AgentThemeUIKit.apply(activeTheme)
+                  }'''
+          )
+
+          replace_once(
+              "AgentPad/Views/SettingsView.swift",
+              '''    private var selectedTheme: AgentTheme {
+                  AgentTheme.resolved(from: selectedThemeRawValue)
+              }''',
+              '''    private var selectedTheme: AgentTheme {
+                  AgentTheme.resolvedForLaunch(
+                      storedRawValue: selectedThemeRawValue,
+                      arguments: ProcessInfo.processInfo.arguments
+                  )
+              }'''
+          )
+
+          replace_once(
+              "AgentPadTests/AgentRuntimeLifecycleTests.swift",
+              '''        XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme-world=white-gold"]), .whiteGold)
+                  XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme", "matrix"]), .matrixRain)
+
+                  for theme in AgentTheme.allCases {''',
+              '''        XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme-world=white-gold"]), .whiteGold)
+                  XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme", "matrix"]), .matrixRain)
+                  XCTAssertEqual(
+                      AgentTheme.resolvedForLaunch(
+                          storedRawValue: AgentTheme.emberCore.rawValue,
+                          arguments: ["NovaForge"]
+                      ),
+                      .emberCore
+                  )
+                  XCTAssertEqual(
+                      AgentTheme.resolvedForLaunch(
+                          storedRawValue: AgentTheme.emberCore.rawValue,
+                          arguments: ["NovaForge", "--theme-world=white-gold"]
+                      ),
+                      .whiteGold,
+                      "A launch-only theme override must affect the active launch without redefining the stored theme."
+                  )
+
+                  for theme in AgentTheme.allCases {'''
+          )
+
+          ui_marker = '''    func testGoalProjectControlCenterCreateEditDeleteAndRunFeedbackScreenshots() throws {'''
+          ui_test = '''    func testThemeLaunchOverrideDoesNotReplacePersistedSelection() throws {
+                  let app = XCUIApplication()
+                  app.launchArguments = ["--reset-ui", "--open-chat"]
+                  app.launch()
+
+                  XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+                  app.tabBars.buttons["Control"].tap()
+                  let ember = identifiedElement("settingsThemeStudioCard-emberCore", in: app)
+                  scrollUntilHittable(ember, in: app)
+                  XCTAssertTrue(ember.isHittable)
+                  ember.tap()
+                  let emberSelected = XCTNSPredicateExpectation(
+                      predicate: NSPredicate(format: "isSelected == true"),
+                      object: ember
+                  )
+                  XCTAssertEqual(XCTWaiter.wait(for: [emberSelected], timeout: 5), .completed)
+                  app.terminate()
+
+                  app.launchArguments = ["--theme-world=whiteGold", "--open-chat"]
+                  app.launch()
+                  XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+                  app.tabBars.buttons["Control"].tap()
+                  let whiteGold = identifiedElement("settingsThemeStudioCard-whiteGold", in: app)
+                  scrollUntilHittable(whiteGold, in: app)
+                  let whiteGoldSelected = XCTNSPredicateExpectation(
+                      predicate: NSPredicate(format: "isSelected == true"),
+                      object: whiteGold
+                  )
+                  XCTAssertEqual(
+                      XCTWaiter.wait(for: [whiteGoldSelected], timeout: 5),
+                      .completed,
+                      "The explicit launch override should own only this running process."
+                  )
+                  app.terminate()
+
+                  app.launchArguments = ["--open-chat"]
+                  app.launch()
+                  XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+                  app.tabBars.buttons["Control"].tap()
+                  let restoredEmber = identifiedElement("settingsThemeStudioCard-emberCore", in: app)
+                  scrollUntilHittable(restoredEmber, in: app)
+                  let restoredEmberSelected = XCTNSPredicateExpectation(
+                      predicate: NSPredicate(format: "isSelected == true"),
+                      object: restoredEmber
+                  )
+                  XCTAssertEqual(
+                      XCTWaiter.wait(for: [restoredEmberSelected], timeout: 5),
+                      .completed,
+                      "A normal relaunch must restore the user's persisted theme after a temporary screenshot/test override."
+                  )
+                  XCTAssertFalse(
+                      identifiedElement("settingsThemeStudioCard-whiteGold", in: app).isSelected,
+                      "The temporary override must not replace the persisted user selection."
+                  )
+              }
+
+          '''
+          replace_once(
+              "AgentPadUITests/AgentPadUITests.swift",
+              ui_marker,
+              ui_test + ui_marker
+          )
+
+      - name: Validate repair invariants
         shell: bash
         run: |
           set -euo pipefail
-          echo '--- AgentTheme declarations and storage API ---'
-          grep -RnE --include='*.swift' 'novaForgeTheme|normalizeStoredTheme|refreshCurrentCache|refreshThemeCache|launchOverride|AgentTheme\.current|AgentTheme\.storageKey' AgentPad AgentPadTests AgentPadUITests || true
-          echo '--- Five theme names in tests and UI ---'
-          grep -RnE --include='*.swift' 'Matrix Rain|Midnight Black|White Gold|Arctic Glass|Ember Core|matrixRain|midnightBlack|whiteGold|arcticGlass|emberCore' AgentPadTests AgentPadUITests || true
-          echo '--- Existing theme test files ---'
-          find AgentPadTests AgentPadUITests -type f -iname '*theme*' -print | sort || true
+          git diff --check
+          test "$(grep -RFn --include='*.swift' 'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)' AgentPad | wc -l | tr -d ' ')" = "0"
+          grep -Fn 'static func resolvedForLaunch' AgentPad/Design/AgentTheme.swift
+          grep -Fn 'testThemeLaunchOverrideDoesNotReplacePersistedSelection' AgentPadUITests/AgentPadUITests.swift
+          echo '--- product diff ---'
+          git diff -- AgentPad/Design/AgentTheme.swift AgentPad/App/AgentPadApp.swift AgentPad/Views/AppRootView.swift AgentPad/Views/SettingsView.swift AgentPadTests/AgentRuntimeLifecycleTests.swift AgentPadUITests/AgentPadUITests.swift
+
+      - name: Commit product repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'NovaForge V14 Preview Worker'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Design/AgentTheme.swift AgentPad/App/AgentPadApp.swift AgentPad/Views/AppRootView.swift AgentPad/Views/SettingsView.swift AgentPadTests/AgentRuntimeLifecycleTests.swift AgentPadUITests/AgentPadUITests.swift
+          git commit -m 'preview: preserve theme across launch overrides'
+          git push origin HEAD:agent/v14-preview-theme-durability-0810
