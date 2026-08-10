@@ -705,7 +705,7 @@ struct LocalModelVariantRow: View {
                     alignment: .leading,
                     spacing: 9
                 ) {
-                    detailStat("Peak cap", variant.estimatedPeakMemoryLabel)
+                    detailStat("Est. peak", variant.estimatedPeakMemoryLabel)
                     detailStat("Context", "\(variant.contextTokens) tokens")
                     detailStat("Runtime", variant.executionLabel)
                     detailStat("License", variant.licenseLabel)
@@ -893,7 +893,7 @@ struct LocalModelDownloadPanel: View {
     private var statusDetail: String {
         switch manager.status {
         case .ready:
-            "Installed locally. Runs offline with capped context for smooth chat."
+            "Installed locally. Runs offline with the configured context cap."
         case .downloading:
             "Downloading in the app model. You can switch tabs; keep NovaForge foregrounded."
         case .partial:
@@ -1103,7 +1103,7 @@ struct ProviderModelPickerSheet: View {
                     .minimumScaleFactor(0.82)
                 Text(
                     provider == .local
-                        ? "Pinned · Crash-gated for iPhone"
+                        ? "Pinned · guarded on-device load"
                         : "\(provider.displayName) • \(models.count) choices"
                 )
                     .font(.system(size: 12, weight: .bold, design: AgentPalette.interfaceFontDesign))
@@ -1131,7 +1131,7 @@ struct ProviderModelPickerSheet: View {
 
     private var localSafetyCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Built to survive iPhone memory pressure", systemImage: "checkmark.shield.fill")
+            Label("Guarded for iPhone memory pressure", systemImage: "checkmark.shield.fill")
                 .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
                 .foregroundStyle(AgentPalette.ink)
 
