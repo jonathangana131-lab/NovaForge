@@ -18,13 +18,19 @@ public struct ContinuityArchivedSnapshot: Codable, Hashable, Sendable {
         identity = snapshot.identity
         epoch = snapshot.epoch
         state = switch snapshot.state {
-        case .executing: .suspended(.executionEnvironmentLost)
-        case .ready, .suspended, .needsDecision, .blocked, .completed: snapshot.state
+        case .executing:
+            .suspended(.executionEnvironmentLost)
+        case .needsDecision, .blocked, .completed:
+            // These projections belong to the canonical Mission Engine. Persistence must not
+            // become a second authority after relaunch; require fresh Mission revalidation.
+            .suspended(.missionStateRevalidationRequired)
+        case .ready, .suspended:
+            snapshot.state
         }
     }
 
     public func restore() throws -> ContinuitySnapshot {
-        let restored = ContinuitySnapshot(identity: identity, state: state, epoch: epoch)
+        let restored = ContinuitySnapshot(identity: identity, state: state, activeLease: nil, epoch: epoch)
         try ContinuityReducer.validate(restored)
         return restored
     }
@@ -36,13 +42,17 @@ public struct ContinuityArchivedSnapshot: Codable, Hashable, Sendable {
         identity = try c.decode(ContinuityIdentity.self, forKey: .identity)
         state = try c.decode(ContinuityRunState.self, forKey: .state)
         epoch = try c.decode(UInt64.self, forKey: .epoch)
-        guard case .executing = state else {
-            let restored = ContinuitySnapshot(identity: identity, state: state, epoch: epoch)
+        switch state {
+        case .ready, .suspended:
+            let restored = ContinuitySnapshot(identity: identity, state: state, activeLease: nil, epoch: epoch)
             do { try ContinuityReducer.validate(restored) }
             catch { throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid archived continuity snapshot.", underlyingError: error)) }
-            return
+        case .executing, .needsDecision, .blocked, .completed:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Live execution and Mission-owned projections cannot be restored as authority from a continuity archive."
+            ))
         }
-        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Executing state cannot be restored from a continuity archive."))
     }
 }
 
