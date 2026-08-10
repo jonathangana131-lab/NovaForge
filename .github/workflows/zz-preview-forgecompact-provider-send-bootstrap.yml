@@ -1,0 +1,54 @@
+name: Preview Forge Compact provider-send bootstrap
+
+on:
+  push:
+    branches:
+      - agent/preview-forgecompact-provider-send
+    paths:
+      - .github/workflows/zz-preview-forgecompact-provider-send-bootstrap.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-product-patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/preview-forgecompact-provider-send
+          fetch-depth: 0
+
+      - name: Apply fail-closed product patch
+        run: python3 scripts/apply_preview_forgecompact_provider_send_patch.py
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Validate Forge Compact package
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+
+      - name: Validate AgentHarness package graph
+        run: swift package --package-path Packages/AgentHarnessKit dump-package >/dev/null
+
+      - name: Verify provider-send integration contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'let forgeCompactPlan = AgentForgeCompactCheckpointPlanner.plan(' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'if compactedSourceItemIDs.contains(item.id)' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'let itemIDs = state.modelItems.compactMap { item in' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'testForgeCompactCheckpointReplacesOnlyEligibleHistoricalPrefix' AgentPadTests/AgentCanonicalContextPreparerTests.swift
+          grep -F 'testForgeCompactLowSavingsCheckpointLeavesCanonicalReplayUntouched' AgentPadTests/AgentCanonicalContextPreparerTests.swift
+
+      - name: Commit product bytes and remove bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/zz-preview-forgecompact-provider-send-bootstrap.yml
+          git add -A
+          git config user.name 'NovaForge Swarm'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Wire Forge Compact into canonical provider send'
+          git push origin HEAD:agent/preview-forgecompact-provider-send
