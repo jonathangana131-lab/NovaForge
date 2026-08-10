@@ -1,14 +1,16 @@
-/// Exact execution binding supplied by the canonical runtime adapter.
+/// Non-Codable execution-evidence handoff reserved for canonical Runtime promotion.
 ///
 /// The binding carries the full validated trace value rather than only a human-readable trace ID,
 /// so a result from an older/different trace cannot be replayed against a plan that reused the ID.
-/// The referenced receipt is still opaque here: only a producer-owned runtime adapter may treat it
-/// as authentic dispatch/execution evidence.
+/// Ordinary package consumers cannot construct this value: its initializer is module-internal.
+/// A future canonical Runtime/WebKit adapter inside this module must create it only after
+/// authenticating the producer-owned execution evidence. Structural equality here prevents
+/// retargeting; it is not authentication by itself.
 public struct ForgePlaytestExecutionBinding: Hashable, Sendable {
     public let executionEvidence: ForgePlaytestEvidenceReference
     public let trace: ForgePlaytestTrace
 
-    public init(
+    init(
         executionEvidence: ForgePlaytestEvidenceReference,
         trace: ForgePlaytestTrace
     ) throws {
@@ -115,11 +117,11 @@ private struct ForgePlaytestDefectBindingKey: Hashable {
 public extension ForgePlaytestGateEvaluator {
     /// Public evidence gate for downstream runtime/mission integration.
     ///
-    /// Every result that claims runtime execution must have one exact binding supplied by the
-    /// canonical runtime adapter. The binding must point at the same execution evidence reference
-    /// carried by the result and must reproduce the complete validated planned trace value.
-    /// Results without runtime-execution evidence (for example, a pre-launch failed journey) must
-    /// not be given a synthetic execution binding.
+    /// Every result that claims runtime execution must have one exact, module-minted binding created
+    /// only after the canonical producer authenticates the execution subject. The binding must point
+    /// at the same execution evidence reference carried by the result and must reproduce the complete
+    /// validated planned trace value. Results without runtime-execution evidence (for example, a
+    /// pre-launch failed journey) must not be given a synthetic execution binding.
     ///
     /// Every high/critical defect that can steer `.repairRequired` must also carry one exact,
     /// non-forgeable `ForgePlaytestAuthenticatedDefectBinding`. Opaque receipt IDs and public defect
