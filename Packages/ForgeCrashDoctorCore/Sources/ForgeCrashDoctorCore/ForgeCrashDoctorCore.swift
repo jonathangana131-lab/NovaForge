@@ -5,12 +5,16 @@ public enum ForgeCrashValidationError: Error, Equatable, Sendable {
     case blankField(String)
     case fieldTooLong(field: String, maximum: Int)
     case invalidPositiveInteger(field: String)
+    case invalidControlCharacter(field: String)
     case tooManyStackFrames(Int)
     case tooManyConsoleEntries(Int)
     case tooManyRecentActions(Int)
     case tooManyRepairAttempts(Int)
     case nonMonotonicSequence(field: String)
     case invalidArtifactIdentity
+    case invalidControlIdentity
+    case invalidRepeatKey
+    case repairSubjectMismatch
 }
 
 private enum ForgeCrashLimits {
@@ -20,6 +24,7 @@ private enum ForgeCrashLimits {
     static let file = 1_024
     static let consoleMessage = 2_000
     static let actionIntent = 320
+    static let repeatFallbackMessage = 240
     static let stackFrames = 64
     static let consoleEntries = 100
     static let recentActions = 32
@@ -41,6 +46,19 @@ private enum ForgeCrashLimits {
         return try required(value, field: field, maximum: maximum)
     }
 
+    static func identity(_ value: String, field: String, maximum: Int) throws -> String {
+        let normalized = try required(value, field: field, maximum: maximum)
+        guard normalized.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            throw ForgeCrashValidationError.invalidControlCharacter(field: field)
+        }
+        return normalized
+    }
+
+    static func optionalIdentity(_ value: String?, field: String, maximum: Int) throws -> String? {
+        guard let value else { return nil }
+        return try identity(value, field: field, maximum: maximum)
+    }
+
     static func monotonic(_ values: [Int], field: String) throws {
         guard values.allSatisfy({ $0 >= 0 }) else {
             throw ForgeCrashValidationError.invalidPositiveInteger(field: field)
@@ -48,6 +66,15 @@ private enum ForgeCrashLimits {
         for pair in zip(values, values.dropFirst()) where pair.1 <= pair.0 {
             throw ForgeCrashValidationError.nonMonotonicSequence(field: field)
         }
+    }
+
+    static func canonicalDigestIdentity(_ value: String, error: ForgeCrashValidationError) throws -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowed = Set("0123456789abcdef")
+        guard normalized.count == 64, normalized.allSatisfy(allowed.contains) else {
+            throw error
+        }
+        return normalized
     }
 }
 
@@ -66,7 +93,7 @@ public struct ForgeCrashSourceLocation: Codable, Hashable, Sendable {
     public let symbol: String?
 
     public init(file: String, line: Int? = nil, column: Int? = nil, symbol: String? = nil) throws {
-        self.file = try ForgeCrashLimits.required(file, field: "source.file", maximum: ForgeCrashLimits.file)
+        self.file = try ForgeCrashLimits.identity(file, field: "source.file", maximum: ForgeCrashLimits.file)
         if let line, line <= 0 {
             throw ForgeCrashValidationError.invalidPositiveInteger(field: "source.line")
         }
@@ -75,7 +102,7 @@ public struct ForgeCrashSourceLocation: Codable, Hashable, Sendable {
         }
         self.line = line
         self.column = column
-        self.symbol = try ForgeCrashLimits.optional(symbol, field: "source.symbol", maximum: ForgeCrashLimits.symbol)
+        self.symbol = try ForgeCrashLimits.optionalIdentity(symbol, field: "source.symbol", maximum: ForgeCrashLimits.symbol)
     }
 
     private enum CodingKeys: String, CodingKey { case file, line, column, symbol }
@@ -98,8 +125,8 @@ public struct ForgeCrashStackFrame: Codable, Hashable, Sendable {
     public let column: Int?
 
     public init(symbol: String, file: String? = nil, line: Int? = nil, column: Int? = nil) throws {
-        self.symbol = try ForgeCrashLimits.required(symbol, field: "stack.symbol", maximum: ForgeCrashLimits.symbol)
-        self.file = try ForgeCrashLimits.optional(file, field: "stack.file", maximum: ForgeCrashLimits.file)
+        self.symbol = try ForgeCrashLimits.identity(symbol, field: "stack.symbol", maximum: ForgeCrashLimits.symbol)
+        self.file = try ForgeCrashLimits.optionalIdentity(file, field: "stack.file", maximum: ForgeCrashLimits.file)
         if let line, line <= 0 {
             throw ForgeCrashValidationError.invalidPositiveInteger(field: "stack.line")
         }
@@ -143,7 +170,7 @@ public struct ForgeCrashConsoleEntry: Codable, Hashable, Sendable {
         self.sequence = sequence
         self.level = level
         self.message = try ForgeCrashLimits.required(message, field: "console.message", maximum: ForgeCrashLimits.consoleMessage)
-        self.source = try ForgeCrashLimits.optional(source, field: "console.source", maximum: ForgeCrashLimits.file)
+        self.source = try ForgeCrashLimits.optionalIdentity(source, field: "console.source", maximum: ForgeCrashLimits.file)
     }
 
     private enum CodingKeys: String, CodingKey { case sequence, level, message, source }
@@ -170,9 +197,9 @@ public struct ForgeCrashSemanticAction: Codable, Hashable, Sendable {
             throw ForgeCrashValidationError.invalidPositiveInteger(field: "action.sequence")
         }
         self.sequence = sequence
-        self.actionID = try ForgeCrashLimits.required(actionID, field: "action.id", maximum: ForgeCrashLimits.identifier)
+        self.actionID = try ForgeCrashLimits.identity(actionID, field: "action.id", maximum: ForgeCrashLimits.identifier)
         self.intent = try ForgeCrashLimits.required(intent, field: "action.intent", maximum: ForgeCrashLimits.actionIntent)
-        self.targetID = try ForgeCrashLimits.optional(targetID, field: "action.target", maximum: ForgeCrashLimits.identifier)
+        self.targetID = try ForgeCrashLimits.optionalIdentity(targetID, field: "action.target", maximum: ForgeCrashLimits.identifier)
     }
 
     private enum CodingKeys: String, CodingKey { case sequence, actionID, intent, targetID }
@@ -240,12 +267,12 @@ public struct ForgeCrashIncident: Codable, Hashable, Sendable {
         try ForgeCrashLimits.monotonic(recentActions.map(\.sequence), field: "action.sequence")
 
         self.schemaVersion = schemaVersion
-        self.incidentID = try ForgeCrashLimits.required(incidentID, field: "incident.id", maximum: ForgeCrashLimits.identifier)
-        self.projectID = try ForgeCrashLimits.required(projectID, field: "project.id", maximum: ForgeCrashLimits.identifier)
-        self.checkpointID = try ForgeCrashLimits.required(checkpointID, field: "checkpoint.id", maximum: ForgeCrashLimits.identifier)
-        self.projectRevision = try ForgeCrashLimits.required(projectRevision, field: "project.revision", maximum: ForgeCrashLimits.identifier)
-        self.runtimeVersion = try ForgeCrashLimits.required(runtimeVersion, field: "runtime.version", maximum: ForgeCrashLimits.identifier)
-        self.runtimeSessionID = try ForgeCrashLimits.required(runtimeSessionID, field: "runtime.session", maximum: ForgeCrashLimits.identifier)
+        self.incidentID = try ForgeCrashLimits.identity(incidentID, field: "incident.id", maximum: ForgeCrashLimits.identifier)
+        self.projectID = try ForgeCrashLimits.identity(projectID, field: "project.id", maximum: ForgeCrashLimits.identifier)
+        self.checkpointID = try ForgeCrashLimits.identity(checkpointID, field: "checkpoint.id", maximum: ForgeCrashLimits.identifier)
+        self.projectRevision = try ForgeCrashLimits.identity(projectRevision, field: "project.revision", maximum: ForgeCrashLimits.identifier)
+        self.runtimeVersion = try ForgeCrashLimits.identity(runtimeVersion, field: "runtime.version", maximum: ForgeCrashLimits.identifier)
+        self.runtimeSessionID = try ForgeCrashLimits.identity(runtimeSessionID, field: "runtime.session", maximum: ForgeCrashLimits.identifier)
         self.occurredAt = occurredAt
         self.kind = kind
         self.message = try ForgeCrashLimits.required(message, field: "incident.message", maximum: ForgeCrashLimits.message)
@@ -283,25 +310,72 @@ public struct ForgeCrashIncident: Codable, Hashable, Sendable {
 }
 
 /// Non-Codable host-authenticated authority. Persisted/model-authored incident metadata cannot mint this type.
-/// A runtime adapter inside this module must eventually validate a real capture artifact before constructing it.
+/// A runtime adapter inside this module must validate a real capture artifact before constructing it.
 public struct ForgeCrashTrustedIncident: Hashable, Sendable {
     private let authenticatedIncident: ForgeCrashIncident
     public let artifactIdentity: String
 
     init(authenticatedIncident: ForgeCrashIncident, artifactIdentity: String) throws {
-        let normalized = artifactIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
-        let allowed = Set("0123456789abcdef")
-        guard normalized.count == 64, normalized.allSatisfy(allowed.contains) else {
-            throw ForgeCrashValidationError.invalidArtifactIdentity
-        }
         self.authenticatedIncident = authenticatedIncident
-        self.artifactIdentity = normalized
+        self.artifactIdentity = try ForgeCrashLimits.canonicalDigestIdentity(
+            artifactIdentity,
+            error: .invalidArtifactIdentity
+        )
     }
 
     public var incident: ForgeCrashIncident { authenticatedIncident }
 
     public func matches(_ candidate: ForgeCrashIncident) -> Bool {
         authenticatedIncident == candidate
+    }
+}
+
+/// Exact runtime subject used to scope durable repair failures. A failure from another checkpoint,
+/// project revision, runtime version, or runtime session cannot consume this subject's retry budget.
+public struct ForgeCrashRepairSubject: Codable, Hashable, Sendable {
+    public let projectID: String
+    public let checkpointID: String
+    public let projectRevision: String
+    public let runtimeVersion: String
+    public let runtimeSessionID: String
+
+    public init(
+        projectID: String,
+        checkpointID: String,
+        projectRevision: String,
+        runtimeVersion: String,
+        runtimeSessionID: String
+    ) throws {
+        self.projectID = try ForgeCrashLimits.identity(projectID, field: "repair.project", maximum: ForgeCrashLimits.identifier)
+        self.checkpointID = try ForgeCrashLimits.identity(checkpointID, field: "repair.checkpoint", maximum: ForgeCrashLimits.identifier)
+        self.projectRevision = try ForgeCrashLimits.identity(projectRevision, field: "repair.projectRevision", maximum: ForgeCrashLimits.identifier)
+        self.runtimeVersion = try ForgeCrashLimits.identity(runtimeVersion, field: "repair.runtimeVersion", maximum: ForgeCrashLimits.identifier)
+        self.runtimeSessionID = try ForgeCrashLimits.identity(runtimeSessionID, field: "repair.runtimeSession", maximum: ForgeCrashLimits.identifier)
+    }
+
+    public init(incident: ForgeCrashIncident) throws {
+        try self.init(
+            projectID: incident.projectID,
+            checkpointID: incident.checkpointID,
+            projectRevision: incident.projectRevision,
+            runtimeVersion: incident.runtimeVersion,
+            runtimeSessionID: incident.runtimeSessionID
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case projectID, checkpointID, projectRevision, runtimeVersion, runtimeSessionID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            projectID: container.decode(String.self, forKey: .projectID),
+            checkpointID: container.decode(String.self, forKey: .checkpointID),
+            projectRevision: container.decode(String.self, forKey: .projectRevision),
+            runtimeVersion: container.decode(String.self, forKey: .runtimeVersion),
+            runtimeSessionID: container.decode(String.self, forKey: .runtimeSessionID)
+        )
     }
 }
 
@@ -312,6 +386,39 @@ public struct ForgeCrashRepeatKey: Codable, Hashable, Sendable {
     public let topStackSymbol: String?
     public let fallbackMessage: String?
 
+    private init(
+        kind: ForgeCrashIncidentKind,
+        sourceFile: String?,
+        sourceLine: Int?,
+        topStackSymbol: String?,
+        fallbackMessage: String?
+    ) throws {
+        let sourceFile = try ForgeCrashLimits.optionalIdentity(sourceFile, field: "repeat.sourceFile", maximum: ForgeCrashLimits.file)
+        if let sourceLine, sourceLine <= 0 {
+            throw ForgeCrashValidationError.invalidPositiveInteger(field: "repeat.sourceLine")
+        }
+        let topStackSymbol = try ForgeCrashLimits.optionalIdentity(
+            topStackSymbol,
+            field: "repeat.topStackSymbol",
+            maximum: ForgeCrashLimits.symbol
+        )
+        let fallbackMessage = try ForgeCrashLimits.optional(
+            fallbackMessage,
+            field: "repeat.fallbackMessage",
+            maximum: ForgeCrashLimits.repeatFallbackMessage
+        )
+        let hasStructuralLocation = sourceFile != nil || sourceLine != nil || topStackSymbol != nil
+        guard hasStructuralLocation != (fallbackMessage != nil) else {
+            throw ForgeCrashValidationError.invalidRepeatKey
+        }
+
+        self.kind = kind
+        self.sourceFile = sourceFile
+        self.sourceLine = sourceLine
+        self.topStackSymbol = topStackSymbol
+        self.fallbackMessage = fallbackMessage
+    }
+
     public static func derive(from incident: ForgeCrashIncident) -> ForgeCrashRepeatKey {
         let topFrame = incident.stackFrames.first
         let sourceFile = incident.sourceLocation?.file ?? topFrame?.file
@@ -319,7 +426,7 @@ public struct ForgeCrashRepeatKey: Codable, Hashable, Sendable {
         let topStackSymbol = incident.sourceLocation?.symbol ?? topFrame?.symbol
         let hasStructuralLocation = sourceFile != nil || sourceLine != nil || topStackSymbol != nil
 
-        return ForgeCrashRepeatKey(
+        return try! ForgeCrashRepeatKey(
             kind: incident.kind,
             sourceFile: sourceFile,
             sourceLine: sourceLine,
@@ -329,11 +436,31 @@ public struct ForgeCrashRepeatKey: Codable, Hashable, Sendable {
     }
 
     private static func normalizeFallbackMessage(_ message: String) -> String {
-        let collapsed = message
+        let withoutControls = String(
+            message.unicodeScalars.map { scalar in
+                CharacterSet.controlCharacters.contains(scalar) ? " " : Character(scalar)
+            }
+        )
+        let collapsed = withoutControls
             .lowercased()
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
-        return String(collapsed.prefix(240))
+        return String(collapsed.prefix(ForgeCrashLimits.repeatFallbackMessage))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, sourceFile, sourceLine, topStackSymbol, fallbackMessage
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            kind: container.decode(ForgeCrashIncidentKind.self, forKey: .kind),
+            sourceFile: container.decodeIfPresent(String.self, forKey: .sourceFile),
+            sourceLine: container.decodeIfPresent(Int.self, forKey: .sourceLine),
+            topStackSymbol: container.decodeIfPresent(String.self, forKey: .topStackSymbol),
+            fallbackMessage: container.decodeIfPresent(String.self, forKey: .fallbackMessage)
+        )
     }
 }
 
@@ -343,16 +470,18 @@ public enum ForgeCrashRepairFailureKind: String, Codable, CaseIterable, Hashable
     case verificationInterrupted
 }
 
-/// Durable record of a repair attempt that did not earn acceptance.
+/// Durable candidate record of a repair attempt that did not earn acceptance.
 /// There is intentionally no `passed`/`resolved` case: success belongs to the owning verification/completion authority.
 public struct ForgeCrashRepairAttempt: Codable, Hashable, Sendable {
     public let sequence: Int
+    public let subject: ForgeCrashRepairSubject
     public let incidentID: String
     public let repeatKey: ForgeCrashRepeatKey
     public let failureKind: ForgeCrashRepairFailureKind
 
     public init(
         sequence: Int,
+        subject: ForgeCrashRepairSubject,
         incidentID: String,
         repeatKey: ForgeCrashRepeatKey,
         failureKind: ForgeCrashRepairFailureKind
@@ -361,17 +490,19 @@ public struct ForgeCrashRepairAttempt: Codable, Hashable, Sendable {
             throw ForgeCrashValidationError.invalidPositiveInteger(field: "repair.sequence")
         }
         self.sequence = sequence
-        self.incidentID = try ForgeCrashLimits.required(incidentID, field: "repair.incident", maximum: ForgeCrashLimits.identifier)
+        self.subject = subject
+        self.incidentID = try ForgeCrashLimits.identity(incidentID, field: "repair.incident", maximum: ForgeCrashLimits.identifier)
         self.repeatKey = repeatKey
         self.failureKind = failureKind
     }
 
-    private enum CodingKeys: String, CodingKey { case sequence, incidentID, repeatKey, failureKind }
+    private enum CodingKeys: String, CodingKey { case sequence, subject, incidentID, repeatKey, failureKind }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
             sequence: container.decode(Int.self, forKey: .sequence),
+            subject: container.decode(ForgeCrashRepairSubject.self, forKey: .subject),
             incidentID: container.decode(String.self, forKey: .incidentID),
             repeatKey: container.decode(ForgeCrashRepeatKey.self, forKey: .repeatKey),
             failureKind: container.decode(ForgeCrashRepairFailureKind.self, forKey: .failureKind)
@@ -379,30 +510,40 @@ public struct ForgeCrashRepairAttempt: Codable, Hashable, Sendable {
     }
 }
 
-/// Ordered durable candidate history. Validation prevents duplicate, reordered, or unbounded failure records
-/// from silently changing retry budgets after relaunch.
+/// Ordered durable candidate history. It is deliberately Codable/public for persistence, but it is not
+/// triage authority. A package-owned trusted repair-control value must authenticate the complete history.
 public struct ForgeCrashRepairHistory: Codable, Hashable, Sendable {
+    public let subject: ForgeCrashRepairSubject
     public let attempts: [ForgeCrashRepairAttempt]
 
-    public init(attempts: [ForgeCrashRepairAttempt] = []) throws {
+    public init(subject: ForgeCrashRepairSubject, attempts: [ForgeCrashRepairAttempt] = []) throws {
         guard attempts.count <= ForgeCrashLimits.repairAttempts else {
             throw ForgeCrashValidationError.tooManyRepairAttempts(attempts.count)
         }
         try ForgeCrashLimits.monotonic(attempts.map(\.sequence), field: "repair.sequence")
+        guard attempts.allSatisfy({ $0.subject == subject }) else {
+            throw ForgeCrashValidationError.repairSubjectMismatch
+        }
+        self.subject = subject
         self.attempts = attempts
     }
 
-    private enum CodingKeys: String, CodingKey { case attempts }
+    private enum CodingKeys: String, CodingKey { case subject, attempts }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(attempts: container.decode([ForgeCrashRepairAttempt].self, forKey: .attempts))
+        try self.init(
+            subject: container.decode(ForgeCrashRepairSubject.self, forKey: .subject),
+            attempts: container.decode([ForgeCrashRepairAttempt].self, forKey: .attempts)
+        )
     }
 }
 
-/// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own
-/// output as verification success; completion remains owned by runtime/test evidence.
+/// Persistable candidate retry envelope. Public construction cannot authorize a live Crash Doctor decision.
+/// The total ceiling is capped to the durable history capacity so a policy can always reach its blocker state.
 public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
+    public static let maximumDurableFailures = ForgeCrashLimits.repairAttempts
+
     public let maximumFocusedFailuresPerRepeatKey: Int
     public let maximumTotalFailuresBeforeBlocker: Int
 
@@ -410,10 +551,12 @@ public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
         maximumFocusedFailuresPerRepeatKey: Int = 2,
         maximumTotalFailuresBeforeBlocker: Int = 6
     ) throws {
-        guard maximumFocusedFailuresPerRepeatKey > 0 else {
+        guard maximumFocusedFailuresPerRepeatKey > 0,
+              maximumFocusedFailuresPerRepeatKey <= ForgeCrashRetryPolicy.maximumDurableFailures else {
             throw ForgeCrashValidationError.invalidPositiveInteger(field: "policy.focusedFailures")
         }
-        guard maximumTotalFailuresBeforeBlocker >= maximumFocusedFailuresPerRepeatKey else {
+        guard maximumTotalFailuresBeforeBlocker >= maximumFocusedFailuresPerRepeatKey,
+              maximumTotalFailuresBeforeBlocker <= ForgeCrashRetryPolicy.maximumDurableFailures else {
             throw ForgeCrashValidationError.invalidPositiveInteger(field: "policy.totalFailures")
         }
         self.maximumFocusedFailuresPerRepeatKey = maximumFocusedFailuresPerRepeatKey
@@ -433,26 +576,82 @@ public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
     }
 }
 
+/// Non-Codable package-owned authorization for one exact runtime repair subject. Persisted/model-authored
+/// history and retry policy remain candidate data until a canonical host adapter authenticates the complete
+/// history + policy subject and constructs this value inside ForgeCrashDoctorCore.
+public struct ForgeCrashTrustedRepairControl: Hashable, Sendable {
+    public let subject: ForgeCrashRepairSubject
+    public let controlIdentity: String
+    private let authenticatedHistory: ForgeCrashRepairHistory
+    private let authenticatedPolicy: ForgeCrashRetryPolicy
+
+    init(
+        trustedIncident: ForgeCrashTrustedIncident,
+        authenticatedHistory: ForgeCrashRepairHistory,
+        authenticatedPolicy: ForgeCrashRetryPolicy,
+        controlIdentity: String
+    ) throws {
+        let subject = try ForgeCrashRepairSubject(incident: trustedIncident.incident)
+        guard authenticatedHistory.subject == subject else {
+            throw ForgeCrashValidationError.repairSubjectMismatch
+        }
+        self.subject = subject
+        self.controlIdentity = try ForgeCrashLimits.canonicalDigestIdentity(
+            controlIdentity,
+            error: .invalidControlIdentity
+        )
+        self.authenticatedHistory = authenticatedHistory
+        self.authenticatedPolicy = authenticatedPolicy
+    }
+
+    func matches(_ trustedIncident: ForgeCrashTrustedIncident) -> Bool {
+        (try? ForgeCrashRepairSubject(incident: trustedIncident.incident)) == subject
+    }
+
+    var history: ForgeCrashRepairHistory { authenticatedHistory }
+    var policy: ForgeCrashRetryPolicy { authenticatedPolicy }
+}
+
 public enum ForgeCrashNextAction: Hashable, Sendable {
     case focusedRepair(attemptNumber: Int)
     case rootCauseAnalysis(repeatedFailures: Int)
     case surfaceBlocker(totalFailures: Int)
 }
 
-/// Non-Codable bounded repair submission. It retains the trusted runtime incident so a model cannot
-/// detach a repair request from the runtime evidence that caused it.
+/// Non-Codable bounded repair submission. It can only be minted by package-authoritative triage from
+/// a trusted runtime incident plus a trusted repair-control subject.
 public struct ForgeCrashRepairSubmission: Hashable, Sendable {
     public let trustedIncident: ForgeCrashTrustedIncident
     public let repeatKey: ForgeCrashRepeatKey
     public let nextAction: ForgeCrashNextAction
+    public let controlIdentity: String
+
+    init(
+        trustedIncident: ForgeCrashTrustedIncident,
+        repeatKey: ForgeCrashRepeatKey,
+        nextAction: ForgeCrashNextAction,
+        controlIdentity: String
+    ) {
+        self.trustedIncident = trustedIncident
+        self.repeatKey = repeatKey
+        self.nextAction = nextAction
+        self.controlIdentity = controlIdentity
+    }
 }
 
 public enum ForgeCrashTriage {
-    public static func makeSubmission(
+    /// Authoritative triage remains module-internal until the canonical Runtime/Crash Doctor adapter
+    /// authenticates the complete current repair-control subject. External imports cannot combine a real
+    /// trusted incident with caller-shaped history/policy to mint a repair submission.
+    static func makeSubmission(
         for trustedIncident: ForgeCrashTrustedIncident,
-        failedHistory: ForgeCrashRepairHistory,
-        policy: ForgeCrashRetryPolicy
-    ) -> ForgeCrashRepairSubmission {
+        control: ForgeCrashTrustedRepairControl
+    ) throws -> ForgeCrashRepairSubmission {
+        guard control.matches(trustedIncident) else {
+            throw ForgeCrashValidationError.repairSubjectMismatch
+        }
+        let failedHistory = control.history
+        let policy = control.policy
         let repeatKey = ForgeCrashRepeatKey.derive(from: trustedIncident.incident)
         let totalFailures = failedHistory.attempts.count
         let repeatedFailures = failedHistory.attempts.lazy.filter { $0.repeatKey == repeatKey }.count
@@ -469,7 +668,8 @@ public enum ForgeCrashTriage {
         return ForgeCrashRepairSubmission(
             trustedIncident: trustedIncident,
             repeatKey: repeatKey,
-            nextAction: nextAction
+            nextAction: nextAction,
+            controlIdentity: control.controlIdentity
         )
     }
 }
