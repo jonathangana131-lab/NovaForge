@@ -44,6 +44,42 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertFalse(js.contains("Math.random"))
     }
 
+    #if os(macOS) || os(Linux)
+    func testGeneratedJavaScriptPassesNodeSyntaxCheckWhenNodeIsAvailable() throws {
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        probe.arguments = ["node", "--version"]
+        probe.standardOutput = Pipe()
+        probe.standardError = Pipe()
+        try probe.run()
+        probe.waitUntilExit()
+        guard probe.terminationStatus == 0 else {
+            throw XCTSkip("Node is unavailable on this SwiftPM host")
+        }
+
+        let js = try XCTUnwrap(try Forge2DGenerator.generate(blueprint).files.first(where: { $0.path == "game.js" })?.contents)
+        let temporaryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("novaforge-forge2d-\(UUID().uuidString)")
+            .appendingPathExtension("js")
+        try js.write(to: temporaryURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+
+        let check = Process()
+        let output = Pipe()
+        check.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        check.arguments = ["node", "--check", temporaryURL.path]
+        check.standardOutput = output
+        check.standardError = output
+        try check.run()
+        check.waitUntilExit()
+
+        if check.terminationStatus != 0 {
+            let diagnostic = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Node syntax check failed"
+            XCTFail(diagnostic)
+        }
+    }
+    #endif
+
     func testGeneratedTouchControlsAreAccessibleLargeAndAssistiveActivatable() throws {
         let project = try Forge2DGenerator.generate(blueprint)
         let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
