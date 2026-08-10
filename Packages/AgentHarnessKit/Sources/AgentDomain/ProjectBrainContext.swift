@@ -17,7 +17,7 @@ public enum ProjectBrainSourceIdentityError: String, Error, Equatable, Sendable 
 /// `acceptedProjectStateID` is the same semantic identity carried by canonical Mission checkpoints.
 /// `checkpointReferenceID` is the host-authenticated canonical checkpoint reference (for example the
 /// canonical MissionCheckpointID description) and `projectRootRevisionID` binds the exact accepted
-/// source/project-root revision. Constructing this value is not an authority grant; only a module-
+/// source/project-root revision. Constructing this value is not an authority grant; only a package-
 /// minted trusted subject/current-source capability can make the identity authoritative.
 public struct ProjectBrainSourceIdentity: Hashable, Sendable {
     public let acceptedProjectStateID: String
@@ -77,18 +77,19 @@ public enum ProjectBrainTrustedSelectionAuthorityError: Error, Equatable, Sendab
 }
 
 /// Capability proving which accepted source/checkpoint identity the host considers current for this
-/// selection. Construction is module-internal and the value is non-Codable, so a public request or
+/// selection. Construction is package-owned and the value is non-Codable, so a public request or
 /// stale snapshot cannot self-declare itself current by copying identity strings.
 ///
-/// A canonical host/store adapter must mint a fresh/current capability only after authenticating the
-/// accepted project state + checkpoint + project-root revision. This type does not implement host
-/// revocation by itself; the adapter owns capability lifetime and must not reuse superseded authority.
+/// A canonical adapter in this Swift package (for example ForgeMission checkpoint integration) must
+/// mint a fresh/current capability only after authenticating the accepted project state + checkpoint
+/// + project-root revision. This type does not implement host revocation by itself; the adapter owns
+/// capability lifetime and must not reuse superseded authority.
 public struct ProjectBrainTrustedSelectionAuthority: Equatable, Sendable {
     public let projectID: ProjectID
     public let sourceIdentity: ProjectBrainSourceIdentity
     public let authorityReceiptID: String
 
-    init(
+    package init(
         authenticatedProjectID projectID: ProjectID,
         sourceIdentity: ProjectBrainSourceIdentity,
         authorityReceiptID: String
@@ -205,9 +206,10 @@ public enum ProjectBrainTrustedSnapshotError: Error, Equatable, Sendable {
 ///
 /// Public/Codable `ProjectBrainFact` values are candidate transport. Their provenance labels are
 /// structurally validated, but they do not authenticate that a user, source file, runtime, test,
-/// or checkpoint actually produced the fact. Construction is therefore module-internal. A future
-/// canonical Project Brain store/host adapter must authenticate the complete fact set *and* exact
-/// accepted project-state/checkpoint/project-root identity before minting this non-Codable binding.
+/// or checkpoint actually produced the fact. Construction is package-owned. A canonical adapter in
+/// this Swift package must authenticate the complete fact set *and* exact accepted project-state /
+/// checkpoint / project-root identity before minting this non-Codable binding. External packages and
+/// app code using ordinary `import AgentDomain` cannot call the mint.
 ///
 /// `brainRevision` is only a positive revision asserted by that authenticated producer. This type
 /// does not prove monotonicity; the canonical store/adapter owns revision ordering. `snapshotDigest`
@@ -223,7 +225,7 @@ public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
     public let snapshotDigest: String
     public let facts: [ProjectBrainFact]
 
-    init(
+    package init(
         authenticatedProjectID projectID: ProjectID,
         brainRevision: UInt64,
         sourceIdentity: ProjectBrainSourceIdentity,
@@ -283,7 +285,7 @@ public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case requiredFactsExceedCharacterBudget(required: Int, maximum: Int)
 }
 
-/// Context derived from a module-authenticated Project Brain snapshot and a separately authenticated
+/// Context derived from a package-authenticated Project Brain snapshot and a separately authenticated
 /// current-source capability. This value is deliberately non-Codable so relaunch/restore must
 /// reacquire current Project Brain/source authority and re-run selection instead of replaying a
 /// previously derived context as accepted truth.
@@ -338,7 +340,7 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
 public enum ProjectBrainContextSelector {
     public static let maximumCandidateFacts = 4_096
 
-    /// Authoritative selection requires two independently module-minted inputs: the authenticated
+    /// Authoritative selection requires two independently package-minted inputs: the authenticated
     /// whole Brain snapshot and the host's authenticated *current* accepted source/checkpoint state.
     /// A stale snapshot cannot self-validate by copying its own public identity into a request.
     public static func select(
