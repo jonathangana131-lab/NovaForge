@@ -89,4 +89,40 @@ final class ForgeRuntimeSessionBoundSemanticAuthorizationTests: XCTestCase {
         XCTAssertEqual(gate.authorizedInteractionCount, 1)
         XCTAssertEqual(gate.nextExpectedSequence, 1)
     }
+
+    func testSessionBoundAuthorizationFeedsCanonicalWebAdapterWithoutUnwrapping() throws {
+        let runtimeVersion = ForgeRuntimeVersion(major: 4, minor: 2)
+        var gate = try ForgeRuntimeSemanticInteractionGate(session: session(runtimeVersion: runtimeVersion))
+        let authorized = try gate.authorizeSessionBound(requestData())
+        let adapter = ForgeRuntimeWebSemanticAutomationAdapter()
+
+        let plan = try adapter.makeDispatchPlan(for: authorized)
+        XCTAssertEqual(plan.requestID, authorized.request.requestID)
+        XCTAssertEqual(plan.sessionID, authorized.request.sessionID)
+        XCTAssertEqual(plan.projectID, authorized.request.projectID)
+        XCTAssertEqual(plan.sourceRevision, authorized.request.sourceRevision)
+        XCTAssertEqual(plan.sequence, authorized.request.sequence)
+        XCTAssertEqual(authorized.runtimeVersion, runtimeVersion)
+
+        let bridgeResultData = try JSONSerialization.data(withJSONObject: [
+            "protocolVersion": authorized.request.protocolVersion,
+            "requestID": authorized.request.requestID,
+            "sessionID": authorized.request.sessionID,
+            "projectID": authorized.request.projectID,
+            "sourceRevision": authorized.request.sourceRevision,
+            "sequence": authorized.request.sequence,
+            "kind": authorized.request.interaction.kind.rawValue,
+            "disposition": "delivered",
+        ], options: [.sortedKeys])
+        let bridgeResultJSON = try XCTUnwrap(String(data: bridgeResultData, encoding: .utf8))
+
+        let observation = try adapter.observeDispatchResult(
+            for: authorized,
+            bridgeResultJSON: bridgeResultJSON
+        )
+        XCTAssertEqual(observation.requestID, authorized.request.requestID)
+        XCTAssertEqual(observation.sequence, authorized.request.sequence)
+        XCTAssertEqual(observation.candidateDisposition, .delivered)
+        XCTAssertEqual(authorized.runtimeVersion, runtimeVersion)
+    }
 }
