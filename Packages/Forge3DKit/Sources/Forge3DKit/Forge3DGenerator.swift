@@ -39,9 +39,9 @@ public enum Forge3DGenerator {
             </div>
             <div class="assistive-driving">
               <label for="accessible-throttle">Throttle</label>
-              <input id="accessible-throttle" type="range" min="-1" max="1" step="0.1" value="0" data-novaforge-action="\#(Forge3DSemanticContract.throttleActionID)">
+              <input id="accessible-throttle" type="range" min="\#(Forge3DSemanticContract.minimumActionValue)" max="\#(Forge3DSemanticContract.maximumActionValue)" step="0.1" value="\#(Forge3DSemanticContract.neutralActionValue)" data-novaforge-action="\#(Forge3DSemanticContract.throttleActionID)">
               <label for="accessible-steer">Steering</label>
-              <input id="accessible-steer" type="range" min="-1" max="1" step="0.1" value="0" data-novaforge-action="\#(Forge3DSemanticContract.steeringActionID)">
+              <input id="accessible-steer" type="range" min="\#(Forge3DSemanticContract.minimumActionValue)" max="\#(Forge3DSemanticContract.maximumActionValue)" step="0.1" value="\#(Forge3DSemanticContract.neutralActionValue)" data-novaforge-action="\#(Forge3DSemanticContract.steeringActionID)">
             </div>
           </main>
           <script src="game.js" defer></script>
