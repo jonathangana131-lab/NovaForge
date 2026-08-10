@@ -61,16 +61,16 @@ struct ComposerReasoningControl: View {
         case .ultra:
             "Extra High"
         case .ultraCode:
-            "UltraCode"
+            "Ultra"
         }
     }
 
     var body: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            // Ultra was the oversized predecessor to the five-stop control.
-            // Preserve the user's intent while moving that legacy state onto
-            // the clear Extra High stop instead of exposing two "ultra" modes.
+            // The retired `.ultra` value predates this five-stop control.
+            // Preserve that legacy intent as Extra High; today's user-facing
+            // Ultra is backed by the stronger `.ultraCode` orchestration.
             if preferences.orchestrationMode == .ultra {
                 preferences.reasoningEffort = .xhigh
                 preferences.orchestrationMode = .standard
@@ -157,7 +157,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Medium"
             case .high: "High"
             case .extraHigh: "Extra High"
-            case .ultraCode: "UltraCode"
+            case .ultraCode: "Ultra"
             }
         }
 
@@ -171,7 +171,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Balanced thinking for everyday agent work"
             case .high: "Deeper reasoning for difficult tasks"
             case .extraHigh: "Extended reasoning for complex plans and debugging"
-            case .ultraCode: "Max reasoning + isolated workspace agents"
+            case .ultraCode: "Max reasoning + three isolated expert agents"
             }
         }
     }
@@ -193,9 +193,7 @@ private struct ComposerReasoningPicker: View {
 
                 reasoningSlider
 
-                Text(selection == .ultraCode
-                     ? "Max reasoning + isolated workspace agents"
-                     : selection.detail)
+                Text(selection.detail)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(AgentPalette.secondaryText)
                     .lineLimit(1)
