@@ -1,0 +1,94 @@
+name: Preview Forge Compact provider-send one-shot
+
+on:
+  push:
+    branches:
+      - agent/preview-forgecompact-provider-send
+    paths:
+      - .github/workflows/zz-preview-forgecompact-provider-send-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/preview-forgecompact-provider-send
+          fetch-depth: 0
+
+      - name: Select newest Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
+          test -n "$NEWEST_XCODE"
+          sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Apply fail-closed provider-send patch
+        run: python3 scripts/apply_preview_forgecompact_provider_send_patch.py
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Select available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list -j devices available | jq -r '
+            [.devices
+              | to_entries[]
+              | select(.key | contains("iOS"))
+              | .value[]
+              | select(.isAvailable == true and (.name | startswith("iPhone")))]
+            | last
+            | .udid // empty
+          ')
+          if [ -z "$UDID" ]; then
+            DEVICE_TYPE=$(xcrun simctl list -j devicetypes | jq -r \
+              '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
+            test -n "$DEVICE_TYPE"
+            UDID=$(xcrun simctl create "NovaForge ForgeCompact Gate" "$DEVICE_TYPE")
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Run package contracts and app unit tests
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.udid }}
+          DERIVED_DATA_PATH: DerivedData/ForgeCompactProviderSend
+          LOG_DIR: artifacts/forgecompact-provider-send
+          UNIT_TEST_TIMEOUT: 1200
+          BUILD_TIMEOUT: 1200
+          PACKAGE_TIMEOUT: 900
+          NOVAFORGE_TEST_INCLUDE_PREFLIGHT: 0
+          NOVAFORGE_TEST_INCLUDE_PACKAGE: 1
+          SHUTDOWN_SIMULATOR_AFTER_TESTS: 1
+        run: zsh scripts/codex-test.sh unit
+
+      - name: Verify integration contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'let forgeCompactPlan = AgentForgeCompactCheckpointPlanner.plan(' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'if compactedSourceItemIDs.contains(item.id)' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'let itemIDs = state.modelItems.compactMap { item in' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'testForgeCompactCheckpointReplacesOnlyEligibleHistoricalPrefix' AgentPadTests/AgentCanonicalContextPreparerTests.swift
+          grep -F 'XCTAssertLessThan(first.estimatedTokens, uncompacted.estimatedTokens)' AgentPadTests/AgentCanonicalContextPreparerTests.swift
+
+      - name: Commit tested product bytes and remove one-shot machinery
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/zz-preview-forgecompact-provider-send-once.yml
+          rm scripts/apply_preview_forgecompact_provider_send_patch.py
+          git add -A
+          git config user.name 'NovaForge Swarm'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Wire Forge Compact into canonical provider send'
+          git push origin HEAD:agent/preview-forgecompact-provider-send
