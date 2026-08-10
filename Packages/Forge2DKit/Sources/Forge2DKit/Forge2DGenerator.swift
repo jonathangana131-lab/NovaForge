@@ -3,18 +3,20 @@ import Foundation
 public enum Forge2DGenerator {
     public static func generate(_ blueprint: Forge2DBlueprint) throws -> Forge2DGeneratedProject {
         try Forge2DBlueprintValidator.validate(blueprint)
+        let gameScript = try Forge2DSemanticAutomation.patch(Forge2DTemplate.script(for: blueprint))
 
         let files = [
             Forge2DGeneratedFile(path: "index.html", contents: html(for: blueprint)),
             Forge2DGeneratedFile(path: "styles.css", contents: Forge2DTemplate.styles),
-            Forge2DGeneratedFile(path: "game.js", contents: Forge2DTemplate.script(for: blueprint)),
+            Forge2DGeneratedFile(path: "game.js", contents: gameScript),
         ]
 
         return Forge2DGeneratedProject(
             blueprint: blueprint,
             entryPath: "index.html",
             files: files,
-            semanticCapabilities: [.localSave, .audio, .controller, .touch, .keyboard]
+            semanticCapabilities: [.localSave, .audio, .controller, .touch, .keyboard, .automation],
+            semanticTargets: Forge2DSelfPlayContract.targets
         )
     }
 
@@ -31,16 +33,16 @@ public enum Forge2DGenerator {
           <link rel="stylesheet" href="styles.css">
         </head>
         <body>
-          <main id="game-shell" aria-label="\#(safeTitle)">
+          <main id="game-shell" data-novaforge-action="\#(Forge2DSelfPlayContract.moveXTargetID)" aria-label="\#(safeTitle)">
             <canvas id="game" role="img" aria-label="Playable 2D game canvas"></canvas>
             <div id="status" class="status" role="status" aria-live="polite">Ready</div>
-            <button id="pause" class="pause" type="button" aria-pressed="false" aria-label="Pause game">Ⅱ</button>
+            <button id="pause" data-novaforge-control="\#(Forge2DSelfPlayContract.pauseTargetID)" class="pause" type="button" aria-pressed="false" aria-label="Pause game">Ⅱ</button>
             <div class="controls controls-left" aria-label="Movement controls">
               <button id="left" type="button" aria-label="Move left">◀</button>
               <button id="right" type="button" aria-label="Move right">▶</button>
             </div>
             <div class="controls controls-right" aria-label="Action controls">
-              <button id="jump" type="button" aria-label="Jump">↑</button>
+              <button id="jump" data-novaforge-control="\#(Forge2DSelfPlayContract.jumpTargetID)" type="button" aria-label="Jump">↑</button>
             </div>
           </main>
           <script src="game.js" defer></script>
