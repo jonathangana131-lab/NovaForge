@@ -22,8 +22,8 @@ jobs:
         run: |
           set -euo pipefail
           echo '--- AgentTheme declarations and storage API ---'
-          grep -RFn --include='*.swift' -E 'novaForgeTheme|normalizeStoredTheme|refreshCurrentCache|refreshThemeCache|launchOverride|AgentTheme\.current|AgentTheme\.storageKey' AgentPad AgentPadTests AgentPadUITests || true
+          grep -RnE --include='*.swift' 'novaForgeTheme|normalizeStoredTheme|refreshCurrentCache|refreshThemeCache|launchOverride|AgentTheme\.current|AgentTheme\.storageKey' AgentPad AgentPadTests AgentPadUITests || true
           echo '--- Five theme names in tests and UI ---'
-          grep -RFn --include='*.swift' -E 'Matrix Rain|Midnight Black|White Gold|Arctic Glass|Ember Core|matrixRain|midnightBlack|whiteGold|arcticGlass|emberCore' AgentPadTests AgentPadUITests || true
+          grep -RnE --include='*.swift' 'Matrix Rain|Midnight Black|White Gold|Arctic Glass|Ember Core|matrixRain|midnightBlack|whiteGold|arcticGlass|emberCore' AgentPadTests AgentPadUITests || true
           echo '--- Existing theme test files ---'
           find AgentPadTests AgentPadUITests -type f -iname '*theme*' -print | sort || true
