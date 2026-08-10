@@ -41,7 +41,7 @@
 <body>
 <main>
   <header class="top">
-    <div><div class="eyebrow">Deterministic 2D run</div><h1>Vector Drift</h1></div>
+    <div><div class="eyebrow">Local 2D run</div><h1>Vector Drift</h1></div>
     <div class="score" aria-label="Run score"><strong id="score">0 / 3</strong><span id="timer">0.0 s</span></div>
   </header>
 
@@ -50,7 +50,7 @@
     <span class="semantic-endpoint" data-novaforge-action="move-x" aria-hidden="true"></span>
     <span class="semantic-endpoint" data-novaforge-action="move-y" aria-hidden="true"></span>
     <div id="startOverlay" class="overlay">
-      <div class="overlay-card"><h2>Collect three.</h2><p>Move the rover through every beacon. Barriers reset your position, not the run.</p><button data-novaforge-control="start-run" type="button">Start run</button></div>
+      <div class="overlay-card"><h2>Collect three.</h2><p>Move the rover through every beacon. Barriers block the route; your run continues.</p><button data-novaforge-control="start-run" type="button">Start run</button></div>
     </div>
     <div id="finishOverlay" class="overlay" hidden>
       <div class="overlay-card"><h2 id="finishTitle">Run complete.</h2><p id="finishCopy">All beacons collected.</p><button data-novaforge-control="restart-run" type="button">Run again</button></div>
@@ -194,7 +194,10 @@
     const rect = canvas.getBoundingClientRect(); const x = (event.clientX - rect.left) / rect.width * W; const y = (event.clientY - rect.top) / rect.height * H;
     const dx = x - rover.x, dy = y - rover.y, mag = Math.hypot(dx, dy) || 1; input.x = dx / mag; input.y = dy / mag;
   });
-  canvas.addEventListener('pointerup', () => { input.x = 0; input.y = 0; });
+  function stopPointerInput() { input.x = 0; input.y = 0; }
+  canvas.addEventListener('pointerup', stopPointerInput);
+  canvas.addEventListener('pointercancel', stopPointerInput);
+  canvas.addEventListener('pointerleave', stopPointerInput);
   resetRun();
 })();
 </script>
