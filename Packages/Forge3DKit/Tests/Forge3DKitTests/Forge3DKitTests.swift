@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import Forge3DKit
 
@@ -94,6 +95,40 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertThrowsError(try Forge3DSemanticAutomation.patch("const unrelated = true;")) { error in
             XCTAssertNotNil(error as? Forge3DSemanticAutomationIssue)
         }
+    }
+
+    func testGeneratedJavaScriptParsesWhenNodeIsAvailable() throws {
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        probe.arguments = ["node", "--version"]
+        probe.standardOutput = Pipe()
+        probe.standardError = Pipe()
+        try probe.run()
+        probe.waitUntilExit()
+        guard probe.terminationStatus == 0 else {
+            throw XCTSkip("Node.js is unavailable on this validation host")
+        }
+
+        let js = try XCTUnwrap(try Forge3DGenerator.generate(blueprint).files.first(where: { $0.path == "game.js" })?.contents)
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("novaforge-forge3d-\(UUID().uuidString).js")
+        try js.write(to: scriptURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        let check = Process()
+        let standardError = Pipe()
+        check.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        check.arguments = ["node", "--check", scriptURL.path]
+        check.standardOutput = Pipe()
+        check.standardError = standardError
+        try check.run()
+        check.waitUntilExit()
+
+        let diagnostics = String(
+            data: standardError.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertEqual(check.terminationStatus, 0, diagnostics)
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
