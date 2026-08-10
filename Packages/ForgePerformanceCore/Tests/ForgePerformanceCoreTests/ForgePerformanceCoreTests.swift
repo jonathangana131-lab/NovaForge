@@ -47,7 +47,7 @@ struct ForgePerformanceCoreTests {
         let p = try policy()
         let r = try run()
         let trust = ForgePerformanceTrustedProducerReceipt(authenticatedRun: r)
-        let evaluation = try ForgePerformanceEvaluator.evaluate(policy: p, run: r, trustedProducer: trust)
+        let evaluation = try ForgePerformanceEvaluator.evaluate(policy: p, run: r, trustedPolicy: .init(authenticatedPolicy: p), trustedProducer: trust)
         #expect(evaluation.passed)
         #expect(evaluation.blockers.isEmpty)
         #expect(evaluation.acceptedReceipt?.target == r.target)
@@ -57,7 +57,7 @@ struct ForgePerformanceCoreTests {
     @Test func budgetFailureCannotMintAcceptedReceipt() throws {
         let p = try policy()
         let r = try run(frameTime: 25)
-        let evaluation = try ForgePerformanceEvaluator.evaluate(policy: p, run: r, trustedProducer: .init(authenticatedRun: r))
+        let evaluation = try ForgePerformanceEvaluator.evaluate(policy: p, run: r, trustedPolicy: .init(authenticatedPolicy: p), trustedProducer: .init(authenticatedRun: r))
         #expect(!evaluation.passed)
         #expect(evaluation.acceptedReceipt == nil)
         #expect(evaluation.blockers.contains(.exceedsBudget(metric: .frameTimeP95Milliseconds, maximum: 20, actual: 25)))
@@ -66,7 +66,7 @@ struct ForgePerformanceCoreTests {
     @Test func insufficientSamplesBlockEvenWhenAggregateLooksFast() throws {
         let p = try policy()
         let r = try run(frameSamples: 10)
-        let evaluation = try ForgePerformanceEvaluator.evaluate(policy: p, run: r, trustedProducer: .init(authenticatedRun: r))
+        let evaluation = try ForgePerformanceEvaluator.evaluate(policy: p, run: r, trustedPolicy: .init(authenticatedPolicy: p), trustedProducer: .init(authenticatedRun: r))
         #expect(!evaluation.passed)
         #expect(evaluation.blockers.contains(.insufficientSamples(metric: .frameTimeP95Milliseconds, required: 120, actual: 10)))
         #expect(evaluation.blockers.contains(.insufficientSamples(metric: .droppedFrameRatio, required: 120, actual: 10)))
@@ -76,7 +76,7 @@ struct ForgePerformanceCoreTests {
         let p = try policy()
         let stale = try run(target: target("source-old"))
         #expect(throws: ForgePerformanceError.targetMismatch) {
-            _ = try ForgePerformanceEvaluator.evaluate(policy: p, run: stale, trustedProducer: .init(authenticatedRun: stale))
+            _ = try ForgePerformanceEvaluator.evaluate(policy: p, run: stale, trustedPolicy: .init(authenticatedPolicy: p), trustedProducer: .init(authenticatedRun: stale))
         }
     }
 
@@ -85,7 +85,7 @@ struct ForgePerformanceCoreTests {
         let changed = try run(context: context("runtime-8"))
         let trust = ForgePerformanceTrustedProducerReceipt(authenticatedRun: original)
         #expect(throws: ForgePerformanceError.untrustedProducer) {
-            _ = try ForgePerformanceEvaluator.evaluate(policy: policy(), run: changed, trustedProducer: trust)
+            _ = try ForgePerformanceEvaluator.evaluate(policy: policy(), run: changed, trustedPolicy: .init(authenticatedPolicy: policy()), trustedProducer: trust)
         }
     }
 
@@ -94,7 +94,7 @@ struct ForgePerformanceCoreTests {
         let changed = try run(memory: 799_999_999)
         let trust = ForgePerformanceTrustedProducerReceipt(authenticatedRun: original)
         #expect(throws: ForgePerformanceError.untrustedProducer) {
-            _ = try ForgePerformanceEvaluator.evaluate(policy: policy(), run: changed, trustedProducer: trust)
+            _ = try ForgePerformanceEvaluator.evaluate(policy: policy(), run: changed, trustedPolicy: .init(authenticatedPolicy: policy()), trustedProducer: trust)
         }
     }
 
@@ -112,7 +112,53 @@ struct ForgePerformanceCoreTests {
             observations: original.observations
         )
         #expect(throws: ForgePerformanceError.scenarioMismatch) {
-            _ = try ForgePerformanceEvaluator.evaluate(policy: p, run: changed, trustedProducer: .init(authenticatedRun: changed))
+            _ = try ForgePerformanceEvaluator.evaluate(policy: p, run: changed, trustedPolicy: .init(authenticatedPolicy: p), trustedProducer: .init(authenticatedRun: changed))
+        }
+    }
+
+    @Test func samePolicyIDWithLooserBudgetCannotReuseCanonicalPolicyTrust() throws {
+        let original = try policy()
+        let changed = try ForgePerformancePolicy(
+            policyID: original.policyID,
+            target: original.target,
+            scenarioID: original.scenarioID,
+            scenarioDefinitionDigest: original.scenarioDefinitionDigest,
+            budgets: [
+                try ForgePerformanceBudget(metric: .frameTimeP95Milliseconds, maximumAllowedValue: 100, minimumSampleCount: 120),
+                try ForgePerformanceBudget(metric: .droppedFrameRatio, maximumAllowedValue: 0.02, minimumSampleCount: 120),
+                try ForgePerformanceBudget(metric: .peakResidentMemoryBytes, maximumAllowedValue: 800_000_000, minimumSampleCount: 1),
+            ]
+        )
+        let r = try run(frameTime: 25)
+        #expect(throws: ForgePerformanceError.untrustedPolicy) {
+            _ = try ForgePerformanceEvaluator.evaluate(
+                policy: changed,
+                run: r,
+                trustedPolicy: .init(authenticatedPolicy: original),
+                trustedProducer: .init(authenticatedRun: r)
+            )
+        }
+    }
+
+    @Test func archivedPolicyTamperRequiresFreshCanonicalPolicyTrust() throws {
+        let p = try policy()
+        let r = try run(frameTime: 25)
+        let archive = try ForgePerformanceArchive(policy: p, run: r)
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(archive)) as? [String: Any])
+        var policyObject = try #require(object["policy"] as? [String: Any])
+        var budgets = try #require(policyObject["budgets"] as? [[String: Any]])
+        let index = try #require(budgets.firstIndex { ($0["metric"] as? String) == ForgePerformanceMetricKind.frameTimeP95Milliseconds.rawValue })
+        budgets[index]["maximumAllowedValue"] = 100.0
+        policyObject["budgets"] = budgets
+        object["policy"] = policyObject
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(ForgePerformanceArchive.self, from: data)
+
+        #expect(throws: ForgePerformanceError.untrustedPolicy) {
+            _ = try decoded.restore(
+                trustedPolicy: .init(authenticatedPolicy: p),
+                trustedProducer: .init(authenticatedRun: r)
+            )
         }
     }
 
@@ -152,7 +198,7 @@ struct ForgePerformanceCoreTests {
             observations: original.observations
         )
         #expect(throws: ForgePerformanceError.untrustedProducer) {
-            _ = try ForgePerformanceEvaluator.evaluate(policy: policy(), run: other, trustedProducer: .init(authenticatedRun: original))
+            _ = try ForgePerformanceEvaluator.evaluate(policy: policy(), run: other, trustedPolicy: .init(authenticatedPolicy: policy()), trustedProducer: .init(authenticatedRun: original))
         }
     }
 
@@ -163,7 +209,7 @@ struct ForgePerformanceCoreTests {
         let data = try JSONEncoder().encode(archive)
         let decoded = try JSONDecoder().decode(ForgePerformanceArchive.self, from: data)
         #expect(decoded == archive)
-        let restored = try decoded.restore(trustedProducer: .init(authenticatedRun: r))
+        let restored = try decoded.restore(trustedPolicy: .init(authenticatedPolicy: p), trustedProducer: .init(authenticatedRun: r))
         #expect(restored.passed)
     }
 
