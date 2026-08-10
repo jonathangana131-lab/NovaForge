@@ -11,6 +11,61 @@ public enum Forge3DSemanticCapability: String, Codable, CaseIterable, Sendable {
     case controller
     case touch
     case keyboard
+    case automation
+}
+
+public enum Forge3DSemanticTargetKind: String, Codable, CaseIterable, Sendable {
+    case control
+    case action
+}
+
+public struct Forge3DSemanticTarget: Equatable, Sendable {
+    public let id: String
+    public let kind: Forge3DSemanticTargetKind
+    public let minimumValue: Double?
+    public let maximumValue: Double?
+    public let neutralValue: Double?
+
+    public init(
+        id: String,
+        kind: Forge3DSemanticTargetKind,
+        minimumValue: Double? = nil,
+        maximumValue: Double? = nil,
+        neutralValue: Double? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.minimumValue = minimumValue
+        self.maximumValue = maximumValue
+        self.neutralValue = neutralValue
+    }
+}
+
+public enum Forge3DSemanticTargetCatalog {
+    public static let pause = Forge3DSemanticTarget(id: "scene.pause", kind: .control)
+    public static let throttle = Forge3DSemanticTarget(
+        id: "drive.throttle",
+        kind: .action,
+        minimumValue: -1,
+        maximumValue: 1,
+        neutralValue: 0
+    )
+    public static let steering = Forge3DSemanticTarget(
+        id: "drive.steering",
+        kind: .action,
+        minimumValue: -1,
+        maximumValue: 1,
+        neutralValue: 0
+    )
+    public static let all: [Forge3DSemanticTarget] = [pause, throttle, steering]
+}
+
+/// Compatibility names from the canonical ForgeRuntimeWebSemanticContract.
+/// These strings opt generated markup into Runtime dispatch; they do not grant host authority.
+enum Forge3DWebSemanticContract {
+    static let controlAttribute = "data-novaforge-control"
+    static let actionAttribute = "data-novaforge-action"
+    static let actionEventName = "novaforge:action"
 }
 
 public struct Forge3DBlueprint: Codable, Equatable, Sendable {
@@ -137,16 +192,19 @@ public struct Forge3DGeneratedProject: Equatable, Sendable {
     public let entryPath: String
     public let files: [Forge3DGeneratedFile]
     public let semanticCapabilities: Set<Forge3DSemanticCapability>
+    public let semanticTargets: [Forge3DSemanticTarget]
 
     public init(
         blueprint: Forge3DBlueprint,
         entryPath: String,
         files: [Forge3DGeneratedFile],
-        semanticCapabilities: Set<Forge3DSemanticCapability>
+        semanticCapabilities: Set<Forge3DSemanticCapability>,
+        semanticTargets: [Forge3DSemanticTarget] = []
     ) {
         self.blueprint = blueprint
         self.entryPath = entryPath
         self.files = files
         self.semanticCapabilities = semanticCapabilities
+        self.semanticTargets = semanticTargets
     }
 }
