@@ -26,6 +26,36 @@ private func seedDNA() throws -> DesignDNA {
     )
 }
 
+private func applyingWithAuthenticatedUserAuthority(
+    _ change: DesignDNAChange,
+    to current: DesignDNA,
+    receiptID: String,
+    acceptedAt: Date
+) throws -> DesignDNA {
+    let editor = DesignDNAEditor()
+    let candidate = try editor.candidateApplying(
+        change,
+        to: current,
+        projectID: current.projectID,
+        changeReceiptID: DesignReceiptID(rawValue: receiptID),
+        acceptedAt: acceptedAt
+    )
+    let purpose = try #require(candidate.requiredUserAuthority)
+    let authority = DesignDNAUserMutationAuthority(
+        authenticatedBefore: current,
+        authenticatedAfter: candidate.snapshot,
+        purpose: purpose
+    )
+    return try editor.applying(
+        change,
+        to: current,
+        projectID: current.projectID,
+        changeReceiptID: DesignReceiptID(rawValue: receiptID),
+        acceptedAt: acceptedAt,
+        userAuthority: authority
+    )
+}
+
 @Test func intentRejectsDuplicateTraitsCaseInsensitively() throws {
     #expect(throws: ForgeDesignValidationError.self) {
         _ = try IntentCore(productPromise: "A game", traits: ["Touch-first", "touch-first"])
@@ -130,7 +160,7 @@ private func seedDNA() throws -> DesignDNA {
     }
 }
 
-@Test func editorUpsertsAndAdvancesRevision() throws {
+@Test func editorUpsertsAndAdvancesRevisionWithAuthenticatedUserAuthority() throws {
     let current = try seedDNA()
     let rule = try DesignRule(
         id: DesignRuleID(rawValue: "rule.material"),
@@ -140,14 +170,22 @@ private func seedDNA() throws -> DesignDNA {
         provenance: provenance(.userDecision, "receipt.user")
     )
 
-    let revised = try DesignDNAEditor().applying(
+    #expect(throws: ForgeDesignValidationError.authenticatedUserAuthorityRequired("protectRule")) {
+        _ = try DesignDNAEditor().applying(
+            .upsertRule(rule),
+            to: current,
+            projectID: projectID,
+            changeReceiptID: DesignReceiptID(rawValue: "receipt.change.2"),
+            acceptedAt: now.addingTimeInterval(1)
+        )
+    }
+
+    let revised = try applyingWithAuthenticatedUserAuthority(
         .upsertRule(rule),
         to: current,
-        projectID: projectID,
-        changeReceiptID: DesignReceiptID(rawValue: "receipt.change.2"),
+        receiptID: "receipt.change.2",
         acceptedAt: now.addingTimeInterval(1)
     )
-
     #expect(revised.revision == 2)
     #expect(revised.rules == [rule])
     #expect(revised.lastChangeReceiptID.rawValue == "receipt.change.2")
@@ -174,16 +212,33 @@ private func seedDNA() throws -> DesignDNA {
     }
 }
 
-@Test func protectedRuleRemovalRequiresUserAuthority() throws {
-    let current = try seedDNA()
+@Test func protectedRuleRemovalRequiresExistingRuleAndAuthenticatedUserAuthority() throws {
     let id = DesignRuleID(rawValue: "rule.spacing")
-    #expect(throws: ForgeDesignValidationError.userAuthorityRequired("removeRule")) {
+    let rule = try DesignRule(
+        id: id,
+        category: .spacing,
+        statement: "Use an 8-point rhythm",
+        protection: .protected,
+        provenance: provenance(.userDecision, "receipt.user.protect")
+    )
+    let base = try DesignDNA(
+        projectID: projectID,
+        revision: 1,
+        intentCore: intent(),
+        rules: [rule],
+        protectedComponents: [],
+        neverRules: [],
+        lastChangeReceiptID: DesignReceiptID(rawValue: "receipt.seed"),
+        updatedAt: now
+    )
+
+    #expect(throws: ForgeDesignValidationError.authenticatedUserAuthorityRequired("removeRule")) {
         _ = try DesignDNAEditor().applying(
-            .removeRule(id, authorization: provenance(.modelSuggestion, "receipt.model")),
-            to: current,
+            .removeRule(id, authorization: provenance(.userDecision, "receipt.user.remove")),
+            to: base,
             projectID: projectID,
             changeReceiptID: DesignReceiptID(rawValue: "receipt.change"),
-            acceptedAt: now
+            acceptedAt: now.addingTimeInterval(1)
         )
     }
 }
@@ -201,26 +256,24 @@ private func seedDNA() throws -> DesignDNA {
     }
 }
 
-@Test func userCanRemoveNeverRule() throws {
+@Test func userCanRemoveNeverRuleWithAuthenticatedAuthority() throws {
     let neverRule = try NeverRule(
         id: NeverRuleID(rawValue: "never.purple"),
         instruction: "No generic purple gradients",
         scope: .project,
         provenance: provenance(.userDecision, "receipt.user.1")
     )
-    let withRule = try DesignDNAEditor().applying(
+    let withRule = try applyingWithAuthenticatedUserAuthority(
         .addNeverRule(neverRule),
         to: seedDNA(),
-        projectID: projectID,
-        changeReceiptID: DesignReceiptID(rawValue: "receipt.change.2"),
-        acceptedAt: now
+        receiptID: "receipt.change.2",
+        acceptedAt: now.addingTimeInterval(1)
     )
-    let removed = try DesignDNAEditor().applying(
+    let removed = try applyingWithAuthenticatedUserAuthority(
         .removeNeverRule(neverRule.id, authorization: provenance(.userDecision, "receipt.user.2")),
         to: withRule,
-        projectID: projectID,
-        changeReceiptID: DesignReceiptID(rawValue: "receipt.change.3"),
-        acceptedAt: now.addingTimeInterval(1)
+        receiptID: "receipt.change.3",
+        acceptedAt: now.addingTimeInterval(2)
     )
     #expect(removed.neverRules.isEmpty)
     #expect(removed.revision == 3)
@@ -258,7 +311,7 @@ private func seedDNA() throws -> DesignDNA {
             to: base,
             projectID: projectID,
             changeReceiptID: DesignReceiptID(rawValue: "receipt.change"),
-            acceptedAt: now
+            acceptedAt: now.addingTimeInterval(1)
         )
     }
 }
@@ -296,7 +349,7 @@ private func seedDNA() throws -> DesignDNA {
             to: base,
             projectID: projectID,
             changeReceiptID: DesignReceiptID(rawValue: "receipt.change"),
-            acceptedAt: now
+            acceptedAt: now.addingTimeInterval(1)
         )
     }
 }
@@ -314,17 +367,21 @@ private func seedDNA() throws -> DesignDNA {
     }
 }
 
-@Test func archiveRequiresSingleProjectAndIncreasingRevision() throws {
+@Test func archiveRequiresSingleProjectAndExactSemanticRevisionChain() throws {
     let first = try seedDNA()
-    let second = try DesignDNA(
+    let rule = try DesignRule(
+        id: DesignRuleID(rawValue: "rule.archive"),
+        category: .motion,
+        statement: "Use direct motion",
+        protection: .advisory,
+        provenance: provenance(.modelSuggestion, "receipt.model.archive")
+    )
+    let second = try DesignDNAEditor().applying(
+        .upsertRule(rule),
+        to: first,
         projectID: projectID,
-        revision: 2,
-        intentCore: intent(),
-        rules: [],
-        protectedComponents: [],
-        neverRules: [],
-        lastChangeReceiptID: DesignReceiptID(rawValue: "receipt.2"),
-        updatedAt: now.addingTimeInterval(1)
+        changeReceiptID: DesignReceiptID(rawValue: "receipt.2"),
+        acceptedAt: now.addingTimeInterval(1)
     )
     #expect((try DesignDNAArchive(snapshots: [first, second])).snapshots.count == 2)
 
@@ -335,15 +392,19 @@ private func seedDNA() throws -> DesignDNA {
 
 @Test func archiveDecodeRevalidatesTamperedRevisionOrder() throws {
     let first = try seedDNA()
-    let second = try DesignDNA(
+    let rule = try DesignRule(
+        id: DesignRuleID(rawValue: "rule.archive"),
+        category: .motion,
+        statement: "Use direct motion",
+        protection: .advisory,
+        provenance: provenance(.modelSuggestion, "receipt.model.archive")
+    )
+    let second = try DesignDNAEditor().applying(
+        .upsertRule(rule),
+        to: first,
         projectID: projectID,
-        revision: 2,
-        intentCore: intent(),
-        rules: [],
-        protectedComponents: [],
-        neverRules: [],
-        lastChangeReceiptID: DesignReceiptID(rawValue: "receipt.2"),
-        updatedAt: now.addingTimeInterval(1)
+        changeReceiptID: DesignReceiptID(rawValue: "receipt.2"),
+        acceptedAt: now.addingTimeInterval(1)
     )
     let archive = try DesignDNAArchive(snapshots: [first, second])
     let data = try JSONEncoder().encode(archive)
