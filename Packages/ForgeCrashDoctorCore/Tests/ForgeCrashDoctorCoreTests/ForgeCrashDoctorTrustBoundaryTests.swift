@@ -54,7 +54,7 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
             func submit(
                 incident: ForgeCrashTrustedIncident,
                 history: ForgeCrashRepairHistory,
-                policy: ForgeCrashRetryPolicy
+                policy: ForgeCrashTrustedRetryPolicy
             ) {
                 _ = ForgeCrashTriage.makeSubmission(
                     for: incident,
@@ -70,6 +70,54 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
                 || diagnostics.localizedCaseInsensitiveContains("cannot convert value of type")
                 || diagnostics.localizedCaseInsensitiveContains("no exact matches in call to static method"),
             "Expected ordinary imports to be unable to feed Codable candidate history into triage, got: \(diagnostics)"
+        )
+    }
+
+    func testExternalConsumerCannotMintTrustedRetryPolicy() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "ForgeTrustedRetryPolicyBypass.swift",
+            source: """
+            import ForgeCrashDoctorCore
+
+            func forgePolicy(_ policy: ForgeCrashRetryPolicy) throws {
+                _ = try ForgeCrashTrustedRetryPolicy(
+                    authenticatedPolicy: policy,
+                    artifactIdentity: String(repeating: "a", count: 64)
+                )
+            }
+            """
+        )
+
+        assertAccessControlDiagnostic(
+            diagnostics,
+            message: "Expected ordinary imports to be unable to mint trusted retry-policy authority"
+        )
+    }
+
+    func testExternalConsumerCannotSubmitCodableCandidatePolicyToTriage() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "ForgeCandidateRetryPolicyBypass.swift",
+            source: """
+            import ForgeCrashDoctorCore
+
+            func submit(
+                incident: ForgeCrashTrustedIncident,
+                history: ForgeCrashTrustedRepairHistory,
+                policy: ForgeCrashRetryPolicy
+            ) {
+                _ = ForgeCrashTriage.makeSubmission(
+                    for: incident,
+                    failedHistory: history,
+                    policy: policy
+                )
+            }
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("cannot convert value of type")
+                || diagnostics.localizedCaseInsensitiveContains("no exact matches in call to static method"),
+            "Expected ordinary imports to be unable to feed Codable candidate policy into triage, got: \(diagnostics)"
         )
     }
 
