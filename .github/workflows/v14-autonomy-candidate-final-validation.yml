@@ -1,0 +1,22 @@
+name: V14 Autonomy Candidate Final Validation
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-AUTONOMY-TRUST-0809/exact/e3
+jobs:
+  exact-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Record toolchain
+        run: swift --version
+      - name: Verify exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "6ef937474495763a816dabf28722084a7fcfd467"
+          git diff --check HEAD^
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeAutonomyCore -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgeAutonomyCore -c release -Xswiftc -warnings-as-errors
