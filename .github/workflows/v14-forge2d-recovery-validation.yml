@@ -1,0 +1,39 @@
+name: V14 Forge2D Recovery Validation
+
+on:
+  pull_request:
+    paths:
+      - 'Packages/Forge2DKit/**'
+      - '.github/workflows/v14-forge2d-recovery-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "dd805e106570da1c1c76d4de9a9d87bf87820f9f"
+          git diff --check HEAD^..HEAD
+          changed="$(git diff --name-only HEAD^..HEAD)"
+          test "$changed" = ".github/workflows/v14-forge2d-recovery-validation.yml"
+
+      - name: Toolchain
+        run: |
+          swift --version
+          node --version
+
+      - name: Debug package tests
+        run: swift test --package-path Packages/Forge2DKit -Xswiftc -warnings-as-errors
+
+      - name: Release package tests
+        run: swift test --package-path Packages/Forge2DKit -c release -Xswiftc -warnings-as-errors
