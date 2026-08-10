@@ -1,0 +1,31 @@
+name: V14 ForgeRuntime State Current-Main Proof
+
+on:
+  push:
+    branches:
+      - "validation/GPT56-NF-V14-STATE-RECOVER-8B09/current-main-proof"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forge-runtime-package:
+    name: ForgeRuntimeKit current-main debug + release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Verify exact repaired product blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservation.swift)" = "1086b7f9d2df01997dec3e32f2e9f880d2637729"
+          test "$(git rev-parse HEAD:Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationTests.swift)" = "6bb7c3a8105892f9f80cdd4db3b18d188c869715"
+          test "$(git rev-parse HEAD:Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateTrustBoundaryTests.swift)" = "19b42fd0fbb954d059d5eb0cde76f9614bc0dfc1"
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
