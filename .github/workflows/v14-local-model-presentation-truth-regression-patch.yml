@@ -1,0 +1,61 @@
+name: V14 Local Model Presentation Truth Regression Patch
+
+on:
+  push:
+    branches:
+      - agent/v14-local-model-presentation-truth-regression
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-local-model-presentation-truth-regression
+          fetch-depth: 0
+
+      - name: Add static catalog qualification regression
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('AgentPadTests/AgentLocalModelProviderTransportTests.swift')
+          source = path.read_text()
+          marker = '    private func assertStreamFailure(\n'
+          test_name = 'testStaticCatalogDoesNotSelfAwardDeviceQualification'
+          test = '''    func testStaticCatalogDoesNotSelfAwardDeviceQualification() {\n        let defaultVariant = LocalModelCatalog.defaultVariant\n        XCTAssertTrue(defaultVariant.isIPhone12SafeDefault)\n        XCTAssertEqual(defaultVariant.deviceFit.title, "Qualification pending")\n        XCTAssertEqual(defaultVariant.deviceFit.symbol, "iphone")\n        XCTAssertTrue(\n            defaultVariant.benchmarkSummary.localizedCaseInsensitiveContains(\n                "exact-device qualification pending"\n            )\n        )\n        XCTAssertTrue(\n            defaultVariant.details.localizedCaseInsensitiveContains(\n                "exact-device qualification remains pending"\n            )\n        )\n\n        let forbiddenStaticClaims = [\n            "Device proven",\n            "physical-device canary proven",\n            "The proven iPhone 12 default",\n        ]\n        for variant in LocalModelCatalog.all {\n            let staticPresentation = [\n                variant.deviceFit.title,\n                variant.benchmarkSummary,\n                variant.details,\n            ].joined(separator: " ")\n            for claim in forbiddenStaticClaims {\n                XCTAssertFalse(\n                    staticPresentation.localizedCaseInsensitiveContains(claim),\n                    "Static catalog metadata must not self-award device qualification: \\(claim)"\n                )\n            }\n        }\n    }\n\n'''
+
+          if test_name not in source:
+              count = source.count(marker)
+              assert count == 1, f'expected exactly one insertion marker, found {count}'
+              source = source.replace(marker, test + marker, 1)
+              path.write_text(source)
+
+          source = path.read_text()
+          assert source.count(test_name) == 1
+          assert 'XCTAssertEqual(defaultVariant.deviceFit.title, "Qualification pending")' in source
+          assert '"physical-device canary proven"' in source
+          PY
+
+      - name: Validate patch shape
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- AgentPadTests/AgentLocalModelProviderTransportTests.swift
+
+      - name: Commit regression
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No regression commit needed."
+            exit 0
+          fi
+          git config user.name "NovaForge V14 Truth Worker"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          git commit -m "[V14] Guard local model qualification presentation truth"
+          git push origin HEAD:agent/v14-local-model-presentation-truth-regression
