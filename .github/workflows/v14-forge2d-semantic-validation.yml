@@ -1,0 +1,40 @@
+name: V14 Forge2D semantic self-play validation
+
+on:
+  push:
+    branches:
+      - 'validation/GPT56-SOL-NF-V14-SELFPLAY-0810/forge2d-semantic'
+
+permissions:
+  contents: read
+
+jobs:
+  forge-2d-kit:
+    name: Forge2DKit ${{ matrix.configuration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert exact product blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DGenerator.swift)" = "fbc1193d014ded093ba194b52968f3e884b370b0"
+          test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DModels.swift)" = "e915e11ec822fee0a57714142c3a5aa0719f5477"
+          test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DSemanticAutomation.swift)" = "2be61beb57918e7c6b727b1cbe6b92c2659cb1a0"
+          test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DTemplate.swift)" = "7367750452a7141d9772731db5f886185587bbf7"
+          test "$(git rev-parse HEAD:Packages/Forge2DKit/Tests/Forge2DKitTests/Forge2DKitTests.swift)" = "2c9e6807dba0612b1f7a5ca005f769fdda6415b7"
+      - name: Test Forge2DKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift --version
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            swift test --package-path Packages/Forge2DKit -c release -Xswiftc -warnings-as-errors
+          else
+            swift test --package-path Packages/Forge2DKit -Xswiftc -warnings-as-errors
+          fi
