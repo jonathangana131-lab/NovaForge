@@ -166,6 +166,18 @@ public struct VisualTrustedCapture: Equatable, Hashable, Sendable, Identifiable 
     public var capturedAt: Date { capture.capturedAt }
 
     init(authenticatedCapture: VisualCaptureReceipt, artifactSHA256: String) throws {
+        guard authenticatedCapture.project.isValid else {
+            throw VisualQAInvariantError.invalidProjectIdentity
+        }
+        guard !authenticatedCapture.runtimeSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw VisualQAInvariantError.invalidRuntimeSession
+        }
+        guard authenticatedCapture.viewport.isValid else {
+            throw VisualQAInvariantError.invalidViewport
+        }
+        guard authenticatedCapture.accessibility.isValid else {
+            throw VisualQAInvariantError.invalidAccessibilityState
+        }
         guard authenticatedCapture.claimsRuntimeVisualEvidence else {
             throw VisualQAInvariantError.nonRuntimeCaptureCannotBeTrusted
         }
@@ -423,8 +435,14 @@ public struct VisualSelectionIdentity: Codable, Equatable, Hashable, Sendable {
         self.source = source
     }
 
-    public func isValid(for capture: VisualTrustedCapture) -> Bool {
-        capture.project == project &&
+    /// Structural promotion check for the canonical in-module Visual Picker adapter.
+    /// This is intentionally internal: candidate selection metadata is not public trust evidence.
+    func isValid(for capture: VisualTrustedCapture) -> Bool {
+        project.isValid &&
+            !runtimeSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !runtimeNodeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            source.isValid &&
+            capture.project == project &&
             capture.runtimeSessionID == runtimeSessionID
     }
 }
