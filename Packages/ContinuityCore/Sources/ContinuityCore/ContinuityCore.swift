@@ -27,6 +27,7 @@ public enum ContinuitySuspensionReason: String, Codable, Hashable, Sendable {
     case userPaused
     case recoverableFailure
     case executionEnvironmentLost
+    case missionStateRevalidationRequired
 }
 
 public enum ContinuityRunState: Codable, Hashable, Sendable {
@@ -87,9 +88,11 @@ public struct ContinuitySnapshot: Hashable, Sendable {
     public let activeLease: ContinuityWorkLease?
     public let epoch: UInt64
 
-    public init(identity: ContinuityIdentity, state: ContinuityRunState = .ready, epoch: UInt64 = 0) {
+    /// Public construction starts only from neutral ready state. Mission-owned projections and
+    /// executing state are reducer/authority outputs and cannot be caller-minted.
+    public init(identity: ContinuityIdentity, epoch: UInt64 = 0) {
         self.identity = identity
-        self.state = state
+        self.state = .ready
         self.activeLease = nil
         self.epoch = epoch
     }
