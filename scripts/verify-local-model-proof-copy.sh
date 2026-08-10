@@ -5,8 +5,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime="$repo_root/AgentPad/Services/LocalModelRuntime.swift"
 settings="$repo_root/AgentPad/Views/SettingsComponents.swift"
 benchmark="$repo_root/AgentPad/Views/ModelManagerPanels.swift"
+sources=("$runtime" "$settings" "$benchmark")
 
-for path in "$runtime" "$settings" "$benchmark"; do
+for path in "${sources[@]}"; do
   if [[ ! -f "$path" ]]; then
     echo "missing expected source file: ${path#$repo_root/}" >&2
     exit 1
@@ -31,7 +32,7 @@ forbidden=(
 
 failed=0
 for needle in "${forbidden[@]}"; do
-  if grep -nF "$needle" "$runtime" "$settings"; then
+  if grep -nF "$needle" "${sources[@]}"; then
     echo "unearned or stale local-model presentation found: $needle" >&2
     failed=1
   fi
@@ -54,7 +55,7 @@ required=(
 )
 
 for needle in "${required[@]}"; do
-  if ! grep -Fq "$needle" "$runtime" "$settings"; then
+  if ! grep -Fq "$needle" "${sources[@]}"; then
     echo "expected truthful local-model presentation missing: $needle" >&2
     failed=1
   fi
