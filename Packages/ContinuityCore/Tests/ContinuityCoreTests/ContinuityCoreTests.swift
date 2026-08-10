@@ -206,6 +206,25 @@ final class ContinuityCoreTests: XCTestCase {
         }
     }
 
+    func testMissionProjectionCannotEraseExplicitUserPause() throws {
+        let seed = ready()
+        let (running, _) = try ContinuityReducer.startForeground(from: seed, grant: executionGrant(.foregroundOnDevice))
+        let paused = try ContinuityReducer.pauseByUser(running)
+
+        XCTAssertThrowsError(try ContinuityReducer.reflectMissionState(
+            authority: projectionAuthority(.ready, identity: paused.identity, issuedForEpoch: paused.epoch),
+            in: paused
+        )) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
+        }
+        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(
+            authority: projectionAuthority(.completed, identity: paused.identity, issuedForEpoch: paused.epoch),
+            in: paused
+        )) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
+        }
+    }
+
     func testCanonicalIdentityRejectsWhitespaceAliasesAndControls() {
         for bad in [
             ContinuityIdentity(missionID: " mission-1", projectID: "project-1", checkpointID: "checkpoint-1", missionRevision: 1),
