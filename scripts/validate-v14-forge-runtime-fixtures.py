@@ -29,7 +29,7 @@ EXPECTED = {
 }
 ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 SEMANTIC_ID = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
-FORBIDDEN_NETWORK = re.compile(r"(?:https?://|\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b)", re.I)
+FORBIDDEN_NETWORK = re.compile(r"(?:https?://|\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b|\bsendBeacon\s*\(|\bimportScripts\s*\(|\burl\s*\()", re.I)
 
 
 class FixtureHTMLParser(HTMLParser):
@@ -41,6 +41,7 @@ class FixtureHTMLParser(HTMLParser):
         self.has_viewport = False
         self.lang = ""
         self.inline_scripts: list[str] = []
+        self.resource_references: list[tuple[str, str]] = []
         self._in_script = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -49,7 +50,13 @@ class FixtureHTMLParser(HTMLParser):
         if tag == "main": self.has_main = True
         if values.get("aria-live") in {"polite", "assertive"}: self.has_live_region = True
         if tag == "meta" and values.get("name") == "viewport": self.has_viewport = True
-        if tag == "script" and not values.get("src"): self._in_script = True
+        if tag == "script":
+            if values.get("src"): self.resource_references.append((tag, values["src"] or ""))
+            else: self._in_script = True
+        if tag == "link" and values.get("href"): self.resource_references.append((tag, values["href"] or ""))
+        if tag in {"img", "iframe", "audio", "video", "source", "embed"} and values.get("src"):
+            self.resource_references.append((tag, values["src"] or ""))
+        if tag == "object" and values.get("data"): self.resource_references.append((tag, values["data"] or ""))
         for key in self.semantics:
             value = values.get(f"data-novaforge-{key}")
             if value is not None: self.semantics[key].append(value)
@@ -98,6 +105,7 @@ def validate_html(path: Path, expected: dict) -> FixtureHTMLParser:
     if not parser.has_viewport: fail(f"{path}: viewport metadata missing")
     if not parser.has_main: fail(f"{path}: semantic main region missing")
     if not parser.has_live_region: fail(f"{path}: status live region missing")
+    if parser.resource_references: fail(f"{path}: self-contained fixture has resource references {parser.resource_references!r}")
     semantic_map = {
         "control": expected["controls"],
         "text-input": expected["textInputs"],
@@ -121,6 +129,8 @@ def validate_all(root: Path = FIXTURE_ROOT) -> list[str]:
     revisions = set()
     for name, expected in EXPECTED.items():
         directory = root / name
+        files = {p.name for p in directory.iterdir() if p.is_file()}
+        if files != {"novaforge.runtime.json", "index.html"}: fail(f"{directory}: unexpected fixture files {files!r}")
         manifest = validate_manifest(directory / "novaforge.runtime.json", expected["projectID"])
         if manifest["projectVersion"] in revisions: fail(f"{directory}: projectVersion must be unique across fixtures")
         revisions.add(manifest["projectVersion"])
