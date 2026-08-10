@@ -29,10 +29,25 @@ final class Forge3DV14HardeningTests: XCTestCase {
         try Forge3DBlueprintValidator.validate(decoded)
     }
 
+    func testGeneratedProjectDeclaresCanonicalSemanticAutomationSurface() throws {
+        let project = try Forge3DGenerator.generate(blueprint)
+        XCTAssertEqual(project.semanticAutomationCapabilities, [.activateControl, .setActionValue])
+
+        let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
+        XCTAssertTrue(html.contains("data-novaforge-control=\"pause\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive-throttle\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive-steering\""))
+    }
+
     func testGeneratedKeyboardHandlerProtectsNativeAssistiveRanges() throws {
         let js = try generatedJavaScript()
         XCTAssertTrue(js.contains("function isNativeDrivingControl(target)"))
         XCTAssertTrue(js.contains("if (isNativeDrivingControl(event.target)) return"))
+        XCTAssertTrue(js.contains("accessibleThrottle.addEventListener(\"novaforge:action\""))
+        XCTAssertTrue(js.contains("accessibleSteer.addEventListener(\"novaforge:action\""))
+        XCTAssertTrue(js.contains("detail.actionID !== expectedActionID"))
+        XCTAssertTrue(js.contains("!Number.isFinite(detail.value)"))
+        XCTAssertTrue(js.contains("return clamp(detail.value, -1, 1)"))
     }
 
     #if os(macOS) || os(Linux)
@@ -144,6 +159,34 @@ final class Forge3DV14HardeningTests: XCTestCase {
         __emitElement(accessibleThrottle, "input");
         if (Math.abs(input.accessibleThrottle - 0.7) > 0.0001) {
           throw new Error("Native assistive throttle input did not update semantic throttle");
+        }
+
+        __emitElement(accessibleThrottle, "novaforge:action", {
+          detail: { actionID: "drive-throttle", value: 3 }
+        });
+        if (input.accessibleThrottle !== 1 || accessibleThrottle.value !== "1") {
+          throw new Error("Canonical throttle action was not clamped into the shared input state");
+        }
+
+        __emitElement(accessibleSteer, "novaforge:action", {
+          detail: { actionID: "drive-steering", value: -0.65 }
+        });
+        if (Math.abs(input.accessibleSteer + 0.65) > 0.0001 || accessibleSteer.value !== "-0.65") {
+          throw new Error("Canonical steering action did not update the shared input state");
+        }
+
+        const throttleBeforeInvalid = input.accessibleThrottle;
+        __emitElement(accessibleThrottle, "novaforge:action", {
+          detail: { actionID: "wrong-target", value: -1 }
+        });
+        if (input.accessibleThrottle !== throttleBeforeInvalid) {
+          throw new Error("Mismatched semantic action ID mutated throttle");
+        }
+        __emitElement(accessibleThrottle, "novaforge:action", {
+          detail: { actionID: "drive-throttle", value: NaN }
+        });
+        if (input.accessibleThrottle !== throttleBeforeInvalid) {
+          throw new Error("Non-finite semantic value mutated throttle");
         }
 
         prevented = false;
