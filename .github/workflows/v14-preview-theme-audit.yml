@@ -1,4 +1,4 @@
-name: V14 Preview theme repair
+name: V14 Preview theme validation
 
 on:
   push:
@@ -6,261 +6,95 @@ on:
       - agent/v14-preview-theme-durability-0810
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair:
+  targeted-theme-verification:
     if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: agent/v14-preview-theme-durability-0810
           fetch-depth: 0
 
-      - name: Apply Preview theme durability repair
-        shell: python
-        run: |
-          from pathlib import Path
-
-          def lines(*items: str) -> str:
-              return "\n".join(items)
-
-          def replace_once(path_name: str, old: str, new: str) -> None:
-              path = Path(path_name)
-              text = path.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(
-                      f"{path_name}: expected exactly one structural anchor, found {count}: {old[:140]!r}"
-                  )
-              path.write_text(text.replace(old, new, 1))
-
-          theme_tail = lines(
-              '        if let index = arguments.firstIndex(of: "--theme"),',
-              '           arguments.indices.contains(arguments.index(after: index)) {',
-              '            return theme(matching: arguments[arguments.index(after: index)])',
-              '        }',
-              '        return nil',
-              '    }',
-              '',
-              '    var title: String {'
-          )
-          theme_tail_repaired = lines(
-              '        if let index = arguments.firstIndex(of: "--theme"),',
-              '           arguments.indices.contains(arguments.index(after: index)) {',
-              '            return theme(matching: arguments[arguments.index(after: index)])',
-              '        }',
-              '        return nil',
-              '    }',
-              '',
-              '    static func resolvedForLaunch(',
-              '        storedRawValue: String?,',
-              '        arguments: [String]',
-              '    ) -> AgentTheme {',
-              '        launchOverride(from: arguments) ?? resolved(from: storedRawValue)',
-              '    }',
-              '',
-              '    var title: String {'
-          )
-          replace_once("AgentPad/Design/AgentTheme.swift", theme_tail, theme_tail_repaired)
-
-          app_launch_old = lines(
-              '        let arguments = ProcessInfo.processInfo.arguments',
-              '        if let launchTheme = AgentTheme.launchOverride(from: arguments) {',
-              '            UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)',
-              '            AgentPalette.refreshThemeCache(launchTheme)',
-              '        } else {',
-              '            AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())',
-              '        }',
-              '        AgentThemeUIKit.apply(AgentTheme.current)'
-          )
-          app_launch_new = lines(
-              '        let arguments = ProcessInfo.processInfo.arguments',
-              '        let storedThemeRawValue = UserDefaults.standard.string(forKey: AgentTheme.storageKey)',
-              '        let launchTheme = AgentTheme.resolvedForLaunch(',
-              '            storedRawValue: storedThemeRawValue,',
-              '            arguments: arguments',
-              '        )',
-              '        if AgentTheme.launchOverride(from: arguments) == nil {',
-              '            _ = AgentTheme.normalizeStoredTheme()',
-              '        }',
-              '        AgentPalette.refreshThemeCache(launchTheme)',
-              '        AgentThemeUIKit.apply(launchTheme)'
-          )
-          replace_once("AgentPad/App/AgentPadApp.swift", app_launch_old, app_launch_new)
-
-          reset_old = lines(
-              '            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)',
-              '            if let launchTheme = AgentTheme.launchOverride(from: arguments) {',
-              '                UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)',
-              '            }',
-              '            AgentPalette.refreshThemeCache(AgentTheme.current)',
-              '            AgentThemeUIKit.apply(AgentTheme.current)'
-          )
-          reset_new = lines(
-              '            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)',
-              '            let resetLaunchTheme = AgentTheme.resolvedForLaunch(',
-              '                storedRawValue: AgentTheme.defaultTheme.rawValue,',
-              '                arguments: arguments',
-              '            )',
-              '            AgentPalette.refreshThemeCache(resetLaunchTheme)',
-              '            AgentThemeUIKit.apply(resetLaunchTheme)'
-          )
-          replace_once("AgentPad/App/AgentPadApp.swift", reset_old, reset_new)
-
-          root_old = lines(
-              '            .onChange(of: selectedThemeRawValue, initial: true) { _, newValue in',
-              '                let theme = AgentTheme.resolved(from: newValue)',
-              '                if newValue != theme.rawValue {',
-              '                    selectedThemeRawValue = theme.rawValue',
-              '                }',
-              '                AgentPalette.refreshThemeCache(theme)',
-              '                AgentThemeUIKit.apply(theme)',
-              '            }'
-          )
-          root_new = lines(
-              '            .onChange(of: selectedThemeRawValue, initial: true) { _, newValue in',
-              '                let storedTheme = AgentTheme.resolved(from: newValue)',
-              '                if newValue != storedTheme.rawValue {',
-              '                    selectedThemeRawValue = storedTheme.rawValue',
-              '                }',
-              '                let activeTheme = AgentTheme.resolvedForLaunch(',
-              '                    storedRawValue: storedTheme.rawValue,',
-              '                    arguments: ProcessInfo.processInfo.arguments',
-              '                )',
-              '                AgentPalette.refreshThemeCache(activeTheme)',
-              '                AgentThemeUIKit.apply(activeTheme)',
-              '            }'
-          )
-          replace_once("AgentPad/Views/AppRootView.swift", root_old, root_new)
-
-          settings_old = lines(
-              '    private var selectedTheme: AgentTheme {',
-              '        AgentTheme.resolved(from: selectedThemeRawValue)',
-              '    }'
-          )
-          settings_new = lines(
-              '    private var selectedTheme: AgentTheme {',
-              '        AgentTheme.resolvedForLaunch(',
-              '            storedRawValue: selectedThemeRawValue,',
-              '            arguments: ProcessInfo.processInfo.arguments',
-              '        )',
-              '    }'
-          )
-          replace_once("AgentPad/Views/SettingsView.swift", settings_old, settings_new)
-
-          unit_old = lines(
-              '        XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme-world=white-gold"]), .whiteGold)',
-              '        XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme", "matrix"]), .matrixRain)',
-              '',
-              '        for theme in AgentTheme.allCases {'
-          )
-          unit_new = lines(
-              '        XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme-world=white-gold"]), .whiteGold)',
-              '        XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme", "matrix"]), .matrixRain)',
-              '        XCTAssertEqual(',
-              '            AgentTheme.resolvedForLaunch(',
-              '                storedRawValue: AgentTheme.emberCore.rawValue,',
-              '                arguments: ["NovaForge"]',
-              '            ),',
-              '            .emberCore',
-              '        )',
-              '        XCTAssertEqual(',
-              '            AgentTheme.resolvedForLaunch(',
-              '                storedRawValue: AgentTheme.emberCore.rawValue,',
-              '                arguments: ["NovaForge", "--theme-world=white-gold"]',
-              '            ),',
-              '            .whiteGold,',
-              '            "A launch-only theme override must affect the active launch without redefining the stored theme."',
-              '        )',
-              '',
-              '        for theme in AgentTheme.allCases {'
-          )
-          replace_once("AgentPadTests/AgentRuntimeLifecycleTests.swift", unit_old, unit_new)
-
-          ui_marker = '    func testGoalProjectControlCenterCreateEditDeleteAndRunFeedbackScreenshots() throws {'
-          ui_test = lines(
-              '    func testThemeLaunchOverrideDoesNotReplacePersistedSelection() throws {',
-              '        let app = XCUIApplication()',
-              '        app.launchArguments = ["--reset-ui", "--open-chat"]',
-              '        app.launch()',
-              '',
-              '        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))',
-              '        app.tabBars.buttons["Control"].tap()',
-              '        let ember = identifiedElement("settingsThemeStudioCard-emberCore", in: app)',
-              '        scrollUntilHittable(ember, in: app)',
-              '        XCTAssertTrue(ember.isHittable)',
-              '        ember.tap()',
-              '        let emberSelected = XCTNSPredicateExpectation(',
-              '            predicate: NSPredicate(format: "isSelected == true"),',
-              '            object: ember',
-              '        )',
-              '        XCTAssertEqual(XCTWaiter.wait(for: [emberSelected], timeout: 5), .completed)',
-              '        app.terminate()',
-              '',
-              '        app.launchArguments = ["--theme-world=whiteGold", "--open-chat"]',
-              '        app.launch()',
-              '        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))',
-              '        app.tabBars.buttons["Control"].tap()',
-              '        let whiteGold = identifiedElement("settingsThemeStudioCard-whiteGold", in: app)',
-              '        scrollUntilHittable(whiteGold, in: app)',
-              '        let whiteGoldSelected = XCTNSPredicateExpectation(',
-              '            predicate: NSPredicate(format: "isSelected == true"),',
-              '            object: whiteGold',
-              '        )',
-              '        XCTAssertEqual(',
-              '            XCTWaiter.wait(for: [whiteGoldSelected], timeout: 5),',
-              '            .completed,',
-              '            "The explicit launch override should own only this running process."',
-              '        )',
-              '        app.terminate()',
-              '',
-              '        app.launchArguments = ["--open-chat"]',
-              '        app.launch()',
-              '        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))',
-              '        app.tabBars.buttons["Control"].tap()',
-              '        let restoredEmber = identifiedElement("settingsThemeStudioCard-emberCore", in: app)',
-              '        scrollUntilHittable(restoredEmber, in: app)',
-              '        let restoredEmberSelected = XCTNSPredicateExpectation(',
-              '            predicate: NSPredicate(format: "isSelected == true"),',
-              '            object: restoredEmber',
-              '        )',
-              '        XCTAssertEqual(',
-              '            XCTWaiter.wait(for: [restoredEmberSelected], timeout: 5),',
-              '            .completed,',
-              '            "A normal relaunch must restore the user\'s persisted theme after a temporary screenshot/test override."',
-              '        )',
-              '        XCTAssertFalse(',
-              '            identifiedElement("settingsThemeStudioCard-whiteGold", in: app).isSelected,',
-              '            "The temporary override must not replace the persisted user selection."',
-              '        )',
-              '    }',
-              ''
-          )
-          replace_once(
-              "AgentPadUITests/AgentPadUITests.swift",
-              ui_marker,
-              ui_test + "\n" + ui_marker
-          )
-
-      - name: Validate repair invariants
+      - name: Select newest Xcode and iPhone simulator
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check
-          test "$(grep -RFn --include='*.swift' 'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)' AgentPad | wc -l | tr -d ' ')" = "0"
-          grep -Fn 'static func resolvedForLaunch' AgentPad/Design/AgentTheme.swift
-          grep -Fn 'testThemeLaunchOverrideDoesNotReplacePersistedSelection' AgentPadUITests/AgentPadUITests.swift
-          echo '--- product diff ---'
-          git diff -- AgentPad/Design/AgentTheme.swift AgentPad/App/AgentPadApp.swift AgentPad/Views/AppRootView.swift AgentPad/Views/SettingsView.swift AgentPadTests/AgentRuntimeLifecycleTests.swift AgentPadUITests/AgentPadUITests.swift
+          NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
+          test -n "$NEWEST_XCODE"
+          sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
+          xcodebuild -version
+          UDID=$(xcrun simctl list -j devices available | jq -r '
+            [.devices
+              | to_entries[]
+              | select(.key | contains("iOS"))
+              | .value[]
+              | select(.isAvailable == true and (.name | startswith("iPhone")))]
+            | last
+            | .udid // empty
+          ')
+          if [ -z "$UDID" ]; then
+            DEVICE_TYPE=$(xcrun simctl list -j devicetypes | jq -r '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
+            test -n "$DEVICE_TYPE"
+            UDID=$(xcrun simctl create "NovaForge Theme CI" "$DEVICE_TYPE")
+          fi
+          echo "SIMULATOR_ID=$UDID" >> "$GITHUB_ENV"
+          echo "Using simulator $UDID"
 
-      - name: Commit product repair
+      - name: Build test bundle
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name 'NovaForge V14 Preview Worker'
-          git config user.email 'actions@users.noreply.github.com'
-          git add AgentPad/Design/AgentTheme.swift AgentPad/App/AgentPadApp.swift AgentPad/Views/AppRootView.swift AgentPad/Views/SettingsView.swift AgentPadTests/AgentRuntimeLifecycleTests.swift AgentPadUITests/AgentPadUITests.swift
-          git commit -m 'preview: preserve theme across launch overrides'
-          git push origin HEAD:agent/v14-preview-theme-durability-0810
+          rm -rf DerivedData/ThemeCI artifacts/theme-ci
+          mkdir -p artifacts/theme-ci
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath DerivedData/ThemeCI \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            NOVAFORGE_SOURCE_COMMIT="$(git rev-parse HEAD)" \
+            build-for-testing | tee artifacts/theme-ci/build.log
+          XCTESTRUN=$(find DerivedData/ThemeCI/Build/Products -maxdepth 1 -name 'AgentPad_*.xctestrun' -print | head -1)
+          test -n "$XCTESTRUN"
+          echo "XCTESTRUN=$XCTESTRUN" >> "$GITHUB_ENV"
+
+      - name: Run five-theme identity and relaunch durability tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          set +e
+          xcodebuild \
+            -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -parallel-testing-enabled NO \
+            -maximum-concurrent-test-simulator-destinations 1 \
+            -only-testing:AgentPadTests/AgentRuntimeLifecycleTests/testThemeWorldPalettesExposeRequiredReadableTokens \
+            -only-testing:AgentPadUITests/AgentPadUITests/testThemeLaunchOverrideDoesNotReplacePersistedSelection \
+            test-without-building | tee artifacts/theme-ci/test.log
+          status=${PIPESTATUS[0]}
+          set -e
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          exit "$status"
+
+      - name: Upload targeted diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-theme-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/theme-ci
+          if-no-files-found: warn
+          retention-days: 14
