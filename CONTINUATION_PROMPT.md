@@ -16,10 +16,11 @@ Start with tools, not a giant plan.
 6. Read `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`.
 7. Read `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md`.
 8. Read `docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md` and fresh-check upstream sources before treating any snapshot model/runtime fact as current.
-9. Read the relevant V13 Product Constitution / Agent Runtime Architecture / Design System / Roadmap sections for the feature you choose.
-10. Use GitHub issue #23 as live coordination context when useful, but live code/PRs outrank stale issue text.
-11. Choose the highest-value safe non-conflicting lane.
-12. Execute real work immediately.
+9. Read `docs/NOVAFORGE_V14_PREVIEW_AND_2_0_REWRITE_DIRECTIVE.md`. Until its pre-2.0 Preview Acceptance Constitution is genuinely closed, treat Preview closure as the immediate product flagship unless the current user explicitly overrides it.
+10. Read the relevant V13 Product Constitution / Agent Runtime Architecture / Design System / Roadmap sections for the feature you choose.
+11. Use GitHub issue #23 as live coordination context when useful, but live code/PRs outrank stale issue text.
+12. Choose the highest-value safe non-conflicting lane.
+13. Execute real work immediately.
 
 ## Product north star
 
@@ -32,6 +33,14 @@ The target loop is:
 The Composer + Plan Space are flagship product surfaces. Full Forge is a real autonomous mode that should eventually build, run, self-play/interact with supported generated projects, inspect evidence, repair defects, rerun regression/visual/accessibility/performance checks, and continue until a machine-readable Completion Constitution is genuinely satisfied or a real blocker remains.
 
 A model response is never proof of completion.
+
+## Current pre-2.0 Preview priority
+
+The user wants a polished, usable NovaForge Preview before waiting for every NovaForge 2.0 feature to close. The immediate release target is the normal agent harness with truthful working AI routes, strong Local AI, mature Forge Compact/RAM integration, all current themes, and a real five-stop effort control ending in **Ultra**. Near-done V14 features may join the Preview only when they can be fully integrated and quality-gated without destabilizing it.
+
+The current shell may be polished for this Preview but is not permanent architecture. Full NovaForge 2.0 should later rewrite/rethink the old menus, navigation, chat layout, composer, settings/control, run/history, generated-runtime/game/physics tooling and other legacy user-facing structures while preserving proven provider/security/local-model/domain truth and user data behind explicit migration boundaries.
+
+The complete scope and acceptance rules live in `docs/NOVAFORGE_V14_PREVIEW_AND_2_0_REWRITE_DIRECTIVE.md`.
 
 ## Local AI priority
 
