@@ -1,0 +1,255 @@
+name: V14 Preview theme durability integration
+
+on:
+  push:
+    branches:
+      - agent/v14-preview-theme-durability-0810
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-current-main:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-preview-theme-durability-0810
+          fetch-depth: 0
+
+      - name: Merge live main and correct permanent theme contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git config user.name 'NovaForge V14 Preview Worker'
+          git config user.email 'actions@users.noreply.github.com'
+          git merge --no-edit origin/main
+          MAIN_SHA=$(git rev-parse origin/main)
+
+          cat > scripts/verify_v14_preview_theme_contract.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+          theme="$repo_root/AgentPad/Design/AgentTheme.swift"
+          settings="$repo_root/AgentPad/Views/SettingsView.swift"
+          components="$repo_root/AgentPad/Views/SettingsComponents.swift"
+          app="$repo_root/AgentPad/App/AgentPadApp.swift"
+          root="$repo_root/AgentPad/Views/AppRootView.swift"
+          unit_tests="$repo_root/AgentPadTests/AgentRuntimeLifecycleTests.swift"
+          ui_tests="$repo_root/AgentPadUITests/AgentPadUITests.swift"
+
+          for path in "$theme" "$settings" "$components" "$app" "$root" "$unit_tests" "$ui_tests"; do
+            [[ -f "$path" ]] || { echo "Preview theme contract: missing ${path#$repo_root/}" >&2; exit 1; }
+          done
+
+          python3 - "$theme" "$settings" "$components" "$app" "$root" "$unit_tests" "$ui_tests" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          theme = Path(sys.argv[1]).read_text()
+          settings = Path(sys.argv[2]).read_text()
+          components = Path(sys.argv[3]).read_text()
+          app = Path(sys.argv[4]).read_text()
+          root = Path(sys.argv[5]).read_text()
+          unit_tests = Path(sys.argv[6]).read_text()
+          ui_tests = Path(sys.argv[7]).read_text()
+
+          expected = [
+              ("matrixRain", "Matrix Rain"),
+              ("midnightBlack", "Midnight Black"),
+              ("whiteGold", "White Gold"),
+              ("arcticGlass", "Arctic Glass"),
+              ("emberCore", "Ember Core"),
+          ]
+
+          header = theme.split('static let storageKey', 1)[0]
+          cases = re.findall(r'^\s*case\s+([A-Za-z0-9_]+)\s*$', header, flags=re.MULTILINE)
+          expected_cases = [case for case, _ in expected]
+          if cases != expected_cases:
+              raise SystemExit(f"expected exactly five canonical theme worlds {expected_cases}, found {cases}")
+
+          required_theme = [
+              'static let storageKey = "novaForgeTheme"',
+              'static let defaultTheme: AgentTheme = .midnightBlack',
+              'static func normalizeStoredTheme() -> AgentTheme',
+              'static func launchOverride(from arguments: [String]) -> AgentTheme?',
+              'static func resolvedForLaunch(',
+              'launchOverride(from: arguments) ?? resolved(from: storedRawValue)',
+              'return AgentTheme(rawValue: rawValue) ?? theme(matching: rawValue) ?? .defaultTheme',
+              'case .whiteGold: .light',
+              'default: .dark',
+          ]
+          for needle in required_theme:
+              if needle not in theme:
+                  raise SystemExit(f"missing theme persistence/resolution contract: {needle}")
+
+          for case, title in expected:
+              if f'case .{case}: "{title}"' not in theme:
+                  raise SystemExit(f"missing public title for {case}: {title}")
+
+          required_settings = [
+              '@AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue',
+              'ForEach(AgentTheme.allCases) { theme in',
+              'selectedThemeRawValue = theme.rawValue',
+              'AgentPalette.refreshThemeCache(theme)',
+              'AgentThemeUIKit.apply(theme)',
+              'AgentTheme.resolvedForLaunch(',
+              'storedRawValue: selectedThemeRawValue',
+          ]
+          for needle in required_settings:
+              if needle not in settings:
+                  raise SystemExit(f"missing Settings theme-selection contract: {needle}")
+
+          if '.accessibilityIdentifier("settingsThemeStudioCard-\\(theme.rawValue)")' not in components:
+              raise SystemExit('missing stable accessibility identity for theme studio cards')
+
+          required_app = [
+              '@AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue',
+              'let storedThemeRawValue = UserDefaults.standard.string(forKey: AgentTheme.storageKey)',
+              'let launchTheme = AgentTheme.resolvedForLaunch(',
+              'if AgentTheme.launchOverride(from: arguments) == nil {',
+              '_ = AgentTheme.normalizeStoredTheme()',
+              'AgentPalette.refreshThemeCache(launchTheme)',
+              'AgentThemeUIKit.apply(launchTheme)',
+              'let resetLaunchTheme = AgentTheme.resolvedForLaunch(',
+              'AgentPalette.refreshThemeCache(resetLaunchTheme)',
+              'AgentThemeUIKit.apply(resetLaunchTheme)',
+              '.preferredColorScheme(selectedTheme.preferredColorScheme)',
+          ]
+          for needle in required_app:
+              if needle not in app:
+                  raise SystemExit(f"missing app launch/relaunch theme contract: {needle}")
+
+          forbidden_persistence = 'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)'
+          if forbidden_persistence in app:
+              raise SystemExit('launch-only theme override must never replace the persisted user theme')
+
+          required_root = [
+              '.onChange(of: selectedThemeRawValue, initial: true)',
+              'let activeTheme = AgentTheme.resolvedForLaunch(',
+              'AgentPalette.refreshThemeCache(activeTheme)',
+              'AgentThemeUIKit.apply(activeTheme)',
+          ]
+          for needle in required_root:
+              if needle not in root:
+                  raise SystemExit(f"missing root active-launch theme contract: {needle}")
+
+          required_unit_proof = [
+              'func testThemeWorldPalettesExposeRequiredReadableTokens()',
+              'A launch-only theme override must affect the active launch without redefining the stored theme.',
+          ]
+          for needle in required_unit_proof:
+              if needle not in unit_tests:
+                  raise SystemExit(f"missing theme domain regression proof: {needle}")
+
+          required_ui_proof = [
+              'func testGoalMatrixChatReadabilityAndThemeSwitchingScreenshots() throws',
+              'func testThemeLaunchOverrideDoesNotReplacePersistedSelection() throws',
+              'settingsThemeStudioCard-matrixRain',
+              'settingsThemeStudioCard-midnightBlack',
+              'settingsThemeStudioCard-emberCore',
+              'settingsThemeStudioCard-whiteGold',
+              "A normal relaunch must restore the user's persisted theme after a temporary screenshot/test override.",
+          ]
+          for needle in required_ui_proof:
+              if needle not in ui_tests:
+                  raise SystemExit(f"missing interactive theme durability proof hook: {needle}")
+
+          print('Preview theme contract: five canonical worlds + persistent user selection + ephemeral launch overrides + relaunch regression proof')
+          PY
+          EOF
+          chmod +x scripts/verify_v14_preview_theme_contract.sh
+
+          cat > .github/workflows/v14-preview-theme-contract.yml <<'EOF'
+          name: V14 Preview theme contract
+
+          on:
+            pull_request:
+              paths:
+                - 'AgentPad/Design/AgentTheme.swift'
+                - 'AgentPad/Views/SettingsView.swift'
+                - 'AgentPad/Views/SettingsComponents.swift'
+                - 'AgentPad/Views/AppRootView.swift'
+                - 'AgentPad/App/AgentPadApp.swift'
+                - 'AgentPadTests/AgentRuntimeLifecycleTests.swift'
+                - 'AgentPadUITests/AgentPadUITests.swift'
+                - 'scripts/verify_v14_preview_theme_contract.sh'
+                - '.github/workflows/v14-preview-theme-contract.yml'
+            push:
+              branches:
+                - main
+              paths:
+                - 'AgentPad/Design/AgentTheme.swift'
+                - 'AgentPad/Views/SettingsView.swift'
+                - 'AgentPad/Views/SettingsComponents.swift'
+                - 'AgentPad/Views/AppRootView.swift'
+                - 'AgentPad/App/AgentPadApp.swift'
+                - 'AgentPadTests/AgentRuntimeLifecycleTests.swift'
+                - 'AgentPadUITests/AgentPadUITests.swift'
+                - 'scripts/verify_v14_preview_theme_contract.sh'
+                - '.github/workflows/v14-preview-theme-contract.yml'
+
+          permissions:
+            contents: read
+
+          jobs:
+            preview-theme-contract:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - name: Verify five-theme selection and relaunch durability
+                  run: bash scripts/verify_v14_preview_theme_contract.sh
+          EOF
+
+          cat > QA/v14-preview-theme-launch-override-durability-receipt.md <<EOF
+          # V14 Preview Theme Launch-Override Durability Receipt
+
+          Protocol: NF-SWARM-v14  
+          Worker: GPT56SOL-NF-V14-PREVIEW-THEME-0810  
+          Integrated base: \`main@${MAIN_SHA}\`  
+          Branch: \`agent/v14-preview-theme-durability-0810\`
+
+          ## Defect closed
+
+          The Preview's explicit \`--theme-world\` / \`--theme\` launch fixture previously wrote the override into \`AgentTheme.storageKey\`. A screenshot/test launch could therefore replace the user's persisted theme and make the following ordinary relaunch come back in the temporary fixture world.
+
+          The normal product contract is now split correctly:
+
+          - a user-selected theme remains persisted through the single \`novaForgeTheme\` key;
+          - an explicit launch override owns only the current process;
+          - the app root and Settings resolve the same active launch world without rewriting stored preference state;
+          - \`--reset-ui\` may reset the stored preference to the default by design, but any simultaneous theme-world override is still ephemeral.
+
+          ## Implementation
+
+          - \`AgentTheme.resolvedForLaunch(storedRawValue:arguments:)\` centralizes launch-only precedence.
+          - \`NovaForgeMainApp\` no longer persists \`launchTheme.rawValue\`; cold-launch normalization is retained for normal launches.
+          - reset fixture handling applies the override through cache/UIKit without storing it.
+          - \`AppRootView\` preserves the active override when \`@AppStorage\` initializes or changes.
+          - \`SettingsView\` reflects the active launch world while ordinary user taps continue to persist their chosen raw value.
+
+          ## Regression evidence
+
+          - Existing five-world identity/title/contrast coverage remains in \`testThemeWorldPalettesExposeRequiredReadableTokens\`.
+          - That unit coverage now proves an Ember stored value resolves to Ember normally and to White Gold only for an explicit White Gold launch.
+          - New UI journey \`testThemeLaunchOverrideDoesNotReplacePersistedSelection\` proves: persist Ember -> terminate -> launch temporary White Gold -> terminate -> ordinary relaunch restores Ember.
+          - The permanent \`verify_v14_preview_theme_contract.sh\` now rejects any reintroduction of \`UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)\` and requires both domain and UI relaunch proof hooks.
+
+          ## Convergence note
+
+          Main gained the first five-theme source contract while this production durability fix was underway. That initial guard required the launch override persistence write, so this lane updates the guard rather than bypassing it. The older five-theme receipt remains truthful for its historical exact commit; this receipt defines the corrected Preview durability contract from this integrated head onward.
+
+          ## Truth boundary
+
+          This receipt is source-contract and regression-test evidence. It does not claim fresh all-five iPhone 12 / iOS 27 screenshot acceptance, physical-device performance, or accessibility closure. Those remain separate release-candidate evidence gates.
+          EOF
+
+          bash scripts/verify_v14_preview_theme_contract.sh
+          git diff --check
+          git add scripts/verify_v14_preview_theme_contract.sh .github/workflows/v14-preview-theme-contract.yml QA/v14-preview-theme-launch-override-durability-receipt.md
+          git commit -m 'preview: make launch theme overrides ephemeral'
+          git push origin HEAD:agent/v14-preview-theme-durability-0810
