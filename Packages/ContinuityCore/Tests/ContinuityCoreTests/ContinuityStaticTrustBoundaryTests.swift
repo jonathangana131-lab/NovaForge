@@ -57,6 +57,7 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
         )
     }
 
+
     func testExternalConsumerCannotMintUserResumeAuthority() throws {
         let diagnostics = try typecheckExternalConsumer(
             named: "MintUserResumeAuthority.swift",
