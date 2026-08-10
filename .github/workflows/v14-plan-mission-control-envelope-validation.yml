@@ -1,0 +1,28 @@
+name: V14 Plan Mission Control Envelope Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-PLANMISSION-0809/exact-control-envelope/**
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Assert exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "8a743e8a97278f87870962747c64d0b2ce4735af"
+          git diff --check HEAD^
+
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -Xswiftc -warnings-as-errors
+
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -c release -Xswiftc -warnings-as-errors
