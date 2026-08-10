@@ -12,7 +12,8 @@ public enum Forge3DGenerator {
                 Forge3DGeneratedFile(path: "styles.css", contents: Forge3DTemplate.styles),
                 Forge3DGeneratedFile(path: "game.js", contents: Forge3DTemplate.script(for: blueprint)),
             ],
-            semanticCapabilities: [.localSave, .controller, .touch, .keyboard]
+            semanticCapabilities: [.localSave, .controller, .touch, .keyboard, .semanticAutomation],
+            semanticAutomation: Forge3DSemanticContract.descriptor
         )
     }
 
@@ -32,15 +33,15 @@ public enum Forge3DGenerator {
           <main id="scene-shell" aria-label="\#(safeTitle)">
             <canvas id="scene" role="img" aria-label="Interactive 3D driving scene"></canvas>
             <div id="status" class="status" role="status" aria-live="polite">Starting 3D scene</div>
-            <button id="pause" class="pause" type="button" aria-pressed="false" aria-label="Pause scene" data-novaforge-control="scene.pause-toggle">Ⅱ</button>
+            <button id="pause" class="pause" type="button" aria-pressed="false" aria-label="Pause scene" data-novaforge-control="\#(Forge3DSemanticContract.pauseControlID)">Ⅱ</button>
             <div id="joystick" class="joystick" role="group" tabindex="0" aria-label="Drive joystick. Drag up or down for throttle and left or right to steer.">
               <div id="joystick-knob" class="joystick-knob" aria-hidden="true"></div>
             </div>
             <div class="assistive-driving">
               <label for="accessible-throttle">Throttle</label>
-              <input id="accessible-throttle" type="range" min="-1" max="1" step="0.1" value="0" data-novaforge-action="drive.throttle">
+              <input id="accessible-throttle" type="range" min="-1" max="1" step="0.1" value="0" data-novaforge-action="\#(Forge3DSemanticContract.throttleActionID)">
               <label for="accessible-steer">Steering</label>
-              <input id="accessible-steer" type="range" min="-1" max="1" step="0.1" value="0" data-novaforge-action="drive.steer">
+              <input id="accessible-steer" type="range" min="-1" max="1" step="0.1" value="0" data-novaforge-action="\#(Forge3DSemanticContract.steeringActionID)">
             </div>
           </main>
           <script src="game.js" defer></script>
