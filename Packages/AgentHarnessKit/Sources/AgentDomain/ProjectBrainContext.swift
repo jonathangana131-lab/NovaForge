@@ -95,8 +95,78 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
     }
 }
 
+public enum ProjectBrainTrustedSnapshotError: Error, Equatable, Sendable {
+    case invalidRevision
+    case invalidAuthorityReceiptID
+    case tooManyFacts(actual: Int, maximum: Int)
+    case crossProjectFact(ProjectBrainFactID)
+    case invalidFact(ProjectBrainFactID, ProjectBrainValidationError)
+    case duplicateFactID(ProjectBrainFactID)
+}
+
+/// Host-authenticated whole-subject Project Brain input for authoritative context selection.
+///
+/// Public/Codable `ProjectBrainFact` values are candidate transport. Their provenance labels are
+/// structurally validated, but they do not authenticate that a user, source file, runtime, test,
+/// or checkpoint actually produced the fact. Construction is therefore module-internal. A future
+/// canonical Project Brain store/host adapter must authenticate the complete fact set and mint this
+/// non-Codable binding before downstream retrieval may produce an authority-bearing context slice.
+public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
+    public static let maximumFacts = 16_384
+
+    public let projectID: ProjectID
+    public let revision: UInt64
+    public let authorityReceiptID: String
+    public let facts: [ProjectBrainFact]
+
+    init(
+        authenticatedProjectID projectID: ProjectID,
+        revision: UInt64,
+        authorityReceiptID: String,
+        facts: [ProjectBrainFact]
+    ) throws {
+        guard revision > 0 else {
+            throw ProjectBrainTrustedSnapshotError.invalidRevision
+        }
+        let canonicalReceipt = authorityReceiptID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard authorityReceiptID == canonicalReceipt,
+              !authorityReceiptID.isEmpty,
+              authorityReceiptID.utf8.count <= 512,
+              authorityReceiptID.unicodeScalars.allSatisfy({
+                  !CharacterSet.controlCharacters.contains($0)
+              }) else {
+            throw ProjectBrainTrustedSnapshotError.invalidAuthorityReceiptID
+        }
+        guard facts.count <= Self.maximumFacts else {
+            throw ProjectBrainTrustedSnapshotError.tooManyFacts(
+                actual: facts.count,
+                maximum: Self.maximumFacts
+            )
+        }
+
+        var seenFactIDs = Set<ProjectBrainFactID>()
+        for fact in facts {
+            guard fact.projectID == projectID else {
+                throw ProjectBrainTrustedSnapshotError.crossProjectFact(fact.factID)
+            }
+            guard seenFactIDs.insert(fact.factID).inserted else {
+                throw ProjectBrainTrustedSnapshotError.duplicateFactID(fact.factID)
+            }
+            if let validationError = fact.validationError {
+                throw ProjectBrainTrustedSnapshotError.invalidFact(fact.factID, validationError)
+            }
+        }
+
+        self.projectID = projectID
+        self.revision = revision
+        self.authorityReceiptID = authorityReceiptID
+        self.facts = facts
+    }
+}
+
 public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case invalidRequest(ProjectBrainContextRequestValidationError)
+    case trustedSnapshotProjectMismatch
     case invalidFact(ProjectBrainFactID, ProjectBrainValidationError)
     case duplicateFactID(ProjectBrainFactID)
     case candidateFactLimitExceeded(actual: Int, maximum: Int)
@@ -106,9 +176,15 @@ public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case requiredFactsExceedCharacterBudget(required: Int, maximum: Int)
 }
 
+/// Context derived from a module-authenticated Project Brain snapshot.
+///
+/// This value is deliberately non-Codable so relaunch/restore must reacquire current Project Brain
+/// authority and re-run selection rather than replay a previously derived context as accepted truth.
 public struct ProjectBrainContextSlice: Equatable, Sendable {
     public let projectID: ProjectID
     public let missionID: MissionID?
+    public let snapshotRevision: UInt64
+    public let snapshotAuthorityReceiptID: String
     public let facts: [ProjectBrainFact]
     public let budgetOmittedFactIDs: [ProjectBrainFactID]
     public let matchedFactCount: Int
@@ -118,6 +194,8 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
     init(
         projectID: ProjectID,
         missionID: MissionID?,
+        snapshotRevision: UInt64,
+        snapshotAuthorityReceiptID: String,
         facts: [ProjectBrainFact],
         budgetOmittedFactIDs: [ProjectBrainFactID],
         matchedFactCount: Int,
@@ -126,6 +204,8 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
     ) {
         self.projectID = projectID
         self.missionID = missionID
+        self.snapshotRevision = snapshotRevision
+        self.snapshotAuthorityReceiptID = snapshotAuthorityReceiptID
         self.facts = facts
         self.budgetOmittedFactIDs = budgetOmittedFactIDs
         self.matchedFactCount = matchedFactCount
@@ -139,9 +219,41 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
 public enum ProjectBrainContextSelector {
     public static let maximumCandidateFacts = 4_096
 
+    /// Authoritative selection accepts only a module-authenticated whole Project Brain subject.
     public static func select(
+        from snapshot: ProjectBrainTrustedSnapshot,
+        request: ProjectBrainContextRequest
+    ) throws -> ProjectBrainContextSlice {
+        guard snapshot.projectID == request.projectID else {
+            throw ProjectBrainContextSelectionError.trustedSnapshotProjectMismatch
+        }
+        return try selectCandidateFacts(
+            snapshot.facts,
+            request: request,
+            snapshotRevision: snapshot.revision,
+            snapshotAuthorityReceiptID: snapshot.authorityReceiptID
+        )
+    }
+
+    /// Internal structural selector retained for package tests and future authenticated adapters.
+    /// External consumers cannot turn public/Codable fact arrays into accepted context through it.
+    static func select(
         from facts: [ProjectBrainFact],
         request: ProjectBrainContextRequest
+    ) throws -> ProjectBrainContextSlice {
+        try selectCandidateFacts(
+            facts,
+            request: request,
+            snapshotRevision: 0,
+            snapshotAuthorityReceiptID: "internal-candidate-only"
+        )
+    }
+
+    private static func selectCandidateFacts(
+        _ facts: [ProjectBrainFact],
+        request: ProjectBrainContextRequest,
+        snapshotRevision: UInt64,
+        snapshotAuthorityReceiptID: String
     ) throws -> ProjectBrainContextSlice {
         if let error = request.validationError {
             throw ProjectBrainContextSelectionError.invalidRequest(error)
@@ -266,6 +378,8 @@ public enum ProjectBrainContextSelector {
         return ProjectBrainContextSlice(
             projectID: request.projectID,
             missionID: request.missionID,
+            snapshotRevision: snapshotRevision,
+            snapshotAuthorityReceiptID: snapshotAuthorityReceiptID,
             facts: selected,
             budgetOmittedFactIDs: omitted,
             matchedFactCount: candidates.count,
