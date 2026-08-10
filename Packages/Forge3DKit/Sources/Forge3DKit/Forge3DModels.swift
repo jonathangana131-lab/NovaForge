@@ -201,19 +201,33 @@ public struct Forge3DGeneratedProject: Equatable, Sendable {
     public let semanticCapabilities: Set<Forge3DSemanticCapability>
     public let semanticAutomation: Forge3DSemanticAutomationDescriptor?
 
+    /// Public construction remains fail-closed for semantic automation. Only the package-owned
+    /// generator can bind the canonical descriptor to the exact generated HTML/JavaScript contract.
     public init(
         blueprint: Forge3DBlueprint,
         entryPath: String,
         files: [Forge3DGeneratedFile],
-        semanticCapabilities: Set<Forge3DSemanticCapability>,
-        semanticAutomation: Forge3DSemanticAutomationDescriptor? = nil
+        semanticCapabilities: Set<Forge3DSemanticCapability>
     ) {
         var normalizedCapabilities = semanticCapabilities
-        if semanticAutomation == nil {
-            normalizedCapabilities.remove(.semanticAutomation)
-        } else {
-            normalizedCapabilities.insert(.semanticAutomation)
-        }
+        normalizedCapabilities.remove(.semanticAutomation)
+
+        self.blueprint = blueprint
+        self.entryPath = entryPath
+        self.files = files
+        self.semanticCapabilities = normalizedCapabilities
+        self.semanticAutomation = nil
+    }
+
+    init(
+        blueprint: Forge3DBlueprint,
+        entryPath: String,
+        files: [Forge3DGeneratedFile],
+        semanticCapabilities: Set<Forge3DSemanticCapability>,
+        semanticAutomation: Forge3DSemanticAutomationDescriptor
+    ) {
+        var normalizedCapabilities = semanticCapabilities
+        normalizedCapabilities.insert(.semanticAutomation)
 
         self.blueprint = blueprint
         self.entryPath = entryPath
