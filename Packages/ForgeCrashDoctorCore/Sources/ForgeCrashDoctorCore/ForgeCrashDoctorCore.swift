@@ -8,6 +8,7 @@ public enum ForgeCrashValidationError: Error, Equatable, Sendable {
     case tooManyStackFrames(Int)
     case tooManyConsoleEntries(Int)
     case tooManyRecentActions(Int)
+    case tooManyRepairAttempts(Int)
     case nonMonotonicSequence(field: String)
     case invalidArtifactIdentity
 }
@@ -22,6 +23,7 @@ private enum ForgeCrashLimits {
     static let stackFrames = 64
     static let consoleEntries = 100
     static let recentActions = 32
+    static let repairAttempts = 128
 
     static func required(_ value: String, field: String, maximum: Int) throws -> String {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -319,9 +321,9 @@ public struct ForgeCrashRepeatKey: Codable, Hashable, Sendable {
 
         return ForgeCrashRepeatKey(
             kind: incident.kind,
-            sourceFile: sourceFile?.lowercased(),
+            sourceFile: sourceFile,
             sourceLine: sourceLine,
-            topStackSymbol: topStackSymbol?.lowercased(),
+            topStackSymbol: topStackSymbol,
             fallbackMessage: hasStructuralLocation ? nil : normalizeFallbackMessage(incident.message)
         )
     }
@@ -363,8 +365,43 @@ public struct ForgeCrashRepairAttempt: Codable, Hashable, Sendable {
         self.repeatKey = repeatKey
         self.failureKind = failureKind
     }
+
+    private enum CodingKeys: String, CodingKey { case sequence, incidentID, repeatKey, failureKind }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            sequence: container.decode(Int.self, forKey: .sequence),
+            incidentID: container.decode(String.self, forKey: .incidentID),
+            repeatKey: container.decode(ForgeCrashRepeatKey.self, forKey: .repeatKey),
+            failureKind: container.decode(ForgeCrashRepairFailureKind.self, forKey: .failureKind)
+        )
+    }
 }
 
+/// Ordered durable candidate history. Validation prevents duplicate, reordered, or unbounded failure records
+/// from silently changing retry budgets after relaunch.
+public struct ForgeCrashRepairHistory: Codable, Hashable, Sendable {
+    public let attempts: [ForgeCrashRepairAttempt]
+
+    public init(attempts: [ForgeCrashRepairAttempt] = []) throws {
+        guard attempts.count <= ForgeCrashLimits.repairAttempts else {
+            throw ForgeCrashValidationError.tooManyRepairAttempts(attempts.count)
+        }
+        try ForgeCrashLimits.monotonic(attempts.map(\.sequence), field: "repair.sequence")
+        self.attempts = attempts
+    }
+
+    private enum CodingKeys: String, CodingKey { case attempts }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(attempts: container.decode([ForgeCrashRepairAttempt].self, forKey: .attempts))
+    }
+}
+
+/// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own
+/// output as verification success; completion remains owned by runtime/test evidence.
 public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
     public let maximumFocusedFailuresPerRepeatKey: Int
     public let maximumTotalFailuresBeforeBlocker: Int
@@ -381,6 +418,18 @@ public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
         }
         self.maximumFocusedFailuresPerRepeatKey = maximumFocusedFailuresPerRepeatKey
         self.maximumTotalFailuresBeforeBlocker = maximumTotalFailuresBeforeBlocker
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case maximumFocusedFailuresPerRepeatKey, maximumTotalFailuresBeforeBlocker
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            maximumFocusedFailuresPerRepeatKey: container.decode(Int.self, forKey: .maximumFocusedFailuresPerRepeatKey),
+            maximumTotalFailuresBeforeBlocker: container.decode(Int.self, forKey: .maximumTotalFailuresBeforeBlocker)
+        )
     }
 }
 
@@ -401,12 +450,12 @@ public struct ForgeCrashRepairSubmission: Hashable, Sendable {
 public enum ForgeCrashTriage {
     public static func makeSubmission(
         for trustedIncident: ForgeCrashTrustedIncident,
-        failedAttempts: [ForgeCrashRepairAttempt],
+        failedHistory: ForgeCrashRepairHistory,
         policy: ForgeCrashRetryPolicy
     ) -> ForgeCrashRepairSubmission {
         let repeatKey = ForgeCrashRepeatKey.derive(from: trustedIncident.incident)
-        let totalFailures = failedAttempts.count
-        let repeatedFailures = failedAttempts.lazy.filter { $0.repeatKey == repeatKey }.count
+        let totalFailures = failedHistory.attempts.count
+        let repeatedFailures = failedHistory.attempts.lazy.filter { $0.repeatKey == repeatKey }.count
 
         let nextAction: ForgeCrashNextAction
         if totalFailures >= policy.maximumTotalFailuresBeforeBlocker {
