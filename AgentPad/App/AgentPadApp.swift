@@ -1456,7 +1456,7 @@ struct NovaForgeMainApp: App {
             if let launchTheme = AgentTheme.launchOverride(from: arguments) {
                 UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)
             }
-            AgentPalette.refreshThemeCache(AgentTheme.current)
+            AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())
             AgentThemeUIKit.apply(AgentTheme.current)
             UserDefaults.standard.removeObject(forKey: LaunchConversationSelection.persistedSelectionKey)
             UserDefaults.standard.removeObject(forKey: AgentRunPreferenceStore.effortKey)
