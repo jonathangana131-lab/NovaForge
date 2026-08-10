@@ -30,8 +30,15 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Apply fail-closed provider-send patch
-        run: python3 scripts/apply_preview_forgecompact_provider_send_patch.py
+      - name: Ensure provider-send patch is applied
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Fq 'let forgeCompactPlan = AgentForgeCompactCheckpointPlanner.plan(' AgentPad/Services/AgentCanonicalContextPreparer.swift; then
+            echo 'Provider-send patch already present on branch head.'
+          else
+            python3 scripts/apply_preview_forgecompact_provider_send_patch.py
+          fi
 
       - name: Diff hygiene
         run: git diff --check
@@ -85,10 +92,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/zz-preview-forgecompact-provider-send-once.yml
-          rm scripts/apply_preview_forgecompact_provider_send_patch.py
+          rm -f .github/workflows/zz-preview-forgecompact-provider-send-once.yml
+          rm -f scripts/apply_preview_forgecompact_provider_send_patch.py
           git add -A
+          if git diff --cached --quiet; then
+            echo 'No post-validation cleanup commit needed.'
+            exit 0
+          fi
           git config user.name 'NovaForge Swarm'
           git config user.email 'actions@users.noreply.github.com'
-          git commit -m 'Wire Forge Compact into canonical provider send'
+          git commit -m 'Validate Forge Compact canonical provider send'
           git push origin HEAD:agent/preview-forgecompact-provider-send
