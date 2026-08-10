@@ -4,9 +4,12 @@ import XCTest
 final class SpeculativeDecodingTruthTests: XCTestCase {
     private let digestA = String(repeating: "a", count: 64)
     private let digestB = String(repeating: "b", count: 64)
-    private let outputDigest = String(repeating: "c", count: 64)
+    private let digestC = String(repeating: "c", count: 64)
+    private let digestD = String(repeating: "d", count: 64)
+    private let digestE = String(repeating: "e", count: 64)
+    private let outputDigest = String(repeating: "f", count: 64)
 
-    func testValidLocalDraftPairIsEligibleForTrial() {
+    func testValidLocalDraftPairIsStructurallyEligibleForTrial() {
         let result = SpeculativeTrialValidator.evaluate(
             configuration: configuration(),
             declaration: declaration()
@@ -46,20 +49,28 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
         XCTAssertEqual(result.rejections, [.localOnlyViolation])
     }
 
-    func testDraftModelRequiresDrafter() {
-        let result = SpeculativeTrialValidator.evaluate(
+    func testDraftModelRequiresDrafterAndDrafterRuntimeConfiguration() {
+        let missingDrafter = SpeculativeTrialValidator.evaluate(
             configuration: configuration(includeDrafter: false),
             declaration: declaration()
         )
+        XCTAssertFalse(missingDrafter.isEligible)
+        XCTAssertEqual(missingDrafter.rejections, [.missingDrafter])
 
-        XCTAssertFalse(result.isEligible)
-        XCTAssertEqual(result.rejections, [.missingDrafter])
+        let missingRuntimeConfig = SpeculativeTrialValidator.evaluate(
+            configuration: configuration(drafterRuntimeConfigurationSHA256: nil),
+            declaration: declaration()
+        )
+        XCTAssertFalse(missingRuntimeConfig.isEligible)
+        XCTAssertEqual(missingRuntimeConfig.rejections, [.missingDrafterRuntimeConfiguration])
     }
 
-    func testDraftlessMechanismRejectsUnexpectedDrafter() {
+    func testDraftlessMechanismRejectsUnexpectedDrafterAndRuntimeConfiguration() {
         let config = SpeculativeDecodingConfiguration(
             verifier: participant(profile: "target-profile"),
             drafter: participant(profile: "draft-profile"),
+            verifierRuntimeConfigurationSHA256: digestC,
+            drafterRuntimeConfigurationSHA256: digestD,
             mechanismID: "ngram-simple",
             capabilityDeclarationRevision: "source-rev-1",
             kind: .ngram,
@@ -83,7 +94,7 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
         )
 
         XCTAssertFalse(result.isEligible)
-        XCTAssertEqual(result.rejections, [.unexpectedDrafter])
+        XCTAssertEqual(result.rejections, [.unexpectedDrafter, .unexpectedDrafterRuntimeConfiguration])
     }
 
     func testExactRuntimeRevisionMustMatchDeclaration() {
@@ -106,18 +117,7 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
     }
 
     func testConfigurationMustBindExactCapabilityDeclarationRevision() {
-        let config = SpeculativeDecodingConfiguration(
-            verifier: participant(profile: "target-profile"),
-            drafter: participant(profile: "draft-profile"),
-            mechanismID: "draft-simple",
-            capabilityDeclarationRevision: "source-rev-stale",
-            kind: .draftModel,
-            maximumDraftTokens: 4,
-            contextTokens: 4_096,
-            promptContractSHA256: digestB,
-            privacyPolicy: .localOnly
-        )
-
+        let config = configuration(capabilityDeclarationRevision: "source-rev-stale")
         let result = SpeculativeTrialValidator.evaluate(
             configuration: config,
             declaration: declaration()
@@ -154,92 +154,167 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
         XCTAssertEqual(result.rejections, [.draftLimitExceeded])
     }
 
-    func testPromotionRejectsReceiptFromDifferentConfiguration() {
+    func testTrialRejectsMalformedExactRuntimeConfigurationFingerprint() {
+        let result = SpeculativeTrialValidator.evaluate(
+            configuration: configuration(verifierRuntimeConfigurationSHA256: "not-a-digest"),
+            declaration: declaration()
+        )
+
+        XCTAssertFalse(result.isEligible)
+        XCTAssertEqual(result.rejections, [.malformedFingerprint])
+    }
+
+    func testComparisonRejectsReceiptFromDifferentCandidateConfiguration() {
         let expected = configuration()
         let observed = configuration(contextTokens: 8_192)
-        let result = SpeculativePromotionEvaluator.evaluate(
+        let result = SpeculativeComparisonEvaluator.evaluate(
             configuration: expected,
+            baselineConfiguration: baseline(),
             declaration: declaration(),
             receipt: receipt(configuration: observed)
         )
 
+        XCTAssertFalse(result.isLatencyCandidate)
         XCTAssertFalse(result.isPromotable)
         XCTAssertEqual(result.rejections, [.comparisonProfileMismatch])
         XCTAssertNil(result.measuredSpeedupRatio)
     }
 
-    func testStrictPromotionRejectsOutputDivergence() {
-        let result = SpeculativePromotionEvaluator.evaluate(
+    func testComparisonRejectsReceiptFromDifferentExpectedBaselineConfiguration() {
+        let expectedBaseline = baseline()
+        let observedBaseline = baseline(verifierRuntimeConfigurationSHA256: digestA)
+        let result = SpeculativeComparisonEvaluator.evaluate(
             configuration: configuration(),
+            baselineConfiguration: expectedBaseline,
             declaration: declaration(),
+            receipt: receipt(baselineConfiguration: observedBaseline)
+        )
+
+        XCTAssertFalse(result.isLatencyCandidate)
+        XCTAssertEqual(result.rejections, [.baselineProfileMismatch])
+        XCTAssertNil(result.measuredSpeedupRatio)
+    }
+
+    func testComparisonRejectsBaselineThatChangesTargetOrPromptWorkload() {
+        let mismatchedBaseline = baseline(
+            verifier: participant(profile: "different-target"),
+            promptContractSHA256: digestE
+        )
+        let result = SpeculativeComparisonEvaluator.evaluate(
+            configuration: configuration(),
+            baselineConfiguration: mismatchedBaseline,
+            declaration: declaration(),
+            receipt: receipt(baselineConfiguration: mismatchedBaseline)
+        )
+
+        XCTAssertFalse(result.isLatencyCandidate)
+        XCTAssertEqual(result.rejections, [.baselineProfileMismatch])
+    }
+
+    func testStrictComparisonRejectsOutputDivergence() {
+        let result = assessment(
             receipt: receipt(speculativeOutputSHA256: digestA)
         )
 
+        XCTAssertFalse(result.isLatencyCandidate)
         XCTAssertFalse(result.isPromotable)
         XCTAssertEqual(result.rejections, [.outputDiverged])
         XCTAssertEqual(result.measuredSpeedupRatio ?? .nan, 1.25, accuracy: 0.000_001)
     }
 
-    func testPromotionRejectsSlowdownEvenWithPassingCases() {
-        let result = SpeculativePromotionEvaluator.evaluate(
-            configuration: configuration(),
-            declaration: declaration(),
+    func testComparisonRejectsSlowdownEvenWithPassingCases() {
+        let result = assessment(
             receipt: receipt(
                 baselineDurationNanoseconds: 800,
                 speculativeDurationNanoseconds: 1_000
             )
         )
 
-        XCTAssertFalse(result.isPromotable)
+        XCTAssertFalse(result.isLatencyCandidate)
         XCTAssertEqual(result.rejections, [.slowerThanBaseline])
         XCTAssertEqual(result.measuredSpeedupRatio ?? .nan, 0.8, accuracy: 0.000_001)
     }
 
-    func testPromotionRejectsObservedFailures() {
-        let result = SpeculativePromotionEvaluator.evaluate(
-            configuration: configuration(),
-            declaration: declaration(),
+    func testComparisonRejectsObservedFailures() {
+        let result = assessment(
             receipt: receipt(successfulCases: 3, failedCases: 1)
         )
 
-        XCTAssertFalse(result.isPromotable)
+        XCTAssertFalse(result.isLatencyCandidate)
         XCTAssertEqual(result.rejections, [.failuresObserved])
     }
 
-    func testPromotionRejectsInvalidAcceptedDraftCount() {
-        let result = SpeculativePromotionEvaluator.evaluate(
-            configuration: configuration(),
-            declaration: declaration(),
+    func testComparisonRejectsInvalidAcceptedDraftCount() {
+        let result = assessment(
             receipt: receipt(proposedDraftTokens: 4, acceptedDraftTokens: 5)
         )
 
-        XCTAssertFalse(result.isPromotable)
+        XCTAssertFalse(result.isLatencyCandidate)
         XCTAssertEqual(result.rejections, [.invalidMeasurement])
         XCTAssertNil(result.measuredSpeedupRatio)
     }
 
-    func testPromotionRejectsReceiptThatNeverProposedDraftTokens() {
-        let result = SpeculativePromotionEvaluator.evaluate(
-            configuration: configuration(),
-            declaration: declaration(),
+    func testComparisonRejectsReceiptThatNeverProposedDraftTokens() {
+        let result = assessment(
             receipt: receipt(proposedDraftTokens: 0, acceptedDraftTokens: 0)
         )
 
-        XCTAssertFalse(result.isPromotable)
+        XCTAssertFalse(result.isLatencyCandidate)
         XCTAssertEqual(result.rejections, [.invalidMeasurement])
         XCTAssertNil(result.measuredSpeedupRatio)
     }
 
-    func testExactMeasuredComparisonCanBecomePromotable() {
+    func testComparisonRequiresExactWorkloadAndEnvironmentFingerprints() {
+        let malformedWorkload = assessment(
+            receipt: receipt(workloadManifestSHA256: "suite-label")
+        )
+        XCTAssertFalse(malformedWorkload.isLatencyCandidate)
+        XCTAssertEqual(malformedWorkload.rejections, [.malformedFingerprint])
+
+        let malformedEnvironment = assessment(
+            receipt: receipt(measurementEnvironmentSHA256: "iphone13,2-ios27")
+        )
+        XCTAssertFalse(malformedEnvironment.isLatencyCandidate)
+        XCTAssertEqual(malformedEnvironment.rejections, [.malformedFingerprint])
+    }
+
+    func testExactMeasuredComparisonIsOnlyResearchLatencyCandidate() {
+        let result = assessment(receipt: receipt())
+
+        XCTAssertTrue(result.isLatencyCandidate)
+        XCTAssertFalse(result.isPromotable)
+        XCTAssertTrue(result.rejections.isEmpty)
+        XCTAssertEqual(result.authority, .researchLatencyCandidateOnly)
+        XCTAssertEqual(result.measuredSpeedupRatio ?? .nan, 1.25, accuracy: 0.000_001)
+    }
+
+    func testCallerWeakenedPolicyCanNeverCreatePromotionAuthority() {
+        let permissive = SpeculativeComparisonPolicy(
+            minimumSuccessfulCases: 1,
+            maximumFailedCases: .max,
+            minimumSpeedupRatio: 1,
+            requiresExactOutputParity: false
+        )
+        let result = assessment(
+            receipt: receipt(successfulCases: 1, failedCases: 2),
+            policy: permissive
+        )
+
+        XCTAssertTrue(result.isLatencyCandidate)
+        XCTAssertFalse(result.isPromotable)
+        XCTAssertEqual(result.authority, .researchLatencyCandidateOnly)
+    }
+
+    func testLegacyPromotionEvaluatorAlsoFailsClosedForProductPromotion() {
         let result = SpeculativePromotionEvaluator.evaluate(
             configuration: configuration(),
+            baselineConfiguration: baseline(),
             declaration: declaration(),
             receipt: receipt()
         )
 
-        XCTAssertTrue(result.isPromotable)
-        XCTAssertTrue(result.rejections.isEmpty)
-        XCTAssertEqual(result.measuredSpeedupRatio ?? .nan, 1.25, accuracy: 0.000_001)
+        XCTAssertTrue(result.isLatencyCandidate)
+        XCTAssertFalse(result.isPromotable)
     }
 
     private func participant(
@@ -259,22 +334,51 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
     private func configuration(
         drafter: SpeculativeParticipantIdentity? = nil,
         includeDrafter: Bool = true,
+        verifierRuntimeConfigurationSHA256: String? = nil,
+        drafterRuntimeConfigurationSHA256: String?? = .some(nil),
+        capabilityDeclarationRevision: String = "source-rev-1",
         maximumDraftTokens: UInt16 = 4,
         contextTokens: UInt64 = 4_096
     ) -> SpeculativeDecodingConfiguration {
         let resolvedDrafter = includeDrafter
             ? (drafter ?? participant(profile: "draft-profile"))
             : nil
+        let resolvedDrafterRuntimeConfiguration: String?
+        switch drafterRuntimeConfigurationSHA256 {
+        case .some(.some(let explicit)):
+            resolvedDrafterRuntimeConfiguration = explicit
+        case .some(.none):
+            resolvedDrafterRuntimeConfiguration = includeDrafter ? digestD : nil
+        case .none:
+            resolvedDrafterRuntimeConfiguration = nil
+        }
 
         return SpeculativeDecodingConfiguration(
             verifier: participant(profile: "target-profile"),
             drafter: resolvedDrafter,
+            verifierRuntimeConfigurationSHA256: verifierRuntimeConfigurationSHA256 ?? digestC,
+            drafterRuntimeConfigurationSHA256: resolvedDrafterRuntimeConfiguration,
             mechanismID: "draft-simple",
-            capabilityDeclarationRevision: "source-rev-1",
+            capabilityDeclarationRevision: capabilityDeclarationRevision,
             kind: .draftModel,
             maximumDraftTokens: maximumDraftTokens,
             contextTokens: contextTokens,
             promptContractSHA256: digestB,
+            privacyPolicy: .localOnly
+        )
+    }
+
+    private func baseline(
+        verifier: SpeculativeParticipantIdentity? = nil,
+        verifierRuntimeConfigurationSHA256: String? = nil,
+        contextTokens: UInt64 = 4_096,
+        promptContractSHA256: String? = nil
+    ) -> SpeculativeBaselineConfiguration {
+        SpeculativeBaselineConfiguration(
+            verifier: verifier ?? participant(profile: "target-profile"),
+            verifierRuntimeConfigurationSHA256: verifierRuntimeConfigurationSHA256 ?? digestE,
+            contextTokens: contextTokens,
+            promptContractSHA256: promptContractSHA256 ?? digestB,
             privacyPolicy: .localOnly
         )
     }
@@ -294,18 +398,23 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
 
     private func receipt(
         configuration: SpeculativeDecodingConfiguration? = nil,
+        baselineConfiguration: SpeculativeBaselineConfiguration? = nil,
+        workloadManifestSHA256: String? = nil,
         speculativeOutputSHA256: String? = nil,
         baselineDurationNanoseconds: UInt64 = 1_000,
         speculativeDurationNanoseconds: UInt64 = 800,
         proposedDraftTokens: UInt64 = 100,
         acceptedDraftTokens: UInt64 = 70,
         successfulCases: UInt32 = 3,
-        failedCases: UInt32 = 0
+        failedCases: UInt32 = 0,
+        measurementEnvironmentSHA256: String? = nil
     ) -> SpeculativeComparisonReceipt {
         SpeculativeComparisonReceipt(
             configuration: configuration ?? self.configuration(),
+            baselineConfiguration: baselineConfiguration ?? baseline(),
             workloadSuiteID: "nova-coding-smoke",
             workloadRevision: "suite-rev-1",
+            workloadManifestSHA256: workloadManifestSHA256 ?? digestC,
             baselineRunID: "baseline-1",
             speculativeRunID: "spec-1",
             baselineOutputSHA256: outputDigest,
@@ -316,7 +425,20 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
             acceptedDraftTokens: acceptedDraftTokens,
             successfulCases: successfulCases,
             failedCases: failedCases,
-            measurementEnvironmentID: "iphone13,2-ios27-runtime-rev1"
+            measurementEnvironmentSHA256: measurementEnvironmentSHA256 ?? digestD
+        )
+    }
+
+    private func assessment(
+        receipt: SpeculativeComparisonReceipt,
+        policy: SpeculativeComparisonPolicy = .conservativeV1
+    ) -> SpeculativeComparisonAssessment {
+        SpeculativeComparisonEvaluator.evaluate(
+            configuration: configuration(),
+            baselineConfiguration: baseline(),
+            declaration: declaration(),
+            receipt: receipt,
+            policy: policy
         )
     }
 }
