@@ -51,6 +51,8 @@ A dedicated guard was added at `scripts/verify_v14_preview_effort_contract.sh` p
 
 This worker does not have the macOS/iOS Simulator runtime required for real iPhone 12 / iOS 27 visual interaction evidence. No Simulator screenshot, animation, physical-device, or full Preview acceptance claim is made here. The change must be included in the broader release-candidate Simulator/theme/accessibility sweep.
 
-## Coordination blocker
+## Coordination / integration note
 
-Attempts to post the issue #23 claim and create the draft PR were rejected by GitHub's temporary REST secondary content-creation rate limit (HTTP 403) on 2026-08-10 around 10:32-10:33 UTC. Repository branch/file writes remained available, so all code, guards, and this receipt were persisted. A later worker should create the draft PR from this exact branch when the GitHub PR endpoint accepts writes; do not duplicate the lane.
+Attempts to post the issue #23 claim and create a draft PR were repeatedly rejected by GitHub's temporary REST secondary content-creation rate limit (HTTP 403) between about 10:32 and 10:37 UTC on 2026-08-10. Repository branch/file writes remained available, so the code, guard, and evidence are durable.
+
+If the exact recorded main base is still current, this narrow reviewed branch may be integrated only by a **non-force fast-forward** so GitHub rejects the write automatically if another worker moved main. The workflow added in this branch is push-triggered on main, so its result should be checked after integration. If the fast-forward cannot be performed safely, leave this branch for a later worker to open as a PR; do not duplicate the lane.
