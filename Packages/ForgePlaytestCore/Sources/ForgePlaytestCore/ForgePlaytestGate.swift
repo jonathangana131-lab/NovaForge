@@ -226,10 +226,10 @@ public enum ForgePlaytestGateEvaluator {
             }
         }
 
-        // Severe defects are already-known source-revision truth even when the journey that found
-        // them failed or was interrupted. Surface those actionable defects before generic evidence
-        // blockers so Full Forge repairs known damage instead of looping on a missing-completion
-        // symptom. Completed-only qualification above remains unchanged.
+        // This module-internal primitive preserves severe defects as repair candidates ahead of
+        // generic evidence blockers. The public evidence gate is responsible for authenticating
+        // every repair-threshold defect before delegating here. Completed-only qualification above
+        // remains unchanged.
         let repairItems = results.flatMap { result in
             result.defects.compactMap { defect -> ForgePlaytestRepairItem? in
                 guard defect.severity >= policy.repairThreshold else { return nil }
