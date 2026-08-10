@@ -43,7 +43,11 @@ public struct AgentForgeCompactCheckpointPlan: Equatable, Sendable {
     }
 
     public var estimatedSavedUTF8Bytes: Int {
-        max(0, sourceTextUTF8Bytes - checkpointSummaryUTF8Bytes)
+        let result = sourceTextUTF8Bytes.subtractingReportingOverflow(
+            checkpointSummaryUTF8Bytes
+        )
+        guard !result.overflow else { return 0 }
+        return max(0, result.partialValue)
     }
 }
 
@@ -62,7 +66,12 @@ public enum AgentForgeCompactCheckpointPlanner {
               minimumSavingsBytes >= 0
         else { return .none }
 
-        let protectedStart = max(0, modelItems.count - protectedTailItemCount)
+        let protectedStart: Int
+        if protectedTailItemCount >= modelItems.count {
+            protectedStart = 0
+        } else {
+            protectedStart = modelItems.count - protectedTailItemCount
+        }
 
         for checkpointIndex in modelItems.indices.reversed() {
             guard checkpointIndex < protectedStart,
@@ -92,16 +101,24 @@ public enum AgentForgeCompactCheckpointPlanner {
                         allPlainTextMessages = false
                         break
                     }
-                    sourceTextBytes += text.utf8.count
+                    let next = sourceTextBytes.addingReportingOverflow(text.utf8.count)
+                    guard !next.overflow else {
+                        allPlainTextMessages = false
+                        break
+                    }
+                    sourceTextBytes = next.partialValue
                 }
                 if !allPlainTextMessages { break }
             }
             guard allPlainTextMessages else { continue }
 
             let summaryBytes = checkpoint.summary.utf8.count
-            guard sourceTextBytes >= summaryBytes + minimumSavingsBytes else {
-                continue
-            }
+            let requiredSourceBytes = summaryBytes.addingReportingOverflow(
+                minimumSavingsBytes
+            )
+            guard !requiredSourceBytes.overflow,
+                  sourceTextBytes >= requiredSourceBytes.partialValue
+            else { continue }
 
             do {
                 let authority = try ProjectCapsuleAuthority(
