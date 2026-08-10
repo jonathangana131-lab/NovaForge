@@ -2,7 +2,7 @@ import XCTest
 @testable import ForgePlaytestCore
 
 final class ForgePlaytestRepairPriorityTests: XCTestCase {
-    func testKnownSevereDefectTakesPriorityOverMissingCompletedJourney() throws {
+    func testKnownSevereDefectNeedsTrustedEvidenceBeforeRepairPriority() throws {
         let project = try ForgePlaytestProjectRevision(
             projectID: "project-repair-priority",
             sourceRevision: "rev-repair-priority"
@@ -48,13 +48,38 @@ final class ForgePlaytestRepairPriorityTests: XCTestCase {
                     defects: [defect]
                 )
 
-                XCTAssertEqual(
+                XCTAssertThrowsError(
                     try ForgePlaytestGateEvaluator.evaluate(
                         project: project,
                         policy: policy,
                         plans: [plan],
                         results: [result],
                         executionBindings: []
+                    )
+                ) { error in
+                    XCTAssertEqual(
+                        error as? ForgePlaytestExecutionGateError,
+                        .missingDefectEvidenceBinding(
+                            journeyID: journeyID,
+                            defectID: defect.defectID
+                        )
+                    )
+                }
+
+                let authenticatedDefect = try ForgePlaytestAuthenticatedDefectBinding(
+                    project: project,
+                    journeyID: journeyID,
+                    defect: defect,
+                    supportingEvidence: [crashEvidence]
+                )
+                XCTAssertEqual(
+                    try ForgePlaytestGateEvaluator.evaluate(
+                        project: project,
+                        policy: policy,
+                        plans: [plan],
+                        results: [result],
+                        executionBindings: [],
+                        defectEvidenceBindings: [authenticatedDefect]
                     ),
                     .repairRequired([
                         ForgePlaytestRepairItem(
@@ -63,9 +88,68 @@ final class ForgePlaytestRepairPriorityTests: XCTestCase {
                             defect: defect
                         ),
                     ]),
-                    "A known severity \(severity.rawValue) \(status.rawValue) defect must remain actionable instead of being hidden by a missing-completed-journey blocker."
+                    "Authenticated severity \(severity.rawValue) \(status.rawValue) defect must remain actionable before the generic missing-completed blocker."
                 )
             }
+        }
+    }
+
+    func testAuthenticatedDefectBindingRejectsRewrittenDefectAndEvidence() throws {
+        let project = try ForgePlaytestProjectRevision(
+            projectID: "project-binding",
+            sourceRevision: "rev-binding"
+        )
+        let journeyID = "goal-binding"
+        let crashEvidence = try ForgePlaytestEvidenceReference(
+            receiptID: "crash-binding",
+            project: project,
+            journeyID: journeyID,
+            kind: .crashLog
+        )
+        let defect = try ForgePlaytestDefect(
+            defectID: "fatal-binding",
+            severity: .high,
+            category: .runtime,
+            summary: "Authenticated crash.",
+            evidenceReceiptIDs: [crashEvidence.receiptID]
+        )
+        let authenticated = try ForgePlaytestAuthenticatedDefectBinding(
+            project: project,
+            journeyID: journeyID,
+            defect: defect,
+            supportingEvidence: [crashEvidence]
+        )
+
+        let rewrittenDefect = try ForgePlaytestDefect(
+            defectID: defect.defectID,
+            severity: .critical,
+            category: .runtime,
+            summary: defect.summary,
+            evidenceReceiptIDs: defect.evidenceReceiptIDs
+        )
+        XCTAssertNotEqual(authenticated.defect, rewrittenDefect)
+
+        let unrelatedEvidence = try ForgePlaytestEvidenceReference(
+            receiptID: "other-binding",
+            project: project,
+            journeyID: journeyID,
+            kind: .consoleLog
+        )
+        XCTAssertThrowsError(
+            try ForgePlaytestAuthenticatedDefectBinding(
+                project: project,
+                journeyID: journeyID,
+                defect: defect,
+                supportingEvidence: [unrelatedEvidence]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgePlaytestExecutionGateError,
+                .defectEvidenceBindingEvidenceMismatch(
+                    journeyID: journeyID,
+                    defectID: defect.defectID
+                )
+            )
         }
     }
 }
