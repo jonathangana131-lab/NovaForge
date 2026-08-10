@@ -17,7 +17,7 @@ jobs:
       matrix:
         configuration: [debug, release]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Assert exact product blobs
         shell: bash
         run: |
@@ -25,7 +25,7 @@ jobs:
           git diff --check
           test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DGenerator.swift)" = "fbc1193d014ded093ba194b52968f3e884b370b0"
           test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DModels.swift)" = "e915e11ec822fee0a57714142c3a5aa0719f5477"
-          test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DSemanticAutomation.swift)" = "2be61beb57918e7c6b727b1cbe6b92c2659cb1a0"
+          test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DSemanticAutomation.swift)" = "5f62e66c5853631d249b6426afb5c4f4084c4bd2"
           test "$(git rev-parse HEAD:Packages/Forge2DKit/Sources/Forge2DKit/Forge2DTemplate.swift)" = "7367750452a7141d9772731db5f886185587bbf7"
           test "$(git rev-parse HEAD:Packages/Forge2DKit/Tests/Forge2DKitTests/Forge2DKitTests.swift)" = "2c9e6807dba0612b1f7a5ca005f769fdda6415b7"
       - name: Test Forge2DKit
