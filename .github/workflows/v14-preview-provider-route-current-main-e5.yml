@@ -1,0 +1,55 @@
+name: V14 Preview provider route current main E5
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/provider-route-current-main/e5
+
+permissions:
+  contents: read
+
+env:
+  PRODUCT_HEAD: 56a3885499f78a01fed59f8d24e706e4444f7484
+  PRODUCT_BASE: 37b5305c459907917d1f27ddc7f08168a68c4bbe
+
+jobs:
+  composition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert exact current-main composition
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$PRODUCT_BASE" "$PRODUCT_HEAD")" = "$PRODUCT_BASE"
+          test "$(git diff --name-only "$PRODUCT_BASE" "$PRODUCT_HEAD" | wc -l | tr -d ' ')" = "4"
+          test "$(git hash-object Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift)" = "df768993642d7c1ffe93dd0c37c1bb94e79718b9"
+          test "$(git hash-object Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileTests.swift)" = "c4acd2bf991c90f5ab3fc87b0508997271c855eb"
+          test "$(git hash-object Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileStaticTrustBoundaryTests.swift)" = "27e81aed4204314ae65c7b20116a44f8838607df"
+          test "$(git hash-object Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift)" = "606cbe5a8ea966b36c26431a1d2c641c9b1130d0"
+          git diff --check "$PRODUCT_BASE" "$PRODUCT_HEAD"
+
+  macos-agentproviders:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert exact current product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$PRODUCT_BASE" "$PRODUCT_HEAD")" = "$PRODUCT_BASE"
+          git diff --check "$PRODUCT_BASE" "$PRODUCT_HEAD"
+      - name: Toolchain
+        run: swift --version
+      - name: Debug real AgentHarnessKit provider contracts
+        run: swift test --package-path Packages/AgentHarnessKit --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
+      - name: Release real AgentHarnessKit provider contracts
+        run: swift test --package-path Packages/AgentHarnessKit -c release --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
