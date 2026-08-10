@@ -1,0 +1,209 @@
+name: V14 Preview provider route profile E2 Linux validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/provider-route-profile/e2-linux
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PRODUCT_HEAD: 654bba727b387015eff0c3554cc946688a8e69cd
+      PRODUCT_BASE: fd9edf6da45571d70d45ca1e9b70a86c8797ac04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert exact product parent and isolated diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$PRODUCT_BASE" "$PRODUCT_HEAD")" = "$PRODUCT_BASE"
+          test "$(git diff --name-only "$PRODUCT_BASE" "$PRODUCT_HEAD" | wc -l | tr -d ' ')" = "3"
+          git diff --check "$PRODUCT_BASE" "$PRODUCT_HEAD"
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build exact-source validation harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/provider-route-profile-harness
+          mkdir -p /tmp/provider-route-profile-harness/Sources/AgentProviders
+          mkdir -p /tmp/provider-route-profile-harness/Tests/AgentProviderContractTests
+          cp Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift /tmp/provider-route-profile-harness/Sources/AgentProviders/
+          cp Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileTests.swift /tmp/provider-route-profile-harness/Tests/AgentProviderContractTests/
+          cp Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileStaticTrustBoundaryTests.swift /tmp/provider-route-profile-harness/Tests/AgentProviderContractTests/
+          cat > /tmp/provider-route-profile-harness/Package.swift <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+          let package = Package(
+              name: "ProviderRouteProfileHarness",
+              products: [.library(name: "AgentProviders", targets: ["AgentProviders"])],
+              targets: [
+                  .target(name: "AgentProviders"),
+                  .testTarget(name: "AgentProviderContractTests", dependencies: ["AgentProviders"]),
+              ]
+          )
+          SWIFT
+          cat > /tmp/provider-route-profile-harness/Sources/AgentProviders/ProviderContractStubs.swift <<'SWIFT'
+          import Foundation
+
+          public struct ProviderID: RawRepresentable, Codable, Hashable, Sendable {
+              public let rawValue: String
+              public init(rawValue: String) { self.rawValue = rawValue }
+          }
+
+          public struct ProviderModelID: RawRepresentable, Codable, Hashable, Sendable {
+              public let rawValue: String
+              public init(rawValue: String) { self.rawValue = rawValue }
+          }
+
+          public struct ProviderAdapterID: RawRepresentable, Codable, Hashable, Sendable {
+              public let rawValue: String
+              public init(rawValue: String) { self.rawValue = rawValue }
+          }
+
+          public enum ProviderCapability: String, Codable, Hashable, Sendable {
+              case cancellation
+              case streaming
+              case tools
+          }
+
+          public struct ProviderCapabilitySet: Codable, Equatable, Sendable {
+              private let values: Set<ProviderCapability>
+              public init(_ values: [ProviderCapability]) { self.values = Set(values) }
+              public func contains(_ value: ProviderCapability) -> Bool { values.contains(value) }
+          }
+
+          public struct ProviderModelCapabilities: Codable, Equatable, Sendable {
+              public let features: ProviderCapabilitySet
+              public init(features: ProviderCapabilitySet) { self.features = features }
+              public static let openAIChatBaseline = Self(features: .init([.cancellation, .streaming, .tools]))
+              public static let openAIResponsesBaseline = Self(features: .init([.cancellation, .streaming, .tools]))
+              public static let openAICompatibleBaseline = Self(features: .init([.cancellation, .streaming, .tools]))
+          }
+
+          public enum ProviderDeployment: String, Codable, Hashable, Sendable {
+              case hostedService
+              case callerManaged
+              case onDevice
+          }
+
+          public enum ProviderRouteProvenance: String, Codable, Hashable, Sendable {
+              case builtInOpenAIChatCompletions
+              case builtInOpenAIResponses
+              case builtInOpenCodeZenChatCompletions
+              case builtInLocalModel
+              case callerConfigured
+          }
+
+          public struct ProviderRoute: Codable, Equatable, Sendable {
+              public let providerID: ProviderID
+              public let modelID: ProviderModelID
+              public let adapterID: ProviderAdapterID
+              public let capabilities: ProviderModelCapabilities
+              public let deployment: ProviderDeployment
+              public let provenance: ProviderRouteProvenance
+              public init(
+                  providerID: ProviderID,
+                  modelID: ProviderModelID,
+                  adapterID: ProviderAdapterID,
+                  capabilities: ProviderModelCapabilities,
+                  deployment: ProviderDeployment,
+                  provenance: ProviderRouteProvenance
+              ) {
+                  self.providerID = providerID
+                  self.modelID = modelID
+                  self.adapterID = adapterID
+                  self.capabilities = capabilities
+                  self.deployment = deployment
+                  self.provenance = provenance
+              }
+          }
+
+          public enum ProviderAdapterDialect: String, Codable, Hashable, Sendable {
+              case openAIChatCompletions
+              case openAIResponses
+              case openAICompatibleChat
+          }
+
+          public struct ProviderAdapterDescriptor: Codable, Equatable, Sendable {
+              public let route: ProviderRoute
+              public let dialect: ProviderAdapterDialect
+              public let requestPath: String
+              public init(route: ProviderRoute, dialect: ProviderAdapterDialect, requestPath: String) {
+                  self.route = route
+                  self.dialect = dialect
+                  self.requestPath = requestPath
+              }
+          }
+
+          public struct OpenAIChatCompletionsAdapter: Sendable {
+              public let descriptor: ProviderAdapterDescriptor
+              public init(model: ProviderModelID, capabilities: ProviderModelCapabilities = .openAIChatBaseline) {
+                  descriptor = .init(
+                      route: .init(
+                          providerID: .init(rawValue: "openai"),
+                          modelID: model,
+                          adapterID: .init(rawValue: "openai-chat-completions"),
+                          capabilities: capabilities,
+                          deployment: .hostedService,
+                          provenance: .builtInOpenAIChatCompletions
+                      ),
+                      dialect: .openAIChatCompletions,
+                      requestPath: "/v1/chat/completions"
+                  )
+              }
+          }
+
+          public struct OpenAIResponsesAdapter: Sendable {
+              public let descriptor: ProviderAdapterDescriptor
+              public init(model: ProviderModelID, capabilities: ProviderModelCapabilities = .openAIResponsesBaseline) {
+                  descriptor = .init(
+                      route: .init(
+                          providerID: .init(rawValue: "openai"),
+                          modelID: model,
+                          adapterID: .init(rawValue: "openai-responses"),
+                          capabilities: capabilities,
+                          deployment: .hostedService,
+                          provenance: .builtInOpenAIResponses
+                      ),
+                      dialect: .openAIResponses,
+                      requestPath: "/v1/responses"
+                  )
+              }
+          }
+
+          public struct OpenCodeZenChatCompletionsAdapter: Sendable {
+              public let descriptor: ProviderAdapterDescriptor
+              public init(model: ProviderModelID, capabilities: ProviderModelCapabilities = .openAICompatibleBaseline) {
+                  descriptor = .init(
+                      route: .init(
+                          providerID: .init(rawValue: "opencode-zen"),
+                          modelID: model,
+                          adapterID: .init(rawValue: "opencode-zen-chat-completions"),
+                          capabilities: capabilities,
+                          deployment: .hostedService,
+                          provenance: .builtInOpenCodeZenChatCompletions
+                      ),
+                      dialect: .openAIChatCompletions,
+                      requestPath: "/zen/v1/chat/completions"
+                  )
+              }
+          }
+          SWIFT
+
+      - name: Debug exact-source contracts and trust boundary
+        run: swift test --package-path /tmp/provider-route-profile-harness -Xswiftc -warnings-as-errors
+
+      - name: Release exact-source contracts and trust boundary
+        run: swift test --package-path /tmp/provider-route-profile-harness -c release -Xswiftc -warnings-as-errors
