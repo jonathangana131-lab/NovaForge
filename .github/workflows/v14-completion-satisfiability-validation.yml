@@ -11,8 +11,21 @@ permissions:
   contents: read
 
 jobs:
-  completion-package:
-    name: Completion debug + release
+  portable-package:
+    name: Completion portable debug + release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeCompletionCore -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeCompletionCore -Xswiftc -warnings-as-errors
+
+  macos-package:
+    name: Completion macOS debug + release
     runs-on: macos-15
     timeout-minutes: 20
     steps:
