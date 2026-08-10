@@ -1,0 +1,112 @@
+import Foundation
+import XCTest
+@testable import ContinuityCore
+
+final class ContinuityStaticTrustBoundaryTests: XCTestCase {
+    func testExternalConsumerCannotMintExecutionGrant() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "MintExecutionGrant.swift",
+            source: """
+            import ContinuityCore
+
+            let identity = ContinuityIdentity(
+                missionID: "mission-1",
+                projectID: "project-1",
+                checkpointID: "checkpoint-1",
+                missionRevision: 1
+            )
+            let _ = ContinuityExecutionGrant(
+                identity: identity,
+                mode: .verifiedCloud,
+                authorityReceiptID: "forged"
+            )
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
+                || diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible"),
+            "Expected external execution-grant construction to fail on access control, got: \(diagnostics)"
+        )
+    }
+
+    func testExternalConsumerCannotSerializeLiveSnapshot() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "EncodeLiveSnapshot.swift",
+            source: """
+            import Foundation
+            import ContinuityCore
+
+            let identity = ContinuityIdentity(
+                missionID: "mission-1",
+                projectID: "project-1",
+                checkpointID: "checkpoint-1",
+                missionRevision: 1
+            )
+            let snapshot = ContinuitySnapshot(identity: identity)
+            let _ = try JSONEncoder().encode(snapshot)
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("continuitysnapshot")
+                && diagnostics.localizedCaseInsensitiveContains("encodable"),
+            "Expected live snapshot serialization to fail because ContinuitySnapshot is not Encodable, got: \(diagnostics)"
+        )
+    }
+
+    private func typecheckExternalConsumer(named fileName: String, source: String) throws -> String {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("continuity-static-trust-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let sourceURL = temporaryDirectory.appendingPathComponent(fileName)
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let modulesURL = try activeModulesURL()
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [
+            "swiftc",
+            "-typecheck",
+            "-swift-version",
+            "6",
+            "-I",
+            modulesURL.path,
+            sourceURL.path,
+        ]
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        process.waitUntilExit()
+
+        let diagnostics = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertNotEqual(process.terminationStatus, 0, "External trust bypass unexpectedly compiled")
+        XCTAssertFalse(
+            diagnostics.localizedCaseInsensitiveContains("no such module 'continuitycore'"),
+            "Static boundary probe failed before reaching ContinuityCore: \(diagnostics)"
+        )
+        return diagnostics
+    }
+
+    private func activeModulesURL() throws -> URL {
+        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        for _ in 0..<10 {
+            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+            let moduleURL = modulesURL.appendingPathComponent("ContinuityCore.swiftmodule")
+            if FileManager.default.fileExists(atPath: moduleURL.path) {
+                return modulesURL
+            }
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path { break }
+            directory = parent
+        }
+        throw NSError(
+            domain: "ContinuityStaticTrustBoundaryTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "ContinuityCore module is missing from active SwiftPM test executable ancestry"]
+        )
+    }
+}
