@@ -13,6 +13,7 @@ This package models checkpoint-bound execution leases, foreground/system/verifie
 - `ContinuityArchive` never serializes an active lease. Archiving an executing snapshot records it as `suspended(.executionEnvironmentLost)`, so relaunch cannot claim work is still running without reacquiring authority.
 - Mission-owned `needsDecision`, `blocked`, and `completed` projections are not durable Continuity authority: archiving them records `suspended(.missionStateRevalidationRequired)`, and forged persisted terminal projections are rejected on decode.
 - `missionStateRevalidationRequired` cannot resume on execution authority alone. Canonical Mission must explicitly reproject `.ready`, `.needsDecision`, `.blocked`, or `.completed` first.
+- An explicit `.userPaused` suspension cannot be overridden by a normal execution grant. Leaving user pause requires a separate fresh, non-Codable `ContinuityUserResumeAuthority`, after which execution still needs its own grant.
 - Advancing to a newer Mission revision cannot carry an older Mission-owned completion/decision/block projection forward without revalidation.
 - Background transfer archives revalidate nested invariants on decode and are bounded.
 
