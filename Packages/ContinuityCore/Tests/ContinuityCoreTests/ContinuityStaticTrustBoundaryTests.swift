@@ -30,6 +30,29 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
         )
     }
 
+    func testExternalConsumerCannotMintTerminalSnapshot() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "MintTerminalSnapshot.swift",
+            source: """
+            import ContinuityCore
+
+            let identity = ContinuityIdentity(
+                missionID: "mission-1",
+                projectID: "project-1",
+                checkpointID: "checkpoint-1",
+                missionRevision: 1
+            )
+            let _ = ContinuitySnapshot(identity: identity, state: .completed, epoch: 1)
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("extra argument 'state'")
+                || diagnostics.localizedCaseInsensitiveContains("extra argument"),
+            "Expected external terminal snapshot construction to be unavailable, got: \(diagnostics)"
+        )
+    }
+
     func testExternalConsumerCannotSerializeLiveSnapshot() throws {
         let diagnostics = try typecheckExternalConsumer(
             named: "EncodeLiveSnapshot.swift",
