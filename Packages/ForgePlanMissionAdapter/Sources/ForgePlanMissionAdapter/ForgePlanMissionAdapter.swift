@@ -3,7 +3,8 @@ import AgentDomain
 import ForgePlanCore
 
 public enum ForgePlanMissionHandoffError: Error, Equatable, Sendable {
-    case invalidAuthority(String)
+    case invalidContext(String)
+    case invalidSourceBinding(String)
     case invalidSummary(String)
     case duplicateDecisionID(String)
     case invalidDecision(String)
@@ -12,14 +13,18 @@ public enum ForgePlanMissionHandoffError: Error, Equatable, Sendable {
     case invalidConstitution(MissionConstitutionValidationError)
 }
 
-private func canonicalOpaqueID(_ value: String, field: String) throws -> String {
+private func canonicalOpaqueID(
+    _ value: String,
+    field: String,
+    error: (String) -> ForgePlanMissionHandoffError
+) throws -> String {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard value == trimmed,
           !value.isEmpty,
           value.utf8.count <= 512,
           value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
     else {
-        throw ForgePlanMissionHandoffError.invalidAuthority(field)
+        throw error(field)
     }
     return value
 }
@@ -33,30 +38,61 @@ private func validText(_ value: String, maximumUTF8Bytes: Int) -> Bool {
         }
 }
 
-public struct ForgePlanMissionAuthority: Sendable {
+/// Host-supplied Mission identity used to build a candidate constitution projection.
+/// `planAcceptanceReceiptID` is an opaque reference only; this public value does not authenticate it.
+public struct ForgePlanMissionContext: Sendable {
     public let missionID: MissionID
     public let projectID: ProjectID
     public let constitutionRevision: UInt64
-    public let acceptedAt: AgentInstant
+    public let projectedAcceptedAt: AgentInstant
     public let planAcceptanceReceiptID: String
 
     public init(
         missionID: MissionID,
         projectID: ProjectID,
         constitutionRevision: UInt64,
-        acceptedAt: AgentInstant,
+        projectedAcceptedAt: AgentInstant,
         planAcceptanceReceiptID: String
     ) throws {
         guard constitutionRevision > 0 else {
-            throw ForgePlanMissionHandoffError.invalidAuthority("constitutionRevision")
+            throw ForgePlanMissionHandoffError.invalidContext("constitutionRevision")
         }
         self.missionID = missionID
         self.projectID = projectID
         self.constitutionRevision = constitutionRevision
-        self.acceptedAt = acceptedAt
+        self.projectedAcceptedAt = projectedAcceptedAt
         self.planAcceptanceReceiptID = try canonicalOpaqueID(
             planAcceptanceReceiptID,
-            field: "planAcceptanceReceiptID"
+            field: "planAcceptanceReceiptID",
+            error: ForgePlanMissionHandoffError.invalidContext
+        )
+    }
+}
+
+/// Revision identity that lets the eventual Composer/Mission integration reject a stale Plan Space
+/// result after the user edits either the source Composer draft or the reviewed plan.
+public struct ForgePlanMissionSourceBinding: Hashable, Sendable {
+    public let composerDraftRevision: UInt64
+    public let planRevision: UInt64
+    public let planReferenceID: String
+
+    public init(
+        composerDraftRevision: UInt64,
+        planRevision: UInt64,
+        planReferenceID: String
+    ) throws {
+        guard composerDraftRevision > 0 else {
+            throw ForgePlanMissionHandoffError.invalidSourceBinding("composerDraftRevision")
+        }
+        guard planRevision > 0 else {
+            throw ForgePlanMissionHandoffError.invalidSourceBinding("planRevision")
+        }
+        self.composerDraftRevision = composerDraftRevision
+        self.planRevision = planRevision
+        self.planReferenceID = try canonicalOpaqueID(
+            planReferenceID,
+            field: "planReferenceID",
+            error: ForgePlanMissionHandoffError.invalidSourceBinding
         )
     }
 }
@@ -106,35 +142,43 @@ public struct ForgePlanMissionSupplement: Sendable {
     }
 }
 
-/// Preconditions exposed to the owning Mission/start router. These are requirements, never proof
-/// that the requirement has already been satisfied.
+/// Every case is a requirement for a canonical host/Mission router to verify or enforce.
+/// None of these values self-certifies that its requirement has already been satisfied.
 public enum ForgePlanMissionExecutionPrecondition: Hashable, Sendable {
+    case sourceRevisionMatch(binding: ForgePlanMissionSourceBinding)
+    case planAcceptanceVerification(receiptID: String)
+    case localOnlyRouting
+    case providerAllowlistEnforcement(providerIDs: [String])
+    case autonomyPolicyResolution(intent: ForgeComposerAutonomyIntent)
     case explicitModelQualification(referenceID: String)
     case delegatedDecisionResolution(decisionID: String)
 }
 
-/// Evaluator-produced handoff. It intentionally retains the exact V14 Composer control profile
-/// instead of projecting privacy/model/autonomy into prose or a second parallel control format.
-/// The type is non-Codable and its initializer is not public, so archived/model-authored bytes
-/// cannot manufacture an accepted Plan -> Mission projection by themselves.
+/// A candidate typed projection from Plan Space toward Mission. It intentionally retains the exact
+/// V14 Composer control profile instead of flattening privacy/model/autonomy into prompt prose.
+/// This value is not accepted execution authority: its receipt/source identities are references and
+/// every security/policy-sensitive requirement is emitted as an unresolved execution precondition.
 public struct ForgePlanMissionHandoff: Sendable {
     public let constitution: MissionConstitution
     public let planAcceptanceReceiptID: String
-    public let acceptedPlanDecisions: [PlanResolvedDecision]
+    public let planDecisions: [PlanResolvedDecision]
     public let controlProfile: ForgeComposerV14ControlProfile
+    public let sourceBinding: ForgePlanMissionSourceBinding
     public let executionPreconditions: [ForgePlanMissionExecutionPrecondition]
 
     fileprivate init(
         constitution: MissionConstitution,
         planAcceptanceReceiptID: String,
-        acceptedPlanDecisions: [PlanResolvedDecision],
+        planDecisions: [PlanResolvedDecision],
         controlProfile: ForgeComposerV14ControlProfile,
+        sourceBinding: ForgePlanMissionSourceBinding,
         executionPreconditions: [ForgePlanMissionExecutionPrecondition]
     ) {
         self.constitution = constitution
         self.planAcceptanceReceiptID = planAcceptanceReceiptID
-        self.acceptedPlanDecisions = acceptedPlanDecisions
+        self.planDecisions = planDecisions
         self.controlProfile = controlProfile
+        self.sourceBinding = sourceBinding
         self.executionPreconditions = executionPreconditions
     }
 
@@ -163,19 +207,15 @@ public struct ForgePlanMissionHandoff: Sendable {
         }.first
     }
 
-    /// Persistent routing requirement. Local Only remains structurally distinct from provider
-    /// permission and must be enforced by the owning router; this package never grants a route.
     public var privacyIntent: ForgeComposerPrivacyIntent { controlProfile.privacy }
-
-    /// User autonomy intent survives Plan Space as typed truth, but remains a permission request;
-    /// actual stage/action authority still belongs to Mission policy and receipts.
     public var autonomyIntent: ForgeComposerAutonomyIntent { controlProfile.autonomy }
 }
 
 public enum ForgePlanMissionAdapter {
     public static func makeHandoff(
         summary: ReadyToForgeSummary,
-        authority: ForgePlanMissionAuthority,
+        context: ForgePlanMissionContext,
+        sourceBinding: ForgePlanMissionSourceBinding,
         supplement: ForgePlanMissionSupplement
     ) throws -> ForgePlanMissionHandoff {
         try validate(summary: summary)
@@ -188,10 +228,10 @@ public enum ForgePlanMissionAdapter {
 
         let controls = summary.controls
         let constitution = MissionConstitution(
-            missionID: authority.missionID,
-            projectID: authority.projectID,
-            revision: authority.constitutionRevision,
-            acceptedAt: authority.acceptedAt,
+            missionID: context.missionID,
+            projectID: context.projectID,
+            revision: context.constitutionRevision,
+            acceptedAt: context.projectedAcceptedAt,
             productGoal: summary.intentSummary,
             projectType: supplement.projectType,
             designIntent: supplement.designIntent,
@@ -218,10 +258,24 @@ public enum ForgePlanMissionAdapter {
             lhs.id == rhs.id ? lhs.prompt < rhs.prompt : lhs.id < rhs.id
         }
 
-        var preconditions: [ForgePlanMissionExecutionPrecondition] = []
+        var preconditions: [ForgePlanMissionExecutionPrecondition] = [
+            .sourceRevisionMatch(binding: sourceBinding),
+            .planAcceptanceVerification(receiptID: context.planAcceptanceReceiptID),
+        ]
+
+        switch controls.privacy {
+        case .localOnly:
+            preconditions.append(.localOnlyRouting)
+        case .providerAllowlist(let providerIDs):
+            preconditions.append(.providerAllowlistEnforcement(providerIDs: providerIDs))
+        }
+
+        preconditions.append(.autonomyPolicyResolution(intent: controls.autonomy))
+
         if case .explicitModel(let referenceID) = controls.intelligence {
             preconditions.append(.explicitModelQualification(referenceID: referenceID))
         }
+
         preconditions.append(contentsOf: canonicalDecisions.compactMap { decision in
             decision.value == .delegatedToNovaForge
                 ? .delegatedDecisionResolution(decisionID: decision.id)
@@ -230,9 +284,10 @@ public enum ForgePlanMissionAdapter {
 
         return ForgePlanMissionHandoff(
             constitution: constitution,
-            planAcceptanceReceiptID: authority.planAcceptanceReceiptID,
-            acceptedPlanDecisions: canonicalDecisions,
+            planAcceptanceReceiptID: context.planAcceptanceReceiptID,
+            planDecisions: canonicalDecisions,
             controlProfile: controls,
+            sourceBinding: sourceBinding,
             executionPreconditions: preconditions
         )
     }
