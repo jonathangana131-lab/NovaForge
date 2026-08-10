@@ -331,15 +331,16 @@ public struct FirstMinuteObservation: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-/// Evidence-backed first-minute assessment. Deliberately non-Codable because trusted capture
-/// authority must be reacquired from the canonical runtime producer after relaunch.
+/// First-minute acceptance derived only from producer-authenticated visual analysis.
+/// The analysis binding is non-Codable, so authority must be reacquired after relaunch.
 public struct FirstMinuteAssessment: Equatable, Sendable {
-    public let capture: VisualTrustedCapture
-    public let observations: [FirstMinuteObservation]
+    public let analysis: VisualTrustedAnalysis
 
-    public init(capture: VisualTrustedCapture, observations: [FirstMinuteObservation]) {
-        self.capture = capture
-        self.observations = observations
+    public var capture: VisualTrustedCapture { analysis.capture }
+    public var observations: [FirstMinuteObservation] { analysis.observations }
+
+    public init(acceptedAnalysis: VisualTrustedAnalysis) {
+        self.analysis = acceptedAnalysis
     }
 
     public var missingCriteria: [FirstMinuteCriterion] {
@@ -444,22 +445,17 @@ public struct AutoPolishPolicy: Codable, Equatable, Sendable {
     }
 }
 
-/// One visual-polish pass over authenticated runtime capture evidence. Non-Codable so accepted
-/// capture authority cannot be restored from candidate bytes after relaunch.
+/// One visual-polish pass over producer-authenticated analysis of a trusted runtime capture.
+/// Non-Codable so accepted analysis authority cannot be restored from candidate bytes.
 public struct AutoPolishPass: Equatable, Sendable {
-    public let capture: VisualTrustedCapture
-    public let findings: [VisualFinding]
-    public let improvementScore: Double
+    public let analysis: VisualTrustedAnalysis
 
-    public init(
-        capture: VisualTrustedCapture,
-        findings: [VisualFinding],
-        improvementScore: Double
-    ) {
-        self.capture = capture
-        self.findings = findings
-        let finiteScore = improvementScore.isFinite ? improvementScore : 0
-        self.improvementScore = min(max(finiteScore, 0), 1)
+    public var capture: VisualTrustedCapture { analysis.capture }
+    public var findings: [VisualFinding] { analysis.findings }
+    public var improvementScore: Double { analysis.improvementScore }
+
+    public init(acceptedAnalysis: VisualTrustedAnalysis) {
+        self.analysis = acceptedAnalysis
     }
 }
 
