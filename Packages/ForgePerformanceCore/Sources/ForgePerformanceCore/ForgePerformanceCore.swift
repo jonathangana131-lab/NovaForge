@@ -43,17 +43,23 @@ public struct ForgePerformanceTarget: Codable, Equatable, Sendable {
     public let sourceRevision: String
     public let checkpointID: String
     public let constitutionRevision: Int
+    public let constitutionReceiptID: String
 
-    public init(missionID: String, projectID: String, sourceRevision: String, checkpointID: String, constitutionRevision: Int) throws {
+    public init(missionID: String, projectID: String, sourceRevision: String, checkpointID: String, constitutionRevision: Int, constitutionReceiptID: String) throws {
         self.missionID = try ForgePerformanceValidation.identifier(missionID, field: "target.missionID")
         self.projectID = try ForgePerformanceValidation.identifier(projectID, field: "target.projectID")
         self.sourceRevision = try ForgePerformanceValidation.identifier(sourceRevision, field: "target.sourceRevision", maximumLength: 512)
         self.checkpointID = try ForgePerformanceValidation.identifier(checkpointID, field: "target.checkpointID")
         guard constitutionRevision >= 0 else { throw ForgePerformanceError.invalidIdentifier("target.constitutionRevision") }
         self.constitutionRevision = constitutionRevision
+        self.constitutionReceiptID = try ForgePerformanceValidation.identifier(
+            constitutionReceiptID,
+            field: "target.constitutionReceiptID",
+            maximumLength: 512
+        )
     }
 
-    private enum CodingKeys: String, CodingKey { case missionID, projectID, sourceRevision, checkpointID, constitutionRevision }
+    private enum CodingKeys: String, CodingKey { case missionID, projectID, sourceRevision, checkpointID, constitutionRevision, constitutionReceiptID }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -61,7 +67,8 @@ public struct ForgePerformanceTarget: Codable, Equatable, Sendable {
             projectID: c.decode(String.self, forKey: .projectID),
             sourceRevision: c.decode(String.self, forKey: .sourceRevision),
             checkpointID: c.decode(String.self, forKey: .checkpointID),
-            constitutionRevision: c.decode(Int.self, forKey: .constitutionRevision)
+            constitutionRevision: c.decode(Int.self, forKey: .constitutionRevision),
+            constitutionReceiptID: c.decode(String.self, forKey: .constitutionReceiptID)
         )
     }
 }
@@ -375,23 +382,35 @@ public enum ForgePerformanceEvaluator {
 }
 
 /// Durable historical inputs only. Decoding never restores trusted policy, producer, or accepted performance authority.
-public struct ForgePerformanceArchive: Codable, Equatable, Sendable {
+public final class ForgePerformanceArchive: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
     public let schemaVersion: Int
     public let policy: ForgePerformancePolicy
     public let run: ForgePerformanceRunEvidence
 
+    public static func == (lhs: ForgePerformanceArchive, rhs: ForgePerformanceArchive) -> Bool {
+        lhs.schemaVersion == rhs.schemaVersion && lhs.policy == rhs.policy && lhs.run == rhs.run
+    }
+
     public init(policy: ForgePerformancePolicy, run: ForgePerformanceRunEvidence) throws {
-        guard policy.target == run.target else { throw ForgePerformanceError.targetMismatch }
-        guard policy.scenarioID == run.scenarioID,
-              policy.scenarioDefinitionDigest == run.scenarioDefinitionDigest else { throw ForgePerformanceError.scenarioMismatch }
         self.schemaVersion = Self.currentSchemaVersion
         self.policy = policy
         self.run = run
+        guard self.policy.target == self.run.target else { throw ForgePerformanceError.targetMismatch }
+        guard self.policy.scenarioID == self.run.scenarioID,
+              self.policy.scenarioDefinitionDigest == self.run.scenarioDefinitionDigest else { throw ForgePerformanceError.scenarioMismatch }
     }
 
     private enum CodingKeys: String, CodingKey { case schemaVersion, policy, run }
-    public init(from decoder: Decoder) throws {
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(policy, forKey: .policy)
+        try c.encode(run, forKey: .run)
+    }
+
+    public convenience init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try c.decode(Int.self, forKey: .schemaVersion)
         guard schema == Self.currentSchemaVersion else { throw ForgePerformanceError.unsupportedSchema(schema) }
