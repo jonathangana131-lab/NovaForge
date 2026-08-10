@@ -1,4 +1,4 @@
-name: Patch Crash Doctor history authority
+name: Patch Crash Doctor retry policy authority
 
 on:
   push:
@@ -16,38 +16,183 @@ jobs:
         with:
           ref: worker/GPT56SOL-NF-V14-CRASH-HISTORY-0810/history-authority/e1
           fetch-depth: 0
-      - name: Apply narrowly-scoped source patch
+      - name: Bind retry policy to module-owned authority
         shell: python
         run: |
           from pathlib import Path
-          path = Path('Packages/ForgeCrashDoctorCore/Sources/ForgeCrashDoctorCore/ForgeCrashDoctorCore.swift')
-          text = path.read_text()
 
-          old = '    case invalidArtifactIdentity\n}'
-          new = '    case invalidArtifactIdentity\n    case repairHistoryEvidenceMismatch\n}'
+          source = Path('Packages/ForgeCrashDoctorCore/Sources/ForgeCrashDoctorCore/ForgeCrashDoctorCore.swift')
+          text = source.read_text()
+          marker = '\npublic enum ForgeCrashNextAction: Hashable, Sendable {'
+          trusted_policy = '''
+
+/// Non-Codable host-authenticated authority over the retry envelope that controls autonomous escalation.
+/// Persisted/model-authored policy bytes remain candidate configuration and cannot relax or tighten budgets directly.
+public struct ForgeCrashTrustedRetryPolicy: Hashable, Sendable {
+    private let authenticatedPolicy: ForgeCrashRetryPolicy
+    public let artifactIdentity: String
+
+    init(authenticatedPolicy: ForgeCrashRetryPolicy, artifactIdentity: String) throws {
+        let normalized = artifactIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowed = Set("0123456789abcdef")
+        guard normalized.count == 64, normalized.allSatisfy(allowed.contains) else {
+            throw ForgeCrashValidationError.invalidArtifactIdentity
+        }
+        self.authenticatedPolicy = authenticatedPolicy
+        self.artifactIdentity = normalized
+    }
+
+    public var policy: ForgeCrashRetryPolicy { authenticatedPolicy }
+
+    public func matches(_ candidate: ForgeCrashRetryPolicy) -> Bool {
+        authenticatedPolicy == candidate
+    }
+}
+'''
+          assert marker in text
+          assert 'public struct ForgeCrashTrustedRetryPolicy' not in text
+          text = text.replace(marker, trusted_policy + marker, 1)
+
+          old = '''    public static func makeSubmission(
+        for trustedIncident: ForgeCrashTrustedIncident,
+        failedHistory: ForgeCrashTrustedRepairHistory,
+        policy: ForgeCrashRetryPolicy
+    ) -> ForgeCrashRepairSubmission {
+        makeSubmission(
+            for: trustedIncident,
+            failedHistory: failedHistory.history,
+            policy: policy
+        )
+    }'''
+          new = '''    public static func makeSubmission(
+        for trustedIncident: ForgeCrashTrustedIncident,
+        failedHistory: ForgeCrashTrustedRepairHistory,
+        policy: ForgeCrashTrustedRetryPolicy
+    ) -> ForgeCrashRepairSubmission {
+        makeSubmission(
+            for: trustedIncident,
+            failedHistory: failedHistory.history,
+            policy: policy.policy
+        )
+    }'''
           assert old in text
           text = text.replace(old, new, 1)
+          source.write_text(text)
 
-          marker = '''\n/// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own\n/// output as verification success; completion remains owned by runtime/test evidence.\npublic struct ForgeCrashRetryPolicy'''
-          trusted = '''\n/// Non-Codable host-authenticated authority over the complete failed repair history.\n/// Persisted/model-authored attempt bytes remain candidate metadata and cannot steer retry escalation directly.\n/// A verification adapter inside this module must validate each failure artifact against the exact attempt\n/// before constructing this binding.\npublic struct ForgeCrashTrustedRepairHistory: Hashable, Sendable {\n    private let authenticatedHistory: ForgeCrashRepairHistory\n    public let failureArtifactIdentities: [String]\n\n    init(\n        authenticatedHistory: ForgeCrashRepairHistory,\n        failureArtifactIdentities: [String]\n    ) throws {\n        guard failureArtifactIdentities.count == authenticatedHistory.attempts.count else {\n            throw ForgeCrashValidationError.repairHistoryEvidenceMismatch\n        }\n\n        let allowed = Set("0123456789abcdef")\n        var normalizedIdentities: [String] = []\n        normalizedIdentities.reserveCapacity(failureArtifactIdentities.count)\n        var uniqueIdentities = Set<String>()\n\n        for identity in failureArtifactIdentities {\n            let normalized = identity.trimmingCharacters(in: .whitespacesAndNewlines)\n            guard normalized.count == 64, normalized.allSatisfy(allowed.contains) else {\n                throw ForgeCrashValidationError.invalidArtifactIdentity\n            }\n            guard uniqueIdentities.insert(normalized).inserted else {\n                throw ForgeCrashValidationError.repairHistoryEvidenceMismatch\n            }\n            normalizedIdentities.append(normalized)\n        }\n\n        self.authenticatedHistory = authenticatedHistory\n        self.failureArtifactIdentities = normalizedIdentities\n    }\n\n    public var history: ForgeCrashRepairHistory { authenticatedHistory }\n\n    public func matches(_ candidate: ForgeCrashRepairHistory) -> Bool {\n        authenticatedHistory == candidate\n    }\n}\n\n/// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own\n/// output as verification success; completion remains owned by runtime/test evidence.\npublic struct ForgeCrashRetryPolicy'''
-          assert marker in text
-          text = text.replace(marker, '\n' + trusted, 1)
+          authority_tests = Path('Packages/ForgeCrashDoctorCore/Tests/ForgeCrashDoctorCoreTests/ForgeCrashRepairHistoryAuthorityTests.swift')
+          tests = authority_tests.read_text()
+          old_call = '''        let submission = ForgeCrashTriage.makeSubmission(
+            for: trustedIncident,
+            failedHistory: trustedHistory,
+            policy: try ForgeCrashRetryPolicy()
+        )'''
+          new_call = '''        let trustedPolicy = try ForgeCrashTrustedRetryPolicy(
+            authenticatedPolicy: try ForgeCrashRetryPolicy(),
+            artifactIdentity: String(repeating: "f", count: 64)
+        )
+        let submission = ForgeCrashTriage.makeSubmission(
+            for: trustedIncident,
+            failedHistory: trustedHistory,
+            policy: trustedPolicy
+        )'''
+          assert old_call in tests
+          tests = tests.replace(old_call, new_call, 1)
 
-          old_sig = '''public enum ForgeCrashTriage {\n    public static func makeSubmission(\n        for trustedIncident: ForgeCrashTrustedIncident,\n        failedHistory: ForgeCrashRepairHistory,\n        policy: ForgeCrashRetryPolicy\n    ) -> ForgeCrashRepairSubmission {'''
-          new_sig = '''public enum ForgeCrashTriage {\n    /// Module-internal primitive used by trusted adapters and package tests. Ordinary consumers cannot\n    /// feed Codable candidate history directly into the escalation decision.\n    static func makeSubmission(\n        for trustedIncident: ForgeCrashTrustedIncident,\n        failedHistory: ForgeCrashRepairHistory,\n        policy: ForgeCrashRetryPolicy\n    ) -> ForgeCrashRepairSubmission {'''
-          assert old_sig in text
-          text = text.replace(old_sig, new_sig, 1)
+          helper_marker = '    private func makeIncident('
+          policy_test = '''    func testTrustedPolicyPreventsCallerFromRelaxingEscalationBudget() throws {
+        let strictPolicy = try ForgeCrashRetryPolicy(
+            maximumFocusedFailuresPerRepeatKey: 2,
+            maximumTotalFailuresBeforeBlocker: 6
+        )
+        let relaxedCandidate = try ForgeCrashRetryPolicy(
+            maximumFocusedFailuresPerRepeatKey: 99,
+            maximumTotalFailuresBeforeBlocker: 99
+        )
+        let trustedPolicy = try ForgeCrashTrustedRetryPolicy(
+            authenticatedPolicy: strictPolicy,
+            artifactIdentity: String(repeating: "1", count: 64)
+        )
 
-          tail = '''        return ForgeCrashRepairSubmission(\n            trustedIncident: trustedIncident,\n            repeatKey: repeatKey,\n            nextAction: nextAction\n        )\n    }\n}\n'''
-          replacement = '''        return ForgeCrashRepairSubmission(\n            trustedIncident: trustedIncident,\n            repeatKey: repeatKey,\n            nextAction: nextAction\n        )\n    }\n\n    public static func makeSubmission(\n        for trustedIncident: ForgeCrashTrustedIncident,\n        failedHistory: ForgeCrashTrustedRepairHistory,\n        policy: ForgeCrashRetryPolicy\n    ) -> ForgeCrashRepairSubmission {\n        makeSubmission(\n            for: trustedIncident,\n            failedHistory: failedHistory.history,\n            policy: policy\n        )\n    }\n}\n'''
-          assert text.endswith(tail)
-          text = text[:-len(tail)] + replacement
-          path.write_text(text)
-      - name: Commit source repair
+        XCTAssertTrue(trustedPolicy.matches(strictPolicy))
+        XCTAssertFalse(trustedPolicy.matches(relaxedCandidate))
+    }
+
+    func testTrustedPolicyRejectsNonCanonicalArtifactIdentity() throws {
+        XCTAssertThrowsError(
+            try ForgeCrashTrustedRetryPolicy(
+                authenticatedPolicy: try ForgeCrashRetryPolicy(),
+                artifactIdentity: String(repeating: "A", count: 64)
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCrashValidationError, .invalidArtifactIdentity)
+        }
+    }
+
+'''
+          assert helper_marker in tests
+          tests = tests.replace(helper_marker, policy_test + helper_marker, 1)
+          authority_tests.write_text(tests)
+
+          trust_tests = Path('Packages/ForgeCrashDoctorCore/Tests/ForgeCrashDoctorCoreTests/ForgeCrashDoctorTrustBoundaryTests.swift')
+          trust = trust_tests.read_text()
+          helper_marker = '    private func assertAccessControlDiagnostic('
+          compiler_tests = '''    func testExternalConsumerCannotMintTrustedRetryPolicy() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "ForgeTrustedRetryPolicyBypass.swift",
+            source: """
+            import ForgeCrashDoctorCore
+
+            func forgePolicy(_ policy: ForgeCrashRetryPolicy) throws {
+                _ = try ForgeCrashTrustedRetryPolicy(
+                    authenticatedPolicy: policy,
+                    artifactIdentity: String(repeating: "a", count: 64)
+                )
+            }
+            """
+        )
+
+        assertAccessControlDiagnostic(
+            diagnostics,
+            message: "Expected ordinary imports to be unable to mint trusted retry-policy authority"
+        )
+    }
+
+    func testExternalConsumerCannotSubmitCodableCandidatePolicyToTriage() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "ForgeCandidateRetryPolicyBypass.swift",
+            source: """
+            import ForgeCrashDoctorCore
+
+            func submit(
+                incident: ForgeCrashTrustedIncident,
+                history: ForgeCrashTrustedRepairHistory,
+                policy: ForgeCrashRetryPolicy
+            ) {
+                _ = ForgeCrashTriage.makeSubmission(
+                    for: incident,
+                    failedHistory: history,
+                    policy: policy
+                )
+            }
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("cannot convert value of type")
+                || diagnostics.localizedCaseInsensitiveContains("no exact matches in call to static method"),
+            "Expected ordinary imports to be unable to feed Codable candidate policy into triage, got: \(diagnostics)"
+        )
+    }
+
+'''
+          assert helper_marker in trust
+          trust = trust.replace(helper_marker, compiler_tests + helper_marker, 1)
+          trust_tests.write_text(trust)
+      - name: Commit policy-authority repair
         run: |
           git diff --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add Packages/ForgeCrashDoctorCore/Sources/ForgeCrashDoctorCore/ForgeCrashDoctorCore.swift
-          git commit -m "[V14] Bind Crash Doctor triage to trusted repair history"
+          git add Packages/ForgeCrashDoctorCore
+          git commit -m "[V14] Bind Crash Doctor retry policy to trusted authority"
           git push origin HEAD:worker/GPT56SOL-NF-V14-CRASH-HISTORY-0810/history-authority/e1
