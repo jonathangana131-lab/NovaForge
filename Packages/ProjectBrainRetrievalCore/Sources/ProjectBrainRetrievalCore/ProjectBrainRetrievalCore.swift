@@ -276,6 +276,9 @@ public struct ProjectBrainRetrievalRequest: Codable, Equatable, Sendable {
     }
 
     private static func validateFactIDSet(_ values: [String]) throws {
+        guard values.count <= ProjectBrainRetrievalLimits.maximumSelectedItems else {
+            throw ProjectBrainRetrievalError.tooManyRequestedFactIDs
+        }
         guard Set(values).count == values.count else {
             throw ProjectBrainRetrievalError.duplicateRequestedFactID
         }
@@ -287,6 +290,7 @@ public struct ProjectBrainRetrievalRequest: Codable, Equatable, Sendable {
 
 public enum ProjectBrainRetrievalOmissionReason: String, Codable, Equatable, Sendable {
     case coldArchiveNotRequested
+    case requestedColdFactUnavailable
     case itemBudget
     case byteBudget
 }
@@ -342,11 +346,13 @@ public enum ProjectBrainRetrievalError: Error, Equatable, Sendable {
     case renderedContextTooLarge
     case invalidBudget
     case duplicateRequestedFactID
+    case tooManyRequestedFactIDs
     case tooManyCandidates
     case duplicateCandidateFactID(String)
     case projectMismatch(factID: String)
     case sourceRevisionMismatch(factID: String)
     case missionMismatch(factID: String)
+    case explicitColdRequestTierMismatch(factID: String)
     case missingRequiredFact(String)
     case requiredContextExceedsItemBudget
     case requiredContextExceedsByteBudget
@@ -387,6 +393,12 @@ public enum ProjectBrainRetrievalPlanner {
         }
 
         let explicitlyRequestedColdIDs = Set(request.explicitlyRequestedColdFactIDs)
+        for factID in explicitlyRequestedColdIDs {
+            if let candidate = byID[factID], candidate.tier != .l3ColdArchive {
+                throw ProjectBrainRetrievalError.explicitColdRequestTierMismatch(factID: factID)
+            }
+        }
+
         var mandatoryIDs = Set(request.requiredFactIDs)
         for candidate in candidates where candidate.tier == .l0AlwaysResident {
             mandatoryIDs.insert(candidate.factID)
@@ -406,9 +418,16 @@ public enum ProjectBrainRetrievalPlanner {
         }
 
         var selected = mandatory
-        var selectedIDs = mandatoryIDs
+        let selectedIDs = mandatoryIDs
         var usedBytes = mandatoryBytes
-        var omissions: [ProjectBrainRetrievalOmission] = []
+        var omissions = explicitlyRequestedColdIDs
+            .filter { byID[$0] == nil }
+            .map {
+                ProjectBrainRetrievalOmission(
+                    factID: $0,
+                    reason: .requestedColdFactUnavailable
+                )
+            }
 
         let optional = candidates
             .filter { !selectedIDs.contains($0.factID) }
@@ -437,7 +456,6 @@ public enum ProjectBrainRetrievalPlanner {
             }
 
             selected.append(candidate)
-            selectedIDs.insert(candidate.factID)
             usedBytes += incrementalBytes
         }
 
