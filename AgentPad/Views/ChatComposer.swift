@@ -61,7 +61,7 @@ struct ComposerReasoningControl: View {
         case .ultra:
             "Extra High"
         case .ultraCode:
-            "UltraCode"
+            "Ultra"
         }
     }
 
@@ -157,7 +157,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Medium"
             case .high: "High"
             case .extraHigh: "Extra High"
-            case .ultraCode: "UltraCode"
+            case .ultraCode: "Ultra"
             }
         }
 
