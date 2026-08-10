@@ -40,7 +40,7 @@ private func checkpoint(
     checkpointID: String = "checkpoint-9",
     missionRevision: UInt64 = 42,
     authorityEpoch: UInt64 = 3,
-    generation: UInt64 = 2,
+    generation: UInt64 = 3,
     projectID: String = "project-1",
     missionID: String = "mission-1"
 ) throws -> ForgeAutonomyCheckpointObservation {
@@ -163,15 +163,29 @@ private func project(
     #expect(projection.requiresCheckpoint)
 }
 
-@Test func exactCheckpointAvoidsDuplicateCriticalCheckpointRequest() throws {
+@Test func exactCurrentGenerationCheckpointAvoidsDuplicateCriticalCheckpointRequest() throws {
     let projection = try project(
         observation: observation(
             thermal: .critical,
-            durableCheckpoint: checkpoint()
+            durableCheckpoint: checkpoint(generation: 3)
         )
     )
     #expect(projection.disposition == .pause)
     #expect(!projection.requiresCheckpoint)
+}
+
+@Test func previousConsumedGenerationCheckpointIsNotFresh() throws {
+    let projection = try project(
+        observation: observation(
+            generation: 3,
+            lastConsumedGeneration: 2,
+            thermal: .critical,
+            durableCheckpoint: checkpoint(generation: 2)
+        )
+    )
+    #expect(projection.disposition == .pause)
+    #expect(projection.reason == .thermalCritical)
+    #expect(projection.requiresCheckpoint)
 }
 
 @Test func checkpointMustMatchExactProjectMissionCheckpointRevisionAndEpoch() throws {
@@ -260,7 +274,7 @@ private func project(
         observation: observation(
             elapsed: 9_500,
             actions: 95,
-            durableCheckpoint: checkpoint()
+            durableCheckpoint: checkpoint(generation: 3)
         )
     )
     #expect(projection.disposition == .proceed)
