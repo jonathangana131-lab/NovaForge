@@ -551,7 +551,7 @@ enum AgentOrchestrationMode: String, CaseIterable, Codable, Identifiable, Sendab
         switch self {
         case .standard: "Standard"
         case .ultra: "Ultra"
-        case .ultraCode: "UltraCode"
+        case .ultraCode: "Ultra"
         }
     }
 
@@ -559,7 +559,7 @@ enum AgentOrchestrationMode: String, CaseIterable, Codable, Identifiable, Sendab
         switch self {
         case .standard: "Think"
         case .ultra: "Ultra"
-        case .ultraCode: "UltraCode"
+        case .ultraCode: "Ultra"
         }
     }
 
@@ -570,7 +570,7 @@ enum AgentOrchestrationMode: String, CaseIterable, Codable, Identifiable, Sendab
         case .ultra:
             "Maximum reasoning with parallel research and review agents."
         case .ultraCode:
-            "Maximum reasoning, isolated coding workspaces, verification, and an integrating lead agent."
+            "Maximum reasoning, three isolated expert agents, verification, and a lead integrator."
         }
     }
 
