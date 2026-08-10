@@ -12,13 +12,13 @@ public enum ProjectBrainSourceIdentityError: String, Error, Equatable, Sendable 
     case invalidProjectRootRevisionID
 }
 
-/// Exact source/checkpoint identity expected by authoritative Project Brain retrieval.
+/// Exact source/checkpoint identity used by authoritative Project Brain retrieval.
 ///
 /// `acceptedProjectStateID` is the same semantic identity carried by canonical Mission checkpoints.
 /// `checkpointReferenceID` is the host-authenticated canonical checkpoint reference (for example the
 /// canonical MissionCheckpointID description) and `projectRootRevisionID` binds the exact accepted
-/// source/project-root revision. Constructing this value is not an authority grant; it is an identity
-/// value that must match the module-minted trusted snapshot exactly.
+/// source/project-root revision. Constructing this value is not an authority grant; only a module-
+/// minted trusted subject/current-source capability can make the identity authoritative.
 public struct ProjectBrainSourceIdentity: Hashable, Sendable {
     public let acceptedProjectStateID: String
     public let checkpointReferenceID: String
@@ -59,12 +59,46 @@ public struct ProjectBrainSourceIdentity: Hashable, Sendable {
         projectRootRevisionID: "internal-candidate-only"
     )
 
-    private static func isCanonicalIdentity(_ value: String) -> Bool {
+    static func isCanonicalAuthorityIdentity(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return value == trimmed
             && !value.isEmpty
             && value.utf8.count <= 512
             && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
+    }
+
+    private static func isCanonicalIdentity(_ value: String) -> Bool {
+        isCanonicalAuthorityIdentity(value)
+    }
+}
+
+public enum ProjectBrainTrustedSelectionAuthorityError: Error, Equatable, Sendable {
+    case invalidAuthorityReceiptID
+}
+
+/// Capability proving which accepted source/checkpoint identity the host considers current for this
+/// selection. Construction is module-internal and the value is non-Codable, so a public request or
+/// stale snapshot cannot self-declare itself current by copying identity strings.
+///
+/// A canonical host/store adapter must mint a fresh/current capability only after authenticating the
+/// accepted project state + checkpoint + project-root revision. This type does not implement host
+/// revocation by itself; the adapter owns capability lifetime and must not reuse superseded authority.
+public struct ProjectBrainTrustedSelectionAuthority: Equatable, Sendable {
+    public let projectID: ProjectID
+    public let sourceIdentity: ProjectBrainSourceIdentity
+    public let authorityReceiptID: String
+
+    init(
+        authenticatedProjectID projectID: ProjectID,
+        sourceIdentity: ProjectBrainSourceIdentity,
+        authorityReceiptID: String
+    ) throws {
+        guard ProjectBrainSourceIdentity.isCanonicalAuthorityIdentity(authorityReceiptID) else {
+            throw ProjectBrainTrustedSelectionAuthorityError.invalidAuthorityReceiptID
+        }
+        self.projectID = projectID
+        self.sourceIdentity = sourceIdentity
+        self.authorityReceiptID = authorityReceiptID
     }
 }
 
@@ -97,7 +131,6 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
 
     public let projectID: ProjectID
     public let missionID: MissionID?
-    public let expectedSourceIdentity: ProjectBrainSourceIdentity?
     public let scopes: [ProjectBrainScope]
     public let preferredKinds: [ProjectBrainFactKind]
     public let additionalRequiredKinds: [ProjectBrainFactKind]
@@ -113,14 +146,9 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
 
     /// `requiredKinds` is additive to the immutable mission-critical floor for source compatibility
     /// with the V13 donor. Passing an empty array cannot weaken that floor.
-    ///
-    /// `expectedSourceIdentity` is optional only so package-internal structural selection tests and
-    /// future candidate-ranking helpers can reuse this request shape. Public trusted-snapshot
-    /// selection fails closed when it is absent.
     public init(
         projectID: ProjectID,
         missionID: MissionID? = nil,
-        expectedSourceIdentity: ProjectBrainSourceIdentity? = nil,
         scopes: [ProjectBrainScope] = [],
         preferredKinds: [ProjectBrainFactKind] = [],
         requiredKinds: [ProjectBrainFactKind] = [],
@@ -132,7 +160,6 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
     ) {
         self.projectID = projectID
         self.missionID = missionID
-        self.expectedSourceIdentity = expectedSourceIdentity
         self.scopes = scopes
         self.preferredKinds = preferredKinds
         self.additionalRequiredKinds = requiredKinds
@@ -207,10 +234,10 @@ public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
         guard brainRevision > 0 else {
             throw ProjectBrainTrustedSnapshotError.invalidBrainRevision
         }
-        guard Self.isCanonicalOpaqueIdentity(authorityReceiptID) else {
+        guard ProjectBrainSourceIdentity.isCanonicalAuthorityIdentity(authorityReceiptID) else {
             throw ProjectBrainTrustedSnapshotError.invalidAuthorityReceiptID
         }
-        guard Self.isCanonicalOpaqueIdentity(snapshotDigest) else {
+        guard ProjectBrainSourceIdentity.isCanonicalAuthorityIdentity(snapshotDigest) else {
             throw ProjectBrainTrustedSnapshotError.invalidSnapshotDigest
         }
         guard facts.count <= Self.maximumFacts else {
@@ -240,20 +267,12 @@ public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
         self.snapshotDigest = snapshotDigest
         self.facts = facts
     }
-
-    private static func isCanonicalOpaqueIdentity(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value == trimmed
-            && !value.isEmpty
-            && value.utf8.count <= 512
-            && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
-    }
 }
 
 public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case invalidRequest(ProjectBrainContextRequestValidationError)
     case trustedSnapshotProjectMismatch
-    case missingExpectedSourceIdentity
+    case trustedSelectionAuthorityProjectMismatch
     case trustedSnapshotSourceMismatch
     case invalidFact(ProjectBrainFactID, ProjectBrainValidationError)
     case duplicateFactID(ProjectBrainFactID)
@@ -264,16 +283,17 @@ public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case requiredFactsExceedCharacterBudget(required: Int, maximum: Int)
 }
 
-/// Context derived from a module-authenticated Project Brain snapshot.
-///
-/// This value is deliberately non-Codable so relaunch/restore must reacquire current Project Brain
-/// authority and re-run selection rather than replay a previously derived context as accepted truth.
+/// Context derived from a module-authenticated Project Brain snapshot and a separately authenticated
+/// current-source capability. This value is deliberately non-Codable so relaunch/restore must
+/// reacquire current Project Brain/source authority and re-run selection instead of replaying a
+/// previously derived context as accepted truth.
 public struct ProjectBrainContextSlice: Equatable, Sendable {
     public let projectID: ProjectID
     public let missionID: MissionID?
     public let snapshotBrainRevision: UInt64
     public let sourceIdentity: ProjectBrainSourceIdentity
     public let snapshotAuthorityReceiptID: String
+    public let currentSourceAuthorityReceiptID: String
     public let snapshotDigest: String
     public let isTrustedSnapshotBound: Bool
     public let facts: [ProjectBrainFact]
@@ -288,6 +308,7 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
         snapshotBrainRevision: UInt64,
         sourceIdentity: ProjectBrainSourceIdentity,
         snapshotAuthorityReceiptID: String,
+        currentSourceAuthorityReceiptID: String,
         snapshotDigest: String,
         isTrustedSnapshotBound: Bool,
         facts: [ProjectBrainFact],
@@ -301,6 +322,7 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
         self.snapshotBrainRevision = snapshotBrainRevision
         self.sourceIdentity = sourceIdentity
         self.snapshotAuthorityReceiptID = snapshotAuthorityReceiptID
+        self.currentSourceAuthorityReceiptID = currentSourceAuthorityReceiptID
         self.snapshotDigest = snapshotDigest
         self.isTrustedSnapshotBound = isTrustedSnapshotBound
         self.facts = facts
@@ -316,10 +338,12 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
 public enum ProjectBrainContextSelector {
     public static let maximumCandidateFacts = 4_096
 
-    /// Authoritative selection accepts only a module-authenticated whole Project Brain subject and
-    /// fails closed unless the caller's current accepted source/checkpoint identity matches exactly.
+    /// Authoritative selection requires two independently module-minted inputs: the authenticated
+    /// whole Brain snapshot and the host's authenticated *current* accepted source/checkpoint state.
+    /// A stale snapshot cannot self-validate by copying its own public identity into a request.
     public static func select(
         from snapshot: ProjectBrainTrustedSnapshot,
+        currentAuthority: ProjectBrainTrustedSelectionAuthority,
         request: ProjectBrainContextRequest
     ) throws -> ProjectBrainContextSlice {
         if let error = request.validationError {
@@ -328,10 +352,10 @@ public enum ProjectBrainContextSelector {
         guard snapshot.projectID == request.projectID else {
             throw ProjectBrainContextSelectionError.trustedSnapshotProjectMismatch
         }
-        guard let expectedSourceIdentity = request.expectedSourceIdentity else {
-            throw ProjectBrainContextSelectionError.missingExpectedSourceIdentity
+        guard currentAuthority.projectID == request.projectID else {
+            throw ProjectBrainContextSelectionError.trustedSelectionAuthorityProjectMismatch
         }
-        guard snapshot.sourceIdentity == expectedSourceIdentity else {
+        guard snapshot.sourceIdentity == currentAuthority.sourceIdentity else {
             throw ProjectBrainContextSelectionError.trustedSnapshotSourceMismatch
         }
         return try selectCandidateFacts(
@@ -340,6 +364,7 @@ public enum ProjectBrainContextSelector {
             snapshotBrainRevision: snapshot.brainRevision,
             sourceIdentity: snapshot.sourceIdentity,
             snapshotAuthorityReceiptID: snapshot.authorityReceiptID,
+            currentSourceAuthorityReceiptID: currentAuthority.authorityReceiptID,
             snapshotDigest: snapshot.snapshotDigest,
             isTrustedSnapshotBound: true
         )
@@ -357,6 +382,7 @@ public enum ProjectBrainContextSelector {
             snapshotBrainRevision: 0,
             sourceIdentity: .internalCandidateOnly,
             snapshotAuthorityReceiptID: "internal-candidate-only",
+            currentSourceAuthorityReceiptID: "internal-candidate-only",
             snapshotDigest: "internal-candidate-only",
             isTrustedSnapshotBound: false
         )
@@ -368,6 +394,7 @@ public enum ProjectBrainContextSelector {
         snapshotBrainRevision: UInt64,
         sourceIdentity: ProjectBrainSourceIdentity,
         snapshotAuthorityReceiptID: String,
+        currentSourceAuthorityReceiptID: String,
         snapshotDigest: String,
         isTrustedSnapshotBound: Bool
     ) throws -> ProjectBrainContextSlice {
@@ -497,6 +524,7 @@ public enum ProjectBrainContextSelector {
             snapshotBrainRevision: snapshotBrainRevision,
             sourceIdentity: sourceIdentity,
             snapshotAuthorityReceiptID: snapshotAuthorityReceiptID,
+            currentSourceAuthorityReceiptID: currentSourceAuthorityReceiptID,
             snapshotDigest: snapshotDigest,
             isTrustedSnapshotBound: isTrustedSnapshotBound,
             facts: selected,
