@@ -1,0 +1,28 @@
+name: V14 Plan Mission Accepted Subject Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-GO-0810/plan-mission-accepted-subject/**
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Assert exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "bbd52b8d3fc922806b18dc86abfab11cd4880b6c"
+          git diff --check HEAD^
+
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -Xswiftc -warnings-as-errors
+
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -c release -Xswiftc -warnings-as-errors
