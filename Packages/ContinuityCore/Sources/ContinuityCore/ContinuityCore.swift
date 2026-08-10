@@ -45,11 +45,13 @@ public enum ContinuityRunState: Codable, Hashable, Sendable {
 public struct ContinuityExecutionGrant: Hashable, Sendable {
     public let identity: ContinuityIdentity
     public let mode: ContinuityExecutionMode
+    public let issuedForEpoch: UInt64
     public let authorityReceiptID: String
 
-    init(identity: ContinuityIdentity, mode: ContinuityExecutionMode, authorityReceiptID: String) {
+    init(identity: ContinuityIdentity, mode: ContinuityExecutionMode, issuedForEpoch: UInt64, authorityReceiptID: String) {
         self.identity = identity
         self.mode = mode
+        self.issuedForEpoch = issuedForEpoch
         self.authorityReceiptID = authorityReceiptID
     }
 }
@@ -72,11 +74,13 @@ public enum ContinuityMissionAuthorityPurpose: Hashable, Sendable {
 public struct ContinuityMissionAuthority: Hashable, Sendable {
     public let identity: ContinuityIdentity
     public let purpose: ContinuityMissionAuthorityPurpose
+    public let issuedForEpoch: UInt64
     public let authorityReceiptID: String
 
-    init(identity: ContinuityIdentity, purpose: ContinuityMissionAuthorityPurpose, authorityReceiptID: String) {
+    init(identity: ContinuityIdentity, purpose: ContinuityMissionAuthorityPurpose, issuedForEpoch: UInt64, authorityReceiptID: String) {
         self.identity = identity
         self.purpose = purpose
+        self.issuedForEpoch = issuedForEpoch
         self.authorityReceiptID = authorityReceiptID
     }
 }
@@ -85,10 +89,12 @@ public struct ContinuityMissionAuthority: Hashable, Sendable {
 /// and package-internal to mint; execution authority alone must never override user steering.
 public struct ContinuityUserResumeAuthority: Hashable, Sendable {
     public let identity: ContinuityIdentity
+    public let issuedForEpoch: UInt64
     public let authorityReceiptID: String
 
-    init(identity: ContinuityIdentity, authorityReceiptID: String) {
+    init(identity: ContinuityIdentity, issuedForEpoch: UInt64, authorityReceiptID: String) {
         self.identity = identity
+        self.issuedForEpoch = issuedForEpoch
         self.authorityReceiptID = authorityReceiptID
     }
 }
@@ -198,7 +204,7 @@ public enum ContinuityReducer {
 
     public static func startForeground(from snapshot: ContinuitySnapshot, grant: ContinuityExecutionGrant) throws -> (ContinuitySnapshot, ContinuityWorkLease) {
         try validate(snapshot)
-        try validate(grant: grant, for: snapshot.identity, mode: .foregroundOnDevice)
+        try validate(grant: grant, for: snapshot.identity, mode: .foregroundOnDevice, issuedForEpoch: snapshot.epoch)
         switch snapshot.state {
         case .ready:
             return try mintExecution(.foregroundOnDevice, from: snapshot, grant: grant)
@@ -219,7 +225,7 @@ public enum ContinuityReducer {
         try validate(snapshot)
         guard case .executing(.foregroundOnDevice) = snapshot.state else { throw ContinuityMutationError.noActiveExecution }
         guard let systemGrant else { return (try suspend(snapshot, reason: .backgroundExecutionUnavailable), nil) }
-        try validate(grant: systemGrant, for: snapshot.identity, mode: .systemManagedOnDevice)
+        try validate(grant: systemGrant, for: snapshot.identity, mode: .systemManagedOnDevice, issuedForEpoch: snapshot.epoch)
         let (next, lease) = try mintExecution(.systemManagedOnDevice, from: snapshot, grant: systemGrant)
         return (next, lease)
     }
@@ -244,28 +250,28 @@ public enum ContinuityReducer {
 
     public static func resumeAfterUserPause(authority: ContinuityUserResumeAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
         try validate(snapshot)
-        try validate(userResumeAuthority: authority, for: snapshot.identity)
+        try validate(userResumeAuthority: authority, for: snapshot.identity, issuedForEpoch: snapshot.epoch)
         guard snapshot.state == .suspended(.userPaused) else { throw ContinuityMutationError.unsupportedTransition }
         return ContinuitySnapshot(identity: snapshot.identity, state: .ready, activeLease: nil, epoch: try successor(snapshot.epoch))
     }
 
     public static func handoffToCloud(from snapshot: ContinuitySnapshot, grant: ContinuityExecutionGrant) throws -> (ContinuitySnapshot, ContinuityWorkLease) {
         try validate(snapshot)
-        try validate(grant: grant, for: snapshot.identity, mode: .verifiedCloud)
+        try validate(grant: grant, for: snapshot.identity, mode: .verifiedCloud, issuedForEpoch: snapshot.epoch)
         guard allowsHandoff(snapshot.state) else { throw ContinuityMutationError.unsupportedTransition }
         return try mintExecution(.verifiedCloud, from: snapshot, grant: grant)
     }
 
     public static func handoffToPairedMac(from snapshot: ContinuitySnapshot, grant: ContinuityExecutionGrant) throws -> (ContinuitySnapshot, ContinuityWorkLease) {
         try validate(snapshot)
-        try validate(grant: grant, for: snapshot.identity, mode: .verifiedPairedMac)
+        try validate(grant: grant, for: snapshot.identity, mode: .verifiedPairedMac, issuedForEpoch: snapshot.epoch)
         guard allowsHandoff(snapshot.state) else { throw ContinuityMutationError.unsupportedTransition }
         return try mintExecution(.verifiedPairedMac, from: snapshot, grant: grant)
     }
 
     public static func advanceCheckpoint(authority: ContinuityMissionAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
         try validate(snapshot)
-        try validate(authority: authority, purpose: .checkpointAdvance)
+        try validate(authority: authority, purpose: .checkpointAdvance, issuedForEpoch: snapshot.epoch)
         let identity = authority.identity
         guard identity.missionID == snapshot.identity.missionID, identity.projectID == snapshot.identity.projectID else {
             throw ContinuityMutationError.checkpointIdentityMismatch
@@ -313,7 +319,7 @@ public enum ContinuityReducer {
         guard authority.identity == snapshot.identity else { throw ContinuityMutationError.missionCompletionIdentityMismatch }
         guard snapshot.activeLease == nil else { throw ContinuityMutationError.unsupportedTransition }
         guard case let .stateProjection(projection) = authority.purpose else { throw ContinuityMutationError.invalidAuthority }
-        try validate(authority: authority, purpose: .stateProjection(projection))
+        try validate(authority: authority, purpose: .stateProjection(projection), issuedForEpoch: snapshot.epoch)
         let state: ContinuityRunState = switch projection {
         case .ready: .ready
         case .needsDecision: .needsDecision
@@ -324,7 +330,7 @@ public enum ContinuityReducer {
     }
 
     public static func reflectMissionCompletion(authority: ContinuityMissionAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
-        try validate(authority: authority, purpose: .stateProjection(.completed))
+        try validate(authority: authority, purpose: .stateProjection(.completed), issuedForEpoch: snapshot.epoch)
         return try reflectMissionState(authority: authority, in: snapshot)
     }
 
@@ -347,21 +353,24 @@ public enum ContinuityReducer {
         ContinuitySnapshot(identity: snapshot.identity, state: .suspended(reason), activeLease: nil, epoch: try successor(snapshot.epoch))
     }
 
-    private static func validate(grant: ContinuityExecutionGrant, for identity: ContinuityIdentity, mode: ContinuityExecutionMode) throws {
-        guard isValidIdentity(grant.identity), grant.identity == identity, grant.mode == mode, isCanonicalID(grant.authorityReceiptID) else {
+    private static func validate(grant: ContinuityExecutionGrant, for identity: ContinuityIdentity, mode: ContinuityExecutionMode, issuedForEpoch: UInt64) throws {
+        guard isValidIdentity(grant.identity), grant.identity == identity, grant.mode == mode,
+              grant.issuedForEpoch == issuedForEpoch, isCanonicalID(grant.authorityReceiptID) else {
             throw ContinuityMutationError.executionGrantMissing
         }
     }
 
-    private static func validate(authority: ContinuityMissionAuthority, purpose: ContinuityMissionAuthorityPurpose) throws {
-        guard isValidIdentity(authority.identity), authority.purpose == purpose, isCanonicalID(authority.authorityReceiptID) else {
+    private static func validate(authority: ContinuityMissionAuthority, purpose: ContinuityMissionAuthorityPurpose, issuedForEpoch: UInt64) throws {
+        guard isValidIdentity(authority.identity), authority.purpose == purpose,
+              authority.issuedForEpoch == issuedForEpoch, isCanonicalID(authority.authorityReceiptID) else {
             throw ContinuityMutationError.invalidAuthority
         }
     }
 
-    private static func validate(userResumeAuthority: ContinuityUserResumeAuthority, for identity: ContinuityIdentity) throws {
+    private static func validate(userResumeAuthority: ContinuityUserResumeAuthority, for identity: ContinuityIdentity, issuedForEpoch: UInt64) throws {
         guard isValidIdentity(userResumeAuthority.identity),
               userResumeAuthority.identity == identity,
+              userResumeAuthority.issuedForEpoch == issuedForEpoch,
               isCanonicalID(userResumeAuthority.authorityReceiptID) else {
             throw ContinuityMutationError.invalidAuthority
         }
