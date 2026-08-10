@@ -54,6 +54,7 @@ enum Forge3DSemanticContract {
     static let pauseControlID = "scene.pause-toggle"
     static let throttleActionID = "drive.throttle"
     static let steeringActionID = "drive.steer"
+    static let actionEventName = "novaforge:action"
     static let minimumActionValue = -1.0
     static let maximumActionValue = 1.0
     static let neutralActionValue = 0.0
@@ -226,13 +227,46 @@ public struct Forge3DGeneratedProject: Equatable, Sendable {
         semanticCapabilities: Set<Forge3DSemanticCapability>,
         semanticAutomation: Forge3DSemanticAutomationDescriptor
     ) {
+        let exposesCanonicalContract = Self.exposesCanonicalSemanticAutomation(
+            files: files,
+            descriptor: semanticAutomation
+        )
         var normalizedCapabilities = semanticCapabilities
-        normalizedCapabilities.insert(.semanticAutomation)
+        if exposesCanonicalContract {
+            normalizedCapabilities.insert(.semanticAutomation)
+        } else {
+            normalizedCapabilities.remove(.semanticAutomation)
+        }
 
         self.blueprint = blueprint
         self.entryPath = entryPath
         self.files = files
         self.semanticCapabilities = normalizedCapabilities
-        self.semanticAutomation = semanticAutomation
+        self.semanticAutomation = exposesCanonicalContract ? semanticAutomation : nil
+    }
+
+    private static func exposesCanonicalSemanticAutomation(
+        files: [Forge3DGeneratedFile],
+        descriptor: Forge3DSemanticAutomationDescriptor
+    ) -> Bool {
+        guard descriptor == Forge3DSemanticContract.descriptor,
+              let html = files.first(where: { $0.path == "index.html" })?.contents,
+              let script = files.first(where: { $0.path == "game.js" })?.contents else {
+            return false
+        }
+
+        let pauseBinding = "data-novaforge-control=\"\(descriptor.pauseControlID)\""
+        let throttleBinding = "data-novaforge-action=\"\(descriptor.throttleAction.targetID)\""
+        let steeringBinding = "data-novaforge-action=\"\(descriptor.steeringAction.targetID)\""
+        let actionListener = "addEventListener(\"\(Forge3DSemanticContract.actionEventName)\""
+        let throttleHandler = "bindActionValue(accessibleThrottle, \"\(descriptor.throttleAction.targetID)\", \"accessibleThrottle\")"
+        let steeringHandler = "bindActionValue(accessibleSteer, \"\(descriptor.steeringAction.targetID)\", \"accessibleSteer\")"
+
+        return html.contains(pauseBinding)
+            && html.contains(throttleBinding)
+            && html.contains(steeringBinding)
+            && script.contains(actionListener)
+            && script.contains(throttleHandler)
+            && script.contains(steeringHandler)
     }
 }
