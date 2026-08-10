@@ -12,6 +12,58 @@ public enum Forge2DSemanticCapability: String, Codable, CaseIterable, Sendable {
     case controller
     case touch
     case keyboard
+    case automation
+}
+
+/// Starter-owned description of the canonical Runtime semantic interaction needed to drive a
+/// generated target. This is discovery metadata only; it grants no Runtime authorization and is
+/// not execution/completion evidence.
+public enum Forge2DSemanticInteractionKind: String, Codable, CaseIterable, Sendable {
+    case controlActivate = "control.activate"
+    case actionSetValue = "action.set-value"
+}
+
+public struct Forge2DSemanticTarget: Codable, Equatable, Sendable {
+    public let id: String
+    public let interactionKind: Forge2DSemanticInteractionKind
+    public let minimumValue: Double?
+    public let neutralValue: Double?
+    public let maximumValue: Double?
+
+    public init(
+        id: String,
+        interactionKind: Forge2DSemanticInteractionKind,
+        minimumValue: Double? = nil,
+        neutralValue: Double? = nil,
+        maximumValue: Double? = nil
+    ) {
+        self.id = id
+        self.interactionKind = interactionKind
+        self.minimumValue = minimumValue
+        self.neutralValue = neutralValue
+        self.maximumValue = maximumValue
+    }
+}
+
+/// Stable target IDs emitted into generated markup and consumed through Forge Runtime's canonical
+/// `data-novaforge-*` contract. Values are intentionally bounded and deterministic so autonomous
+/// personas can discover the starter's controls without guessing DOM IDs.
+public enum Forge2DSelfPlayContract {
+    public static let pauseTargetID = "pause"
+    public static let jumpTargetID = "jump"
+    public static let moveXTargetID = "move-x"
+
+    public static let targets: [Forge2DSemanticTarget] = [
+        .init(id: pauseTargetID, interactionKind: .controlActivate),
+        .init(id: jumpTargetID, interactionKind: .controlActivate),
+        .init(
+            id: moveXTargetID,
+            interactionKind: .actionSetValue,
+            minimumValue: -1,
+            neutralValue: 0,
+            maximumValue: 1
+        ),
+    ]
 }
 
 public struct Forge2DBlueprint: Codable, Equatable, Sendable {
@@ -129,16 +181,19 @@ public struct Forge2DGeneratedProject: Equatable, Sendable {
     public let entryPath: String
     public let files: [Forge2DGeneratedFile]
     public let semanticCapabilities: Set<Forge2DSemanticCapability>
+    public let semanticTargets: [Forge2DSemanticTarget]
 
     public init(
         blueprint: Forge2DBlueprint,
         entryPath: String,
         files: [Forge2DGeneratedFile],
-        semanticCapabilities: Set<Forge2DSemanticCapability>
+        semanticCapabilities: Set<Forge2DSemanticCapability>,
+        semanticTargets: [Forge2DSemanticTarget] = []
     ) {
         self.blueprint = blueprint
         self.entryPath = entryPath
         self.files = files
         self.semanticCapabilities = semanticCapabilities
+        self.semanticTargets = semanticTargets
     }
 }
