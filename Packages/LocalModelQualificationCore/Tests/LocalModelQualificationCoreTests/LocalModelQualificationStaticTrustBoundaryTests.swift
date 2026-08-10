@@ -36,9 +36,9 @@ final class LocalModelQualificationStaticTrustBoundaryTests: XCTestCase {
         let diagnostics = try externalCompilerDiagnostics(for: externalSource, fileName: "ExternalRawTrust.swift")
 
         XCTAssertTrue(
-            diagnostics.localizedCaseInsensitiveContains("inaccessible")
-                || diagnostics.localizedCaseInsensitiveContains("internal protection level"),
-            "Expected raw trust evaluator access-control rejection, got: \(diagnostics)"
+            diagnostics.localizedCaseInsensitiveContains("incorrect argument label")
+                && diagnostics.localizedCaseInsensitiveContains("trustedBindings"),
+            "Expected public API to expose only trustedBindings, got: \(diagnostics)"
         )
     }
 
