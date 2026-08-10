@@ -99,21 +99,49 @@ final class ForgeVisualQATests: XCTestCase {
         )
     }
 
-    func testFirstMinuteAssessmentRequiresEveryCriterionAndCurrentTrustedCaptureForVisualChecks() throws {
+    func testFirstMinuteAssessmentRequiresEveryCriterionAndCurrentTrustedAnalysis() throws {
         let currentCapture = try trustedCapture()
         var observations = FirstMinuteCriterion.allCases.map {
             FirstMinuteObservation(criterion: $0, passed: true, captureID: currentCapture.id)
         }
-        XCTAssertTrue(FirstMinuteAssessment(capture: currentCapture, observations: observations).passes)
+        XCTAssertTrue(
+            FirstMinuteAssessment(
+                acceptedAnalysis: try trustedAnalysis(capture: currentCapture, observations: observations)
+            ).passes
+        )
 
         observations.removeLast()
-        XCTAssertFalse(FirstMinuteAssessment(capture: currentCapture, observations: observations).passes)
+        XCTAssertFalse(
+            FirstMinuteAssessment(
+                acceptedAnalysis: try trustedAnalysis(capture: currentCapture, observations: observations)
+            ).passes
+        )
+    }
 
-        let staleID = UUID()
+    func testTrustedAnalysisRejectsStaleVisualObservation() throws {
+        let currentCapture = try trustedCapture()
         let stale = FirstMinuteCriterion.allCases.map {
-            FirstMinuteObservation(criterion: $0, passed: true, captureID: staleID)
+            FirstMinuteObservation(criterion: $0, passed: true, captureID: UUID())
         }
-        XCTAssertFalse(FirstMinuteAssessment(capture: currentCapture, observations: stale).passes)
+        XCTAssertThrowsError(try trustedAnalysis(capture: currentCapture, observations: stale)) { error in
+            guard case VisualAnalysisAuthorityError.observationCaptureMismatch = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testTrustedAnalysisRejectsDuplicateFirstMinuteCriterion() throws {
+        let currentCapture = try trustedCapture()
+        let observations = [
+            FirstMinuteObservation(criterion: .purposeIsClear, passed: true, captureID: currentCapture.id),
+            FirstMinuteObservation(criterion: .purposeIsClear, passed: false, captureID: currentCapture.id),
+        ]
+        XCTAssertThrowsError(try trustedAnalysis(capture: currentCapture, observations: observations)) { error in
+            XCTAssertEqual(
+                error as? VisualAnalysisAuthorityError,
+                .duplicateObservationCriterion(.purposeIsClear)
+            )
+        }
     }
 
     func testFirstMinuteAssessmentFailsOnAnyFailedCriterion() throws {
@@ -125,7 +153,9 @@ final class ForgeVisualQATests: XCTestCase {
                 captureID: currentCapture.id
             )
         }
-        let assessment = FirstMinuteAssessment(capture: currentCapture, observations: observations)
+        let assessment = FirstMinuteAssessment(
+            acceptedAnalysis: try trustedAnalysis(capture: currentCapture, observations: observations)
+        )
         XCTAssertFalse(assessment.passes)
         XCTAssertEqual(assessment.failedCriteria, [.primaryActionIsDiscoverable])
     }
@@ -169,29 +199,32 @@ final class ForgeVisualQATests: XCTestCase {
         let currentCapture = try trustedCapture()
         let crash = finding(kind: .runtimeCrash, severity: .blocker, captureID: currentCapture.id)
         let spacing = finding(kind: .awkwardSpacing, severity: .minor, captureID: currentCapture.id)
-        let pass = AutoPolishPass(capture: currentCapture, findings: [spacing, crash], improvementScore: 0.5)
+        let pass = try acceptedPass(capture: currentCapture, findings: [spacing, crash], improvementScore: 0.5)
         XCTAssertEqual(
             AutoPolishPlanner.decide(passes: [pass]),
             .repairFunctionalBlocker(crash)
         )
     }
 
-    func testAutoPolishRejectsUnevidencedOrStaleFindings() throws {
+    func testTrustedAnalysisRejectsUnevidencedOrStaleFindings() throws {
         let currentCapture = try trustedCapture()
         let unsupported = finding(kind: .clipping, severity: .major, captureID: nil)
         let stale = finding(kind: .overlap, severity: .major, captureID: UUID())
-        XCTAssertEqual(
-            AutoPolishPlanner.decide(
-                passes: [AutoPolishPass(capture: currentCapture, findings: [unsupported], improvementScore: 0.5)]
-            ),
-            .stop(.insufficientVisualEvidence)
-        )
-        XCTAssertEqual(
-            AutoPolishPlanner.decide(
-                passes: [AutoPolishPass(capture: currentCapture, findings: [stale], improvementScore: 0.5)]
-            ),
-            .stop(.insufficientVisualEvidence)
-        )
+
+        for invalidFinding in [unsupported, stale] {
+            XCTAssertThrowsError(
+                try trustedAnalysis(
+                    capture: currentCapture,
+                    findings: [invalidFinding],
+                    improvementScore: 0.5
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? VisualAnalysisAuthorityError,
+                    .findingCaptureMismatch(invalidFinding.id)
+                )
+            }
+        }
     }
 
     func testAutoPolishPrioritizesSeverityThenMeaningfulKind() throws {
@@ -208,12 +241,12 @@ final class ForgeVisualQATests: XCTestCase {
             severity: .major,
             captureID: currentCapture.id
         )
-        let pass = AutoPolishPass(capture: currentCapture, findings: [overlap, clipping], improvementScore: 0.5)
+        let pass = try acceptedPass(capture: currentCapture, findings: [overlap, clipping], improvementScore: 0.5)
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass]), .fixVisualFinding(clipping))
     }
 
-    func testAutoPolishStopsWhenAcceptedOnlyWithTrustedCapture() throws {
-        let pass = AutoPolishPass(capture: try trustedCapture(), findings: [], improvementScore: 0.3)
+    func testAutoPolishStopsWhenAcceptedOnlyWithTrustedAnalysis() throws {
+        let pass = try acceptedPass(capture: trustedCapture(), findings: [], improvementScore: 0.3)
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass]), .stop(.acceptancePassed))
     }
 
@@ -221,7 +254,7 @@ final class ForgeVisualQATests: XCTestCase {
         let passes = try (0..<3).map { index -> AutoPolishPass in
             let currentCapture = try trustedCapture(frame: UInt64(index), digestByte: String(index + 1))
             let issue = finding(kind: .cosmeticPolish, severity: .cosmetic, captureID: currentCapture.id)
-            return AutoPolishPass(capture: currentCapture, findings: [issue], improvementScore: 0.2)
+            return try acceptedPass(capture: currentCapture, findings: [issue], improvementScore: 0.2)
         }
         XCTAssertEqual(
             AutoPolishPlanner.decide(passes: passes, policy: .init(maximumPasses: 3)),
@@ -233,12 +266,12 @@ final class ForgeVisualQATests: XCTestCase {
         let firstCapture = try trustedCapture(frame: 1, digestByte: "1")
         let secondCapture = try trustedCapture(frame: 2, digestByte: "2")
         let passes = [
-            AutoPolishPass(
+            try acceptedPass(
                 capture: firstCapture,
                 findings: [finding(kind: .awkwardSpacing, severity: .minor, captureID: firstCapture.id)],
                 improvementScore: 0.01
             ),
-            AutoPolishPass(
+            try acceptedPass(
                 capture: secondCapture,
                 findings: [finding(kind: .awkwardSpacing, severity: .minor, captureID: secondCapture.id)],
                 improvementScore: 0.02
@@ -256,21 +289,31 @@ final class ForgeVisualQATests: XCTestCase {
     func testAutoPolishHonorsUserAndDependencyStops() throws {
         let currentCapture = try trustedCapture()
         let issue = finding(kind: .clipping, severity: .major, captureID: currentCapture.id)
-        let pass = AutoPolishPass(capture: currentCapture, findings: [issue], improvementScore: 0.5)
+        let pass = try acceptedPass(capture: currentCapture, findings: [issue], improvementScore: 0.5)
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass], userPaused: true), .stop(.userPaused))
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass], dependencyBlocked: true), .stop(.dependencyBlocked))
     }
 
-    func testAutoPolishPassClampsImprovementScore() throws {
+    func testTrustedAnalysisRejectsInvalidImprovementScore() throws {
         let currentCapture = try trustedCapture()
-        XCTAssertEqual(
-            AutoPolishPass(capture: currentCapture, findings: [], improvementScore: 4).improvementScore,
-            1
-        )
-        XCTAssertEqual(
-            AutoPolishPass(capture: currentCapture, findings: [], improvementScore: -2).improvementScore,
-            0
-        )
+        for score in [Double.nan, Double.infinity, -0.01, 1.01] {
+            XCTAssertThrowsError(
+                try trustedAnalysis(capture: currentCapture, improvementScore: score)
+            ) { error in
+                XCTAssertEqual(error as? VisualAnalysisAuthorityError, .invalidImprovementScore)
+            }
+        }
+    }
+
+    func testTrustedAnalysisRejectsNonCanonicalAnalyzerReceipt() throws {
+        let currentCapture = try trustedCapture()
+        for receipt in ["", " receipt", "receipt ", "receipt\nother"] {
+            XCTAssertThrowsError(
+                try trustedAnalysis(capture: currentCapture, analyzerReceiptID: receipt)
+            ) { error in
+                XCTAssertEqual(error as? VisualAnalysisAuthorityError, .invalidAnalyzerReceipt)
+            }
+        }
     }
 
     func testPolicyClampsUnsafeConfiguration() {
@@ -350,6 +393,37 @@ final class ForgeVisualQATests: XCTestCase {
         return try VisualTrustedCapture(
             authenticatedCapture: receipt,
             artifactSHA256: String(repeating: digestByte, count: 64)
+        )
+    }
+
+    private func trustedAnalysis(
+        capture: VisualTrustedCapture,
+        observations: [FirstMinuteObservation] = [],
+        findings: [VisualFinding] = [],
+        improvementScore: Double = 0,
+        analyzerReceiptID: String = "analyzer-receipt"
+    ) throws -> VisualTrustedAnalysis {
+        try VisualTrustedAnalysis(
+            authenticatedCapture: capture,
+            observations: observations,
+            findings: findings,
+            improvementScore: improvementScore,
+            analyzerReceiptID: analyzerReceiptID
+        )
+    }
+
+    private func acceptedPass(
+        capture: VisualTrustedCapture,
+        findings: [VisualFinding],
+        improvementScore: Double
+    ) throws -> AutoPolishPass {
+        AutoPolishPass(
+            acceptedAnalysis: try trustedAnalysis(
+                capture: capture,
+                findings: findings,
+                improvementScore: improvementScore,
+                analyzerReceiptID: "analyzer-\(capture.id.uuidString)"
+            )
         )
     }
 
