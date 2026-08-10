@@ -15,6 +15,9 @@ XCODEBUILD_CAP_MINUTES="${XCODEBUILD_CAP_MINUTES:-40}"
 rm -rf "$ARTIFACT_DIR" "$DERIVED_DATA"
 mkdir -p "$ARTIFACT_DIR"
 
+echo "==> Verifying pre-2.0 Preview effort contract"
+python3 ci/preview-effort-contract.py
+
 echo "==> Selecting newest Xcode"
 NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
 if [ -z "$NEWEST_XCODE" ]; then
