@@ -1,7 +1,9 @@
 name: V14 Local Model proof guard validation
 
 on:
-  pull_request:
+  push:
+    branches:
+      - worker/GPT56SOL-NF-V14-GUARD-8A10/local-model-proof-guard-coverage-validation/e3
 
 permissions:
   contents: read
@@ -14,7 +16,6 @@ jobs:
       - name: Checkout exact validation head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 2
 
       - name: Bind validation to repaired product head
