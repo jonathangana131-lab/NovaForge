@@ -7,7 +7,7 @@ const accessibleSteer = document.getElementById("accessible-steer");
 
 function normalizedActionValue(rawValue) {
   const value = Number(rawValue);
-  return Number.isFinite(value) ? clamp(value, -1, 1) : 0;
+  return Number.isFinite(value) ? clamp(value, \#(Forge3DSemanticContract.minimumActionValue), \#(Forge3DSemanticContract.maximumActionValue)) : \#(Forge3DSemanticContract.neutralActionValue);
 }
 function bindActionValue(element, actionID, inputKey) {
   const apply = rawValue => {
@@ -21,8 +21,8 @@ function bindActionValue(element, actionID, inputKey) {
     apply(event.detail.value);
   });
 }
-bindActionValue(accessibleThrottle, "drive.throttle", "accessibleThrottle");
-bindActionValue(accessibleSteer, "drive.steer", "accessibleSteer");
+bindActionValue(accessibleThrottle, "\#(Forge3DSemanticContract.throttleActionID)", "accessibleThrottle");
+bindActionValue(accessibleSteer, "\#(Forge3DSemanticContract.steeringActionID)", "accessibleSteer");
 
 function updateKeyboard() {
   input.keyThrottle = (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
