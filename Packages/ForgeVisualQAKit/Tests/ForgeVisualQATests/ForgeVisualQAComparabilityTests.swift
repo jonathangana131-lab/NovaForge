@@ -27,16 +27,8 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
             digestByte: "b"
         )
         let passes = [
-            AutoPolishPass(
-                capture: portrait,
-                findings: [finding(captureID: portrait.id)],
-                improvementScore: 0.1
-            ),
-            AutoPolishPass(
-                capture: landscape,
-                findings: [finding(captureID: landscape.id)],
-                improvementScore: 0.1
-            ),
+            try acceptedPass(capture: portrait, findings: [finding(captureID: portrait.id)]),
+            try acceptedPass(capture: landscape, findings: [finding(captureID: landscape.id)]),
         ]
         XCTAssertEqual(AutoPolishPlanner.decide(passes: passes), .stop(.insufficientVisualEvidence))
     }
@@ -71,6 +63,21 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
         return try VisualTrustedCapture(
             authenticatedCapture: capture,
             artifactSHA256: String(repeating: digestByte, count: 64)
+        )
+    }
+
+    private func acceptedPass(
+        capture: VisualTrustedCapture,
+        findings: [VisualFinding]
+    ) throws -> AutoPolishPass {
+        AutoPolishPass(
+            acceptedAnalysis: try VisualTrustedAnalysis(
+                authenticatedCapture: capture,
+                observations: [],
+                findings: findings,
+                improvementScore: 0.1,
+                analyzerReceiptID: "analysis-\(capture.id.uuidString)"
+            )
         )
     }
 
