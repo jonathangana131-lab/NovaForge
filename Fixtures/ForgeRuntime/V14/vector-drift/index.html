@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Vector Drift</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0a0b0d; --panel:#14171b; --line:#2c3138; --text:#f5f5f2; --muted:#9da1a8; --accent:#ff9e42; --good:#90d5a8; }
+    * { box-sizing: border-box; }
+    html,body { margin:0; min-height:100%; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif; }
+    body { min-height:100dvh; padding:max(12px,env(safe-area-inset-top)) 12px max(16px,env(safe-area-inset-bottom)); display:grid; place-items:center; }
+    main { width:min(100%,720px); display:grid; gap:12px; }
+    .top { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; padding:2px 4px; }
+    .eyebrow { color:var(--accent); font-size:11px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
+    h1 { margin:4px 0 0; font-size:clamp(25px,6vw,38px); line-height:1; letter-spacing:-.04em; }
+    .score { text-align:right; font-variant-numeric:tabular-nums; }
+    .score strong { display:block; font-size:22px; }
+    .score span { color:var(--muted); font-size:12px; }
+    .stage { position:relative; overflow:hidden; border:1px solid var(--line); border-radius:20px; background:#0e1115; min-height:360px; aspect-ratio: 3 / 4; max-height:70dvh; }
+    canvas { width:100%; height:100%; display:block; touch-action:none; }
+    .overlay { position:absolute; inset:0; display:grid; place-items:center; padding:28px; background:linear-gradient(180deg,rgba(10,11,13,.30),rgba(10,11,13,.84)); text-align:center; }
+    .overlay[hidden] { display:none; }
+    .overlay-card { max-width:330px; }
+    .overlay h2 { margin:0 0 8px; font-size:28px; letter-spacing:-.035em; }
+    .overlay p { margin:0 0 18px; color:var(--muted); line-height:1.45; }
+    button { min-height:48px; border:0; border-radius:14px; padding:0 18px; background:var(--accent); color:#18120b; font:inherit; font-weight:800; touch-action:manipulation; }
+    button.secondary { background:#252a31; color:var(--text); }
+    button:focus-visible, canvas:focus-visible { outline:3px solid #ffd0a3; outline-offset:3px; }
+    .controls { display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px; }
+    .hint { min-width:0; color:var(--muted); font-size:13px; line-height:1.35; padding-left:4px; }
+    .pad { display:grid; grid-template-columns:repeat(3,44px); grid-template-rows:repeat(2,44px); gap:6px; }
+    .pad button { min-height:44px; padding:0; border-radius:12px; background:#20242a; color:var(--text); }
+    .pad .up { grid-column:2; }.pad .left{grid-column:1;grid-row:2}.pad .down{grid-column:2;grid-row:2}.pad .right{grid-column:3;grid-row:2}
+    .status { min-height:20px; padding:0 4px; color:var(--muted); font-size:13px; }
+    .semantic-endpoint { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; pointer-events:none; }
+    @media (orientation:landscape) and (max-height:540px) { main { grid-template-columns:minmax(260px,1fr) 180px; align-items:center; } .top,.controls,.status { grid-column:2; } .stage { grid-column:1; grid-row:1 / span 4; aspect-ratio:4/3; min-height:0; height:min(88dvh,520px); } .controls{grid-template-columns:1fr}.pad{justify-content:start} }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; } }
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div><div class="eyebrow">Deterministic 2D run</div><h1>Vector Drift</h1></div>
+    <div class="score" aria-label="Run score"><strong id="score">0 / 3</strong><span id="timer">0.0 s</span></div>
+  </header>
+
+  <section class="stage" aria-label="Vector Drift playfield">
+    <canvas id="game" width="720" height="960" tabindex="0" role="application" aria-label="Move the orange rover to collect three green beacons while avoiding gray barriers" data-novaforge-gesture="playfield"></canvas>
+    <span class="semantic-endpoint" data-novaforge-action="move-x" aria-hidden="true"></span>
+    <span class="semantic-endpoint" data-novaforge-action="move-y" aria-hidden="true"></span>
+    <div id="startOverlay" class="overlay">
+      <div class="overlay-card"><h2>Collect three.</h2><p>Move the rover through every beacon. Barriers reset your position, not the run.</p><button data-novaforge-control="start-run" type="button">Start run</button></div>
+    </div>
+    <div id="finishOverlay" class="overlay" hidden>
+      <div class="overlay-card"><h2 id="finishTitle">Run complete.</h2><p id="finishCopy">All beacons collected.</p><button data-novaforge-control="restart-run" type="button">Run again</button></div>
+    </div>
+  </section>
+
+  <section class="controls" aria-label="Game controls">
+    <div class="hint">Arrow keys, touch the playfield, or use the four direction controls.</div>
+    <div class="pad" aria-label="Direction pad">
+      <button class="up" data-novaforge-control="move-up" type="button" aria-label="Move up">↑</button>
+      <button class="left" data-novaforge-control="move-left" type="button" aria-label="Move left">←</button>
+      <button class="down" data-novaforge-control="move-down" type="button" aria-label="Move down">↓</button>
+      <button class="right" data-novaforge-control="move-right" type="button" aria-label="Move right">→</button>
+    </div>
+  </section>
+  <div id="status" class="status" aria-live="polite">Ready to start.</div>
+</main>
+<script>
+(() => {
+  'use strict';
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const startOverlay = document.getElementById('startOverlay');
+  const finishOverlay = document.getElementById('finishOverlay');
+  const scoreLabel = document.getElementById('score');
+  const timerLabel = document.getElementById('timer');
+  const status = document.getElementById('status');
+  const W = canvas.width, H = canvas.height;
+  const rover = { x: 95, y: 835, r: 24, speed: 285 };
+  const spawn = { x: rover.x, y: rover.y };
+  const beaconsTemplate = [
+    { x: 126, y: 166, r: 22 },
+    { x: 574, y: 236, r: 22 },
+    { x: 520, y: 742, r: 22 }
+  ];
+  const barriers = [
+    { x: 210, y: 95, w: 42, h: 480 },
+    { x: 420, y: 385, w: 42, h: 480 },
+    { x: 252, y: 660, w: 168, h: 42 }
+  ];
+  let beacons = [];
+  let input = { x: 0, y: 0 };
+  let running = false;
+  let elapsed = 0;
+  let lastTime = 0;
+  let collected = 0;
+
+  function resetRun() {
+    rover.x = spawn.x; rover.y = spawn.y;
+    beacons = beaconsTemplate.map(item => ({ ...item, collected: false }));
+    input.x = 0; input.y = 0; elapsed = 0; collected = 0;
+    scoreLabel.textContent = '0 / 3'; timerLabel.textContent = '0.0 s';
+    finishOverlay.hidden = true;
+    draw();
+  }
+
+  function startRun() {
+    if (running) return;
+    resetRun(); running = true; startOverlay.hidden = true; lastTime = performance.now(); status.textContent = 'Run active.';
+    requestAnimationFrame(frame);
+  }
+
+  function finishRun() {
+    running = false; finishOverlay.hidden = false; status.textContent = `Complete in ${elapsed.toFixed(1)} seconds.`;
+  }
+
+  function circleHitsRect(cx, cy, r, rect) {
+    const x = Math.max(rect.x, Math.min(cx, rect.x + rect.w));
+    const y = Math.max(rect.y, Math.min(cy, rect.y + rect.h));
+    return (cx - x) ** 2 + (cy - y) ** 2 < r ** 2;
+  }
+
+  function update(dt) {
+    const mag = Math.hypot(input.x, input.y) || 1;
+    const nx = input.x / Math.max(1, mag), ny = input.y / Math.max(1, mag);
+    const previous = { x: rover.x, y: rover.y };
+    rover.x = Math.max(rover.r, Math.min(W - rover.r, rover.x + nx * rover.speed * dt));
+    rover.y = Math.max(rover.r, Math.min(H - rover.r, rover.y + ny * rover.speed * dt));
+    if (barriers.some(rect => circleHitsRect(rover.x, rover.y, rover.r, rect))) {
+      rover.x = previous.x; rover.y = previous.y; status.textContent = 'Barrier. Try another path.';
+    }
+    for (const beacon of beacons) {
+      if (!beacon.collected && Math.hypot(rover.x - beacon.x, rover.y - beacon.y) <= rover.r + beacon.r) {
+        beacon.collected = true; collected += 1; scoreLabel.textContent = `${collected} / 3`; status.textContent = `Beacon ${collected} collected.`;
+        if (collected === beacons.length) finishRun();
+      }
+    }
+  }
+
+  function frame(now) {
+    if (!running) return;
+    const dt = Math.min(0.033, Math.max(0, (now - lastTime) / 1000)); lastTime = now; elapsed += dt;
+    update(dt); timerLabel.textContent = `${elapsed.toFixed(1)} s`; draw();
+    if (running) requestAnimationFrame(frame);
+  }
+
+  function draw() {
+    ctx.fillStyle = '#0e1115'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#232831'; ctx.lineWidth = 2;
+    for (let x = 0; x <= W; x += 90) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y <= H; y += 90) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    ctx.fillStyle = '#3a3f47'; for (const rect of barriers) ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    for (const beacon of beacons) {
+      if (beacon.collected) continue;
+      ctx.beginPath(); ctx.arc(beacon.x, beacon.y, beacon.r, 0, Math.PI * 2); ctx.fillStyle = '#90d5a8'; ctx.fill();
+      ctx.beginPath(); ctx.arc(beacon.x, beacon.y, beacon.r + 9, 0, Math.PI * 2); ctx.strokeStyle = '#416a50'; ctx.lineWidth = 4; ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(rover.x, rover.y, rover.r, 0, Math.PI * 2); ctx.fillStyle = '#ff9e42'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(rover.x, rover.y - 15); ctx.lineTo(rover.x + 8, rover.y + 8); ctx.lineTo(rover.x - 8, rover.y + 8); ctx.closePath(); ctx.fillStyle = '#25170c'; ctx.fill();
+  }
+
+  function pulseDirection(x, y) {
+    input.x = x; input.y = y;
+    window.setTimeout(() => { if (input.x === x && input.y === y) { input.x = 0; input.y = 0; } }, 180);
+  }
+
+  document.querySelector('[data-novaforge-control="start-run"]').addEventListener('click', startRun);
+  document.querySelector('[data-novaforge-control="restart-run"]').addEventListener('click', startRun);
+  document.querySelector('[data-novaforge-control="move-up"]').addEventListener('click', () => pulseDirection(0, -1));
+  document.querySelector('[data-novaforge-control="move-down"]').addEventListener('click', () => pulseDirection(0, 1));
+  document.querySelector('[data-novaforge-control="move-left"]').addEventListener('click', () => pulseDirection(-1, 0));
+  document.querySelector('[data-novaforge-control="move-right"]').addEventListener('click', () => pulseDirection(1, 0));
+  for (const axis of ['x', 'y']) {
+    document.querySelector(`[data-novaforge-action="move-${axis}"]`).addEventListener('novaforge:action', event => {
+      const value = Number(event.detail && event.detail.value);
+      if (!Number.isFinite(value)) return;
+      input[axis] = Math.max(-1, Math.min(1, value));
+    });
+  }
+  canvas.addEventListener('novaforge:gesture', event => {
+    const id = String(event.detail && event.detail.gestureID || '');
+    const map = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0], stop:[0,0] };
+    if (map[id]) { input.x = map[id][0]; input.y = map[id][1]; }
+  });
+  window.addEventListener('keydown', event => {
+    const map = { ArrowUp:[0,-1], ArrowDown:[0,1], ArrowLeft:[-1,0], ArrowRight:[1,0] };
+    if (!map[event.key]) return; event.preventDefault(); input.x = map[event.key][0]; input.y = map[event.key][1];
+  }, { passive:false });
+  window.addEventListener('keyup', event => { if (event.key.startsWith('Arrow')) { input.x = 0; input.y = 0; } });
+  canvas.addEventListener('pointerdown', event => {
+    const rect = canvas.getBoundingClientRect(); const x = (event.clientX - rect.left) / rect.width * W; const y = (event.clientY - rect.top) / rect.height * H;
+    const dx = x - rover.x, dy = y - rover.y, mag = Math.hypot(dx, dy) || 1; input.x = dx / mag; input.y = dy / mag;
+  });
+  canvas.addEventListener('pointerup', () => { input.x = 0; input.y = 0; });
+  resetRun();
+})();
+</script>
+</body>
+</html>
