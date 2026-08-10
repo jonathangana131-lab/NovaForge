@@ -99,6 +99,9 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertTrue(css.contains("right: max(14px, env(safe-area-inset-right))"))
         XCTAssertFalse(css.contains("body { padding: env(safe-area-inset-top)"))
 
+        XCTAssertTrue(js.contains("[controls.left, controls.right, controls.jump, pauseButton].forEach(isolateNativeButtonKeys)"))
+        XCTAssertTrue(js.contains("event.code === \"Space\" || event.code === \"Enter\""))
+        XCTAssertTrue(js.contains("event.stopPropagation()"))
         XCTAssertTrue(js.contains("const pointerActivationControls = new Set()"))
         XCTAssertTrue(js.contains("button.addEventListener(\"pointerdown\""))
         XCTAssertTrue(js.contains("button.addEventListener(\"pointercancel\""))
