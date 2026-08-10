@@ -13,6 +13,13 @@ public enum Forge3DSemanticCapability: String, Codable, CaseIterable, Sendable {
     case keyboard
 }
 
+/// Semantic interaction classes exposed by the generated page for a trusted Forge Runtime host.
+/// These are project-declared capabilities only; they do not grant host automation authority.
+public enum Forge3DSemanticAutomationCapability: String, Codable, CaseIterable, Sendable {
+    case activateControl = "control.activate"
+    case setActionValue = "action.set-value"
+}
+
 public struct Forge3DBlueprint: Codable, Equatable, Sendable {
     public var name: String
     public var slug: String
@@ -137,16 +144,19 @@ public struct Forge3DGeneratedProject: Equatable, Sendable {
     public let entryPath: String
     public let files: [Forge3DGeneratedFile]
     public let semanticCapabilities: Set<Forge3DSemanticCapability>
+    public let semanticAutomationCapabilities: Set<Forge3DSemanticAutomationCapability>
 
     public init(
         blueprint: Forge3DBlueprint,
         entryPath: String,
         files: [Forge3DGeneratedFile],
-        semanticCapabilities: Set<Forge3DSemanticCapability>
+        semanticCapabilities: Set<Forge3DSemanticCapability>,
+        semanticAutomationCapabilities: Set<Forge3DSemanticAutomationCapability> = []
     ) {
         self.blueprint = blueprint
         self.entryPath = entryPath
         self.files = files
         self.semanticCapabilities = semanticCapabilities
+        self.semanticAutomationCapabilities = semanticAutomationCapabilities
     }
 }
