@@ -4,24 +4,52 @@ import XCTest
 
 final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
     func testExternalConsumerCannotMintTrustedRuntimeIncident() throws {
-        let diagnostics = try typecheckExternalConsumer(
-            named: "ForgeTrustedCrashBypass.swift",
-            source: """
-            import ForgeCrashDoctorCore
+        let diagnostics = try typecheckExternalConsumer(named: "ForgeTrustedCrashBypass.swift", source: """
+        import ForgeCrashDoctorCore
+        func forgeTrust(_ incident: ForgeCrashIncident) throws {
+            _ = try ForgeCrashTrustedIncident(authenticatedIncident: incident, artifactIdentity: String(repeating: "a", count: 64))
+        }
+        """)
+        assertAccessControlDiagnostic(diagnostics)
+    }
 
-            func forgeTrust(_ incident: ForgeCrashIncident) throws {
-                _ = try ForgeCrashTrustedIncident(
-                    authenticatedIncident: incident,
-                    artifactIdentity: String(repeating: "a", count: 64)
-                )
-            }
-            """
-        )
+    func testExternalConsumerCannotMintTrustedRepairPolicy() throws {
+        let diagnostics = try typecheckExternalConsumer(named: "ForgeTrustedPolicyBypass.swift", source: """
+        import ForgeCrashDoctorCore
+        func forgePolicy(_ policy: ForgeCrashRetryPolicy) throws {
+            _ = try ForgeCrashTrustedRetryPolicy(authenticatedPolicy: policy, policyRevision: "policy-v1")
+        }
+        """)
+        assertAccessControlDiagnostic(diagnostics)
+    }
 
+    func testExternalConsumerCannotMintTrustedFailedAttempt() throws {
+        let diagnostics = try typecheckExternalConsumer(named: "ForgeTrustedAttemptBypass.swift", source: """
+        import ForgeCrashDoctorCore
+        func forgeAttempt(_ incident: ForgeCrashTrustedIncident) throws {
+            _ = try ForgeCrashTrustedFailedAttempt(sequence: 1, trustedIncident: incident, failureKind: .sameCrashReturned)
+        }
+        """)
+        assertAccessControlDiagnostic(diagnostics)
+    }
+
+    func testExternalConsumerCannotInvokePrivilegedTriage() throws {
+        let diagnostics = try typecheckExternalConsumer(named: "ForgeTriageBypass.swift", source: """
+        import ForgeCrashDoctorCore
+        func bypass(_ incident: ForgeCrashTrustedIncident, _ control: ForgeCrashTrustedRepairControl) throws {
+            _ = try ForgeCrashTriage.makeSubmission(for: incident, trustedControl: control)
+        }
+        """)
+        assertAccessControlDiagnostic(diagnostics)
+    }
+
+    private func assertAccessControlDiagnostic(_ diagnostics: String, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(
             diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
-                || diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible"),
-            "Expected ordinary imports to be unable to mint trusted crash evidence, got: \(diagnostics)"
+                || diagnostics.localizedCaseInsensitiveContains("is inaccessible"),
+            "Expected ordinary imports to be blocked by module access control, got: \(diagnostics)",
+            file: file,
+            line: line
         )
     }
 
@@ -38,25 +66,14 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [
-            "swiftc",
-            "-typecheck",
-            "-swift-version",
-            "6",
-            "-I",
-            modulesURL.path,
-            sourceURL.path,
-        ]
+        process.arguments = ["swiftc", "-typecheck", "-swift-version", "6", "-I", modulesURL.path, sourceURL.path]
         process.standardOutput = output
         process.standardError = output
         try process.run()
         process.waitUntilExit()
 
-        let diagnostics = String(
-            decoding: output.fileHandleForReading.readDataToEndOfFile(),
-            as: UTF8.self
-        )
-        XCTAssertNotEqual(process.terminationStatus, 0, "External runtime-trust bypass unexpectedly compiled")
+        let diagnostics = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertNotEqual(process.terminationStatus, 0, "External trust bypass unexpectedly compiled")
         XCTAssertFalse(
             diagnostics.localizedCaseInsensitiveContains("no such module 'forgecrashdoctorcore'"),
             "Trust probe failed before reaching ForgeCrashDoctorCore access control: \(diagnostics)"
@@ -65,27 +82,32 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        let starts = [
+            Bundle(for: ForgeCrashDoctorTrustBoundaryTests.self).bundleURL,
+            URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent(),
+        ]
 
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ForgeCrashDoctorCore.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) {
-                return modulesURL
-            }
-
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { break }
-            directory = parent
+        for start in starts {
+            if let modules = findModules(startingAt: start) { return modules }
         }
 
         throw NSError(
             domain: "ForgeCrashDoctorTrustBoundaryTests",
             code: 1,
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "ForgeCrashDoctorCore module is missing from the active SwiftPM test executable ancestry"
-            ]
+            userInfo: [NSLocalizedDescriptionKey: "ForgeCrashDoctorCore module is missing from XCTest bundle and executable ancestry"]
         )
+    }
+
+    private func findModules(startingAt start: URL) -> URL? {
+        var directory = start
+        for _ in 0..<12 {
+            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+            let moduleURL = modulesURL.appendingPathComponent("ForgeCrashDoctorCore.swiftmodule")
+            if FileManager.default.fileExists(atPath: moduleURL.path) { return modulesURL }
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path { break }
+            directory = parent
+        }
+        return nil
     }
 }
