@@ -1,0 +1,43 @@
+name: Temporary Preview Local Settings copy repair
+
+on:
+  push:
+    branches:
+      - worker/gpt56-sol-preview-local-copy-0319
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'preview: make Local memory-pressure copy truthful'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: worker/gpt56-sol-preview-local-copy-0319
+          fetch-depth: 0
+      - name: Patch exact user-facing claim
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('AgentPad/Views/SettingsComponents.swift')
+          source = path.read_text(encoding='utf-8')
+          old = 'Built to survive iPhone memory pressure'
+          new = 'Guarded for iPhone memory pressure'
+          count = source.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly one stale claim, found {count}')
+          path.write_text(source.replace(old, new), encoding='utf-8')
+          PY
+          bash scripts/verify_v14_local_settings_truth.sh
+          rm .github/workflows/zz-preview-local-copy-patch.yml
+          git diff --check
+          git diff --exit-code -- AgentPad/Views/SettingsComponents.swift .github/workflows/zz-preview-local-copy-patch.yml || true
+      - name: Commit cleaned patch
+        run: |
+          git config user.name 'NovaForge Swarm'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Views/SettingsComponents.swift .github/workflows/zz-preview-local-copy-patch.yml
+          git commit -m 'preview: make Local memory-pressure copy truthful'
+          git push origin HEAD:worker/gpt56-sol-preview-local-copy-0319
