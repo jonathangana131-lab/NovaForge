@@ -58,6 +58,21 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(css.contains(".assistive-driving"))
     }
 
+    func testGeneratedControlsOptIntoCanonicalRuntimeSemanticAutomation() throws {
+        let project = try Forge3DGenerator.generate(blueprint)
+        let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
+        let js = try XCTUnwrap(project.files.first(where: { $0.path == "game.js" })?.contents)
+
+        XCTAssertTrue(html.contains("data-novaforge-control=\"scene.pause-toggle\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive.throttle\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive.steer\""))
+        XCTAssertTrue(js.contains("addEventListener(\"novaforge:action\""))
+        XCTAssertTrue(js.contains("event.detail?.actionID !== actionID"))
+        XCTAssertTrue(js.contains("bindActionValue(accessibleThrottle, \"drive.throttle\", \"accessibleThrottle\")"))
+        XCTAssertTrue(js.contains("bindActionValue(accessibleSteer, \"drive.steer\", \"accessibleSteer\")"))
+        XCTAssertTrue(js.contains("Number.isFinite(value) ? clamp(value, -1, 1) : 0"))
+    }
+
     func testBlueprintRoundTripsThroughCodable() throws {
         let data = try JSONEncoder().encode(blueprint)
         XCTAssertEqual(try JSONDecoder().decode(Forge3DBlueprint.self, from: data), blueprint)
