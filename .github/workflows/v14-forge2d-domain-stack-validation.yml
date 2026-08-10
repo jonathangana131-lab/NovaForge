@@ -1,10 +1,9 @@
 name: V14 Forge2D Domain Stack Validation
 
 on:
-  pull_request:
-    paths:
-      - 'Packages/Forge2DKit/**'
-      - '.github/workflows/v14-forge2d-domain-stack-validation.yml'
+  push:
+    branches:
+      - 'validation/GPT56-SOL-NF-V14-2DRECOVER-8A10/domain-e1'
 
 permissions:
   contents: read
@@ -15,16 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          fetch-depth: 3
 
-      - name: Assert exact product parent
+      - name: Assert exact product ancestor and isolated validation delta
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "4b8dbb94cd36b2496b3980b3c1c2459afa9358f9"
-          git diff --check HEAD^..HEAD
-          changed="$(git diff --name-only HEAD^..HEAD)"
+          test "$(git rev-parse HEAD^^)" = "4b8dbb94cd36b2496b3980b3c1c2459afa9358f9"
+          git diff --check HEAD^^..HEAD
+          changed="$(git diff --name-only HEAD^^..HEAD)"
           test "$changed" = ".github/workflows/v14-forge2d-domain-stack-validation.yml"
 
       - name: Toolchain
