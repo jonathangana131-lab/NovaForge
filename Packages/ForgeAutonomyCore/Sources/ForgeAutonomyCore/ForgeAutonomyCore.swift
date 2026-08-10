@@ -256,14 +256,14 @@ public struct ForgeAutonomyCheckpointObservation: Codable, Equatable, Sendable {
 
     fileprivate func exactlyMatches(
         _ authority: ForgeAutonomyAuthority,
-        noLaterThan observationGeneration: UInt64
+        at observationGeneration: UInt64
     ) -> Bool {
         projectID == authority.projectID
             && missionID == authority.missionID
             && checkpointID == authority.checkpointID
             && missionRevision == authority.missionRevision
             && authorityEpoch == authority.authorityEpoch
-            && capturedAtObservationGeneration <= observationGeneration
+            && capturedAtObservationGeneration == observationGeneration
     }
 }
 
@@ -356,7 +356,7 @@ public struct ForgeAutonomyObservation: Codable, Equatable, Sendable {
     fileprivate func hasExactFreshCheckpoint(for authority: ForgeAutonomyAuthority) -> Bool {
         latestDurableCheckpoint?.exactlyMatches(
             authority,
-            noLaterThan: observationGeneration
+            at: observationGeneration
         ) == true
     }
 }
