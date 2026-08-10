@@ -18,10 +18,66 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
             """
         )
 
+        assertAccessControlDiagnostic(
+            diagnostics,
+            message: "Expected ordinary imports to be unable to mint trusted crash evidence"
+        )
+    }
+
+    func testExternalConsumerCannotMintTrustedRepairHistory() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "ForgeTrustedRepairHistoryBypass.swift",
+            source: """
+            import ForgeCrashDoctorCore
+
+            func forgeHistory(_ history: ForgeCrashRepairHistory) throws {
+                _ = try ForgeCrashTrustedRepairHistory(
+                    authenticatedHistory: history,
+                    failureArtifactIdentities: []
+                )
+            }
+            """
+        )
+
+        assertAccessControlDiagnostic(
+            diagnostics,
+            message: "Expected ordinary imports to be unable to mint trusted repair-history authority"
+        )
+    }
+
+    func testExternalConsumerCannotSubmitCodableCandidateHistoryToTriage() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "ForgeCandidateRepairHistoryBypass.swift",
+            source: """
+            import ForgeCrashDoctorCore
+
+            func submit(
+                incident: ForgeCrashTrustedIncident,
+                history: ForgeCrashRepairHistory,
+                policy: ForgeCrashRetryPolicy
+            ) {
+                _ = ForgeCrashTriage.makeSubmission(
+                    for: incident,
+                    failedHistory: history,
+                    policy: policy
+                )
+            }
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
+                || diagnostics.localizedCaseInsensitiveContains("cannot convert value of type")
+                || diagnostics.localizedCaseInsensitiveContains("no exact matches in call to static method"),
+            "Expected ordinary imports to be unable to feed Codable candidate history into triage, got: \(diagnostics)"
+        )
+    }
+
+    private func assertAccessControlDiagnostic(_ diagnostics: String, message: String) {
         XCTAssertTrue(
             diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
                 || diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible"),
-            "Expected ordinary imports to be unable to mint trusted crash evidence, got: \(diagnostics)"
+            "\(message), got: \(diagnostics)"
         )
     }
 
@@ -56,7 +112,7 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
             decoding: output.fileHandleForReading.readDataToEndOfFile(),
             as: UTF8.self
         )
-        XCTAssertNotEqual(process.terminationStatus, 0, "External runtime-trust bypass unexpectedly compiled")
+        XCTAssertNotEqual(process.terminationStatus, 0, "External trust bypass unexpectedly compiled")
         XCTAssertFalse(
             diagnostics.localizedCaseInsensitiveContains("no such module 'forgecrashdoctorcore'"),
             "Trust probe failed before reaching ForgeCrashDoctorCore access control: \(diagnostics)"
