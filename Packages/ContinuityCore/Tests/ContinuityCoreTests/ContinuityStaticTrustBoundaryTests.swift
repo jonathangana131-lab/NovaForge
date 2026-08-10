@@ -57,6 +57,33 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
         )
     }
 
+
+    func testExternalConsumerCannotMintUserResumeAuthority() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "MintUserResumeAuthority.swift",
+            source: """
+            import ContinuityCore
+
+            let identity = ContinuityIdentity(
+                missionID: "mission-1",
+                projectID: "project-1",
+                checkpointID: "checkpoint-1",
+                missionRevision: 1
+            )
+            let _ = ContinuityUserResumeAuthority(
+                identity: identity,
+                authorityReceiptID: "forged"
+            )
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
+                || diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible"),
+            "Expected external user-resume authority construction to fail on access control, got: \(diagnostics)"
+        )
+    }
+
     func testExternalConsumerCannotMintTerminalSnapshot() throws {
         let diagnostics = try typecheckExternalConsumer(
             named: "MintTerminalSnapshot.swift",

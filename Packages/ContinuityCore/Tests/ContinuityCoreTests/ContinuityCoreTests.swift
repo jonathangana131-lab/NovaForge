@@ -98,6 +98,24 @@ final class ContinuityCoreTests: XCTestCase {
         XCTAssertNoThrow(try ContinuityReducer.startForeground(from: revalidated, grant: executionGrant(.foregroundOnDevice)))
     }
 
+
+    func testUserPauseCannotResumeOnExecutionAuthorityAlone() throws {
+        let (running, _) = try ContinuityReducer.startForeground(from: ready(), grant: executionGrant(.foregroundOnDevice))
+        let paused = try ContinuityReducer.pauseByUser(running)
+        XCTAssertEqual(paused.state, .suspended(.userPaused))
+
+        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: paused, grant: executionGrant(.foregroundOnDevice))) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
+        }
+        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: paused, grant: executionGrant(.verifiedCloud))) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
+        }
+
+        let resumed = try ContinuityReducer.resumeAfterUserPause(authority: userResumeAuthority(paused.identity), in: paused)
+        XCTAssertEqual(resumed.state, .ready)
+        XCTAssertNoThrow(try ContinuityReducer.startForeground(from: resumed, grant: executionGrant(.foregroundOnDevice)))
+    }
+
     func testCanonicalIdentityRejectsWhitespaceAliasesAndControls() {
         for bad in [
             ContinuityIdentity(missionID: " mission-1", projectID: "project-1", checkpointID: "checkpoint-1", missionRevision: 1),
@@ -203,6 +221,9 @@ final class ContinuityCoreTests: XCTestCase {
     private func ready() -> ContinuitySnapshot { .init(identity: identity()) }
     private func executionGrant(_ mode: ContinuityExecutionMode, identity: ContinuityIdentity? = nil) -> ContinuityExecutionGrant {
         .init(identity: identity ?? self.identity(), mode: mode, authorityReceiptID: "host-receipt-\(mode)")
+    }
+    private func userResumeAuthority(_ identity: ContinuityIdentity) -> ContinuityUserResumeAuthority {
+        .init(identity: identity, authorityReceiptID: "user-resume-authority")
     }
     private func checkpointAuthority(_ identity: ContinuityIdentity) -> ContinuityMissionAuthority {
         .init(identity: identity, purpose: .checkpointAdvance, authorityReceiptID: "mission-checkpoint-authority")

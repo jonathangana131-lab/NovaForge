@@ -81,6 +81,18 @@ public struct ContinuityMissionAuthority: Hashable, Sendable {
     }
 }
 
+/// Fresh user-intent authority for leaving an explicit user pause. It is intentionally non-Codable
+/// and package-internal to mint; execution authority alone must never override user steering.
+public struct ContinuityUserResumeAuthority: Hashable, Sendable {
+    public let identity: ContinuityIdentity
+    public let authorityReceiptID: String
+
+    init(identity: ContinuityIdentity, authorityReceiptID: String) {
+        self.identity = identity
+        self.authorityReceiptID = authorityReceiptID
+    }
+}
+
 public struct ContinuityWorkLease: Hashable, Sendable {
     public let identity: ContinuityIdentity
     public let epoch: UInt64
@@ -191,7 +203,9 @@ public enum ContinuityReducer {
         case .ready:
             return try mintExecution(.foregroundOnDevice, from: snapshot, grant: grant)
         case let .suspended(reason):
-            guard reason != .missionStateRevalidationRequired else { throw ContinuityMutationError.unsupportedTransition }
+            guard reason != .missionStateRevalidationRequired, reason != .userPaused else {
+                throw ContinuityMutationError.unsupportedTransition
+            }
             return try mintExecution(.foregroundOnDevice, from: snapshot, grant: grant)
         case .needsDecision, .blocked, .completed, .executing:
             throw ContinuityMutationError.unsupportedTransition
@@ -226,6 +240,13 @@ public enum ContinuityReducer {
         try validate(snapshot)
         guard case .executing = snapshot.state else { throw ContinuityMutationError.noActiveExecution }
         return try suspend(snapshot, reason: .executionEnvironmentLost)
+    }
+
+    public static func resumeAfterUserPause(authority: ContinuityUserResumeAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
+        try validate(snapshot)
+        try validate(userResumeAuthority: authority, for: snapshot.identity)
+        guard snapshot.state == .suspended(.userPaused) else { throw ContinuityMutationError.unsupportedTransition }
+        return ContinuitySnapshot(identity: snapshot.identity, state: .ready, activeLease: nil, epoch: try successor(snapshot.epoch))
     }
 
     public static func handoffToCloud(from snapshot: ContinuitySnapshot, grant: ContinuityExecutionGrant) throws -> (ContinuitySnapshot, ContinuityWorkLease) {
@@ -310,7 +331,8 @@ public enum ContinuityReducer {
     private static func allowsHandoff(_ state: ContinuityRunState) -> Bool {
         switch state {
         case .ready, .executing: true
-        case let .suspended(reason): reason != .missionStateRevalidationRequired
+        case let .suspended(reason):
+            reason != .missionStateRevalidationRequired && reason != .userPaused
         case .needsDecision, .blocked, .completed: false
         }
     }
@@ -333,6 +355,14 @@ public enum ContinuityReducer {
 
     private static func validate(authority: ContinuityMissionAuthority, purpose: ContinuityMissionAuthorityPurpose) throws {
         guard isValidIdentity(authority.identity), authority.purpose == purpose, isCanonicalID(authority.authorityReceiptID) else {
+            throw ContinuityMutationError.invalidAuthority
+        }
+    }
+
+    private static func validate(userResumeAuthority: ContinuityUserResumeAuthority, for identity: ContinuityIdentity) throws {
+        guard isValidIdentity(userResumeAuthority.identity),
+              userResumeAuthority.identity == identity,
+              isCanonicalID(userResumeAuthority.authorityReceiptID) else {
             throw ContinuityMutationError.invalidAuthority
         }
     }
