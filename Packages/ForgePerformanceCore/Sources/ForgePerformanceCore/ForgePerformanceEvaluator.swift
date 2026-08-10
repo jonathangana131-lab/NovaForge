@@ -1,6 +1,7 @@
 import Foundation
 
 public enum ForgePerformanceBlocker: Equatable, Sendable {
+    case untrustedPolicy(policyRevision: String)
     case missingScenario(scenarioID: String)
     case policyRevisionMismatch(scenarioID: String)
     case scenarioRevisionMismatch(scenarioID: String)
@@ -19,21 +20,22 @@ public enum ForgePerformanceBlocker: Equatable, Sendable {
 
     fileprivate var sortKey: String {
         switch self {
-        case let .missingScenario(id): return "00|\(id)"
-        case let .policyRevisionMismatch(id): return "01|\(id)"
-        case let .scenarioRevisionMismatch(id): return "02|\(id)"
-        case let .executionEnvironmentMismatch(id): return "03|\(id)"
-        case let .untrustedProducerReceipt(id, receipt): return "04|\(id)|\(receipt)"
-        case let .insufficientFrameSamples(id, _, _): return "05|\(id)"
-        case let .p95FrameTimeExceeded(id, _, _): return "06|\(id)"
-        case let .p99FrameTimeExceeded(id, _, _): return "07|\(id)"
-        case let .missingPeakResidentMemory(id): return "08|\(id)"
-        case let .peakResidentMemoryExceeded(id, _, _): return "09|\(id)"
-        case let .missingInteractionLatency(id): return "10|\(id)"
-        case let .insufficientInteractionSamples(id, _, _): return "11|\(id)"
-        case let .interactionP95LatencyExceeded(id, _, _): return "12|\(id)"
-        case let .missingColdLaunch(id): return "13|\(id)"
-        case let .coldLaunchExceeded(id, _, _): return "14|\(id)"
+        case let .untrustedPolicy(revision): return "00|\(revision)"
+        case let .missingScenario(id): return "01|\(id)"
+        case let .policyRevisionMismatch(id): return "02|\(id)"
+        case let .scenarioRevisionMismatch(id): return "03|\(id)"
+        case let .executionEnvironmentMismatch(id): return "04|\(id)"
+        case let .untrustedProducerReceipt(id, receipt): return "05|\(id)|\(receipt)"
+        case let .insufficientFrameSamples(id, _, _): return "06|\(id)"
+        case let .p95FrameTimeExceeded(id, _, _): return "07|\(id)"
+        case let .p99FrameTimeExceeded(id, _, _): return "08|\(id)"
+        case let .missingPeakResidentMemory(id): return "09|\(id)"
+        case let .peakResidentMemoryExceeded(id, _, _): return "10|\(id)"
+        case let .missingInteractionLatency(id): return "11|\(id)"
+        case let .insufficientInteractionSamples(id, _, _): return "12|\(id)"
+        case let .interactionP95LatencyExceeded(id, _, _): return "13|\(id)"
+        case let .missingColdLaunch(id): return "14|\(id)"
+        case let .coldLaunchExceeded(id, _, _): return "15|\(id)"
         }
     }
 }
@@ -60,6 +62,7 @@ public enum ForgePerformanceEvaluator {
 
     public static func evaluate(
         policy: ForgePerformancePolicy,
+        trustedPolicyReceipt: ForgePerformanceTrustedPolicyReceipt? = nil,
         runs: [ForgePerformanceRunEvidence],
         trustedProducerReceipts: [ForgePerformanceTrustedProducerReceipt]
     ) throws -> ForgePerformanceEvaluation {
@@ -86,7 +89,8 @@ public enum ForgePerformanceEvaluator {
             runByScenarioID[run.scenarioID] = run
         }
 
-        var blockers: [ForgePerformanceBlocker] = []
+        let policyIsTrusted = trustedPolicyReceipt?.exactlyMatches(policy) == true
+        var blockers: [ForgePerformanceBlocker] = policyIsTrusted ? [] : [.untrustedPolicy(policyRevision: policy.policyRevision)]
         var acceptedReceiptIDs: [String] = []
 
         for scenario in policy.scenarios {
@@ -137,7 +141,7 @@ public enum ForgePerformanceEvaluator {
                 }
             }
 
-            if blockers.count == countBefore { acceptedReceiptIDs.append(run.producerReceiptID) }
+            if policyIsTrusted, blockers.count == countBefore { acceptedReceiptIDs.append(run.producerReceiptID) }
         }
 
         let canonical = blockers.sorted { $0.sortKey < $1.sortKey }
