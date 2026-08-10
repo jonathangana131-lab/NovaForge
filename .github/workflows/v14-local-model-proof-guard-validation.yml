@@ -1,0 +1,116 @@
+name: V14 Local Model proof guard validation
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+
+      - name: Bind validation to repaired product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "3a122042689d8d99585dd7f59f0f516ba52c208c"
+          bash -n scripts/verify-local-model-proof-copy.sh
+          bash scripts/verify-local-model-proof-copy.sh
+          git diff --check
+
+      - name: Prove superseded benchmark labels are rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="AgentPad/Views/ModelManagerPanels.swift"
+          original="$(mktemp)"
+          cp "$target" "$original"
+
+          expect_reject() {
+            local label="$1"
+            local from="$2"
+            local to="$3"
+            cp "$original" "$target"
+            python3 - "$target" "$from" "$to" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          old = sys.argv[2]
+          new = sys.argv[3]
+          text = path.read_text()
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one occurrence of {old!r}, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+            if bash scripts/verify-local-model-proof-copy.sh; then
+              echo "guard unexpectedly accepted superseded benchmark label: $label" >&2
+              exit 1
+            fi
+          }
+
+          expect_reject \
+            "tok/s" \
+            'unit: "e2e chars/s"' \
+            'unit: "tok/s"'
+
+          expect_reject \
+            "first token" \
+            'unit: "first output"' \
+            'unit: "first token"'
+
+          expect_reject \
+            "qualification-sounding benchmark prompt" \
+            'Run a local timing sample on this device. Results are session diagnostics, not qualification evidence.' \
+            'Measure real generation speed on this device'
+
+          cp "$original" "$target"
+          bash scripts/verify-local-model-proof-copy.sh
+
+      - name: Prove original presentation scope cannot migrate into benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          settings="AgentPad/Views/SettingsComponents.swift"
+          benchmark="AgentPad/Views/ModelManagerPanels.swift"
+          settings_original="$(mktemp)"
+          benchmark_original="$(mktemp)"
+          cp "$settings" "$settings_original"
+          cp "$benchmark" "$benchmark_original"
+
+          python3 - "$settings" "$benchmark" <<'PY'
+          import pathlib
+          import sys
+
+          settings = pathlib.Path(sys.argv[1])
+          benchmark = pathlib.Path(sys.argv[2])
+          needle = "Guarded for iPhone memory pressure"
+          replacement = "Memory-pressure controls"
+
+          settings_text = settings.read_text()
+          if settings_text.count(needle) != 1:
+              raise SystemExit(f"expected exactly one settings occurrence of {needle!r}, found {settings_text.count(needle)}")
+          settings.write_text(settings_text.replace(needle, replacement, 1))
+
+          benchmark_text = benchmark.read_text()
+          if needle in benchmark_text:
+              raise SystemExit("benchmark unexpectedly already contains moved presentation needle")
+          benchmark.write_text(benchmark_text + f"\n// {needle}\n")
+          PY
+
+          if bash scripts/verify-local-model-proof-copy.sh; then
+            echo "guard unexpectedly accepted an original required presentation moved into ModelManagerPanels.swift" >&2
+            exit 1
+          fi
+
+          cp "$settings_original" "$settings"
+          cp "$benchmark_original" "$benchmark"
+          bash scripts/verify-local-model-proof-copy.sh
