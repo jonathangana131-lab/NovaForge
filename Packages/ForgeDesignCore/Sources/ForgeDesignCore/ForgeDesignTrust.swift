@@ -1,11 +1,7 @@
 import Foundation
 
 /// Complete Design DNA subject that a host has authenticated as accepted project truth.
-///
-/// This type is intentionally non-Codable. Persisted `DesignDNA` remains durable evidence, but
-/// restoring bytes must never restore a trusted bit. Only package-owned authenticated adapters may
-/// construct a binding; external consumers cannot mint accepted Design DNA authority from candidate
-/// bytes merely by calling an initializer.
+/// This type is intentionally non-Codable; decoded bytes never restore their own trusted bit.
 public struct DesignDNATrustBinding: Equatable, Sendable {
     private let authenticatedSnapshot: DesignDNA
 
@@ -29,81 +25,71 @@ public struct DesignDNATrustBinding: Equatable, Sendable {
 }
 
 /// Purpose-bound user authority for one exact Design DNA transition.
-///
-/// Persisted/user-authored `.userDecision` provenance is metadata, not permission. This type is
-/// intentionally non-Codable and its initializer is package-internal so ordinary consumers cannot
-/// mint authority from an arbitrary receipt string. A future canonical host adapter inside this
-/// package must authenticate the user decision before constructing it.
+/// Structural `.userDecision` provenance is durable metadata, not this capability.
 public struct DesignDNAUserMutationAuthority: Equatable, Sendable {
     private let authenticatedBefore: DesignDNA
     private let authenticatedAfter: DesignDNA
+    private let authenticatedRecord: DesignDNAChangeRecord
     private let authenticatedPurpose: DesignDNAUserMutationPurpose
 
     init(
         authenticatedBefore: DesignDNA,
         authenticatedAfter: DesignDNA,
+        authenticatedRecord: DesignDNAChangeRecord,
         purpose: DesignDNAUserMutationPurpose
     ) {
         self.authenticatedBefore = authenticatedBefore
         self.authenticatedAfter = authenticatedAfter
+        self.authenticatedRecord = authenticatedRecord
         self.authenticatedPurpose = purpose
     }
 
     func authorizes(
         before: DesignDNA,
         after: DesignDNA,
+        record: DesignDNAChangeRecord,
         purpose: DesignDNAUserMutationPurpose
     ) -> Bool {
         authenticatedBefore == before
             && authenticatedAfter == after
+            && authenticatedRecord == record
             && authenticatedPurpose == purpose
     }
 }
 
-/// Authenticated link between two exact consecutive accepted Design DNA snapshots.
-///
-/// Durable archives remain candidate evidence after decode. Accepted history requires both whole-
-/// snapshot bindings and one of these non-Codable links for every adjacent transition, preventing a
-/// forged archive from replacing/downgrading/removing protected design while only increasing a
-/// revision number.
+/// Non-Codable host authentication of one durable change record and its exact snapshots.
 public struct DesignDNATransitionTrustBinding: Equatable, Sendable {
     private let authenticatedBefore: DesignDNA
     private let authenticatedAfter: DesignDNA
-    private let authenticatedKind: DesignDNATransitionKind
+    private let authenticatedRecord: DesignDNAChangeRecord
 
     init(
         authenticatedBefore: DesignDNA,
         authenticatedAfter: DesignDNA,
-        kind: DesignDNATransitionKind
+        authenticatedRecord: DesignDNAChangeRecord
     ) throws {
-        let validatedKind = try DesignDNAArchive.validatedTransitionKind(
+        try DesignDNAArchive.validateTransitionRecord(
+            authenticatedRecord,
             from: authenticatedBefore,
             to: authenticatedAfter
         )
-        guard validatedKind == kind else {
-            throw ForgeDesignValidationError.invalidArchiveTransition(
-                "trusted transition kind does not match exact before/after snapshots"
-            )
-        }
         self.authenticatedBefore = authenticatedBefore
         self.authenticatedAfter = authenticatedAfter
-        self.authenticatedKind = kind
+        self.authenticatedRecord = authenticatedRecord
     }
 
     func matches(
         before: DesignDNA,
         after: DesignDNA,
-        kind: DesignDNATransitionKind
+        record: DesignDNAChangeRecord
     ) -> Bool {
         authenticatedBefore == before
             && authenticatedAfter == after
-            && authenticatedKind == kind
+            && authenticatedRecord == record
     }
 }
 
 public extension DesignDNA {
-    /// Structural provenance never self-authorizes accepted truth. A whole-snapshot package-owned
-    /// binding must match exactly.
     func canSupportAcceptedDesignTruth(
         trustedSnapshots: [DesignDNATrustBinding]
     ) -> Bool {
@@ -112,8 +98,6 @@ public extension DesignDNA {
 }
 
 public extension DesignDNAArchive {
-    /// Accepted history fails closed after relaunch unless every exact snapshot and every exact
-    /// adjacent transition has been re-authenticated by the host.
     func canSupportAcceptedDesignHistory(
         trustedSnapshots: [DesignDNATrustBinding],
         trustedTransitions: [DesignDNATransitionTrustBinding]
@@ -125,14 +109,12 @@ public extension DesignDNAArchive {
             return false
         }
 
-        for index in snapshots.indices.dropFirst() {
-            let before = snapshots[index - 1]
-            let after = snapshots[index]
-            guard let kind = try? Self.validatedTransitionKind(from: before, to: after) else {
-                return false
-            }
+        for index in changeRecords.indices {
+            let before = snapshots[index]
+            let after = snapshots[index + 1]
+            let record = changeRecords[index]
             guard trustedTransitions.contains(where: {
-                $0.matches(before: before, after: after, kind: kind)
+                $0.matches(before: before, after: after, record: record)
             }) else {
                 return false
             }
