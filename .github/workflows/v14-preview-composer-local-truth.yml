@@ -1,0 +1,28 @@
+name: V14 Preview Composer local truth
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/Views/ChatComposer.swift'
+      - 'AgentPad/Services/LocalModelRuntime.swift'
+      - 'scripts/verify_v14_preview_composer_local_truth.sh'
+      - '.github/workflows/v14-preview-composer-local-truth.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/Views/ChatComposer.swift'
+      - 'AgentPad/Services/LocalModelRuntime.swift'
+      - 'scripts/verify_v14_preview_composer_local_truth.sh'
+      - '.github/workflows/v14-preview-composer-local-truth.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  composer-local-truth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Composer local-device truth boundary
+        run: bash scripts/verify_v14_preview_composer_local_truth.sh
