@@ -197,6 +197,33 @@ final class AgentForgeCompactCheckpointPlannerTests: XCTestCase {
         )
     }
 
+    func testPathologicalSavingsThresholdDoesNotOverflow() {
+        let first = message(
+            id: id(51),
+            role: .user,
+            text: String(repeating: "history ", count: 100),
+            time: 1
+        )
+        let checkpoint = checkpoint(
+            id: id(52),
+            sourceIDs: [first.id],
+            summary: "summary",
+            time: 2
+        )
+        let current = message(id: id(53), role: .user, text: "continue", time: 3)
+
+        XCTAssertEqual(
+            AgentForgeCompactCheckpointPlanner.plan(
+                modelItems: [first, checkpoint, current],
+                projectID: "preview-project",
+                missionID: "preview-run",
+                protectedTailItemCount: 1,
+                minimumSavingsBytes: Int.max
+            ),
+            .none
+        )
+    }
+
     private func message(
         id: ModelItemID,
         role: ModelRole,
