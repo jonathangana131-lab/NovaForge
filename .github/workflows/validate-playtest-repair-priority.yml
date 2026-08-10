@@ -1,0 +1,25 @@
+name: Validate Playtest repair priority E2
+
+on:
+  push:
+    branches:
+      - validation/GPT56SOL-NF-V14-PLAYTEST-REPAIR-0810/repair-priority/e2
+
+permissions:
+  contents: read
+
+jobs:
+  playtest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exact product diff check
+        run: |
+          test "$(git rev-parse HEAD^)" = "d2d0b7ea05bc0a4dcc83e2284027ae071ba294ce"
+          git diff --check ee4ed30a523f201bf30bad1adf603b3d9ddd0826...HEAD^
+      - name: Debug package tests
+        run: swift test --package-path Packages/ForgePlaytestCore -Xswiftc -warnings-as-errors
+      - name: Release package tests
+        run: swift test --package-path Packages/ForgePlaytestCore --configuration release -Xswiftc -warnings-as-errors
