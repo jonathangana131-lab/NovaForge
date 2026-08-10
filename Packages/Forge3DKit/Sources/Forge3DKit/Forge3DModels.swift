@@ -11,6 +11,61 @@ public enum Forge3DSemanticCapability: String, Codable, CaseIterable, Sendable {
     case controller
     case touch
     case keyboard
+    case automation
+}
+
+/// Starter-owned description of the canonical Runtime semantic interaction required to drive a
+/// generated target. This is discovery metadata only; it grants no Runtime authorization and is
+/// not execution/completion evidence.
+public enum Forge3DSemanticInteractionKind: String, Codable, CaseIterable, Sendable {
+    case controlActivate = "control.activate"
+    case actionSetValue = "action.set-value"
+}
+
+public struct Forge3DSemanticTarget: Codable, Equatable, Sendable {
+    public let id: String
+    public let interactionKind: Forge3DSemanticInteractionKind
+    public let minimumValue: Double?
+    public let neutralValue: Double?
+    public let maximumValue: Double?
+
+    public init(
+        id: String,
+        interactionKind: Forge3DSemanticInteractionKind,
+        minimumValue: Double? = nil,
+        neutralValue: Double? = nil,
+        maximumValue: Double? = nil
+    ) {
+        self.id = id
+        self.interactionKind = interactionKind
+        self.minimumValue = minimumValue
+        self.neutralValue = neutralValue
+        self.maximumValue = maximumValue
+    }
+}
+
+public enum Forge3DSelfPlayContract {
+    public static let pauseTargetID = "pause"
+    public static let throttleTargetID = "drive-throttle"
+    public static let steerTargetID = "drive-steer"
+
+    public static let targets: [Forge3DSemanticTarget] = [
+        .init(id: pauseTargetID, interactionKind: .controlActivate),
+        .init(
+            id: throttleTargetID,
+            interactionKind: .actionSetValue,
+            minimumValue: -1,
+            neutralValue: 0,
+            maximumValue: 1
+        ),
+        .init(
+            id: steerTargetID,
+            interactionKind: .actionSetValue,
+            minimumValue: -1,
+            neutralValue: 0,
+            maximumValue: 1
+        ),
+    ]
 }
 
 public struct Forge3DBlueprint: Codable, Equatable, Sendable {
@@ -137,16 +192,19 @@ public struct Forge3DGeneratedProject: Equatable, Sendable {
     public let entryPath: String
     public let files: [Forge3DGeneratedFile]
     public let semanticCapabilities: Set<Forge3DSemanticCapability>
+    public let semanticTargets: [Forge3DSemanticTarget]
 
     public init(
         blueprint: Forge3DBlueprint,
         entryPath: String,
         files: [Forge3DGeneratedFile],
-        semanticCapabilities: Set<Forge3DSemanticCapability>
+        semanticCapabilities: Set<Forge3DSemanticCapability>,
+        semanticTargets: [Forge3DSemanticTarget] = []
     ) {
         self.blueprint = blueprint
         self.entryPath = entryPath
         self.files = files
         self.semanticCapabilities = semanticCapabilities
+        self.semanticTargets = semanticTargets
     }
 }
