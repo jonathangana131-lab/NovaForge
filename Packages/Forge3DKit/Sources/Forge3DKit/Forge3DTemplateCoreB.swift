@@ -7,6 +7,17 @@ const accessibleSteer = document.getElementById("accessible-steer");
 accessibleThrottle.addEventListener("input", () => { input.accessibleThrottle = clamp(Number(accessibleThrottle.value) || 0, -1, 1); });
 accessibleSteer.addEventListener("input", () => { input.accessibleSteer = clamp(Number(accessibleSteer.value) || 0, -1, 1); });
 
+const automationInput = { throttle: 0, steering: 0 };
+function bindAutomationAction(element, actionID, inputChannel) {
+  element.addEventListener(CONFIG.semanticActionEventName, event => {
+    const detail = event.detail;
+    if (!detail || detail.actionID !== actionID || !Number.isFinite(detail.value)) return;
+    automationInput[inputChannel] = clamp(detail.value, -1, 1);
+  });
+}
+bindAutomationAction(accessibleThrottle, CONFIG.semanticThrottleActionID, "throttle");
+bindAutomationAction(accessibleSteer, CONFIG.semanticSteeringActionID, "steering");
+
 function updateKeyboard() {
   input.keyThrottle = (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
   input.keySteer = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
@@ -63,8 +74,8 @@ function pollGamepad() {
 
 function update(dt) {
   pollGamepad();
-  const throttle = clamp(input.keyThrottle + input.touchThrottle + input.accessibleThrottle + input.padThrottle, -1, 1);
-  const steer = clamp(input.keySteer + input.touchSteer + input.accessibleSteer + input.padSteer, -1, 1);
+  const throttle = clamp(input.keyThrottle + input.touchThrottle + input.accessibleThrottle + automationInput.throttle + input.padThrottle, -1, 1);
+  const steer = clamp(input.keySteer + input.touchSteer + input.accessibleSteer + automationInput.steering + input.padSteer, -1, 1);
   const targetSpeed = throttle >= 0 ? throttle * CONFIG.topSpeed : throttle * CONFIG.topSpeed * 0.38;
   vehicle.speed = approach(vehicle.speed, targetSpeed, CONFIG.acceleration * dt);
   if (Math.abs(throttle) < 0.02) vehicle.speed = approach(vehicle.speed, 0, CONFIG.acceleration * 0.48 * dt);
