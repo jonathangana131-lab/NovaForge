@@ -11,7 +11,8 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.entryPath, "index.html")
         XCTAssertEqual(first.files.map(\.path), ["index.html", "styles.css", "game.js"])
-        XCTAssertEqual(first.semanticCapabilities, [.localSave, .audio, .controller, .touch, .keyboard])
+        XCTAssertEqual(first.semanticCapabilities, [.localSave, .audio, .controller, .touch, .keyboard, .automation])
+        XCTAssertEqual(first.semanticTargets, Forge2DSelfPlayContract.targets)
     }
 
     func testGeneratedProjectHasNoRemoteImportsOrNetworkAuthority() throws {
@@ -58,6 +59,43 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertTrue(css.contains("top: max(14px, env(safe-area-inset-top))"))
         XCTAssertTrue(css.contains("right: max(14px, env(safe-area-inset-right))"))
         XCTAssertFalse(css.contains("body { padding: env(safe-area-inset-top)"))
+    }
+
+    func testGeneratedProjectExposesCanonicalSemanticSelfPlayTargets() throws {
+        let project = try Forge2DGenerator.generate(blueprint)
+        let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
+        let js = try XCTUnwrap(project.files.first(where: { $0.path == "game.js" })?.contents)
+
+        XCTAssertTrue(html.contains("data-novaforge-control=\"pause\""))
+        XCTAssertTrue(html.contains("data-novaforge-control=\"jump\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"move-x\""))
+        XCTAssertTrue(js.contains("document.querySelector('[data-novaforge-action=\"move-x\"]')"))
+        XCTAssertTrue(js.contains("addEventListener(\"novaforge:action\""))
+        XCTAssertTrue(js.contains("detail.actionID !== \"move-x\""))
+        XCTAssertTrue(js.contains("automationAxis: 0"))
+        XCTAssertTrue(js.contains("bounded(humanHorizontal + input.automationAxis, -1, 1)"))
+        XCTAssertTrue(js.contains("controls.jump.addEventListener(\"click\", queueJump)"))
+        XCTAssertFalse(js.contains("__novaForgeHostSemanticAutomationV1"), "Starter must not duplicate Runtime host authority")
+
+        XCTAssertEqual(project.semanticTargets.count, 3)
+        XCTAssertEqual(project.semanticTargets[0], .init(id: "pause", interactionKind: .controlActivate))
+        XCTAssertEqual(project.semanticTargets[1], .init(id: "jump", interactionKind: .controlActivate))
+        XCTAssertEqual(
+            project.semanticTargets[2],
+            .init(
+                id: "move-x",
+                interactionKind: .actionSetValue,
+                minimumValue: -1,
+                neutralValue: 0,
+                maximumValue: 1
+            )
+        )
+    }
+
+    func testSemanticAutomationPatchFailsClosedWhenTemplateContractDrifts() {
+        XCTAssertThrowsError(try Forge2DSemanticAutomation.patch("const unrelated = true;")) { error in
+            XCTAssertNotNil(error as? Forge2DSemanticAutomationIssue)
+        }
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
