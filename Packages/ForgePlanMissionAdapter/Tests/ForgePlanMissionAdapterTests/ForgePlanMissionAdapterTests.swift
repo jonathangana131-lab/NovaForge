@@ -3,18 +3,25 @@ import ForgePlanCore
 @testable import ForgePlanMissionAdapter
 
 final class ForgePlanMissionAdapterTests: XCTestCase {
-    private func context() throws -> ForgePlanMissionContext {
+    private func context(
+        handoffRevision: UInt64 = 7,
+        receiptID: String = "plan-accept-7"
+    ) throws -> ForgePlanMissionContext {
         try .init(
-            handoffRevision: 7,
-            planAcceptanceReceiptID: "plan-accept-7"
+            handoffRevision: handoffRevision,
+            planAcceptanceReceiptID: receiptID
         )
     }
 
-    private func sourceBinding() throws -> ForgePlanMissionSourceBinding {
+    private func sourceBinding(
+        composerDraftRevision: UInt64 = 11,
+        planRevision: UInt64 = 4,
+        planReferenceID: String = "plan-space-4"
+    ) throws -> ForgePlanMissionSourceBinding {
         try .init(
-            composerDraftRevision: 11,
-            planRevision: 4,
-            planReferenceID: "plan-space-4"
+            composerDraftRevision: composerDraftRevision,
+            planRevision: planRevision,
+            planReferenceID: planReferenceID
         )
     }
 
@@ -36,11 +43,11 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         )
     }
 
-    private func summary(
+    private func proposal(
         profile: ForgeComposerV14ControlProfile? = nil,
-        decisions: [PlanResolvedDecision] = [],
+        questions: [PlanQuestion] = [],
         intentSummary: String = "Build a calm local-first timer"
-    ) throws -> ReadyToForgeSummary {
+    ) throws -> PlanSpaceProposal {
         let resolvedProfile: ForgeComposerV14ControlProfile
         if let profile {
             resolvedProfile = profile
@@ -49,20 +56,78 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         }
         return .init(
             intentSummary: intentSummary,
-            decisions: decisions,
+            questions: questions,
             controls: resolvedProfile
         )
     }
 
-    private func makeHandoff(summary: ReadyToForgeSummary) throws -> ForgePlanMissionHandoff {
-        try ForgePlanMissionAdapter.makeHandoff(
-            summary: summary,
-            context: context(),
-            sourceBinding: sourceBinding()
+    private func choiceQuestion(
+        id: String = "theme",
+        prompt: String = "Theme?",
+        allowsDecideForMe: Bool = true
+    ) -> PlanQuestion {
+        .init(
+            id: id,
+            prompt: prompt,
+            reason: "Material design decision",
+            importance: .material,
+            controlKind: .segmentedChoice,
+            options: [
+                .init(id: "dark", label: "Dark", detail: "Dark surfaces", previewToken: "preview-dark"),
+                .init(id: "light", label: "Light", detail: "Light surfaces", previewToken: "preview-light"),
+            ],
+            placeholder: "Choose a theme",
+            allowsDecideForMe: allowsDecideForMe
         )
     }
 
-    func testLocalOnlyAndFullForgeSurviveAsTypedRoutingRequirements() throws {
+    private func sliderQuestion(id: String = "density") -> PlanQuestion {
+        .init(
+            id: id,
+            prompt: "Interface density?",
+            reason: "Changes layout density",
+            importance: .material,
+            controlKind: .slider,
+            range: .init(
+                minimum: 0,
+                maximum: 1,
+                step: 0.25,
+                lowLabel: "Airy",
+                highLabel: "Dense"
+            ),
+            allowsDecideForMe: true
+        )
+    }
+
+    private func makeHandoff(
+        proposal: PlanSpaceProposal,
+        answers: [String: PlanAnswer] = [:],
+        context: ForgePlanMissionContext? = nil,
+        sourceBinding: ForgePlanMissionSourceBinding? = nil
+    ) throws -> ForgePlanMissionHandoff {
+        let resolvedContext: ForgePlanMissionContext
+        if let context {
+            resolvedContext = context
+        } else {
+            resolvedContext = try self.context()
+        }
+
+        let resolvedSourceBinding: ForgePlanMissionSourceBinding
+        if let sourceBinding {
+            resolvedSourceBinding = sourceBinding
+        } else {
+            resolvedSourceBinding = try self.sourceBinding()
+        }
+
+        return try ForgePlanMissionAdapter.makeHandoff(
+            proposal: proposal,
+            answers: answers,
+            context: resolvedContext,
+            sourceBinding: resolvedSourceBinding
+        )
+    }
+
+    func testLocalOnlyAndFullForgeSurviveAsTypedMissionEraRequirements() throws {
         let profile = try controls(
             buildDepth: .obsessive,
             creativity: 0.8,
@@ -70,7 +135,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             autonomy: .fullForge,
             privacy: .localOnly
         )
-        let handoff = try makeHandoff(summary: summary(profile: profile))
+        let handoff = try makeHandoff(proposal: proposal(profile: profile))
         let binding = try sourceBinding()
 
         XCTAssertEqual(handoff.revision, 7)
@@ -83,27 +148,103 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         XCTAssertEqual(handoff.privacyIntent, .localOnly)
         XCTAssertEqual(handoff.autonomyIntent, .fullForge)
         XCTAssertEqual(handoff.sourceBinding, binding)
-        XCTAssertTrue(handoff.executionPreconditions.contains(.sourceRevisionMatch(binding: binding)))
-        XCTAssertTrue(handoff.executionPreconditions.contains(.planAcceptanceVerification(receiptID: "plan-accept-7")))
+        XCTAssertFalse(handoff.authorizesExecution)
+
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .composerPlanRevisionMatch(binding: binding)
+            )
+        )
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .acceptedPlanSubjectVerification(
+                    receiptID: "plan-accept-7",
+                    subject: handoff.acceptedPlanSubject
+                )
+            )
+        )
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .missionControlEnvelopeBinding(envelope: handoff.controlEnvelope)
+            )
+        )
         XCTAssertTrue(handoff.executionPreconditions.contains(.localOnlyRouting))
-        XCTAssertTrue(handoff.executionPreconditions.contains(.autonomyPolicyResolution(intent: .fullForge)))
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .autonomyPolicyResolution(intent: .fullForge)
+            )
+        )
         XCTAssertFalse(handoff.requiresExternalModelQualification)
         XCTAssertFalse(handoff.requiresDelegatedDecisionResolution)
     }
 
-    func testReceiptAndSourceRevisionRemainVerificationRequirements() throws {
-        let binding = try sourceBinding()
-        let handoff = try makeHandoff(summary: summary())
+    func testReceiptRequirementBindsTheWholeAcceptedSubject() throws {
+        let plan = try proposal()
+        let handoff = try makeHandoff(proposal: plan)
 
-        XCTAssertEqual(handoff.sourceBinding, binding)
-        XCTAssertTrue(handoff.executionPreconditions.contains(.sourceRevisionMatch(binding: binding)))
-        XCTAssertTrue(handoff.executionPreconditions.contains(.planAcceptanceVerification(receiptID: "plan-accept-7")))
+        XCTAssertEqual(handoff.acceptedPlanSubject.proposal, plan)
+        XCTAssertEqual(handoff.acceptedPlanSubject.acceptedAnswers, [])
+        XCTAssertEqual(handoff.acceptedPlanSubject.summary.intentSummary, plan.intentSummary)
+        XCTAssertEqual(handoff.acceptedPlanSubject.composerPlanBinding, try sourceBinding())
+        XCTAssertTrue(
+            handoff.executionPreconditions.contains(
+                .acceptedPlanSubjectVerification(
+                    receiptID: "plan-accept-7",
+                    subject: handoff.acceptedPlanSubject
+                )
+            )
+        )
+    }
+
+    func testSameReceiptCannotMakeChangedPrivacyStructurallyIndistinguishable() throws {
+        let localHandoff = try makeHandoff(
+            proposal: proposal(profile: controls(privacy: .localOnly))
+        )
+        let hostedPrivacy = try ForgeComposerPrivacyIntent.providers(["openai", "anthropic"])
+        let hostedHandoff = try makeHandoff(
+            proposal: proposal(profile: controls(privacy: hostedPrivacy))
+        )
+
+        XCTAssertEqual(localHandoff.planAcceptanceReceiptID, hostedHandoff.planAcceptanceReceiptID)
+        XCTAssertNotEqual(localHandoff.acceptedPlanSubject, hostedHandoff.acceptedPlanSubject)
+        XCTAssertNotEqual(
+            localHandoff.executionPreconditions[1],
+            hostedHandoff.executionPreconditions[1]
+        )
+    }
+
+    func testSameReceiptCannotMakeChangedDecisionStructurallyIndistinguishable() throws {
+        let question = choiceQuestion()
+        let plan = try proposal(questions: [question])
+        let dark = try makeHandoff(proposal: plan, answers: ["theme": .choice("dark")])
+        let light = try makeHandoff(proposal: plan, answers: ["theme": .choice("light")])
+
+        XCTAssertEqual(dark.planAcceptanceReceiptID, light.planAcceptanceReceiptID)
+        XCTAssertNotEqual(dark.acceptedPlanSubject, light.acceptedPlanSubject)
+        XCTAssertEqual(dark.planDecisions.first?.value, .selected(optionID: "dark", label: "Dark"))
+        XCTAssertEqual(light.planDecisions.first?.value, .selected(optionID: "light", label: "Light"))
+    }
+
+    func testSameReceiptCannotMakeChangedComposerPlanBindingIndistinguishable() throws {
+        let plan = try proposal()
+        let first = try makeHandoff(
+            proposal: plan,
+            sourceBinding: sourceBinding(planRevision: 4)
+        )
+        let second = try makeHandoff(
+            proposal: plan,
+            sourceBinding: sourceBinding(planRevision: 5)
+        )
+
+        XCTAssertEqual(first.planAcceptanceReceiptID, second.planAcceptanceReceiptID)
+        XCTAssertNotEqual(first.acceptedPlanSubject, second.acceptedPlanSubject)
+        XCTAssertNotEqual(first.controlEnvelope, second.controlEnvelope)
     }
 
     func testProviderAllowlistRemainsExactAndRequiresEnforcement() throws {
         let privacy = try ForgeComposerPrivacyIntent.providers(["openai", "anthropic"])
         let profile = try controls(privacy: privacy)
-        let handoff = try makeHandoff(summary: summary(profile: profile))
+        let handoff = try makeHandoff(proposal: proposal(profile: profile))
 
         XCTAssertEqual(handoff.privacyIntent, try .providers(["anthropic", "openai"]))
         XCTAssertTrue(handoff.privacyIntent.allowsProvider("openai"))
@@ -122,7 +263,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             referenceID: "model.local.qwen35-4b"
         )
         let profile = try controls(intelligence: modelIntent)
-        let handoff = try makeHandoff(summary: summary(profile: profile))
+        let handoff = try makeHandoff(proposal: proposal(profile: profile))
 
         XCTAssertTrue(handoff.requiresExternalModelQualification)
         XCTAssertEqual(handoff.requestedExplicitModelReferenceID, "model.local.qwen35-4b")
@@ -134,22 +275,46 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         XCTAssertEqual(handoff.controlProfile.intelligence, modelIntent)
     }
 
-    func testDelegatedDecisionSurvivesAsPreExecutionGate() throws {
-        let decision = PlanResolvedDecision(
-            id: "storage",
-            prompt: "Which storage approach?",
-            value: .delegatedToNovaForge
+    func testDelegatedChoicePreservesExactQuestionContractAndRejectsOutOfSchemaResolution() throws {
+        let question = choiceQuestion(id: "storage", prompt: "Which storage approach?")
+        let handoff = try makeHandoff(
+            proposal: proposal(questions: [question]),
+            answers: ["storage": .decideForMe]
         )
-        let handoff = try makeHandoff(summary: summary(decisions: [decision]))
 
         XCTAssertEqual(handoff.delegatedDecisionIDs, ["storage"])
         XCTAssertTrue(handoff.requiresDelegatedDecisionResolution)
-        XCTAssertEqual(handoff.planDecisions, [decision])
+        XCTAssertEqual(handoff.delegatedDecisionContracts.count, 1)
+
+        let contract = try XCTUnwrap(handoff.delegatedDecisionContracts.first)
+        XCTAssertEqual(contract.question, question)
+        XCTAssertEqual(contract.question.reason, "Material design decision")
+        XCTAssertEqual(contract.question.controlKind, .segmentedChoice)
+        XCTAssertEqual(contract.question.options.map(\.id), ["dark", "light"])
+        XCTAssertTrue(contract.acceptsConcreteResolution(.choice("dark")))
+        XCTAssertFalse(contract.acceptsConcreteResolution(.choice("other")))
+        XCTAssertFalse(contract.acceptsConcreteResolution(.decideForMe))
+
         XCTAssertTrue(
             handoff.executionPreconditions.contains(
-                .delegatedDecisionResolution(decisionID: "storage")
+                .delegatedDecisionResolution(contract: contract)
             )
         )
+    }
+
+    func testDelegatedNumericContractEnforcesRangeAndStep() throws {
+        let question = sliderQuestion()
+        let handoff = try makeHandoff(
+            proposal: proposal(questions: [question]),
+            answers: ["density": .decideForMe]
+        )
+
+        let contract = try XCTUnwrap(handoff.delegatedDecisionContracts.first)
+        XCTAssertEqual(contract.question.range, question.range)
+        XCTAssertTrue(contract.acceptsConcreteResolution(.scalar(0.5)))
+        XCTAssertFalse(contract.acceptsConcreteResolution(.scalar(0.6)))
+        XCTAssertFalse(contract.acceptsConcreteResolution(.scalar(2)))
+        XCTAssertFalse(contract.acceptsConcreteResolution(.text("0.5")))
     }
 
     func testExplicitModelFullForgeAndDelegationRemainSeparateRequirements() throws {
@@ -157,13 +322,10 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             intelligence: try .explicit(referenceID: "model.deep.local"),
             autonomy: .fullForge
         )
-        let decision = PlanResolvedDecision(
-            id: "physics",
-            prompt: "Choose handling style",
-            value: .delegatedToNovaForge
-        )
+        let question = choiceQuestion(id: "physics", prompt: "Choose handling style")
         let handoff = try makeHandoff(
-            summary: summary(profile: profile, decisions: [decision])
+            proposal: proposal(profile: profile, questions: [question]),
+            answers: ["physics": .decideForMe]
         )
 
         XCTAssertTrue(
@@ -176,115 +338,156 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
                 .explicitModelQualification(referenceID: "model.deep.local")
             )
         )
-        XCTAssertTrue(
-            handoff.executionPreconditions.contains(
-                .delegatedDecisionResolution(decisionID: "physics")
-            )
-        )
+        XCTAssertEqual(handoff.delegatedDecisionIDs, ["physics"])
         XCTAssertEqual(handoff.autonomyIntent, .fullForge)
+        XCTAssertEqual(handoff.controlEnvelope.controlProfile, profile)
     }
 
     func testConcreteDecisionRemainsStructuredAndDoesNotBecomeDelegated() throws {
-        let decision = PlanResolvedDecision(
-            id: "theme",
-            prompt: "Theme?",
-            value: .selected(optionID: "dark", label: "Dark")
+        let question = choiceQuestion()
+        let handoff = try makeHandoff(
+            proposal: proposal(questions: [question]),
+            answers: ["theme": .choice("dark")]
         )
-        let handoff = try makeHandoff(summary: summary(decisions: [decision]))
 
-        XCTAssertEqual(handoff.planDecisions, [decision])
+        XCTAssertEqual(
+            handoff.planDecisions,
+            [
+                .init(
+                    id: "theme",
+                    prompt: "Theme?",
+                    value: .selected(optionID: "dark", label: "Dark")
+                )
+            ]
+        )
         XCTAssertFalse(handoff.requiresDelegatedDecisionResolution)
-        XCTAssertFalse(
-            handoff.executionPreconditions.contains(
-                .delegatedDecisionResolution(decisionID: "theme")
-            )
-        )
+        XCTAssertTrue(handoff.delegatedDecisionContracts.isEmpty)
     }
 
-    func testDirectlyConstructedBlankSummaryFailsClosed() throws {
-        let bad = try summary(intentSummary: "  ")
-        XCTAssertThrowsError(try makeHandoff(summary: bad)) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSummary("intentSummary"))
-        }
-    }
-
-    func testDuplicateDecisionIDsFailClosed() throws {
-        let one = PlanResolvedDecision(id: "x", prompt: "One", value: .text("a"))
-        let two = PlanResolvedDecision(id: "x", prompt: "Two", value: .text("b"))
-        XCTAssertThrowsError(
-            try makeHandoff(summary: summary(decisions: [one, two]))
-        ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .duplicateDecisionID("x"))
-        }
-    }
-
-    func testTooManyDecisionsFailsClosed() throws {
-        let decisions = (0..<129).map { index in
-            PlanResolvedDecision(
-                id: "decision-\(index)",
-                prompt: "Decision \(index)?",
-                value: .text("value")
+    func testBlankProposalIntentFailsClosed() throws {
+        let bad = try proposal(intentSummary: "  ")
+        XCTAssertThrowsError(try makeHandoff(proposal: bad)) {
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidSummary("intentSummary")
             )
         }
+    }
+
+    func testPresentedAnswerSetMustBeExact() throws {
+        let question = choiceQuestion()
+        let plan = try proposal(questions: [question])
+
+        XCTAssertThrowsError(try makeHandoff(proposal: plan, answers: [:])) {
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidAcceptedPlan("presentedAnswerSet")
+            )
+        }
+
         XCTAssertThrowsError(
-            try makeHandoff(summary: summary(decisions: decisions))
+            try makeHandoff(
+                proposal: plan,
+                answers: [
+                    "theme": .choice("dark"),
+                    "invented": .text("not part of plan"),
+                ]
+            )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSummary("tooManyDecisions"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidAcceptedPlan("presentedAnswerSet")
+            )
         }
     }
 
-    func testInvalidNonFiniteDecisionFailsClosed() throws {
-        let bad = PlanResolvedDecision(id: "risk", prompt: "Risk?", value: .scalar(.infinity))
+    func testDecideForMeFailsWhenQuestionDoesNotPermitDelegation() throws {
+        let question = choiceQuestion(allowsDecideForMe: false)
+        let plan = try proposal(questions: [question])
+
         XCTAssertThrowsError(
-            try makeHandoff(summary: summary(decisions: [bad]))
+            try makeHandoff(proposal: plan, answers: ["theme": .decideForMe])
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("risk"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidAcceptedPlan("answers")
+            )
         }
     }
 
-    func testInvalidIntervalOrderingFailsClosed() throws {
-        let bad = PlanResolvedDecision(
-            id: "range",
-            prompt: "Range?",
-            value: .interval(lower: 2, upper: 1)
+    func testNonFiniteAnswerFailsBeforeHandoff() throws {
+        let plan = try proposal(questions: [sliderQuestion()])
+        XCTAssertThrowsError(
+            try makeHandoff(proposal: plan, answers: ["density": .scalar(.infinity)])
+        ) {
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidAcceptedPlan("answers")
+            )
+        }
+    }
+
+    func testQuestionContractRejectsControlCharactersAndExcessCount() throws {
+        let badQuestion = PlanQuestion(
+            id: "bad",
+            prompt: "Bad\u{0000}",
+            controlKind: .freeText
         )
         XCTAssertThrowsError(
-            try makeHandoff(summary: summary(decisions: [bad]))
+            try makeHandoff(
+                proposal: proposal(questions: [badQuestion]),
+                answers: ["bad": .text("value")]
+            )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("range"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidPlanQuestion("bad")
+            )
         }
-    }
 
-    func testSelectedOptionIdentityRejectsControlCharacters() throws {
-        let bad = PlanResolvedDecision(
-            id: "theme",
-            prompt: "Theme?",
-            value: .selected(optionID: "dark\u{0000}", label: "Dark")
-        )
+        let questions = (0..<129).map { index in
+            PlanQuestion(
+                id: "q-\(index)",
+                prompt: "Question \(index)?",
+                importance: .inferable,
+                controlKind: .freeText
+            )
+        }
         XCTAssertThrowsError(
-            try makeHandoff(summary: summary(decisions: [bad]))
+            try makeHandoff(proposal: proposal(questions: questions))
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("theme"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidSummary("tooManyQuestions")
+            )
         }
     }
 
     func testTextAllowsNewlinesButRejectsOtherControlCharacters() throws {
-        let good = PlanResolvedDecision(
+        let question = PlanQuestion(
             id: "notes",
             prompt: "Notes?",
-            value: .text("line one\nline two")
+            controlKind: .freeText
         )
-        XCTAssertNoThrow(try makeHandoff(summary: summary(decisions: [good])))
+        let plan = try proposal(questions: [question])
 
-        let bad = PlanResolvedDecision(
-            id: "bad-notes",
-            prompt: "Notes?",
-            value: .text("nope\u{0000}")
+        XCTAssertNoThrow(
+            try makeHandoff(
+                proposal: plan,
+                answers: ["notes": .text("line one\nline two")]
+            )
         )
+
         XCTAssertThrowsError(
-            try makeHandoff(summary: summary(decisions: [bad]))
+            try makeHandoff(
+                proposal: plan,
+                answers: ["notes": .text("nope\u{0000}")]
+            )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("bad-notes"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidDecision("notes")
+            )
         }
     }
 
@@ -295,7 +498,10 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
                 planAcceptanceReceiptID: "ok"
             )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidContext("handoffRevision"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidContext("handoffRevision")
+            )
         }
         XCTAssertThrowsError(
             try ForgePlanMissionContext(
@@ -303,11 +509,14 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
                 planAcceptanceReceiptID: " padded "
             )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidContext("planAcceptanceReceiptID"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidContext("planAcceptanceReceiptID")
+            )
         }
     }
 
-    func testSourceBindingRejectsZeroRevisionAndNonCanonicalReference() throws {
+    func testComposerPlanBindingRejectsZeroRevisionAndNonCanonicalReference() throws {
         XCTAssertThrowsError(
             try ForgePlanMissionSourceBinding(
                 composerDraftRevision: 0,
@@ -315,7 +524,10 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
                 planReferenceID: "plan-1"
             )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSourceBinding("composerDraftRevision"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidSourceBinding("composerDraftRevision")
+            )
         }
         XCTAssertThrowsError(
             try ForgePlanMissionSourceBinding(
@@ -324,7 +536,10 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
                 planReferenceID: "plan-1"
             )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSourceBinding("planRevision"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidSourceBinding("planRevision")
+            )
         }
         XCTAssertThrowsError(
             try ForgePlanMissionSourceBinding(
@@ -333,16 +548,29 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
                 planReferenceID: " plan-1 "
             )
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSourceBinding("planReferenceID"))
+            XCTAssertEqual(
+                $0 as? ForgePlanMissionHandoffError,
+                .invalidSourceBinding("planReferenceID")
+            )
         }
     }
 
-    func testDecisionOrderingAndDelegatedPreconditionsAreCanonical() throws {
-        let z = PlanResolvedDecision(id: "z", prompt: "Z", value: .delegatedToNovaForge)
-        let a = PlanResolvedDecision(id: "a", prompt: "A", value: .delegatedToNovaForge)
-        let handoff = try makeHandoff(summary: summary(decisions: [z, a]))
+    func testDecisionAndDelegatedContractOrderingAreCanonical() throws {
+        let z = choiceQuestion(id: "z", prompt: "Z")
+        let a = choiceQuestion(id: "a", prompt: "A")
+        let handoff = try makeHandoff(
+            proposal: proposal(questions: [z, a]),
+            answers: [
+                "z": .decideForMe,
+                "a": .decideForMe,
+            ]
+        )
 
         XCTAssertEqual(handoff.planDecisions.map(\.id), ["a", "z"])
         XCTAssertEqual(handoff.delegatedDecisionIDs, ["a", "z"])
+        XCTAssertEqual(
+            handoff.acceptedPlanSubject.acceptedAnswers.map(\.questionID),
+            ["a", "z"]
+        )
     }
 }
