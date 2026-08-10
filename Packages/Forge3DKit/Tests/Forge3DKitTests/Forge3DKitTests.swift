@@ -10,7 +10,8 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.entryPath, "index.html")
         XCTAssertEqual(first.files.map(\.path), ["index.html", "styles.css", "game.js"])
-        XCTAssertEqual(first.semanticCapabilities, [.localSave, .controller, .touch, .keyboard])
+        XCTAssertEqual(first.semanticCapabilities, [.localSave, .controller, .touch, .keyboard, .semanticAutomation])
+        XCTAssertEqual(first.semanticAutomation, Forge3DSemanticContract.descriptor)
     }
 
     func testGeneratedProjectDeniesNetworkAndUsesOnlyLocalAssets() throws {
@@ -62,15 +63,27 @@ final class Forge3DKitTests: XCTestCase {
         let project = try Forge3DGenerator.generate(blueprint)
         let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
         let js = try XCTUnwrap(project.files.first(where: { $0.path == "game.js" })?.contents)
+        let automation = try XCTUnwrap(project.semanticAutomation)
+
+        XCTAssertEqual(automation.pauseControlID, "scene.pause-toggle")
+        XCTAssertEqual(automation.throttleAction.targetID, "drive.throttle")
+        XCTAssertEqual(automation.throttleAction.minimumValue, -1)
+        XCTAssertEqual(automation.throttleAction.maximumValue, 1)
+        XCTAssertEqual(automation.throttleAction.neutralValue, 0)
+        XCTAssertEqual(automation.steeringAction.targetID, "drive.steer")
+        XCTAssertEqual(automation.steeringAction.minimumValue, -1)
+        XCTAssertEqual(automation.steeringAction.maximumValue, 1)
+        XCTAssertEqual(automation.steeringAction.neutralValue, 0)
 
         XCTAssertTrue(html.contains("data-novaforge-control=\"scene.pause-toggle\""))
         XCTAssertTrue(html.contains("data-novaforge-action=\"drive.throttle\""))
         XCTAssertTrue(html.contains("data-novaforge-action=\"drive.steer\""))
+        XCTAssertTrue(html.contains("min=\"-1.0\" max=\"1.0\" step=\"0.1\" value=\"0.0\""))
         XCTAssertTrue(js.contains("addEventListener(\"novaforge:action\""))
         XCTAssertTrue(js.contains("event.detail?.actionID !== actionID"))
         XCTAssertTrue(js.contains("bindActionValue(accessibleThrottle, \"drive.throttle\", \"accessibleThrottle\")"))
         XCTAssertTrue(js.contains("bindActionValue(accessibleSteer, \"drive.steer\", \"accessibleSteer\")"))
-        XCTAssertTrue(js.contains("Number.isFinite(value) ? clamp(value, -1, 1) : 0"))
+        XCTAssertTrue(js.contains("Number.isFinite(value) ? clamp(value, -1.0, 1.0) : 0.0"))
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
