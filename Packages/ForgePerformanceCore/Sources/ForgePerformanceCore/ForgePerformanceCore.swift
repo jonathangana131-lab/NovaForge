@@ -10,6 +10,7 @@ public enum ForgePerformanceError: Error, Equatable, Sendable {
     case duplicateObservationMetric(ForgePerformanceMetricKind)
     case targetMismatch
     case scenarioMismatch
+    case untrustedPolicy
     case untrustedProducer
     case unsupportedSchema(Int)
     case archiveMismatch
@@ -265,6 +266,19 @@ public struct ForgePerformanceRunEvidence: Codable, Equatable, Sendable {
     }
 }
 
+/// Canonical-constitution trust binds the complete performance policy. Public/Codable policy data cannot self-authorize.
+public struct ForgePerformanceTrustedPolicyReceipt: Equatable, Sendable {
+    private let authenticatedPolicy: ForgePerformancePolicy
+    public var policyID: String { authenticatedPolicy.policyID }
+    public var target: ForgePerformanceTarget { authenticatedPolicy.target }
+    public var scenarioID: String { authenticatedPolicy.scenarioID }
+    public var scenarioDefinitionDigest: String { authenticatedPolicy.scenarioDefinitionDigest }
+    public var budgets: [ForgePerformanceBudget] { authenticatedPolicy.budgets }
+
+    init(authenticatedPolicy: ForgePerformancePolicy) { self.authenticatedPolicy = authenticatedPolicy }
+    func exactlyMatches(_ policy: ForgePerformancePolicy) -> Bool { authenticatedPolicy == policy }
+}
+
 /// Host trust binds the entire validated run. It is intentionally non-Codable and not externally constructible.
 public struct ForgePerformanceTrustedProducerReceipt: Equatable, Sendable {
     private let authenticatedRun: ForgePerformanceRunEvidence
@@ -318,10 +332,16 @@ public struct ForgePerformanceEvaluation: Equatable, Sendable {
 }
 
 public enum ForgePerformanceEvaluator {
-    public static func evaluate(policy: ForgePerformancePolicy, run: ForgePerformanceRunEvidence, trustedProducer: ForgePerformanceTrustedProducerReceipt) throws -> ForgePerformanceEvaluation {
+    public static func evaluate(
+        policy: ForgePerformancePolicy,
+        run: ForgePerformanceRunEvidence,
+        trustedPolicy: ForgePerformanceTrustedPolicyReceipt,
+        trustedProducer: ForgePerformanceTrustedProducerReceipt
+    ) throws -> ForgePerformanceEvaluation {
         guard policy.target == run.target else { throw ForgePerformanceError.targetMismatch }
         guard policy.scenarioID == run.scenarioID,
               policy.scenarioDefinitionDigest == run.scenarioDefinitionDigest else { throw ForgePerformanceError.scenarioMismatch }
+        guard trustedPolicy.exactlyMatches(policy) else { throw ForgePerformanceError.untrustedPolicy }
         guard trustedProducer.exactlyMatches(run) else { throw ForgePerformanceError.untrustedProducer }
 
         let observations = Dictionary(uniqueKeysWithValues: run.observations.map { ($0.metric, $0) })
@@ -354,7 +374,7 @@ public enum ForgePerformanceEvaluator {
     }
 }
 
-/// Durable historical inputs only. Decoding never restores trusted producer or accepted performance authority.
+/// Durable historical inputs only. Decoding never restores trusted policy, producer, or accepted performance authority.
 public struct ForgePerformanceArchive: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
     public let schemaVersion: Int
@@ -380,8 +400,16 @@ public struct ForgePerformanceArchive: Codable, Equatable, Sendable {
         try self.init(policy: policy, run: run)
     }
 
-    /// Relaunch must supply fresh host trust for the exact archived run; pass state is always recomputed.
-    public func restore(trustedProducer: ForgePerformanceTrustedProducerReceipt) throws -> ForgePerformanceEvaluation {
-        try ForgePerformanceEvaluator.evaluate(policy: policy, run: run, trustedProducer: trustedProducer)
+    /// Relaunch must supply fresh canonical-policy and producer trust; pass state is always recomputed.
+    public func restore(
+        trustedPolicy: ForgePerformanceTrustedPolicyReceipt,
+        trustedProducer: ForgePerformanceTrustedProducerReceipt
+    ) throws -> ForgePerformanceEvaluation {
+        try ForgePerformanceEvaluator.evaluate(
+            policy: policy,
+            run: run,
+            trustedPolicy: trustedPolicy,
+            trustedProducer: trustedProducer
+        )
     }
 }
