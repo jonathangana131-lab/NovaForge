@@ -24,22 +24,12 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
           source = Path("Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservation.swift")
           text = source.read_text()
           replacements = [
-              (
-                  "public protocol ForgeRuntimeStateEvidenceAuthenticating: Sendable {",
-                  "protocol ForgeRuntimeStateEvidenceAuthenticating: Sendable {",
-              ),
-              (
-                  "public enum ForgeRuntimeStateEvaluator {",
-                  "enum ForgeRuntimeStateEvaluator {",
-              ),
-              (
-                  "    public static func evaluate<Authenticator: ForgeRuntimeStateEvidenceAuthenticating>(",
-                  "    static func evaluate<Authenticator: ForgeRuntimeStateEvidenceAuthenticating>(",
-              ),
+              ("public protocol ForgeRuntimeStateEvidenceAuthenticating: Sendable {", "protocol ForgeRuntimeStateEvidenceAuthenticating: Sendable {"),
+              ("public enum ForgeRuntimeStateEvaluator {", "enum ForgeRuntimeStateEvaluator {"),
+              ("    public static func evaluate<Authenticator: ForgeRuntimeStateEvidenceAuthenticating>(", "    static func evaluate<Authenticator: ForgeRuntimeStateEvidenceAuthenticating>("),
           ]
           for old, new in replacements:
               count = text.count(old)
@@ -54,125 +44,8 @@ jobs:
           if test_text.count(marker) != 1:
               raise SystemExit("expected one ForgeRuntime import in observation tests")
           tests.write_text(test_text.replace(marker, "@testable import ForgeRuntime\n", 1))
-
-          trust_test = Path("Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateTrustBoundaryTests.swift")
-          if trust_test.exists():
-              raise SystemExit("trust-boundary test already exists unexpectedly")
-          trust_test.write_text(r'''import Foundation
-import XCTest
-@testable import ForgeRuntime
-
-final class ForgeRuntimeStateTrustBoundaryTests: XCTestCase {
-    func testExternalConsumerCannotNameStateEvidenceAuthenticator() throws {
-        let diagnostics = try typecheckExternalConsumer(
-            named: "StateAuthenticator.swift",
-            source: """
-            import ForgeRuntime
-
-            typealias LeakedStateAuthenticator = ForgeRuntimeStateEvidenceAuthenticating
-            """
-        )
-
-        XCTAssertTrue(
-            diagnostics.localizedCaseInsensitiveContains("cannot find type 'forgeruntimestateevidenceauthenticating'")
-                || diagnostics.localizedCaseInsensitiveContains("cannot find 'forgeruntimestateevidenceauthenticating'"),
-            "Expected state evidence authenticator to be hidden from external consumers, got: \(diagnostics)"
-        )
-    }
-
-    func testExternalConsumerCannotCallStateAcceptanceEvaluator() throws {
-        let diagnostics = try typecheckExternalConsumer(
-            named: "StateEvaluator.swift",
-            source: """
-            import ForgeRuntime
-
-            typealias LeakedStateEvaluator = ForgeRuntimeStateEvaluator
-            """
-        )
-
-        XCTAssertTrue(
-            diagnostics.localizedCaseInsensitiveContains("cannot find type 'forgeruntimestateevaluator'")
-                || diagnostics.localizedCaseInsensitiveContains("cannot find 'forgeruntimestateevaluator'"),
-            "Expected state acceptance evaluator to be hidden from external consumers, got: \(diagnostics)"
-        )
-    }
-
-    private func typecheckExternalConsumer(
-        named fileName: String,
-        source: String
-    ) throws -> String {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("forge-runtime-state-trust-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: temporaryDirectory,
-            withIntermediateDirectories: true
-        )
-        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
-
-        let sourceURL = temporaryDirectory.appendingPathComponent(fileName)
-        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
-
-        let modulesURL = try activeModulesURL()
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [
-            "swiftc",
-            "-typecheck",
-            "-swift-version",
-            "6",
-            "-I",
-            modulesURL.path,
-            sourceURL.path,
-        ]
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        process.waitUntilExit()
-
-        let diagnostics = String(
-            decoding: output.fileHandleForReading.readDataToEndOfFile(),
-            as: UTF8.self
-        )
-
-        XCTAssertNotEqual(process.terminationStatus, 0, "External state trust bypass unexpectedly compiled")
-        XCTAssertFalse(
-            diagnostics.localizedCaseInsensitiveContains("no such module 'forgeruntime'"),
-            "Static boundary probe failed before reaching the ForgeRuntime trust API: \(diagnostics)"
-        )
-        return diagnostics
-    }
-
-    private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
-            .deletingLastPathComponent()
-
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ForgeRuntime.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) {
-                return modulesURL
-            }
-
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path {
-                break
-            }
-            directory = parent
-        }
-
-        throw NSError(
-            domain: "ForgeRuntimeStateTrustBoundaryTests",
-            code: 1,
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "ForgeRuntime module is missing from the active SwiftPM test executable ancestry"
-            ]
-        )
-    }
-}
-''')
           PY
+          printf '%s' 'aW1wb3J0IEZvdW5kYXRpb24KaW1wb3J0IFhDVGVzdApAdGVzdGFibGUgaW1wb3J0IEZvcmdlUnVudGltZQoKZmluYWwgY2xhc3MgRm9yZ2VSdW50aW1lU3RhdGVUcnVzdEJvdW5kYXJ5VGVzdHM6IFhDVGVzdENhc2UgewogICAgZnVuYyB0ZXN0RXh0ZXJuYWxDb25zdW1lckNhbm5vdE5hbWVTdGF0ZUV2aWRlbmNlQXV0aGVudGljYXRvcigpIHRocm93cyB7CiAgICAgICAgbGV0IGRpYWdub3N0aWNzID0gdHJ5IHR5cGVjaGVja0V4dGVybmFsQ29uc3VtZXIoCiAgICAgICAgICAgIG5hbWVkOiAiU3RhdGVBdXRoZW50aWNhdG9yLnN3aWZ0IiwKICAgICAgICAgICAgc291cmNlOiAiIiIKICAgICAgICAgICAgaW1wb3J0IEZvcmdlUnVudGltZQoKICAgICAgICAgICAgdHlwZWFsaWFzIExlYWtlZFN0YXRlQXV0aGVudGljYXRvciA9IEZvcmdlUnVudGltZVN0YXRlRXZpZGVuY2VBdXRoZW50aWNhdGluZwogICAgICAgICAgICAiIiIKICAgICAgICApCgogICAgICAgIFhDVEFzc2VydFRydWUoCiAgICAgICAgICAgIGRpYWdub3N0aWNzLmxvY2FsaXplZENhc2VJbnNlbnNpdGl2ZUNvbnRhaW5zKCJjYW5ub3QgZmluZCB0eXBlICdmb3JnZXJ1bnRpbWVzdGF0ZWV2aWRlbmNlYXV0aGVudGljYXRpbmcnIikKICAgICAgICAgICAgICAgIHx8IGRpYWdub3N0aWNzLmxvY2FsaXplZENhc2VJbnNlbnNpdGl2ZUNvbnRhaW5zKCJjYW5ub3QgZmluZCAnZm9yZ2VydW50aW1lc3RhdGVldmlkZW5jZWF1dGhlbnRpY2F0aW5nJyIpLAogICAgICAgICAgICAiRXhwZWN0ZWQgc3RhdGUgZXZpZGVuY2UgYXV0aGVudGljYXRvciB0byBiZSBoaWRkZW4gZnJvbSBleHRlcm5hbCBjb25zdW1lcnMsIGdvdDogXChkaWFnbm9zdGljcykiCiAgICAgICAgKQogICAgfQoKICAgIGZ1bmMgdGVzdEV4dGVybmFsQ29uc3VtZXJDYW5ub3RDYWxsU3RhdGVBY2NlcHRhbmNlRXZhbHVhdG9yKCkgdGhyb3dzIHsKICAgICAgICBsZXQgZGlhZ25vc3RpY3MgPSB0cnkgdHlwZWNoZWNrRXh0ZXJuYWxDb25zdW1lcigKICAgICAgICAgICAgbmFtZWQ6ICJTdGF0ZUV2YWx1YXRvci5zd2lmdCIsCiAgICAgICAgICAgIHNvdXJjZTogIiIiCiAgICAgICAgICAgIGltcG9ydCBGb3JnZVJ1bnRpbWUKCiAgICAgICAgICAgIHR5cGVhbGlhcyBMZWFrZWRTdGF0ZUV2YWx1YXRvciA9IEZvcmdlUnVudGltZVN0YXRlRXZhbHVhdG9yCiAgICAgICAgICAgICIiIgogICAgICAgICkKCiAgICAgICAgWENUQXNzZXJ0VHJ1ZSgKICAgICAgICAgICAgZGlhZ25vc3RpY3MubG9jYWxpemVkQ2FzZUluc2Vuc2l0aXZlQ29udGFpbnMoImNhbm5vdCBmaW5kIHR5cGUgJ2ZvcmdlcnVudGltZXN0YXRlZXZhbHVhdG9yJyIpCiAgICAgICAgICAgICAgICB8fCBkaWFnbm9zdGljcy5sb2NhbGl6ZWRDYXNlSW5zZW5zaXRpdmVDb250YWlucygiY2Fubm90IGZpbmQgJ2ZvcmdlcnVudGltZXN0YXRlZXZhbHVhdG9yJyIpLAogICAgICAgICAgICAiRXhwZWN0ZWQgc3RhdGUgYWNjZXB0YW5jZSBldmFsdWF0b3IgdG8gYmUgaGlkZGVuIGZyb20gZXh0ZXJuYWwgY29uc3VtZXJzLCBnb3Q6IFwoZGlhZ25vc3RpY3MpIgogICAgICAgICkKICAgIH0KCiAgICBwcml2YXRlIGZ1bmMgdHlwZWNoZWNrRXh0ZXJuYWxDb25zdW1lcigKICAgICAgICBuYW1lZCBmaWxlTmFtZTogU3RyaW5nLAogICAgICAgIHNvdXJjZTogU3RyaW5nCiAgICApIHRocm93cyAtPiBTdHJpbmcgewogICAgICAgIGxldCB0ZW1wb3JhcnlEaXJlY3RvcnkgPSBGaWxlTWFuYWdlci5kZWZhdWx0LnRlbXBvcmFyeURpcmVjdG9yeQogICAgICAgICAgICAuYXBwZW5kaW5nUGF0aENvbXBvbmVudCgiZm9yZ2UtcnVudGltZS1zdGF0ZS10cnVzdC1cKFVVSUQoKS51dWlkU3RyaW5nKSIsIGlzRGlyZWN0b3J5OiB0cnVlKQogICAgICAgIHRyeSBGaWxlTWFuYWdlci5kZWZhdWx0LmNyZWF0ZURpcmVjdG9yeSgKICAgICAgICAgICAgYXQ6IHRlbXBvcmFyeURpcmVjdG9yeSwKICAgICAgICAgICAgd2l0aEludGVybWVkaWF0ZURpcmVjdG9yaWVzOiB0cnVlCiAgICAgICAgKQogICAgICAgIGRlZmVyIHsgdHJ5PyBGaWxlTWFuYWdlci5kZWZhdWx0LnJlbW92ZUl0ZW0oYXQ6IHRlbXBvcmFyeURpcmVjdG9yeSkgfQoKICAgICAgICBsZXQgc291cmNlVVJMID0gdGVtcG9yYXJ5RGlyZWN0b3J5LmFwcGVuZGluZ1BhdGhDb21wb25lbnQoZmlsZU5hbWUpCiAgICAgICAgdHJ5IHNvdXJjZS53cml0ZSh0bzogc291cmNlVVJMLCBhdG9taWNhbGx5OiB0cnVlLCBlbmNvZGluZzogLnV0ZjgpCgogICAgICAgIGxldCBtb2R1bGVzVVJMID0gdHJ5IGFjdGl2ZU1vZHVsZXNVUkwoKQogICAgICAgIGxldCBwcm9jZXNzID0gUHJvY2VzcygpCiAgICAgICAgbGV0IG91dHB1dCA9IFBpcGUoKQogICAgICAgIHByb2Nlc3MuZXhlY3V0YWJsZVVSTCA9IFVSTChmaWxlVVJMV2l0aFBhdGg6ICIvdXNyL2Jpbi9lbnYiKQogICAgICAgIHByb2Nlc3MuYXJndW1lbnRzID0gWwogICAgICAgICAgICAic3dpZnRjIiwKICAgICAgICAgICAgIi10eXBlY2hlY2siLAogICAgICAgICAgICAiLXN3aWZ0LXZlcnNpb24iLAogICAgICAgICAgICAiNiIsCiAgICAgICAgICAgICItSSIsCiAgICAgICAgICAgIG1vZHVsZXNVUkwucGF0aCwKICAgICAgICAgICAgc291cmNlVVJMLnBhdGgsCiAgICAgICAgXQogICAgICAgIHByb2Nlc3Muc3RhbmRhcmRPdXRwdXQgPSBvdXRwdXQKICAgICAgICBwcm9jZXNzLnN0YW5kYXJkRXJyb3IgPSBvdXRwdXQKICAgICAgICB0cnkgcHJvY2Vzcy5ydW4oKQogICAgICAgIHByb2Nlc3Mud2FpdFVudGlsRXhpdCgpCgogICAgICAgIGxldCBkaWFnbm9zdGljcyA9IFN0cmluZygKICAgICAgICAgICAgZGVjb2Rpbmc6IG91dHB1dC5maWxlSGFuZGxlRm9yUmVhZGluZy5yZWFkRGF0YVRvRW5kT2ZGaWxlKCksCiAgICAgICAgICAgIGFzOiBVVEY4LnNlbGYKICAgICAgICApCgogICAgICAgIFhDVEFzc2VydE5vdEVxdWFsKHByb2Nlc3MudGVybWluYXRpb25TdGF0dXMsIDAsICJFeHRlcm5hbCBzdGF0ZSB0cnVzdCBieXBhc3MgdW5leHBlY3RlZGx5IGNvbXBpbGVkIikKICAgICAgICBYQ1RBc3NlcnRGYWxzZSgKICAgICAgICAgICAgZGlhZ25vc3RpY3MubG9jYWxpemVkQ2FzZUluc2Vuc2l0aXZlQ29udGFpbnMoIm5vIHN1Y2ggbW9kdWxlICdmb3JnZXJ1bnRpbWUnIiksCiAgICAgICAgICAgICJTdGF0aWMgYm91bmRhcnkgcHJvYmUgZmFpbGVkIGJlZm9yZSByZWFjaGluZyB0aGUgRm9yZ2VSdW50aW1lIHRydXN0IEFQSTogXChkaWFnbm9zdGljcykiCiAgICAgICAgKQogICAgICAgIHJldHVybiBkaWFnbm9zdGljcwogICAgfQoKICAgIHByaXZhdGUgZnVuYyBhY3RpdmVNb2R1bGVzVVJMKCkgdGhyb3dzIC0+IFVSTCB7CiAgICAgICAgdmFyIGRpcmVjdG9yeSA9IFVSTChmaWxlVVJMV2l0aFBhdGg6IENvbW1hbmRMaW5lLmFyZ3VtZW50c1swXSkKICAgICAgICAgICAgLmRlbGV0aW5nTGFzdFBhdGhDb21wb25lbnQoKQoKICAgICAgICBmb3IgXyBpbiAwLi48MTAgewogICAgICAgICAgICBsZXQgbW9kdWxlc1VSTCA9IGRpcmVjdG9yeS5hcHBlbmRpbmdQYXRoQ29tcG9uZW50KCJNb2R1bGVzIiwgaXNEaXJlY3Rvcnk6IHRydWUpCiAgICAgICAgICAgIGxldCBtb2R1bGVVUkwgPSBtb2R1bGVzVVJMLmFwcGVuZGluZ1BhdGhDb21wb25lbnQoIkZvcmdlUnVudGltZS5zd2lmdG1vZHVsZSIpCiAgICAgICAgICAgIGlmIEZpbGVNYW5hZ2VyLmRlZmF1bHQuZmlsZUV4aXN0cyhhdFBhdGg6IG1vZHVsZVVSTC5wYXRoKSB7CiAgICAgICAgICAgICAgICByZXR1cm4gbW9kdWxlc1VSTAogICAgICAgICAgICB9CgogICAgICAgICAgICBsZXQgcGFyZW50ID0gZGlyZWN0b3J5LmRlbGV0aW5nTGFzdFBhdGhDb21wb25lbnQoKQogICAgICAgICAgICBpZiBwYXJlbnQucGF0aCA9PSBkaXJlY3RvcnkucGF0aCB7CiAgICAgICAgICAgICAgICBicmVhawogICAgICAgICAgICB9CiAgICAgICAgICAgIGRpcmVjdG9yeSA9IHBhcmVudAogICAgICAgIH0KCiAgICAgICAgdGhyb3cgTlNFcnJvcigKICAgICAgICAgICAgZG9tYWluOiAiRm9yZ2VSdW50aW1lU3RhdGVUcnVzdEJvdW5kYXJ5VGVzdHMiLAogICAgICAgICAgICBjb2RlOiAxLAogICAgICAgICAgICB1c2VySW5mbzogWwogICAgICAgICAgICAgICAgTlNMb2NhbGl6ZWREZXNjcmlwdGlvbktleToKICAgICAgICAgICAgICAgICAgICAiRm9yZ2VSdW50aW1lIG1vZHVsZSBpcyBtaXNzaW5nIGZyb20gdGhlIGFjdGl2ZSBTd2lmdFBNIHRlc3QgZXhlY3V0YWJsZSBhbmNlc3RyeSIKICAgICAgICAgICAgXQogICAgICAgICkKICAgIH0KfQo=' | base64 --decode > Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateTrustBoundaryTests.swift
       - name: Diff guard
         shell: bash
         run: |
