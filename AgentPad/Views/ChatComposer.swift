@@ -171,7 +171,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Balanced thinking for everyday agent work"
             case .high: "Deeper reasoning for difficult tasks"
             case .extraHigh: "Extended reasoning for complex plans and debugging"
-            case .ultraCode: "Max reasoning + isolated workspace agents"
+            case .ultraCode: "Isolated specialist agents + lead verification"
             }
         }
     }
@@ -194,7 +194,7 @@ private struct ComposerReasoningPicker: View {
                 reasoningSlider
 
                 Text(selection == .ultraCode
-                     ? "Max reasoning + isolated workspace agents"
+                     ? ultraDetail
                      : selection.detail)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(AgentPalette.secondaryText)
@@ -210,6 +210,16 @@ private struct ComposerReasoningPicker: View {
 
     private var activeTint: Color {
         selection == .ultraCode ? AgentPalette.indigo : provider.tint
+    }
+
+    private var ultraDetail: String {
+        guard let effectiveEffort = preferences.effectiveReasoningEffort(
+            provider: provider,
+            modelID: modelID
+        ) else {
+            return "Isolated specialist agents + lead verification"
+        }
+        return "\(effectiveEffort.title) model reasoning + isolated specialist agents"
     }
 
     private var selection: Level {
