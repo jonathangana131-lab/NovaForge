@@ -1,0 +1,37 @@
+name: V14 Forge3D E2 Validation
+
+on:
+  push:
+    branches:
+      - 'validation/GPT56-SOL-NF-V14-3DRECOVER-8A10/e2'
+
+permissions:
+  contents: read
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent and isolated validation delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "99fd3784cfc2a40fe405c1b15adde91509a7d19a"
+          git diff --check HEAD^..HEAD
+          changed="$(git diff --name-only HEAD^..HEAD)"
+          test "$changed" = ".github/workflows/v14-forge3d-e2-validation.yml"
+
+      - name: Toolchain
+        run: |
+          swift --version
+          node --version
+
+      - name: Debug package tests
+        run: swift test --package-path Packages/Forge3DKit -Xswiftc -warnings-as-errors
+
+      - name: Release package tests
+        run: swift test --package-path Packages/Forge3DKit -c release -Xswiftc -warnings-as-errors
