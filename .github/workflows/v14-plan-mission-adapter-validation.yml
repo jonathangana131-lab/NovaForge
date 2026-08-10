@@ -1,0 +1,37 @@
+name: V14 Plan Mission Adapter Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-PLANMISSION-0809/**
+  pull_request:
+    paths:
+      - "Packages/ForgePlanMissionAdapter/**"
+      - ".github/workflows/v14-plan-mission-adapter-validation.yml"
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Assert exact product parent on push
+        if: github.event_name == 'push'
+        run: |
+          test "$(git rev-parse HEAD^)" = "b19598f22383158d99feb7e4433e14911beba1ef"
+          git diff --check HEAD^
+
+      - name: Diff sanity on pull request
+        if: github.event_name == 'pull_request'
+        run: git diff --check "${{ github.event.pull_request.base.sha }}"...HEAD
+
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -Xswiftc -warnings-as-errors
+
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanMissionAdapter -c release -Xswiftc -warnings-as-errors
