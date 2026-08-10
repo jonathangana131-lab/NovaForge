@@ -940,6 +940,42 @@ final class AgentLocalModelProviderTransportTests: XCTestCase {
         XCTAssertEqual(stoppedScopes, [fixture.scope])
     }
 
+    func testStaticCatalogDoesNotSelfAwardDeviceQualification() {
+        let defaultVariant = LocalModelCatalog.defaultVariant
+        XCTAssertTrue(defaultVariant.isIPhone12SafeDefault)
+        XCTAssertEqual(defaultVariant.deviceFit.title, "Qualification pending")
+        XCTAssertEqual(defaultVariant.deviceFit.symbol, "iphone")
+        XCTAssertTrue(
+            defaultVariant.benchmarkSummary.localizedCaseInsensitiveContains(
+                "exact-device qualification pending"
+            )
+        )
+        XCTAssertTrue(
+            defaultVariant.details.localizedCaseInsensitiveContains(
+                "exact-device qualification remains pending"
+            )
+        )
+
+        let forbiddenStaticClaims = [
+            "Device proven",
+            "physical-device canary proven",
+            "The proven iPhone 12 default",
+        ]
+        for variant in LocalModelCatalog.all {
+            let staticPresentation = [
+                variant.deviceFit.title,
+                variant.benchmarkSummary,
+                variant.details,
+            ].joined(separator: " ")
+            for claim in forbiddenStaticClaims {
+                XCTAssertFalse(
+                    staticPresentation.localizedCaseInsensitiveContains(claim),
+                    "Static catalog metadata must not self-award device qualification: \(claim)"
+                )
+            }
+        }
+    }
+
     private func assertStreamFailure(
         script: ScriptedLocalModelInference.Script,
         expected: AgentLocalModelProviderTransportError,
