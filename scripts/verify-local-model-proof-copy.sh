@@ -4,8 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime="$repo_root/AgentPad/Services/LocalModelRuntime.swift"
 settings="$repo_root/AgentPad/Views/SettingsComponents.swift"
+benchmark="$repo_root/AgentPad/Views/ModelManagerPanels.swift"
 
-for path in "$runtime" "$settings"; do
+for path in "$runtime" "$settings" "$benchmark"; do
   if [[ ! -f "$path" ]]; then
     echo "missing expected source file: ${path#$repo_root/}" >&2
     exit 1
@@ -55,6 +56,32 @@ required=(
 for needle in "${required[@]}"; do
   if ! grep -Fq "$needle" "$runtime" "$settings"; then
     echo "expected truthful local-model presentation missing: $needle" >&2
+    failed=1
+  fi
+done
+
+benchmark_forbidden=(
+  'unit: "tok/s"'
+  'unit: "first token"'
+  'Measure real generation speed on this device'
+)
+
+for needle in "${benchmark_forbidden[@]}"; do
+  if grep -nF "$needle" "$benchmark"; then
+    echo "superseded benchmark presentation found: $needle" >&2
+    failed=1
+  fi
+done
+
+benchmark_required=(
+  'unit: "e2e chars/s"'
+  'unit: "first output"'
+  'not qualification evidence'
+)
+
+for needle in "${benchmark_required[@]}"; do
+  if ! grep -Fq "$needle" "$benchmark"; then
+    echo "expected truthful benchmark presentation missing: $needle" >&2
     failed=1
   fi
 done
