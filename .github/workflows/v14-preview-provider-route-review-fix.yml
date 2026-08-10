@@ -151,9 +151,9 @@ jobs:
           SWIFT
 
           git diff --check
-          test "$(git diff --name-only | wc -l | tr -d ' ')" = "2"
-          git diff --name-only | grep -Fx 'Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift'
-          git diff --name-only | grep -Fx 'Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift'
+          test "$(git status --short | wc -l | tr -d ' ')" = "2"
+          git status --short | grep -F 'Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift'
+          git status --short | grep -F 'Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift'
 
       - name: Commit reviewed repair to product branch
         shell: bash
