@@ -675,6 +675,123 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
         XCTAssertNotNil(assistantObject["tool_calls"])
     }
 
+    func testForgeCompactCheckpointReplacesOnlyEligibleHistoricalPrefix() async throws {
+        let fixture = CanonicalContextFixture(seed: 11)
+        let historicalIDs: [ModelItemID] = (0..<8).map {
+            canonicalTagged(11_100 + UInt64($0))
+        }
+        let historicalItems = historicalIDs.enumerated().map { index, id in
+            fixture.userItem(
+                id: id,
+                text: "historical-marker-\(index)-" + String(
+                    repeating: "durable project context ",
+                    count: 160
+                )
+            )
+        }
+        let checkpointItemID: ModelItemID = canonicalTagged(11_200)
+        let checkpoint = ContextCheckpointReference(
+            checkpointID: canonicalTagged(11_201),
+            schemaVersion: .current,
+            summary: "Durable checkpoint: preserve the accepted project direction.",
+            sourceItemIDs: historicalIDs,
+            sourceDigest: canonicalDigest(character: "1")
+        )
+        let checkpointItem = ModelItem(
+            id: checkpointItemID,
+            createdAt: AgentInstant(rawValue: 11_200),
+            payload: .contextCheckpoint(checkpoint)
+        )
+        let tailIDs: [ModelItemID] = (0..<6).map {
+            canonicalTagged(11_300 + UInt64($0))
+        }
+        let tailItems = tailIDs.enumerated().map { index, id in
+            fixture.userItem(id: id, text: "recent-tail-\(index)")
+        }
+        let preparer = try fixture.preparer()
+
+        let uncompacted = try await preparer.prepareProviderTurn(
+            state: fixture.state(modelItems: historicalItems + tailItems),
+            tools: []
+        )
+        let state = fixture.state(
+            modelItems: historicalItems + [checkpointItem] + tailItems,
+            checkpoints: [checkpoint]
+        )
+        let first = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let second = try await preparer.prepareProviderTurn(state: state, tools: [])
+
+        XCTAssertEqual(first.request, second.request)
+        XCTAssertEqual(first.contextDigest, second.contextDigest)
+        XCTAssertEqual(first.itemIDs, [checkpointItemID] + tailIDs)
+        XCTAssertEqual(first.request.messages.count, 10)
+        XCTAssertLessThan(first.estimatedTokens, uncompacted.estimatedTokens)
+        XCTAssertGreaterThan(
+            uncompacted.estimatedTokens - first.estimatedTokens,
+            8_000
+        )
+
+        let encoded = String(
+            decoding: try JSONEncoder().encode(first.request),
+            as: UTF8.self
+        )
+        XCTAssertFalse(encoded.contains("historical-marker-0"))
+        XCTAssertFalse(encoded.contains("historical-marker-7"))
+        XCTAssertTrue(encoded.contains("Durable checkpoint"))
+        XCTAssertTrue(encoded.contains("recent-tail-0"))
+        XCTAssertTrue(encoded.contains("recent-tail-5"))
+    }
+
+    func testForgeCompactLowSavingsCheckpointLeavesCanonicalReplayUntouched() async throws {
+        let fixture = CanonicalContextFixture(seed: 12)
+        let historicalIDs: [ModelItemID] = (0..<8).map {
+            canonicalTagged(12_100 + UInt64($0))
+        }
+        let historicalItems = historicalIDs.enumerated().map { index, id in
+            fixture.userItem(id: id, text: "h\(index)")
+        }
+        let checkpointItemID: ModelItemID = canonicalTagged(12_200)
+        let checkpoint = ContextCheckpointReference(
+            checkpointID: canonicalTagged(12_201),
+            schemaVersion: .current,
+            summary: "small summary",
+            sourceItemIDs: historicalIDs,
+            sourceDigest: canonicalDigest(character: "2")
+        )
+        let checkpointItem = ModelItem(
+            id: checkpointItemID,
+            createdAt: AgentInstant(rawValue: 12_200),
+            payload: .contextCheckpoint(checkpoint)
+        )
+        let tailIDs: [ModelItemID] = (0..<6).map {
+            canonicalTagged(12_300 + UInt64($0))
+        }
+        let tailItems = tailIDs.map {
+            fixture.userItem(id: $0, text: "tail")
+        }
+        let state = fixture.state(
+            modelItems: historicalItems + [checkpointItem] + tailItems,
+            checkpoints: [checkpoint]
+        )
+
+        let prepared = try await fixture.preparer().prepareProviderTurn(
+            state: state,
+            tools: []
+        )
+
+        XCTAssertEqual(
+            prepared.itemIDs,
+            historicalIDs + [checkpointItemID] + tailIDs
+        )
+        let encoded = String(
+            decoding: try JSONEncoder().encode(prepared.request),
+            as: UTF8.self
+        )
+        XCTAssertTrue(encoded.contains("h0"))
+        XCTAssertTrue(encoded.contains("h7"))
+        XCTAssertTrue(encoded.contains("small summary"))
+    }
+
     func testPreCancelledPreparationPropagatesCancellation() async throws {
         let fixture = CanonicalContextFixture(seed: 7)
         let preparer = try fixture.preparer()

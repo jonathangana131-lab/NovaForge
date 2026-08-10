@@ -215,6 +215,21 @@ struct AgentCanonicalContextPreparer: AgentContextPreparing, Sendable {
         )
         try Task.checkCancellation()
 
+        // Forge Compact never mutates the authoritative reducer state. After
+        // the full transcript/checkpoint proof has passed, it may authorize
+        // replacing one old plain-text prefix with its durable checkpoint.
+        // Provider-owned reasoning/tool envelopes and the protected recent
+        // tail therefore remain byte-for-byte on the canonical replay path.
+        let forgeCompactPlan = AgentForgeCompactCheckpointPlanner.plan(
+            modelItems: state.modelItems,
+            projectID: configuration.context.projectID?.description
+                ?? configuration.context.conversationID.description,
+            missionID: configuration.context.lineage.runID.description
+        )
+        let compactedSourceItemIDs = Set(
+            forgeCompactPlan.compactedSourceItemIDs
+        )
+
         var messages: [ProviderMessage] = []
         messages.reserveCapacity(state.modelItems.count + 3)
         if let systemInstruction = configuration.systemInstruction {
@@ -252,6 +267,10 @@ struct AgentCanonicalContextPreparer: AgentContextPreparing, Sendable {
         while itemIndex < state.modelItems.count {
             try Task.checkCancellation()
             let item = state.modelItems[itemIndex]
+            if compactedSourceItemIDs.contains(item.id) {
+                itemIndex += 1
+                continue
+            }
             let message: ProviderMessage
             if case let .message(modelMessage) = item.payload,
                modelMessage.role == .assistant,
@@ -419,7 +438,9 @@ struct AgentCanonicalContextPreparer: AgentContextPreparing, Sendable {
             )
         }
 
-        let itemIDs = state.modelItems.map(\.id)
+        let itemIDs = state.modelItems.compactMap { item in
+            compactedSourceItemIDs.contains(item.id) ? nil : item.id
+        }
         let digestMaterial = AgentCanonicalContextDigestMaterial(
             scheme: "novaforge_agent_context_v1",
             context: configuration.context,
