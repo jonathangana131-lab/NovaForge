@@ -1,0 +1,42 @@
+name: V14 Preview provider route profile E2 validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/provider-route-profile/e2
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      PRODUCT_HEAD: 654bba727b387015eff0c3554cc946688a8e69cd
+      PRODUCT_BASE: fd9edf6da45571d70d45ca1e9b70a86c8797ac04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert exact product parent and isolated diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$PRODUCT_BASE" "$PRODUCT_HEAD")" = "$PRODUCT_BASE"
+          test "$(git diff --name-only "$PRODUCT_BASE" "$PRODUCT_HEAD" | wc -l | tr -d ' ')" = "3"
+          git diff --name-only "$PRODUCT_BASE" "$PRODUCT_HEAD" | grep -Fx 'Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift'
+          git diff --name-only "$PRODUCT_BASE" "$PRODUCT_HEAD" | grep -Fx 'Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileTests.swift'
+          git diff --name-only "$PRODUCT_BASE" "$PRODUCT_HEAD" | grep -Fx 'Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileStaticTrustBoundaryTests.swift'
+          git diff --check "$PRODUCT_BASE" "$PRODUCT_HEAD"
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Debug provider route profile contracts
+        run: swift test --package-path Packages/AgentHarnessKit --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
+
+      - name: Release provider route profile contracts
+        run: swift test --package-path Packages/AgentHarnessKit -c release --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
