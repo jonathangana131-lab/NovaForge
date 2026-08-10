@@ -1,0 +1,92 @@
+name: V14 Local Model Presentation Truth Patch
+
+on:
+  push:
+    branches:
+      - agent/v14-local-model-presentation-truth
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-local-model-presentation-truth
+          fetch-depth: 0
+
+      - name: Patch optimistic device-proof presentation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          runtime_path = Path('AgentPad/Services/LocalModelRuntime.swift')
+          settings_path = Path('AgentPad/Views/SettingsComponents.swift')
+          runtime = runtime_path.read_text()
+          settings = settings_path.read_text()
+
+          old_runtime = {
+              'case .deviceProven: "Device proven"': 'case .deviceProven: "Qualification pending"',
+              'case .deviceProven: "checkmark.shield.fill"': 'case .deviceProven: "iphone"',
+              'benchmarkSummary: "Official Qwen coder baseline · physical-device canary proven"': 'benchmarkSummary: "Official Qwen coder baseline · exact-device qualification pending"',
+              'details: "The proven iPhone 12 default. Conservative Metal offload, a 2,048-token context, and a 256-token answer cap protect first-prompt stability."': 'details: "The default iPhone 12-targeted profile. Conservative Metal offload, a 2,048-token context, and a 256-token answer cap are intended to reduce first-prompt memory pressure; exact-device qualification remains pending until receipt-backed evidence is available."',
+          }
+          old_settings = 'case .deviceProven: AgentPalette.green'
+          new_settings = 'case .deviceProven: AgentPalette.cyan'
+
+          already_patched = all(new in runtime for new in old_runtime.values()) and new_settings in settings
+          if not already_patched:
+              for old, new in old_runtime.items():
+                  count = runtime.count(old)
+                  assert count == 1, f'expected exactly one runtime occurrence of {old!r}, found {count}'
+                  runtime = runtime.replace(old, new, 1)
+              count = settings.count(old_settings)
+              assert count == 1, f'expected exactly one settings occurrence of {old_settings!r}, found {count}'
+              settings = settings.replace(old_settings, new_settings, 1)
+              runtime_path.write_text(runtime)
+              settings_path.write_text(settings)
+
+          runtime = runtime_path.read_text()
+          settings = settings_path.read_text()
+          forbidden = [
+              'case .deviceProven: "Device proven"',
+              'physical-device canary proven',
+              'The proven iPhone 12 default',
+          ]
+          for phrase in forbidden:
+              assert phrase not in runtime, f'legacy proof claim still present: {phrase}'
+          for required in old_runtime.values():
+              assert required in runtime, f'missing truthful presentation replacement: {required}'
+          assert new_settings in settings
+          assert old_settings not in settings
+          PY
+
+      - name: Validate patch shape
+        shell: bash
+        run: |
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          runtime = Path('AgentPad/Services/LocalModelRuntime.swift').read_text()
+          settings = Path('AgentPad/Views/SettingsComponents.swift').read_text()
+          assert 'isIPhone12SafeDefault: true' in runtime
+          assert 'case .deviceProven' in runtime
+          assert 'case .deviceProven: AgentPalette.cyan' in settings
+          print('Local model presentation truth assertions passed.')
+          PY
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No patch commit needed."
+            exit 0
+          fi
+          git config user.name "NovaForge V14 Truth Worker"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPad/Services/LocalModelRuntime.swift AgentPad/Views/SettingsComponents.swift
+          git commit -m "[V14] Truth-gate local model device qualification copy"
+          git push origin HEAD:agent/v14-local-model-presentation-truth
