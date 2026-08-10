@@ -11,6 +11,7 @@ public enum ForgeCrashValidationError: Error, Equatable, Sendable {
     case tooManyRepairAttempts(Int)
     case nonMonotonicSequence(field: String)
     case invalidArtifactIdentity
+    case repairHistoryEvidenceMismatch
 }
 
 private enum ForgeCrashLimits {
@@ -400,6 +401,50 @@ public struct ForgeCrashRepairHistory: Codable, Hashable, Sendable {
     }
 }
 
+
+/// Non-Codable host-authenticated authority over the complete failed repair history.
+/// Persisted/model-authored attempt bytes remain candidate metadata and cannot steer retry escalation directly.
+/// A verification adapter inside this module must validate each failure artifact against the exact attempt
+/// before constructing this binding.
+public struct ForgeCrashTrustedRepairHistory: Hashable, Sendable {
+    private let authenticatedHistory: ForgeCrashRepairHistory
+    public let failureArtifactIdentities: [String]
+
+    init(
+        authenticatedHistory: ForgeCrashRepairHistory,
+        failureArtifactIdentities: [String]
+    ) throws {
+        guard failureArtifactIdentities.count == authenticatedHistory.attempts.count else {
+            throw ForgeCrashValidationError.repairHistoryEvidenceMismatch
+        }
+
+        let allowed = Set("0123456789abcdef")
+        var normalizedIdentities: [String] = []
+        normalizedIdentities.reserveCapacity(failureArtifactIdentities.count)
+        var uniqueIdentities = Set<String>()
+
+        for identity in failureArtifactIdentities {
+            let normalized = identity.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard normalized.count == 64, normalized.allSatisfy(allowed.contains) else {
+                throw ForgeCrashValidationError.invalidArtifactIdentity
+            }
+            guard uniqueIdentities.insert(normalized).inserted else {
+                throw ForgeCrashValidationError.repairHistoryEvidenceMismatch
+            }
+            normalizedIdentities.append(normalized)
+        }
+
+        self.authenticatedHistory = authenticatedHistory
+        self.failureArtifactIdentities = normalizedIdentities
+    }
+
+    public var history: ForgeCrashRepairHistory { authenticatedHistory }
+
+    public func matches(_ candidate: ForgeCrashRepairHistory) -> Bool {
+        authenticatedHistory == candidate
+    }
+}
+
 /// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own
 /// output as verification success; completion remains owned by runtime/test evidence.
 public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
@@ -448,7 +493,9 @@ public struct ForgeCrashRepairSubmission: Hashable, Sendable {
 }
 
 public enum ForgeCrashTriage {
-    public static func makeSubmission(
+    /// Module-internal primitive used by trusted adapters and package tests. Ordinary consumers cannot
+    /// feed Codable candidate history directly into the escalation decision.
+    static func makeSubmission(
         for trustedIncident: ForgeCrashTrustedIncident,
         failedHistory: ForgeCrashRepairHistory,
         policy: ForgeCrashRetryPolicy
@@ -470,6 +517,18 @@ public enum ForgeCrashTriage {
             trustedIncident: trustedIncident,
             repeatKey: repeatKey,
             nextAction: nextAction
+        )
+    }
+
+    public static func makeSubmission(
+        for trustedIncident: ForgeCrashTrustedIncident,
+        failedHistory: ForgeCrashTrustedRepairHistory,
+        policy: ForgeCrashRetryPolicy
+    ) -> ForgeCrashRepairSubmission {
+        makeSubmission(
+            for: trustedIncident,
+            failedHistory: failedHistory.history,
+            policy: policy
         )
     }
 }
