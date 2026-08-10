@@ -15,6 +15,9 @@ XCODEBUILD_CAP_MINUTES="${XCODEBUILD_CAP_MINUTES:-40}"
 rm -rf "$ARTIFACT_DIR" "$DERIVED_DATA"
 mkdir -p "$ARTIFACT_DIR"
 
+echo "==> Verifying Local Settings presentation truth"
+bash scripts/verify_v14_local_settings_truth.sh
+
 echo "==> Selecting newest Xcode"
 NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
 if [ -z "$NEWEST_XCODE" ]; then
