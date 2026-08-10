@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - worker/GPT56SOL-NF-V14-GUARD-8A10/local-model-proof-guard-coverage-validation/e1
+  pull_request:
 
 permissions:
   contents: read
