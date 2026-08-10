@@ -1,0 +1,45 @@
+name: V14 Preview theme durability integration retry
+
+on:
+  push:
+    branches:
+      - agent/v14-preview-theme-durability-0810
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-current-main:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-preview-theme-durability-0810
+          fetch-depth: 0
+
+      - name: Reuse validated integration with force-added receipt
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+          import textwrap
+
+          source = subprocess.check_output([
+              "git", "show",
+              "abdbd7cddfe73b64992e2e2bc6fb02cd0952abbb:.github/workflows/v14-preview-theme-audit.yml"
+          ], text=True)
+          marker = "        run: |\n"
+          if source.count(marker) != 1:
+              raise SystemExit("validated integration run block was not uniquely recoverable")
+          script = textwrap.dedent(source.split(marker, 1)[1])
+          old = "git add scripts/verify_v14_preview_theme_contract.sh .github/workflows/v14-preview-theme-contract.yml QA/v14-preview-theme-launch-override-durability-receipt.md"
+          new = "git add scripts/verify_v14_preview_theme_contract.sh .github/workflows/v14-preview-theme-contract.yml\ngit add -f QA/v14-preview-theme-launch-override-durability-receipt.md"
+          if script.count(old) != 1:
+              raise SystemExit("expected ignored receipt add command exactly once")
+          script = script.replace(old, new, 1)
+          Path("/tmp/v14-theme-integrate.sh").write_text(script)
+
+      - name: Integrate and push
+        shell: bash
+        run: bash /tmp/v14-theme-integrate.sh
