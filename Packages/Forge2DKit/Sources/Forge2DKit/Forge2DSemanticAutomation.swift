@@ -54,11 +54,10 @@ enum Forge2DSemanticAutomation {
 
         script = try replacingExactlyOnce(
             in: script,
-            anchor: "const horizontal = (rightDown ? 1 : 0) - (leftDown ? 1 : 0);\n          const targetVX = horizontal * 430;",
+            anchor: "const horizontal = (rightDown ? 1 : 0) - (leftDown ? 1 : 0);",
             replacement: """
             const humanHorizontal = (rightDown ? 1 : 0) - (leftDown ? 1 : 0);
-              const horizontal = bounded(humanHorizontal + input.automationAxis, -1, 1);
-              const targetVX = horizontal * 430;
+            const horizontal = bounded(humanHorizontal + input.automationAxis, -1, 1);
             """
         )
 
