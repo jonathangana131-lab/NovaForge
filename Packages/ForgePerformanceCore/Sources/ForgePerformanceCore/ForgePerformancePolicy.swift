@@ -117,3 +117,18 @@ public struct ForgePerformancePolicy: Codable, Equatable, Sendable {
         )
     }
 }
+
+/// Non-Codable host trust for the complete acceptance policy. Its initializer is module-internal
+/// so caller/model-authored policy bytes cannot relax thresholds and mint their own definition of done.
+public struct ForgePerformanceTrustedPolicyReceipt: Equatable, Sendable {
+    private let authenticatedPolicy: ForgePerformancePolicy
+
+    public var policyRevision: String { authenticatedPolicy.policyRevision }
+    public var target: ForgePerformanceTarget { authenticatedPolicy.target }
+
+    init(authenticatedPolicy: ForgePerformancePolicy) {
+        self.authenticatedPolicy = authenticatedPolicy
+    }
+
+    func exactlyMatches(_ policy: ForgePerformancePolicy) -> Bool { authenticatedPolicy == policy }
+}
