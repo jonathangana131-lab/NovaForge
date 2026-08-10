@@ -1,0 +1,38 @@
+name: V14 Plan Mission Adapter Diagnostic
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-PLANMISSION-0809/diagnostic/**
+
+jobs:
+  exact-debug-diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "b19598f22383158d99feb7e4433e14911beba1ef"
+          git diff --check HEAD^
+
+      - name: Debug package with surfaced diagnostic
+        shell: bash
+        run: |
+          set +e
+          swift test --package-path Packages/ForgePlanMissionAdapter -Xswiftc -warnings-as-errors > /tmp/planmission-debug.log 2>&1
+          status=$?
+          cat /tmp/planmission-debug.log
+          if [ "$status" -ne 0 ]; then
+            diagnostic="$(grep -m1 -E '(^|: )(error:|fatal error:)|error:' /tmp/planmission-debug.log | head -c 3000)"
+            if [ -z "$diagnostic" ]; then
+              diagnostic="$(tail -n 20 /tmp/planmission-debug.log | tr '\n' ' ' | head -c 3000)"
+            fi
+            diagnostic="${diagnostic//'%'/'%25'}"
+            diagnostic="${diagnostic//$'\r'/'%0D'}"
+            diagnostic="${diagnostic//$'\n'/'%0A'}"
+            echo "::error title=Swift package diagnostic::$diagnostic"
+            exit "$status"
+          fi
