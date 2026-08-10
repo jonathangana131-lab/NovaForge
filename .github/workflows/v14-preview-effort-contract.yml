@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'AgentPad/Views/ChatComposer.swift'
+      - 'AgentPad/Services/AIProvider.swift'
       - 'AgentPad/Services/AgentSystemFreshRunRequestFactory.swift'
       - 'scripts/verify_v14_preview_effort_contract.sh'
       - '.github/workflows/v14-preview-effort-contract.yml'
@@ -12,6 +13,7 @@ on:
       - main
     paths:
       - 'AgentPad/Views/ChatComposer.swift'
+      - 'AgentPad/Services/AIProvider.swift'
       - 'AgentPad/Services/AgentSystemFreshRunRequestFactory.swift'
       - 'scripts/verify_v14_preview_effort_contract.sh'
       - '.github/workflows/v14-preview-effort-contract.yml'
