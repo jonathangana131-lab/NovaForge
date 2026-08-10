@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import Forge2DKit
 
@@ -43,10 +44,11 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertFalse(js.contains("Math.random"))
     }
 
-    func testGeneratedTouchControlsAreAccessibleAndLarge() throws {
+    func testGeneratedTouchControlsAreAccessibleLargeAndAssistiveActivatable() throws {
         let project = try Forge2DGenerator.generate(blueprint)
         let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
         let css = try XCTUnwrap(project.files.first(where: { $0.path == "styles.css" })?.contents)
+        let js = try XCTUnwrap(project.files.first(where: { $0.path == "game.js" })?.contents)
 
         XCTAssertTrue(html.contains("aria-label=\"Move left\""))
         XCTAssertTrue(html.contains("aria-label=\"Move right\""))
@@ -55,14 +57,55 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertTrue(css.contains("width: 68px; height: 68px"))
         XCTAssertTrue(css.contains("prefers-reduced-transparency"))
         XCTAssertTrue(css.contains("prefers-reduced-motion"))
+        XCTAssertTrue(css.contains(".controls button:focus-visible"))
+        XCTAssertTrue(css.contains("outline-offset: 3px"))
         XCTAssertTrue(css.contains("top: max(14px, env(safe-area-inset-top))"))
         XCTAssertTrue(css.contains("right: max(14px, env(safe-area-inset-right))"))
         XCTAssertFalse(css.contains("body { padding: env(safe-area-inset-top)"))
+
+        XCTAssertTrue(js.contains("event.detail === 0"))
+        XCTAssertTrue(js.contains("pulseAssistiveDirection(\"keyboardLeft\", \"left\")"))
+        XCTAssertTrue(js.contains("pulseAssistiveDirection(\"keyboardRight\", \"right\")"))
+        XCTAssertTrue(js.contains("if (event.detail === 0) queueJump()"))
+        XCTAssertTrue(js.contains("window.setTimeout"))
+    }
+
+    func testGeneratedControlsKeepStableRuntimeAutomationSelectors() throws {
+        let html = try XCTUnwrap(try Forge2DGenerator.generate(blueprint).files.first(where: { $0.path == "index.html" })?.contents)
+
+        XCTAssertTrue(html.contains("id=\"left\""))
+        XCTAssertTrue(html.contains("id=\"right\""))
+        XCTAssertTrue(html.contains("id=\"jump\""))
+        XCTAssertTrue(html.contains("id=\"pause\""))
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
         let data = try JSONEncoder().encode(blueprint)
         XCTAssertEqual(try JSONDecoder().decode(Forge2DBlueprint.self, from: data), blueprint)
+    }
+
+    func testDecodedBlueprintReentersValidation() throws {
+        let data = try JSONEncoder().encode(blueprint)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["viewportWidth"] = 120
+        let tampered = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        XCTAssertThrowsError(try JSONDecoder().decode(Forge2DBlueprint.self, from: tampered)) { error in
+            guard case DecodingError.dataCorrupted = error else {
+                return XCTFail("Expected dataCorrupted, got \(error)")
+            }
+        }
+    }
+
+    func testDecodedBlueprintCanRecoverDefaultPersistenceKeyWhenFieldIsAbsent() throws {
+        let data = try JSONEncoder().encode(blueprint)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "persistenceKey")
+        let legacyCompatible = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        let decoded = try JSONDecoder().decode(Forge2DBlueprint.self, from: legacyCompatible)
+        XCTAssertEqual(decoded.persistenceKey, "novaforge.neon-runner.save.v1")
+        try Forge2DBlueprintValidator.validate(decoded)
     }
 
     func testRejectsUnsafeOrNonsensicalBlueprints() {
