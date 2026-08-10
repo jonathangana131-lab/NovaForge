@@ -1,0 +1,14 @@
+{
+  "formatVersion": {"major": 1, "minor": 0},
+  "projectID": "fixture.vector-drift",
+  "projectVersion": "fixture-v14-vector-drift-r1",
+  "runtimeVersion": {"major": 1, "minor": 0},
+  "entryPoint": "index.html",
+  "display": {"name": "Vector Drift", "iconPath": null},
+  "presentation": {"orientation": "automatic", "viewport": "safeArea"},
+  "storage": {"namespace": "fixture.vector-drift", "schemaVersion": 1, "quotaBytes": 1048576},
+  "capabilities": [],
+  "network": {"mode": "denied", "allowedHosts": []},
+  "bundledAssets": [],
+  "modules": []
+}
