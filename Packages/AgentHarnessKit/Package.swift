@@ -8,6 +8,9 @@ let package = Package(
         .iOS(.v17),
         .macOS(.v14),
     ],
+    dependencies: [
+        .package(path: "../ForgeCompactCore"),
+    ],
     products: [
         .library(name: "AgentDomain", targets: ["AgentDomain"]),
         .library(name: "AgentEngine", targets: ["AgentEngine"]),
@@ -33,6 +36,7 @@ let package = Package(
                 "AgentReducerCore",
                 "AgentStore",
                 "AgentTools",
+                .product(name: "ForgeCompactCore", package: "ForgeCompactCore"),
             ]
         ),
         .target(
