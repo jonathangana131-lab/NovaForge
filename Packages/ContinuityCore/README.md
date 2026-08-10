@@ -10,6 +10,7 @@ This package models checkpoint-bound execution leases, foreground/system/verifie
 - Mission checkpoint/completion projection requires a fresh, non-Codable `ContinuityMissionAuthority` from the canonical Mission adapter.
 - Live `ContinuitySnapshot` and `ContinuityWorkLease` are intentionally non-Codable.
 - `ContinuityArchive` never serializes an active lease. Archiving an executing snapshot records it as `suspended(.executionEnvironmentLost)`, so relaunch cannot claim work is still running without reacquiring authority.
+- Mission-owned `needsDecision`, `blocked`, and `completed` projections are not durable Continuity authority: archiving them records `suspended(.missionStateRevalidationRequired)`, and forged persisted terminal projections are rejected on decode.
 - Background transfer archives revalidate nested invariants on decode and are bounded.
 
 This package does **not** implement or claim ActivityKit delivery, BackgroundTasks/continued-processing eligibility, background URLSession wiring, a cloud backend, Mac pairing, indefinite iPhone background execution, Simulator/device endurance, or physical-device proof. Platform adapters remain a later closure rung.
