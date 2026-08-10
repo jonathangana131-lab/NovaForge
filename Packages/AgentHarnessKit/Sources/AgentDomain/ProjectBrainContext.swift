@@ -1,12 +1,8 @@
 import Foundation
 
 public enum ProjectBrainContextFreshnessPolicy: String, Codable, CaseIterable, Sendable {
-    /// Only facts whose source has been reverified and remains current.
     case currentOnly
-    /// Current facts plus facts whose freshness is not yet known. Stale facts remain excluded.
     case currentAndUnknown
-    /// Explicit expert/debug policy that allows stale facts to enter the slice with their
-    /// `freshness` and `staleReason` preserved. Stale facts are always ranked last.
     case includeStale
 }
 
@@ -26,44 +22,40 @@ public enum ProjectBrainContextRequestValidationError: String, Error, Codable, E
     case invalidScope
 }
 
-/// Bounded, deterministic retrieval request for one Project Brain neighborhood.
-///
-/// This is deliberately not a semantic-search prompt. Callers resolve the structural
-/// neighborhood they need (project / mission / file / symbol / runtime), then this request
-/// selects source-backed durable facts without turning a transcript or generated summary into
-/// canonical project state.
-///
-/// Mission-critical facts are retained by default. A caller may add exact `requiredFactIDs`,
-/// but cannot weaken the default required kinds. If required truth cannot fit the requested
-/// budget, selection fails closed rather than silently dropping accepted state.
+/// Bounded deterministic Project Brain retrieval. Mission-critical truth is an immutable floor:
+/// callers may add required kinds/IDs but cannot remove Design DNA, accepted decisions, or blockers.
 public struct ProjectBrainContextRequest: Equatable, Sendable {
     public static let maximumFactBudget = 256
     public static let maximumCharacterBudget = 262_144
     public static let maximumScopeCount = 64
     public static let maximumRequiredFactIDCount = 256
     public static let missionCriticalKinds: [ProjectBrainFactKind] = [
-        .designDNA,
-        .acceptedDecision,
-        .unresolvedBlocker,
+        .designDNA, .acceptedDecision, .unresolvedBlocker,
     ]
 
     public let projectID: ProjectID
     public let missionID: MissionID?
     public let scopes: [ProjectBrainScope]
     public let preferredKinds: [ProjectBrainFactKind]
-    public let requiredKinds: [ProjectBrainFactKind]
+    public let additionalRequiredKinds: [ProjectBrainFactKind]
     public let requiredFactIDs: [ProjectBrainFactID]
     public let freshnessPolicy: ProjectBrainContextFreshnessPolicy
     public let includeProjectScopeFallback: Bool
     public let maxFacts: Int
     public let maxCharacters: Int
 
+    public var requiredKinds: [ProjectBrainFactKind] {
+        Self.missionCriticalKinds + additionalRequiredKinds
+    }
+
+    /// `requiredKinds` is additive to the immutable mission-critical floor for source compatibility
+    /// with the V13 donor. Passing an empty array cannot weaken that floor.
     public init(
         projectID: ProjectID,
         missionID: MissionID? = nil,
         scopes: [ProjectBrainScope] = [],
         preferredKinds: [ProjectBrainFactKind] = [],
-        requiredKinds: [ProjectBrainFactKind] = ProjectBrainContextRequest.missionCriticalKinds,
+        requiredKinds: [ProjectBrainFactKind] = [],
         requiredFactIDs: [ProjectBrainFactID] = [],
         freshnessPolicy: ProjectBrainContextFreshnessPolicy = .currentOnly,
         includeProjectScopeFallback: Bool = true,
@@ -74,7 +66,7 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
         self.missionID = missionID
         self.scopes = scopes
         self.preferredKinds = preferredKinds
-        self.requiredKinds = requiredKinds
+        self.additionalRequiredKinds = requiredKinds
         self.requiredFactIDs = requiredFactIDs
         self.freshnessPolicy = freshnessPolicy
         self.includeProjectScopeFallback = includeProjectScopeFallback
@@ -88,30 +80,17 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
         guard maxCharacters > 0 else { return .emptyCharacterBudget }
         guard maxCharacters <= Self.maximumCharacterBudget else { return .characterBudgetTooLarge }
         guard scopes.count <= Self.maximumScopeCount else { return .tooManyScopes }
-        guard preferredKinds.count <= ProjectBrainFactKind.allCases.count else {
-            return .tooManyPreferredKinds
-        }
-        guard requiredKinds.count <= ProjectBrainFactKind.allCases.count else {
-            return .tooManyRequiredKinds
-        }
-        guard requiredFactIDs.count <= Self.maximumRequiredFactIDCount else {
-            return .tooManyRequiredFactIDs
-        }
-        guard Set(preferredKinds.map(\.rawValue)).count == preferredKinds.count else {
-            return .duplicatePreferredKind
-        }
-        guard Set(requiredKinds.map(\.rawValue)).count == requiredKinds.count else {
-            return .duplicateRequiredKind
-        }
-        guard Set(requiredFactIDs).count == requiredFactIDs.count else {
-            return .duplicateRequiredFactID
-        }
-        guard Set(scopes.map(ProjectBrainContextScopeKey.init)).count == scopes.count else {
-            return .duplicateScope
-        }
-        guard scopes.allSatisfy({ $0.validationError == nil }) else {
-            return .invalidScope
-        }
+        guard preferredKinds.count <= ProjectBrainFactKind.allCases.count else { return .tooManyPreferredKinds }
+        guard additionalRequiredKinds.count <= ProjectBrainFactKind.allCases.count else { return .tooManyRequiredKinds }
+        guard requiredFactIDs.count <= Self.maximumRequiredFactIDCount else { return .tooManyRequiredFactIDs }
+        guard Set(preferredKinds.map(\.rawValue)).count == preferredKinds.count else { return .duplicatePreferredKind }
+        let additional = additionalRequiredKinds.map(\.rawValue)
+        guard Set(additional).count == additional.count else { return .duplicateRequiredKind }
+        let floor = Set(Self.missionCriticalKinds.map(\.rawValue))
+        guard additional.allSatisfy({ !floor.contains($0) }) else { return .duplicateRequiredKind }
+        guard Set(requiredFactIDs).count == requiredFactIDs.count else { return .duplicateRequiredFactID }
+        guard Set(scopes.map(ProjectBrainContextScopeKey.init)).count == scopes.count else { return .duplicateScope }
+        guard scopes.allSatisfy({ $0.validationError == nil }) else { return .invalidScope }
         return nil
     }
 }
@@ -122,14 +101,11 @@ public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case duplicateFactID(ProjectBrainFactID)
     case candidateFactLimitExceeded(actual: Int, maximum: Int)
     case missingRequiredFact(ProjectBrainFactID)
+    case requiredFactExcludedByFreshness(ProjectBrainFactID, ProjectBrainFreshness)
     case requiredFactsExceedFactBudget(required: Int, maximum: Int)
     case requiredFactsExceedCharacterBudget(required: Int, maximum: Int)
 }
 
-/// Exact source-backed facts selected for one bounded model/tool context.
-///
-/// No fact is rewritten or summarized here. `budgetOmittedFactIDs` makes best-effort compaction
-/// explicit. Required truth is never reported there: if it cannot fit, selection throws.
 public struct ProjectBrainContextSlice: Equatable, Sendable {
     public let projectID: ProjectID
     public let missionID: MissionID?
@@ -139,7 +115,7 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
     public let estimatedCharacterCount: Int
     public let maximumCharacterCount: Int
 
-    public init(
+    init(
         projectID: ProjectID,
         missionID: MissionID?,
         facts: [ProjectBrainFact],
@@ -160,16 +136,6 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
     public var isCompacted: Bool { !budgetOmittedFactIDs.isEmpty }
 }
 
-/// Structural Project Brain retrieval and context compaction.
-///
-/// Selection order is stable across launches and model/provider changes:
-/// 1. required mission-critical/exact facts before best-effort facts;
-/// 2. exact requested scope before project fallback, then required off-scope truth;
-/// 3. requested mission facts before project-wide facts;
-/// 4. current before unknown before explicitly included stale facts;
-/// 5. caller preferred fact kinds;
-/// 6. most recently verified source evidence;
-/// 7. stable FactID tie-break.
 public enum ProjectBrainContextSelector {
     public static let maximumCandidateFacts = 4_096
 
@@ -180,77 +146,73 @@ public enum ProjectBrainContextSelector {
         if let error = request.validationError {
             throw ProjectBrainContextSelectionError.invalidRequest(error)
         }
-        guard facts.count <= maximumCandidateFacts else {
-            throw ProjectBrainContextSelectionError.candidateFactLimitExceeded(
-                actual: facts.count,
-                maximum: maximumCandidateFacts
-            )
-        }
 
-        var candidates: [RankedFact] = []
-        candidates.reserveCapacity(min(facts.count, maximumCandidateFacts))
-
-        let preferredKindRank = Dictionary(
+        let preferredRank = Dictionary(
             uniqueKeysWithValues: request.preferredKinds.enumerated().map { ($1.rawValue, $0) }
         )
         let requiredKinds = Set(request.requiredKinds.map(\.rawValue))
-        let requiredFactIDs = Set(request.requiredFactIDs)
-        let requestedScopeKeys = Set(request.scopes.map(ProjectBrainContextScopeKey.init))
-        var seenRelevantFactIDs: Set<ProjectBrainFactID> = []
-        var matchedRequiredFactIDs: Set<ProjectBrainFactID> = []
+        let requiredIDs = Set(request.requiredFactIDs)
+        let requestedScopes = Set(request.scopes.map(ProjectBrainContextScopeKey.init))
+
+        var candidates: [RankedFact] = []
+        candidates.reserveCapacity(min(facts.count, maximumCandidateFacts))
+        var seenRelevantIDs: Set<ProjectBrainFactID> = []
+        var matchedRequiredIDs: Set<ProjectBrainFactID> = []
+        var relevantFactCount = 0
 
         for fact in facts {
             guard fact.projectID == request.projectID else { continue }
             if let missionID = request.missionID {
                 guard fact.missionID == nil || fact.missionID == missionID else { continue }
             } else {
-                // Project-wide context must not silently merge facts from unrelated historical
-                // missions. Mission-scoped facts require an explicit mission neighborhood.
                 guard fact.missionID == nil else { continue }
             }
 
-            guard seenRelevantFactIDs.insert(fact.factID).inserted else {
+            relevantFactCount += 1
+            guard relevantFactCount <= maximumCandidateFacts else {
+                throw ProjectBrainContextSelectionError.candidateFactLimitExceeded(
+                    actual: relevantFactCount,
+                    maximum: maximumCandidateFacts
+                )
+            }
+            guard seenRelevantIDs.insert(fact.factID).inserted else {
                 throw ProjectBrainContextSelectionError.duplicateFactID(fact.factID)
             }
             if let error = fact.validationError {
                 throw ProjectBrainContextSelectionError.invalidFact(fact.factID, error)
             }
 
-            let requiredByID = requiredFactIDs.contains(fact.factID)
+            let requiredByID = requiredIDs.contains(fact.factID)
             let requiredByKind = requiredKinds.contains(fact.kind.rawValue)
             let isRequired = requiredByID || requiredByKind
 
             guard freshnessAllows(fact.freshness, policy: request.freshnessPolicy) else {
+                if requiredByID {
+                    throw ProjectBrainContextSelectionError.missingRequiredFact(fact.factID)
+                }
+                if requiredByKind {
+                    throw ProjectBrainContextSelectionError.requiredFactExcludedByFreshness(
+                        fact.factID,
+                        fact.freshness
+                    )
+                }
                 continue
             }
 
             let scopeRank: Int
-            if requestedScopeKeys.isEmpty {
-                scopeRank = 0
-            } else if requestedScopeKeys.contains(ProjectBrainContextScopeKey(fact.scope)) {
+            if requestedScopes.isEmpty || requestedScopes.contains(ProjectBrainContextScopeKey(fact.scope)) {
                 scopeRank = 0
             } else if request.includeProjectScopeFallback, fact.scope.kind == .project {
                 scopeRank = 1
             } else if isRequired {
-                // Required mission truth may not disappear merely because the active working-set
-                // request is narrowed to a file/symbol/runtime neighborhood.
                 scopeRank = 2
             } else {
                 continue
             }
 
-            if requiredByID {
-                matchedRequiredFactIDs.insert(fact.factID)
-            }
-
-            let missionRank: Int
-            if request.missionID != nil {
-                missionRank = fact.missionID == request.missionID ? 0 : 1
-            } else {
-                missionRank = 0
-            }
-
-            let kindRank = preferredKindRank[fact.kind.rawValue] ?? request.preferredKinds.count
+            if requiredByID { matchedRequiredIDs.insert(fact.factID) }
+            let missionRank = request.missionID == nil ? 0 : (fact.missionID == request.missionID ? 0 : 1)
+            let kindRank = preferredRank[fact.kind.rawValue] ?? request.preferredKinds.count
             candidates.append(RankedFact(
                 fact: fact,
                 isRequired: isRequired,
@@ -262,23 +224,21 @@ public enum ProjectBrainContextSelector {
             ))
         }
 
-        for requiredFactID in request.requiredFactIDs where !matchedRequiredFactIDs.contains(requiredFactID) {
-            throw ProjectBrainContextSelectionError.missingRequiredFact(requiredFactID)
+        for requiredID in request.requiredFactIDs where !matchedRequiredIDs.contains(requiredID) {
+            throw ProjectBrainContextSelectionError.missingRequiredFact(requiredID)
         }
 
         candidates.sort(by: rankedBefore)
-
-        let requiredCandidates = candidates.filter(\.isRequired)
-        guard requiredCandidates.count <= request.maxFacts else {
+        let required = candidates.filter(\.isRequired)
+        guard required.count <= request.maxFacts else {
             throw ProjectBrainContextSelectionError.requiredFactsExceedFactBudget(
-                required: requiredCandidates.count,
+                required: required.count,
                 maximum: request.maxFacts
             )
         }
 
-        var usedCharacters = 0
-        for candidate in requiredCandidates {
-            usedCharacters = saturatingAdd(usedCharacters, candidate.estimatedCharacterCount)
+        var usedCharacters = required.reduce(into: 0) {
+            $0 = saturatingAdd($0, $1.estimatedCharacterCount)
         }
         guard usedCharacters <= request.maxCharacters else {
             throw ProjectBrainContextSelectionError.requiredFactsExceedCharacterBudget(
@@ -287,18 +247,16 @@ public enum ProjectBrainContextSelector {
             )
         }
 
-        var selected = requiredCandidates.map(\.fact)
-        selected.reserveCapacity(min(request.maxFacts, candidates.count))
-        var budgetOmitted: [ProjectBrainFactID] = []
-
+        var selected = required.map(\.fact)
+        var omitted: [ProjectBrainFactID] = []
         for candidate in candidates where !candidate.isRequired {
             guard selected.count < request.maxFacts else {
-                budgetOmitted.append(candidate.fact.factID)
+                omitted.append(candidate.fact.factID)
                 continue
             }
             let proposed = saturatingAdd(usedCharacters, candidate.estimatedCharacterCount)
             guard proposed <= request.maxCharacters else {
-                budgetOmitted.append(candidate.fact.factID)
+                omitted.append(candidate.fact.factID)
                 continue
             }
             selected.append(candidate.fact)
@@ -309,16 +267,13 @@ public enum ProjectBrainContextSelector {
             projectID: request.projectID,
             missionID: request.missionID,
             facts: selected,
-            budgetOmittedFactIDs: budgetOmitted,
+            budgetOmittedFactIDs: omitted,
             matchedFactCount: candidates.count,
             estimatedCharacterCount: usedCharacters,
             maximumCharacterCount: request.maxCharacters
         )
     }
 
-    /// Deterministic model-independent character estimate for the complete fact identity, scope,
-    /// freshness, statement, and provenance payload. Provider-specific serialization overhead and
-    /// tokenization belong above this domain layer. Arithmetic saturates instead of trapping.
     public static func estimatedCharacterCount(of fact: ProjectBrainFact) -> Int {
         var count = fact.statement.count
         count = saturatingAdd(count, fact.factID.description.count)
@@ -344,12 +299,9 @@ public enum ProjectBrainContextSelector {
         policy: ProjectBrainContextFreshnessPolicy
     ) -> Bool {
         switch policy {
-        case .currentOnly:
-            freshness == .current
-        case .currentAndUnknown:
-            freshness != .stale
-        case .includeStale:
-            true
+        case .currentOnly: freshness == .current
+        case .currentAndUnknown: freshness != .stale
+        case .includeStale: true
         }
     }
 
@@ -365,9 +317,7 @@ public enum ProjectBrainContextSelector {
         if lhs.isRequired != rhs.isRequired { return lhs.isRequired && !rhs.isRequired }
         if lhs.scopeRank != rhs.scopeRank { return lhs.scopeRank < rhs.scopeRank }
         if lhs.missionRank != rhs.missionRank { return lhs.missionRank < rhs.missionRank }
-        if lhs.freshnessRank != rhs.freshnessRank {
-            return lhs.freshnessRank < rhs.freshnessRank
-        }
+        if lhs.freshnessRank != rhs.freshnessRank { return lhs.freshnessRank < rhs.freshnessRank }
         if lhs.kindRank != rhs.kindRank { return lhs.kindRank < rhs.kindRank }
         if lhs.fact.lastVerifiedAt != rhs.fact.lastVerifiedAt {
             return lhs.fact.lastVerifiedAt > rhs.fact.lastVerifiedAt
