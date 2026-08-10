@@ -12,7 +12,11 @@ function updateKeyboard() {
   input.keySteer = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
 }
 const keys = new Set();
+function isNativeDrivingControl(target) {
+  return target === accessibleThrottle || target === accessibleSteer;
+}
 window.addEventListener("keydown", event => {
+  if (isNativeDrivingControl(event.target)) return;
   if (["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.code)) {
     keys.add(event.code); updateKeyboard(); event.preventDefault();
   }
