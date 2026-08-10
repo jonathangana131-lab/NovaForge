@@ -1,0 +1,45 @@
+name: V14 Runtime State + Semantic Stack Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-STATE-RECOVER-0809/state-with-semantic/e1
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-state-semantic-stack:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert exact stack parent and diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "e35c945a6772a04452ce1d96fb57142bb64bf06e"
+          test "$(git rev-parse HEAD^^)" = "2a0daf26b3f754d487c112d5f846ad6e5cccbdec"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservation.swift)" = "111e776336ae64973b2a3843b5574075757d16fd"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationTests.swift)" = "f7872fb8161f14b67af95c85730578fbf9b79993"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateStaticTrustBoundaryTests.swift)" = "8ada05711e6ef5e83283094a0d31c29611682d94"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/v14-runtime-state-semantic-stack-validation.yml"
+          printf '%s\n' \
+            'Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservation.swift' \
+            'Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationTests.swift' \
+            'Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateStaticTrustBoundaryTests.swift' > /tmp/expected
+          git diff --name-only 2a0daf26b3f754d487c112d5f846ad6e5cccbdec HEAD^ > /tmp/actual
+          diff -u /tmp/expected /tmp/actual
+          git diff --check 2a0daf26b3f754d487c112d5f846ad6e5cccbdec HEAD^
+
+      - name: Swift version
+        run: swift --version
+
+      - name: ForgeRuntimeKit debug tests
+        run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
+
+      - name: ForgeRuntimeKit release tests
+        run: swift test --package-path Packages/ForgeRuntimeKit -c release -Xswiftc -warnings-as-errors
