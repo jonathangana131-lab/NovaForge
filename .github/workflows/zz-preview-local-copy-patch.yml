@@ -10,14 +10,13 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'preview: make Local memory-pressure copy truthful'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: worker/gpt56-sol-preview-local-copy-0319
           fetch-depth: 0
-      - name: Patch exact user-facing claim
+      - name: Patch exact user-facing claim and verify
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -33,7 +32,6 @@ jobs:
           bash scripts/verify_v14_local_settings_truth.sh
           rm .github/workflows/zz-preview-local-copy-patch.yml
           git diff --check
-          git diff --exit-code -- AgentPad/Views/SettingsComponents.swift .github/workflows/zz-preview-local-copy-patch.yml || true
       - name: Commit cleaned patch
         run: |
           git config user.name 'NovaForge Swarm'
