@@ -3,6 +3,7 @@ import Foundation
 public enum Forge3DGenerator {
     public static func generate(_ blueprint: Forge3DBlueprint) throws -> Forge3DGeneratedProject {
         try Forge3DBlueprintValidator.validate(blueprint)
+        let gameScript = try Forge3DSemanticAutomation.patch(Forge3DTemplate.script(for: blueprint))
 
         return Forge3DGeneratedProject(
             blueprint: blueprint,
@@ -10,9 +11,10 @@ public enum Forge3DGenerator {
             files: [
                 Forge3DGeneratedFile(path: "index.html", contents: html(for: blueprint)),
                 Forge3DGeneratedFile(path: "styles.css", contents: Forge3DTemplate.styles),
-                Forge3DGeneratedFile(path: "game.js", contents: Forge3DTemplate.script(for: blueprint)),
+                Forge3DGeneratedFile(path: "game.js", contents: gameScript),
             ],
-            semanticCapabilities: [.localSave, .controller, .touch, .keyboard]
+            semanticCapabilities: [.localSave, .controller, .touch, .keyboard, .automation],
+            semanticTargets: Forge3DSelfPlayContract.targets
         )
     }
 
@@ -32,15 +34,15 @@ public enum Forge3DGenerator {
           <main id="scene-shell" aria-label="\#(safeTitle)">
             <canvas id="scene" role="img" aria-label="Interactive 3D driving scene"></canvas>
             <div id="status" class="status" role="status" aria-live="polite">Starting 3D scene</div>
-            <button id="pause" class="pause" type="button" aria-pressed="false" aria-label="Pause scene">Ⅱ</button>
+            <button id="pause" data-novaforge-control="\#(Forge3DSelfPlayContract.pauseTargetID)" class="pause" type="button" aria-pressed="false" aria-label="Pause scene">Ⅱ</button>
             <div id="joystick" class="joystick" role="group" tabindex="0" aria-label="Drive joystick. Drag up or down for throttle and left or right to steer.">
               <div id="joystick-knob" class="joystick-knob" aria-hidden="true"></div>
             </div>
             <div class="assistive-driving">
               <label for="accessible-throttle">Throttle</label>
-              <input id="accessible-throttle" type="range" min="-1" max="1" step="0.1" value="0">
+              <input id="accessible-throttle" data-novaforge-action="\#(Forge3DSelfPlayContract.throttleTargetID)" type="range" min="-1" max="1" step="0.1" value="0">
               <label for="accessible-steer">Steering</label>
-              <input id="accessible-steer" type="range" min="-1" max="1" step="0.1" value="0">
+              <input id="accessible-steer" data-novaforge-action="\#(Forge3DSelfPlayContract.steerTargetID)" type="range" min="-1" max="1" step="0.1" value="0">
             </div>
           </main>
           <script src="game.js" defer></script>
