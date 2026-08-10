@@ -318,6 +318,7 @@ public enum ContinuityReducer {
         try validate(snapshot)
         guard authority.identity == snapshot.identity else { throw ContinuityMutationError.missionCompletionIdentityMismatch }
         guard snapshot.activeLease == nil else { throw ContinuityMutationError.unsupportedTransition }
+        guard snapshot.state != .suspended(.userPaused) else { throw ContinuityMutationError.unsupportedTransition }
         guard case let .stateProjection(projection) = authority.purpose else { throw ContinuityMutationError.invalidAuthority }
         try validate(authority: authority, purpose: .stateProjection(projection), issuedForEpoch: snapshot.epoch)
         let state: ContinuityRunState = switch projection {
