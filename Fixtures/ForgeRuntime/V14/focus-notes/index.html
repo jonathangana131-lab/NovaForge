@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Focus Notes</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d0e10;
+      --panel: #17191d;
+      --panel-strong: #202329;
+      --text: #f5f5f2;
+      --muted: #a8aaad;
+      --line: #30333a;
+      --accent: #ff9e42;
+      --good: #86c99d;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+    body { min-height: 100dvh; padding: max(18px, env(safe-area-inset-top)) 18px max(22px, env(safe-area-inset-bottom)); }
+    main { width: min(100%, 620px); margin: 0 auto; display: grid; gap: 22px; }
+    header { padding: 10px 2px 0; }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 7px 0 6px; font-size: clamp(30px, 8vw, 44px); letter-spacing: -.045em; line-height: .98; }
+    .sub { margin: 0; max-width: 34ch; color: var(--muted); line-height: 1.45; }
+    .composer { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); }
+    input { min-width: 0; min-height: 48px; border: 0; outline: 0; padding: 0 8px; background: transparent; color: var(--text); font: inherit; font-size: 17px; }
+    input::placeholder { color: #74777e; }
+    button { min-height: 44px; border: 0; border-radius: 13px; padding: 0 16px; font: inherit; font-weight: 700; color: var(--text); background: var(--panel-strong); touch-action: manipulation; }
+    button:focus-visible, input:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 70%, white); outline-offset: 2px; }
+    .add { min-width: 74px; background: var(--accent); color: #18120b; }
+    .summary { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 0 2px; }
+    .summary strong { font-size: 18px; }
+    .summary span { color: var(--muted); font-size: 14px; }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+    li { display: grid; grid-template-columns: 32px 1fr; align-items: center; min-height: 58px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); }
+    li.done { opacity: .62; }
+    li.done .task-copy { text-decoration: line-through; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent); }
+    li.done .dot { border-color: var(--good); background: var(--good); }
+    .task-copy { overflow-wrap: anywhere; }
+    .empty { min-height: 160px; display: grid; place-items: center; padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: 18px; color: var(--muted); }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .status { min-height: 22px; color: var(--muted); font-size: 14px; padding: 0 2px; }
+    @media (prefers-reduced-motion: no-preference) { button { transition: transform .14s ease, filter .14s ease; } button:active { transform: scale(.98); } }
+    @media (prefers-color-scheme: light) {
+      :root { color-scheme: light; --bg: #f6f5f1; --panel: #fffefa; --panel-strong: #eceae4; --text: #151515; --muted: #66645f; --line: #d8d5cd; --accent: #dc711c; --good: #378657; }
+    }
+    @media (max-width: 360px) { .actions { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Offline utility</div>
+    <h1>Focus Notes</h1>
+    <p class="sub">A tiny priority queue designed to stay calm when the list gets noisy.</p>
+  </header>
+
+  <section class="composer" aria-label="Add a focus note">
+    <input id="taskInput" data-novaforge-text-input="task-title" maxlength="120" autocomplete="off" aria-label="Task title" placeholder="What matters next?">
+    <button class="add" data-novaforge-control="add-task" type="button">Add</button>
+  </section>
+
+  <section aria-labelledby="queueTitle">
+    <div class="summary">
+      <strong id="queueTitle">Now</strong>
+      <span id="countLabel">0 open</span>
+    </div>
+    <ul id="taskList" aria-label="Focus queue"></ul>
+    <div id="emptyState" class="empty">Add one thing worth finishing.</div>
+  </section>
+
+  <div class="actions" aria-label="Queue actions">
+    <button data-novaforge-control="complete-next" type="button">Complete next</button>
+    <button data-novaforge-control="clear-completed" type="button">Clear completed</button>
+  </div>
+  <div id="status" class="status" aria-live="polite">Ready.</div>
+</main>
+<script>
+(() => {
+  'use strict';
+  const KEY = 'novaforge.fixture.focus-notes.v1';
+  const input = document.getElementById('taskInput');
+  const list = document.getElementById('taskList');
+  const empty = document.getElementById('emptyState');
+  const count = document.getElementById('countLabel');
+  const status = document.getElementById('status');
+  let tasks = load();
+
+  function load() {
+    try {
+      const decoded = JSON.parse(localStorage.getItem(KEY) || '[]');
+      if (!Array.isArray(decoded)) return [];
+      return decoded
+        .filter(item => item && typeof item.title === 'string' && typeof item.done === 'boolean')
+        .slice(0, 40)
+        .map((item, index) => ({ id: Number.isSafeInteger(item.id) ? item.id : index + 1, title: item.title.slice(0, 120), done: item.done }));
+    } catch (_) { return []; }
+  }
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(tasks)); } catch (_) { /* fixture remains usable without persistence */ }
+  }
+
+  function announce(message) { status.textContent = message; }
+
+  function render() {
+    list.replaceChildren();
+    const openCount = tasks.reduce((sum, task) => sum + (task.done ? 0 : 1), 0);
+    count.textContent = `${openCount} open`;
+    empty.hidden = tasks.length !== 0;
+    for (const task of tasks) {
+      const item = document.createElement('li');
+      item.className = task.done ? 'done' : '';
+      item.dataset.taskId = String(task.id);
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.setAttribute('aria-hidden', 'true');
+      const copy = document.createElement('span');
+      copy.className = 'task-copy';
+      copy.textContent = task.title;
+      item.append(dot, copy);
+      list.append(item);
+    }
+  }
+
+  function addTask() {
+    const title = input.value.trim();
+    if (!title) { announce('Enter a task first.'); return; }
+    const nextID = tasks.reduce((max, task) => Math.max(max, task.id), 0) + 1;
+    tasks.push({ id: nextID, title: title.slice(0, 120), done: false });
+    input.value = '';
+    save(); render(); announce(`Added ${title.slice(0, 50)}.`);
+  }
+
+  function completeNext() {
+    const next = tasks.find(task => !task.done);
+    if (!next) { announce('Nothing left to complete.'); return; }
+    next.done = true;
+    save(); render(); announce(`Completed ${next.title.slice(0, 50)}.`);
+  }
+
+  function clearCompleted() {
+    const previous = tasks.length;
+    tasks = tasks.filter(task => !task.done);
+    const removed = previous - tasks.length;
+    save(); render(); announce(removed ? `Cleared ${removed} completed.` : 'No completed items to clear.');
+  }
+
+  document.querySelector('[data-novaforge-control="add-task"]').addEventListener('click', addTask);
+  document.querySelector('[data-novaforge-control="complete-next"]').addEventListener('click', completeNext);
+  document.querySelector('[data-novaforge-control="clear-completed"]').addEventListener('click', clearCompleted);
+  input.addEventListener('keydown', event => { if (event.key === 'Enter') addTask(); });
+  render();
+})();
+</script>
+</body>
+</html>
