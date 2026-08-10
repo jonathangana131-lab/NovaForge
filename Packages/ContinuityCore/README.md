@@ -14,6 +14,7 @@ This package models checkpoint-bound execution leases, foreground/system/verifie
 - Mission-owned `needsDecision`, `blocked`, and `completed` projections are not durable Continuity authority: archiving them records `suspended(.missionStateRevalidationRequired)`, and forged persisted terminal projections are rejected on decode.
 - `missionStateRevalidationRequired` cannot resume on execution authority alone. Canonical Mission must explicitly reproject `.ready`, `.needsDecision`, `.blocked`, or `.completed` first.
 - An explicit `.userPaused` suspension cannot be overridden by a normal execution grant. Leaving user pause requires a separate fresh, non-Codable `ContinuityUserResumeAuthority` bound to that exact paused epoch; after any epoch advance it is stale, and execution still needs its own fresh generation-bound grant.
+- Mission state projection also cannot erase `.userPaused`; user steering must be explicitly resumed before canonical Mission projection may change the continuity run state.
 - Advancing to a newer Mission revision cannot carry an older Mission-owned completion/decision/block projection forward without revalidation.
 - Same-process capability replay fails closed across system expiration, user pause/resume, environment loss, accepted worker results, checkpoint advance, Mission projection, and handoff because all fresh authority is validated against the current snapshot epoch before mutation.
 - Background transfer archives revalidate nested invariants on decode and are bounded.
