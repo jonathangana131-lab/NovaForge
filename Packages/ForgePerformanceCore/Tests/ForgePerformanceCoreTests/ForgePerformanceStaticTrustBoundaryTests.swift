@@ -40,28 +40,22 @@ final class ForgePerformanceStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        let bundleModulesURL = Bundle(for: ForgePerformanceStaticTrustBoundaryTests.self)
-            .bundleURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("Modules", isDirectory: true)
-        if moduleExists(in: bundleModulesURL) {
-            return bundleModulesURL
-        }
+        let anchors = [
+            Bundle(for: ForgePerformanceStaticTrustBoundaryTests.self).bundleURL,
+            URL(fileURLWithPath: CommandLine.arguments[0]),
+        ]
 
-        // Linux SwiftPM places the test executable directly in the configuration
-        // directory instead of a macOS .xctest bundle. Keep this bounded fallback
-        // so the same trust probe exercises both layouts without hard-coding a
-        // configuration, architecture, or repository path.
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
-            .deletingLastPathComponent()
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            if moduleExists(in: modulesURL) {
-                return modulesURL
+        for anchor in anchors {
+            var directory = anchor.deletingLastPathComponent()
+            for _ in 0..<10 {
+                let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+                if moduleExists(in: modulesURL) {
+                    return modulesURL
+                }
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path { break }
+                directory = parent
             }
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { break }
-            directory = parent
         }
 
         throw NSError(
@@ -69,7 +63,7 @@ final class ForgePerformanceStaticTrustBoundaryTests: XCTestCase {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "ForgePerformanceCore module missing from active SwiftPM build"
+                    "ForgePerformanceCore module missing from active SwiftPM test bundle/executable ancestry"
             ]
         )
     }
