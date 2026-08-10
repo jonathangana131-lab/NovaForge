@@ -32,6 +32,7 @@ required_composer = [
     'preferences.reasoningEffort = .max',
     'preferences.orchestrationMode = .ultraCode',
     '.accessibilityAdjustableAction',
+    'Text(presentation.mode.title)',
 ]
 for needle in required_composer:
     if needle not in composer:
@@ -52,6 +53,11 @@ for needle in required_preferences:
     if needle not in preferences:
         raise SystemExit(f"missing preference persistence/runtime contract: {needle}")
 
+if preferences.count('case .ultraCode: "Ultra"') < 2:
+    raise SystemExit('UltraCode internal mode must present as Ultra in both title and shortTitle')
+if 'case .ultraCode: "UltraCode"' in preferences:
+    raise SystemExit('developer-facing UltraCode leaked through orchestration presentation titles')
+
 required_runtime = [
     'preferences.effectiveReasoningEffort(',
     'case .ultraCode: ["v2UltraCodeOrchestration", "v2IsolatedAgentWorkspaces"]',
@@ -60,5 +66,5 @@ for needle in required_runtime:
     if needle not in fresh_run:
         raise SystemExit(f"missing runtime contract: {needle}")
 
-print('Preview effort contract: Low / Medium / High / Extra High / Ultra -> persisted strongest orchestration path')
+print('Preview effort contract: Low / Medium / High / Extra High / Ultra -> persisted strongest orchestration path with consistent run-time presentation')
 PY
