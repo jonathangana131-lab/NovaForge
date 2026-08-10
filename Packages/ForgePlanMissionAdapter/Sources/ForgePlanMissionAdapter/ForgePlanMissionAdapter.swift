@@ -1,5 +1,4 @@
 import Foundation
-import AgentDomain
 import ForgePlanCore
 
 public enum ForgePlanMissionHandoffError: Error, Equatable, Sendable {
@@ -8,9 +7,6 @@ public enum ForgePlanMissionHandoffError: Error, Equatable, Sendable {
     case invalidSummary(String)
     case duplicateDecisionID(String)
     case invalidDecision(String)
-    case missingAcceptanceJourneys
-    case missingExpectedEvidence
-    case invalidConstitution(MissionConstitutionValidationError)
 }
 
 private func canonicalOpaqueID(
@@ -38,29 +34,20 @@ private func validText(_ value: String, maximumUTF8Bytes: Int) -> Bool {
         }
 }
 
-/// Host-supplied Mission identity used to build a candidate constitution projection.
-/// `planAcceptanceReceiptID` is an opaque reference only; this public value does not authenticate it.
-public struct ForgePlanMissionContext: Sendable {
-    public let missionID: MissionID
-    public let projectID: ProjectID
-    public let constitutionRevision: UInt64
-    public let projectedAcceptedAt: AgentInstant
+/// Host-supplied identity for this Plan -> Mission handoff candidate.
+/// The acceptance receipt is only an opaque reference; this type does not authenticate it.
+public struct ForgePlanMissionContext: Hashable, Sendable {
+    public let handoffRevision: UInt64
     public let planAcceptanceReceiptID: String
 
     public init(
-        missionID: MissionID,
-        projectID: ProjectID,
-        constitutionRevision: UInt64,
-        projectedAcceptedAt: AgentInstant,
+        handoffRevision: UInt64,
         planAcceptanceReceiptID: String
     ) throws {
-        guard constitutionRevision > 0 else {
-            throw ForgePlanMissionHandoffError.invalidContext("constitutionRevision")
+        guard handoffRevision > 0 else {
+            throw ForgePlanMissionHandoffError.invalidContext("handoffRevision")
         }
-        self.missionID = missionID
-        self.projectID = projectID
-        self.constitutionRevision = constitutionRevision
-        self.projectedAcceptedAt = projectedAcceptedAt
+        self.handoffRevision = handoffRevision
         self.planAcceptanceReceiptID = try canonicalOpaqueID(
             planAcceptanceReceiptID,
             field: "planAcceptanceReceiptID",
@@ -69,8 +56,8 @@ public struct ForgePlanMissionContext: Sendable {
     }
 }
 
-/// Revision identity that lets the eventual Composer/Mission integration reject a stale Plan Space
-/// result after the user edits either the source Composer draft or the reviewed plan.
+/// Revision identity that lets Composer/Mission integration reject a stale Plan Space result after
+/// the user edits either the source Composer draft or the reviewed plan.
 public struct ForgePlanMissionSourceBinding: Hashable, Sendable {
     public let composerDraftRevision: UInt64
     public let planRevision: UInt64
@@ -97,53 +84,8 @@ public struct ForgePlanMissionSourceBinding: Hashable, Sendable {
     }
 }
 
-/// Mission fields that cannot be inferred safely from the Plan Space control profile itself.
-/// Privacy/locality is deliberately absent: V14 Composer privacy remains the single authority.
-public struct ForgePlanMissionSupplement: Sendable {
-    public var projectType: String
-    public var designIntent: String?
-    public var orientationTarget: String?
-    public var deviceTargets: MissionStringSet
-    public var requiredCapabilities: MissionStringSet
-    public var explicitNonGoals: MissionStringSet
-    public var constraints: MissionStringSet
-    public var performanceTarget: String?
-    public var accessibilityTarget: String?
-    public var persistenceExpectations: String?
-    public var acceptanceJourneys: MissionStringSet
-    public var expectedEvidence: MissionEvidenceSet
-
-    public init(
-        projectType: String,
-        designIntent: String? = nil,
-        orientationTarget: String? = nil,
-        deviceTargets: MissionStringSet = MissionStringSet([]),
-        requiredCapabilities: MissionStringSet = MissionStringSet([]),
-        explicitNonGoals: MissionStringSet = MissionStringSet([]),
-        constraints: MissionStringSet = MissionStringSet([]),
-        performanceTarget: String? = nil,
-        accessibilityTarget: String? = nil,
-        persistenceExpectations: String? = nil,
-        acceptanceJourneys: MissionStringSet,
-        expectedEvidence: MissionEvidenceSet
-    ) {
-        self.projectType = projectType
-        self.designIntent = designIntent
-        self.orientationTarget = orientationTarget
-        self.deviceTargets = deviceTargets
-        self.requiredCapabilities = requiredCapabilities
-        self.explicitNonGoals = explicitNonGoals
-        self.constraints = constraints
-        self.performanceTarget = performanceTarget
-        self.accessibilityTarget = accessibilityTarget
-        self.persistenceExpectations = persistenceExpectations
-        self.acceptanceJourneys = acceptanceJourneys
-        self.expectedEvidence = expectedEvidence
-    }
-}
-
-/// Every case is a requirement for a canonical host/Mission router to verify or enforce.
-/// None of these values self-certifies that its requirement has already been satisfied.
+/// Requirements for the eventual host/Mission router. These values are never evidence that the
+/// requirement has already been satisfied.
 public enum ForgePlanMissionExecutionPrecondition: Hashable, Sendable {
     case sourceRevisionMatch(binding: ForgePlanMissionSourceBinding)
     case planAcceptanceVerification(receiptID: String)
@@ -154,12 +96,15 @@ public enum ForgePlanMissionExecutionPrecondition: Hashable, Sendable {
     case delegatedDecisionResolution(decisionID: String)
 }
 
-/// A candidate typed projection from Plan Space toward Mission. It intentionally retains the exact
-/// V14 Composer control profile instead of flattening privacy/model/autonomy into prompt prose.
-/// This value is not accepted execution authority: its receipt/source identities are references and
-/// every security/policy-sensitive requirement is emitted as an unresolved execution precondition.
+/// Typed Plan Space output that can survive the presentation boundary without flattening privacy,
+/// model selection, autonomy, build-depth, creativity, refactor risk, or decisions into prompt prose.
+///
+/// This is intentionally *not* a Mission Constitution or execution authority. Canonical Mission
+/// types are owned by the Mission Engine lineage; after that authority lands, a separate adapter can
+/// consume this envelope without inventing a parallel Mission domain.
 public struct ForgePlanMissionHandoff: Sendable {
-    public let constitution: MissionConstitution
+    public let revision: UInt64
+    public let intentSummary: String
     public let planAcceptanceReceiptID: String
     public let planDecisions: [PlanResolvedDecision]
     public let controlProfile: ForgeComposerV14ControlProfile
@@ -167,14 +112,16 @@ public struct ForgePlanMissionHandoff: Sendable {
     public let executionPreconditions: [ForgePlanMissionExecutionPrecondition]
 
     fileprivate init(
-        constitution: MissionConstitution,
+        revision: UInt64,
+        intentSummary: String,
         planAcceptanceReceiptID: String,
         planDecisions: [PlanResolvedDecision],
         controlProfile: ForgeComposerV14ControlProfile,
         sourceBinding: ForgePlanMissionSourceBinding,
         executionPreconditions: [ForgePlanMissionExecutionPrecondition]
     ) {
-        self.constitution = constitution
+        self.revision = revision
+        self.intentSummary = intentSummary
         self.planAcceptanceReceiptID = planAcceptanceReceiptID
         self.planDecisions = planDecisions
         self.controlProfile = controlProfile
@@ -215,48 +162,14 @@ public enum ForgePlanMissionAdapter {
     public static func makeHandoff(
         summary: ReadyToForgeSummary,
         context: ForgePlanMissionContext,
-        sourceBinding: ForgePlanMissionSourceBinding,
-        supplement: ForgePlanMissionSupplement
+        sourceBinding: ForgePlanMissionSourceBinding
     ) throws -> ForgePlanMissionHandoff {
         try validate(summary: summary)
-        guard !supplement.acceptanceJourneys.values.isEmpty else {
-            throw ForgePlanMissionHandoffError.missingAcceptanceJourneys
-        }
-        guard !supplement.expectedEvidence.values.isEmpty else {
-            throw ForgePlanMissionHandoffError.missingExpectedEvidence
-        }
-
-        let controls = summary.controls
-        let constitution = MissionConstitution(
-            missionID: context.missionID,
-            projectID: context.projectID,
-            revision: context.constitutionRevision,
-            acceptedAt: context.projectedAcceptedAt,
-            productGoal: summary.intentSummary,
-            projectType: supplement.projectType,
-            designIntent: supplement.designIntent,
-            orientationTarget: supplement.orientationTarget,
-            deviceTargets: supplement.deviceTargets,
-            requiredCapabilities: supplement.requiredCapabilities,
-            explicitNonGoals: supplement.explicitNonGoals,
-            constraints: supplement.constraints,
-            buildDepth: map(controls.buildDepth),
-            creativity: mapCreativity(controls.creativity.value),
-            refactorRisk: mapRefactorRisk(controls.refactorRisk.value),
-            localityPreference: controls.privacy.isLocalOnly ? .localOnly : .unspecified,
-            performanceTarget: supplement.performanceTarget,
-            accessibilityTarget: supplement.accessibilityTarget,
-            persistenceExpectations: supplement.persistenceExpectations,
-            acceptanceJourneys: supplement.acceptanceJourneys,
-            expectedEvidence: supplement.expectedEvidence
-        )
-        if let error = constitution.validationError {
-            throw ForgePlanMissionHandoffError.invalidConstitution(error)
-        }
 
         let canonicalDecisions = summary.decisions.sorted { lhs, rhs in
             lhs.id == rhs.id ? lhs.prompt < rhs.prompt : lhs.id < rhs.id
         }
+        let controls = summary.controls
 
         var preconditions: [ForgePlanMissionExecutionPrecondition] = [
             .sourceRevisionMatch(binding: sourceBinding),
@@ -283,7 +196,8 @@ public enum ForgePlanMissionAdapter {
         })
 
         return ForgePlanMissionHandoff(
-            constitution: constitution,
+            revision: context.handoffRevision,
+            intentSummary: summary.intentSummary,
             planAcceptanceReceiptID: context.planAcceptanceReceiptID,
             planDecisions: canonicalDecisions,
             controlProfile: controls,
@@ -343,25 +257,5 @@ public enum ForgePlanMissionAdapter {
                 break
             }
         }
-    }
-
-    private static func map(_ value: ForgeComposerBuildDepthIntent) -> MissionBuildDepth {
-        switch value {
-        case .quick: .prototype
-        case .complete: .polished
-        case .obsessive: .obsessive
-        }
-    }
-
-    private static func mapCreativity(_ value: Double) -> MissionCreativity {
-        if value < (1.0 / 3.0) { return .faithful }
-        if value >= (2.0 / 3.0) { return .inventive }
-        return .balanced
-    }
-
-    private static func mapRefactorRisk(_ value: Double) -> MissionRefactorRisk {
-        if value < (1.0 / 3.0) { return .preserve }
-        if value >= (2.0 / 3.0) { return .rebuild }
-        return .balanced
     }
 }
