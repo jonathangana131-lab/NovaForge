@@ -1131,7 +1131,7 @@ struct ProviderModelPickerSheet: View {
 
     private var localSafetyCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Built to survive iPhone memory pressure", systemImage: "checkmark.shield.fill")
+            Label("Guarded for iPhone memory pressure", systemImage: "checkmark.shield.fill")
                 .font(.system(size: 13, weight: .black, design: AgentPalette.interfaceFontDesign))
                 .foregroundStyle(AgentPalette.ink)
 
