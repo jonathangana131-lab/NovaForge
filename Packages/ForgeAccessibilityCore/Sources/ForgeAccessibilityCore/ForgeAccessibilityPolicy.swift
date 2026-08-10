@@ -59,8 +59,11 @@ public struct ForgeAccessibilityExecutionPolicy: Codable, Equatable, Sendable {
     }
 }
 
-/// Host-authored accessibility acceptance policy for one exact product state.
-/// A policy that omits the baseline accessibility surfaces cannot mint an accepted projection.
+/// Candidate accessibility acceptance policy for one exact product state.
+///
+/// The value remains public/Codable so the host can persist and inspect candidate policy bytes, but
+/// those bytes do not authenticate who accepted the policy. Authoritative evaluation separately
+/// requires a live package-owned `ForgeAccessibilityTrustedPolicy` for this exact complete value.
 public struct ForgeAccessibilityPolicy: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
     public static let maximumScenarios = 64
@@ -175,5 +178,25 @@ public struct ForgeAccessibilityPolicy: Codable, Equatable, Sendable {
             executionPolicy: container.decode(ForgeAccessibilityExecutionPolicy.self, forKey: .executionPolicy),
             scenarios: container.decode([ForgeAccessibilityScenario].self, forKey: .scenarios)
         )
+    }
+}
+
+/// Exact live host-trust binding for one complete accessibility acceptance policy.
+///
+/// This value is intentionally non-Codable and cannot be minted by ordinary external consumers.
+/// A canonical adapter inside this module must construct it only after authenticating the accepted
+/// host policy. Whole-value matching makes future semantically relevant policy fields participate
+/// in the trust subject automatically.
+public struct ForgeAccessibilityTrustedPolicy: Equatable, Sendable {
+    private let authenticatedPolicy: ForgeAccessibilityPolicy
+
+    public var target: ForgeAccessibilityTarget { authenticatedPolicy.target }
+
+    init(authenticatedPolicy: ForgeAccessibilityPolicy) {
+        self.authenticatedPolicy = authenticatedPolicy
+    }
+
+    func exactlyMatches(_ policy: ForgeAccessibilityPolicy) -> Bool {
+        authenticatedPolicy == policy
     }
 }
