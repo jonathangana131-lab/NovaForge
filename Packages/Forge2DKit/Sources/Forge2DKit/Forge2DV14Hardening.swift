@@ -63,8 +63,10 @@ enum Forge2DV14Hardening {
     static let script = #"""
     // Native button activation from keyboard and assistive technologies can emit
     // `click` without the pointer lifecycle used by the touch controls above.
-    // Keep that path bounded and separate so pointer input cannot double-fire it.
+    // Track the pointer lifecycle explicitly so those clicks remain usable without
+    // letting an ordinary touch/pointer activation double-fire the assistive path.
     const assistiveReleaseTimers = { left: 0, right: 0 };
+    const pointerActivationControls = new Set();
 
     function pulseAssistiveDirection(inputKey, timerKey) {
       input[inputKey] = true;
@@ -75,14 +77,24 @@ enum Forge2DV14Hardening {
       }, 180);
     }
 
-    controls.left.addEventListener("click", event => {
-      if (event.detail === 0) pulseAssistiveDirection("keyboardLeft", "left");
-    });
-    controls.right.addEventListener("click", event => {
-      if (event.detail === 0) pulseAssistiveDirection("keyboardRight", "right");
-    });
-    controls.jump.addEventListener("click", event => {
-      if (event.detail === 0) queueJump();
-    });
+    function registerAssistiveActivation(button, action) {
+      button.addEventListener("pointerdown", () => {
+        pointerActivationControls.add(button.id);
+      });
+      button.addEventListener("pointercancel", () => {
+        pointerActivationControls.delete(button.id);
+      });
+      button.addEventListener("pointerup", () => {
+        window.setTimeout(() => pointerActivationControls.delete(button.id), 0);
+      });
+      button.addEventListener("click", () => {
+        if (pointerActivationControls.delete(button.id)) return;
+        action();
+      });
+    }
+
+    registerAssistiveActivation(controls.left, () => pulseAssistiveDirection("keyboardLeft", "left"));
+    registerAssistiveActivation(controls.right, () => pulseAssistiveDirection("keyboardRight", "right"));
+    registerAssistiveActivation(controls.jump, queueJump);
     """#
 }
