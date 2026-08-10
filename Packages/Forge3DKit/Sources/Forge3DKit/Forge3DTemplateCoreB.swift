@@ -16,7 +16,7 @@ function bindActionValue(element, actionID, inputKey) {
     input[inputKey] = value;
   };
   element.addEventListener("input", () => apply(element.value));
-  element.addEventListener("novaforge:action", event => {
+  element.addEventListener("\#(Forge3DSemanticContract.actionEventName)", event => {
     if (event.detail?.actionID !== actionID) return;
     apply(event.detail.value);
   });
