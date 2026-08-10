@@ -1,0 +1,38 @@
+name: V14 Playtest execution trust validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PLAYEXEC-TRUST-0810/execution-binding/e1
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PRODUCT_HEAD: 80b33e8fc46c4fb69a25b814d5fd4e744a9fca26
+      STACK_BASE: e4374d3b3b1e628d286194849ffab2387b39dfac
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          test "$(git merge-base "$STACK_BASE" "$PRODUCT_HEAD")" = "$STACK_BASE"
+          git diff --check "$STACK_BASE" "$PRODUCT_HEAD"
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Debug package tests
+        run: swift test --package-path Packages/ForgePlaytestCore -Xswiftc -warnings-as-errors
+
+      - name: Release package tests
+        run: swift test --package-path Packages/ForgePlaytestCore -c release -Xswiftc -warnings-as-errors
