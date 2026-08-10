@@ -9,7 +9,10 @@ import Foundation
 /// identity from caller-supplied IDs.
 public struct ForgeRuntimeSessionBoundAuthorizedSemanticInteraction: Equatable, Sendable {
     public let runtimeVersion: ForgeRuntimeVersion
-    private let authorizedInteraction: ForgeRuntimeAuthorizedSemanticInteraction
+
+    // Module-internal only so canonical ForgeRuntime adapters can consume the already-authorized
+    // request without exposing a public escape hatch that drops runtime-version provenance.
+    let authorizedInteraction: ForgeRuntimeAuthorizedSemanticInteraction
 
     init(
         authorizedInteraction: ForgeRuntimeAuthorizedSemanticInteraction,
@@ -64,6 +67,29 @@ public extension ForgeRuntimeSemanticInteractionGate {
         return ForgeRuntimeSessionBoundAuthorizedSemanticInteraction(
             authorizedInteraction: authorizedInteraction,
             runtimeVersion: session.runtimeVersion
+        )
+    }
+}
+
+public extension ForgeRuntimeWebSemanticAutomationAdapter {
+    /// Builds the canonical web dispatch plan without forcing a host to unwrap or re-authorize a
+    /// session-bound interaction. Runtime version remains available on `authorized` for the host's
+    /// exact loaded-runtime comparison before and after dispatch.
+    func makeDispatchPlan(
+        for authorized: ForgeRuntimeSessionBoundAuthorizedSemanticInteraction
+    ) throws -> ForgeRuntimeWebSemanticDispatchPlan {
+        try makeDispatchPlan(for: authorized.authorizedInteraction)
+    }
+
+    /// Parses page-authored candidate disposition through the existing strict identity checks while
+    /// preserving the session-bound authorization object at the host boundary.
+    func observeDispatchResult(
+        for authorized: ForgeRuntimeSessionBoundAuthorizedSemanticInteraction,
+        bridgeResultJSON: String
+    ) throws -> ForgeRuntimeWebSemanticDispatchObservation {
+        try observeDispatchResult(
+            for: authorized.authorizedInteraction,
+            bridgeResultJSON: bridgeResultJSON
         )
     }
 }
