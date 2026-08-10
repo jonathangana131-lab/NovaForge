@@ -14,9 +14,12 @@ Run from the repository root:
 ```sh
 python3 scripts/validate-v14-forge-runtime-fixtures.py
 python3 -m unittest -v scripts/tests/test_validate_v14_forge_runtime_fixtures.py
+scripts/validate-v14-forge-runtime-fixtures-swift.sh
 ```
 
-The validator intentionally fails closed on unknown fixture directories, unexpected files inside a fixture, cross-project storage namespaces, external-network primitives/references, hidden resource-loading references, duplicate semantic target IDs, and contract drift in the expected semantic target set.
+The Python validator intentionally fails closed on unknown fixture directories, unexpected files inside a fixture, cross-project storage namespaces, external-network primitives/references, hidden resource-loading references, duplicate semantic target IDs, and contract drift in the expected semantic target set.
+
+The Swift validation script compiles the repository's actual `ForgeRuntimeManifest`, `ForgeRuntimeManifestValidator`, and `ForgeRuntimeLaunchAuthorization` sources with a temporary harness, then requires both fixture manifests to decode and be launchable under the default host support snapshot. It does not modify RuntimeKit or grant runtime authority.
 
 ## Worker evidence — 2026-08-10
 
@@ -26,12 +29,14 @@ On branch `agent/v14-generated-runtime-acceptance-fixtures`:
 - adversarial Python tests: PASS, 7/7;
 - `python3 -m py_compile` for validator/tests: PASS;
 - inline JavaScript extracted from both fixtures and checked with `node --check`: PASS, 2/2;
+- current RuntimeKit manifest decoder + validator logic: PASS for both manifests, zero warnings;
+- repeatable Swift validator script syntax/end-to-end harness check: PASS in the worker environment using the current extracted RuntimeKit source logic; in a normal repository checkout the script compiles those three RuntimeKit files directly;
 - active semantic-input bridge review: `novaforge:action` carries `detail.value` and `novaforge:gesture` carries `detail.gestureID`, matching Vector Drift listeners;
 - collision-aware 6 px grid reachability scan: all three Vector Drift beacon targets are reachable from spawn in the current obstacle geometry;
-- remote Git blob identity was checked against the locally tested bytes for both manifests, both HTML files, validator, and tests.
+- remote Git blob identity was checked against the locally tested bytes for both manifests, both HTML files, Python validator, and Python tests.
 
 Headless Chromium screenshot attempts timed out in the worker environment because the browser could not establish expected system services. Therefore there is **no** screenshot/visual acceptance evidence from this pass.
 
 ## Truth boundary
 
-Passing this fixture validator proves only the checked source/structure invariants. It does not prove a real ForgeRuntime launch, autonomous self-play completion, screenshot quality, accessibility instrumentation, simulator/physical-device behavior, performance, thermal behavior, or Completion Constitution acceptance. Those require their own receipts from the relevant NovaForge authorities.
+Passing these fixture validators proves only the checked source/structure and manifest-acceptance invariants. It does not prove a real ForgeRuntime launch, autonomous self-play completion, screenshot quality, accessibility instrumentation, simulator/physical-device behavior, performance, thermal behavior, or Completion Constitution acceptance. Those require their own receipts from the relevant NovaForge authorities.
