@@ -208,10 +208,17 @@ public struct Forge3DGeneratedProject: Equatable, Sendable {
         semanticCapabilities: Set<Forge3DSemanticCapability>,
         semanticAutomation: Forge3DSemanticAutomationDescriptor? = nil
     ) {
+        var normalizedCapabilities = semanticCapabilities
+        if semanticAutomation == nil {
+            normalizedCapabilities.remove(.semanticAutomation)
+        } else {
+            normalizedCapabilities.insert(.semanticAutomation)
+        }
+
         self.blueprint = blueprint
         self.entryPath = entryPath
         self.files = files
-        self.semanticCapabilities = semanticCapabilities
+        self.semanticCapabilities = normalizedCapabilities
         self.semanticAutomation = semanticAutomation
     }
 }
