@@ -1,0 +1,167 @@
+name: V14 Preview provider route review fix
+
+on:
+  push:
+    branches:
+      - automation/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/review-fix/e1
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: worker/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/provider-route-profile/e2
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Assert reviewed product head
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "3e814d84a31a602dbc4dc2a33fcfc1acae644d87"
+
+      - name: Apply independent review repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift")
+          text = path.read_text()
+
+          replacements = [
+              (
+                  """    case emptyEndpointAuthority\n    case emptyEvidenceRevision\n    case emptyDataHandlingPolicyID\n""",
+                  """    case emptyEndpointAuthority\n    case emptyEvidenceRevision\n    case emptyCatalogSourceID\n    case emptyHealthSourceID\n    case emptyDataHandlingPolicyID\n""",
+              ),
+              (
+                  """        guard !evidence.revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {\n            throw ProviderRouteProfileValidationError.emptyEvidenceRevision\n        }\n        guard !dataHandling.policyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {\n""",
+                  """        guard !evidence.revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {\n            throw ProviderRouteProfileValidationError.emptyEvidenceRevision\n        }\n        guard !evidence.catalogSourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {\n            throw ProviderRouteProfileValidationError.emptyCatalogSourceID\n        }\n        guard !evidence.healthSourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {\n            throw ProviderRouteProfileValidationError.emptyHealthSourceID\n        }\n        guard !dataHandling.policyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {\n""",
+              ),
+              (
+                  """        if supportState == .supported, authenticationMode == .unverified {\n            throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedAuthentication\n        }\n        if supportState == .supported, dataHandling.classification == .unverified {\n            throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedDataHandling\n        }\n""",
+                  """        let canBecomeSelectable = supportState.isSelectable(allowExperimental: true)\n        if canBecomeSelectable, authenticationMode == .unverified {\n            throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedAuthentication\n        }\n        if canBecomeSelectable, dataHandling.classification == .unverified {\n            throw ProviderRouteProfileValidationError.supportedRouteHasUnverifiedDataHandling\n        }\n""",
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one source match, got {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          cat > Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift <<'SWIFT'
+          @testable import AgentProviders
+          import XCTest
+
+          final class ProviderRouteProfileReviewRegressionTests: XCTestCase {
+              func testExperimentalRouteRejectsUnverifiedAuthenticationBeforeOptInCanSelectIt() throws {
+                  XCTAssertThrowsError(
+                      try makeProfile(
+                          supportState: .experimental,
+                          authenticationMode: .unverified
+                      )
+                  ) { error in
+                      XCTAssertEqual(
+                          error as? ProviderRouteProfileValidationError,
+                          .supportedRouteHasUnverifiedAuthentication
+                      )
+                  }
+              }
+
+              func testExperimentalRouteRejectsUnverifiedDataHandlingBeforeOptInCanSelectIt() throws {
+                  XCTAssertThrowsError(
+                      try makeProfile(
+                          supportState: .experimental,
+                          dataHandlingClassification: .unverified
+                      )
+                  ) { error in
+                      XCTAssertEqual(
+                          error as? ProviderRouteProfileValidationError,
+                          .supportedRouteHasUnverifiedDataHandling
+                      )
+                  }
+              }
+
+              func testRouteProfileRejectsBlankCatalogEvidenceSource() throws {
+                  XCTAssertThrowsError(
+                      try makeProfile(catalogSourceID: "  \n")
+                  ) { error in
+                      XCTAssertEqual(
+                          error as? ProviderRouteProfileValidationError,
+                          .emptyCatalogSourceID
+                      )
+                  }
+              }
+
+              func testRouteProfileRejectsBlankHealthEvidenceSource() throws {
+                  XCTAssertThrowsError(
+                      try makeProfile(healthSourceID: "\t")
+                  ) { error in
+                      XCTAssertEqual(
+                          error as? ProviderRouteProfileValidationError,
+                          .emptyHealthSourceID
+                      )
+                  }
+              }
+
+              private func makeProfile(
+                  supportState: ProviderProductSupportState = .supported,
+                  authenticationMode: ProviderAuthenticationMode = .apiKeyBearer,
+                  dataHandlingClassification: ProviderDataHandlingClassification = .standardHosted,
+                  catalogSourceID: String = "fixture-catalog",
+                  healthSourceID: String = "fixture-health"
+              ) throws -> ProviderRouteProfile {
+                  let descriptor = OpenAIChatCompletionsAdapter(
+                      model: ProviderModelID(rawValue: "review-route")
+                  ).descriptor
+                  return try ProviderRouteProfile(
+                      descriptor: descriptor,
+                      endpoint: ProviderEndpointAuthority(
+                          authorityID: "fixture-origin",
+                          relativePath: descriptor.requestPath
+                      ),
+                      authenticationMode: authenticationMode,
+                      dataHandling: ProviderDataHandlingPolicy(
+                          policyID: "fixture-policy",
+                          classification: dataHandlingClassification,
+                          requiresPreUseDisclosure: dataHandlingClassification == .unverified,
+                          sourceID: "fixture-privacy-source",
+                          verifiedAtISO8601: "2026-08-10T00:00:00Z"
+                      ),
+                      replayPolicy: .none,
+                      retryBehavior: .transientSameRoute,
+                      cancellationBehavior: .cooperativeTransportAbort,
+                      supportState: supportState,
+                      evidence: ProviderRouteEvidence(
+                          catalogSourceID: catalogSourceID,
+                          healthSourceID: healthSourceID,
+                          revision: "review-r1"
+                      )
+                  )
+              }
+          }
+          SWIFT
+
+          git diff --check
+          test "$(git diff --name-only | wc -l | tr -d ' ')" = "2"
+          git diff --name-only | grep -Fx 'Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift'
+          git diff --name-only | grep -Fx 'Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift'
+
+      - name: Commit reviewed repair to product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'NovaForge Swarm'
+          git config user.email 'actions@users.noreply.github.com'
+          git add Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift \
+            Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift
+          git commit -m '[V14 Preview] Close provider route truth review blockers'
+          git push origin HEAD:worker/GPT56-SOL-NF-V14-PREVIEW-ROUTE-0810/provider-route-profile/e2
