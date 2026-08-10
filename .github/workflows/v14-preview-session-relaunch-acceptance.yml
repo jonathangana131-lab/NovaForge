@@ -1,0 +1,106 @@
+name: V14 Preview session relaunch acceptance
+
+on:
+  push:
+    branches:
+      - worker/GPT56-SOL-NF-V14-PREVIEW-SESSION-0810/relaunch/e1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-session-relaunch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  relaunch-acceptance:
+    name: Session + relaunch acceptance
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select newest Xcode and iPhone Simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
+          if [ -z "$NEWEST_XCODE" ]; then
+            echo "No Xcode installation found under /Applications" >&2
+            exit 69
+          fi
+          sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
+          xcodebuild -version
+
+          UDID=$(xcrun simctl list -j devices available | jq -r '
+            [.devices
+              | to_entries[]
+              | select(.key | contains("iOS"))
+              | .value[]
+              | select(.isAvailable == true and (.name | startswith("iPhone")))]
+            | last
+            | .udid // empty
+          ')
+          if [ -z "$UDID" ]; then
+            DEVICE_TYPE=$(xcrun simctl list -j devicetypes | jq -r \
+              '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
+            [ -n "$DEVICE_TYPE" ] || { echo "No compatible iPhone simulator type" >&2; exit 69; }
+            UDID=$(xcrun simctl create "NovaForge Preview Relaunch" "$DEVICE_TYPE")
+          fi
+          echo "SIMULATOR_ID=$UDID" >> "$GITHUB_ENV"
+
+      - name: Build Preview test bundle once
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf DerivedData/PreviewSession artifacts/preview-session-relaunch
+          mkdir -p artifacts/preview-session-relaunch
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath DerivedData/PreviewSession \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing \
+            | tee artifacts/preview-session-relaunch/build.log
+
+      - name: Prove atomic persisted state and cold-launch safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath DerivedData/PreviewSession \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            -resultBundlePath artifacts/preview-session-relaunch/PreviewSessionRelaunch.xcresult \
+            -only-testing:AgentPadTests/FilesWorkspacePersistenceTests \
+            -only-testing:AgentPadUITests/AgentPadUITests/testLaunchStartsOnFreshReadyChatInsteadOfOldChat \
+            -only-testing:AgentPadUITests/AgentPadUITests/testLaunchRestoresCompletedSelectedChatButNotInterruptedDraft \
+            test-without-building \
+            | tee artifacts/preview-session-relaunch/test.log
+
+      - name: Upload relaunch evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-session-relaunch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/preview-session-relaunch
+          if-no-files-found: warn
+          retention-days: 14
