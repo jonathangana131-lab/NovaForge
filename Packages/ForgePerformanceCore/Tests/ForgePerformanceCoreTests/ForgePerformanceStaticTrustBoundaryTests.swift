@@ -40,15 +40,43 @@ final class ForgePerformanceStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        let bundleModulesURL = Bundle(for: ForgePerformanceStaticTrustBoundaryTests.self)
+            .bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Modules", isDirectory: true)
+        if moduleExists(in: bundleModulesURL) {
+            return bundleModulesURL
+        }
+
+        // Linux SwiftPM places the test executable directly in the configuration
+        // directory instead of a macOS .xctest bundle. Keep this bounded fallback
+        // so the same trust probe exercises both layouts without hard-coding a
+        // configuration, architecture, or repository path.
+        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
+            .deletingLastPathComponent()
         for _ in 0..<10 {
             let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ForgePerformanceCore.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) { return modulesURL }
+            if moduleExists(in: modulesURL) {
+                return modulesURL
+            }
             let parent = directory.deletingLastPathComponent()
             if parent.path == directory.path { break }
             directory = parent
         }
-        throw NSError(domain: "ForgePerformanceStaticTrustBoundaryTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "ForgePerformanceCore module missing from active SwiftPM test executable ancestry"])
+
+        throw NSError(
+            domain: "ForgePerformanceStaticTrustBoundaryTests",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "ForgePerformanceCore module missing from active SwiftPM build"
+            ]
+        )
+    }
+
+    private func moduleExists(in modulesURL: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: modulesURL.appendingPathComponent("ForgePerformanceCore.swiftmodule").path
+        )
     }
 }
