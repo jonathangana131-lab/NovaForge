@@ -61,7 +61,7 @@ struct ComposerReasoningControl: View {
         case .ultra:
             "Extra High"
         case .ultraCode:
-            "UltraCode"
+            "Ultra"
         }
     }
 
@@ -157,7 +157,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Medium"
             case .high: "High"
             case .extraHigh: "Extra High"
-            case .ultraCode: "UltraCode"
+            case .ultraCode: "Ultra"
             }
         }
 
@@ -437,6 +437,10 @@ struct AgentOrchestrationStatusCard: View {
         presentation.mode == .ultraCode ? AgentPalette.indigo : AgentPalette.lilac
     }
 
+    private var modeTitle: String {
+        presentation.mode == .ultraCode ? "Ultra" : presentation.mode.title
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 11) {
@@ -447,7 +451,7 @@ struct AgentOrchestrationStatusCard: View {
                     .frame(width: 38, height: 38)
                     .background(tint.opacity(0.13), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(presentation.mode.title)
+                    Text(modeTitle)
                         .font(.headline.weight(.bold))
                     Text(presentation.headline)
                         .font(.caption)
@@ -1309,7 +1313,8 @@ private struct ComposerModelChooserSheet: View {
 
     private func modelSymbol(_ model: String) -> String {
         if LocalModelCatalog.variant(for: model) != nil { return "iphone.gen3" }
-        if model.localizedCaseInsensitiveContains("gpt") { return "sparkles" }
+        if model.localizedCaseInsensitiveContains("gpt") { return "sparkles"
+        }
         return "cube.transparent"
     }
 
