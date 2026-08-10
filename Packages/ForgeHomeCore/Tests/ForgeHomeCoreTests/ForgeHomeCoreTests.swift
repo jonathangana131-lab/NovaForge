@@ -134,6 +134,37 @@ final class ForgeHomeCoreTests: XCTestCase {
         XCTAssertEqual(ForgeHomeProjector.project([idle, active], trustedBindings: [activeBinding]).cards.map(\.name), ["Active", "Idle"])
     }
 
+    func testDuplicateCreationIDsAreQuarantinedWithoutChoosingTrustedWinner() throws {
+        let duplicateID = ForgeCreationID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000099")!)
+        let trusted = ForgeCreationRecord(
+            id: duplicateID,
+            name: "Trusted duplicate",
+            lastChangedAt: now,
+            currentSourceRevision: "rev",
+            runtimeEvidence: runtimeEvidence(level: .runtimeTested, revision: "rev")
+        )
+        let forged = ForgeCreationRecord(
+            id: duplicateID,
+            name: "Forged duplicate",
+            lastChangedAt: now.addingTimeInterval(100),
+            currentSourceRevision: "rev",
+            runtimeEvidence: runtimeEvidence(level: .runtimeTested, revision: "rev"),
+            canExportSource: true
+        )
+        let binding = try ForgeHomeTrustBinding(authenticatedRecord: trusted)
+
+        let snapshot = ForgeHomeProjector.project([forged, trusted], trustedBindings: [binding])
+        XCTAssertTrue(snapshot.cards.isEmpty)
+        XCTAssertEqual(snapshot.conflictedCreationIDs, [duplicateID])
+    }
+
+    func testUniqueCreationDoesNotAppearInConflictSet() {
+        let unique = ForgeCreationRecord(name: "Unique", lastChangedAt: now)
+        let snapshot = ForgeHomeProjector.project([unique])
+        XCTAssertEqual(snapshot.cards.map(\.id), [unique.id])
+        XCTAssertTrue(snapshot.conflictedCreationIDs.isEmpty)
+    }
+
     func testIdleOrderingIsDeterministic() {
         let firstID = ForgeCreationID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
         let secondID = ForgeCreationID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
