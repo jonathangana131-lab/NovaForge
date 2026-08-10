@@ -6,6 +6,68 @@ public enum ProjectBrainContextFreshnessPolicy: String, Codable, CaseIterable, S
     case includeStale
 }
 
+public enum ProjectBrainSourceIdentityError: String, Error, Equatable, Sendable {
+    case invalidAcceptedProjectStateID
+    case invalidCheckpointReferenceID
+    case invalidProjectRootRevisionID
+}
+
+/// Exact source/checkpoint identity expected by authoritative Project Brain retrieval.
+///
+/// `acceptedProjectStateID` is the same semantic identity carried by canonical Mission checkpoints.
+/// `checkpointReferenceID` is the host-authenticated canonical checkpoint reference (for example the
+/// canonical MissionCheckpointID description) and `projectRootRevisionID` binds the exact accepted
+/// source/project-root revision. Constructing this value is not an authority grant; it is an identity
+/// value that must match the module-minted trusted snapshot exactly.
+public struct ProjectBrainSourceIdentity: Hashable, Sendable {
+    public let acceptedProjectStateID: String
+    public let checkpointReferenceID: String
+    public let projectRootRevisionID: String
+
+    public init(
+        acceptedProjectStateID: String,
+        checkpointReferenceID: String,
+        projectRootRevisionID: String
+    ) throws {
+        guard Self.isCanonicalIdentity(acceptedProjectStateID) else {
+            throw ProjectBrainSourceIdentityError.invalidAcceptedProjectStateID
+        }
+        guard Self.isCanonicalIdentity(checkpointReferenceID) else {
+            throw ProjectBrainSourceIdentityError.invalidCheckpointReferenceID
+        }
+        guard Self.isCanonicalIdentity(projectRootRevisionID) else {
+            throw ProjectBrainSourceIdentityError.invalidProjectRootRevisionID
+        }
+        self.acceptedProjectStateID = acceptedProjectStateID
+        self.checkpointReferenceID = checkpointReferenceID
+        self.projectRootRevisionID = projectRootRevisionID
+    }
+
+    private init(
+        uncheckedAcceptedProjectStateID: String,
+        checkpointReferenceID: String,
+        projectRootRevisionID: String
+    ) {
+        self.acceptedProjectStateID = uncheckedAcceptedProjectStateID
+        self.checkpointReferenceID = checkpointReferenceID
+        self.projectRootRevisionID = projectRootRevisionID
+    }
+
+    static let internalCandidateOnly = ProjectBrainSourceIdentity(
+        uncheckedAcceptedProjectStateID: "internal-candidate-only",
+        checkpointReferenceID: "internal-candidate-only",
+        projectRootRevisionID: "internal-candidate-only"
+    )
+
+    private static func isCanonicalIdentity(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value == trimmed
+            && !value.isEmpty
+            && value.utf8.count <= 512
+            && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
+    }
+}
+
 public enum ProjectBrainContextRequestValidationError: String, Error, Codable, Equatable, Sendable {
     case emptyFactBudget
     case factBudgetTooLarge
@@ -35,6 +97,7 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
 
     public let projectID: ProjectID
     public let missionID: MissionID?
+    public let expectedSourceIdentity: ProjectBrainSourceIdentity?
     public let scopes: [ProjectBrainScope]
     public let preferredKinds: [ProjectBrainFactKind]
     public let additionalRequiredKinds: [ProjectBrainFactKind]
@@ -50,9 +113,14 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
 
     /// `requiredKinds` is additive to the immutable mission-critical floor for source compatibility
     /// with the V13 donor. Passing an empty array cannot weaken that floor.
+    ///
+    /// `expectedSourceIdentity` is optional only so package-internal structural selection tests and
+    /// future candidate-ranking helpers can reuse this request shape. Public trusted-snapshot
+    /// selection fails closed when it is absent.
     public init(
         projectID: ProjectID,
         missionID: MissionID? = nil,
+        expectedSourceIdentity: ProjectBrainSourceIdentity? = nil,
         scopes: [ProjectBrainScope] = [],
         preferredKinds: [ProjectBrainFactKind] = [],
         requiredKinds: [ProjectBrainFactKind] = [],
@@ -64,6 +132,7 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
     ) {
         self.projectID = projectID
         self.missionID = missionID
+        self.expectedSourceIdentity = expectedSourceIdentity
         self.scopes = scopes
         self.preferredKinds = preferredKinds
         self.additionalRequiredKinds = requiredKinds
@@ -96,8 +165,9 @@ public struct ProjectBrainContextRequest: Equatable, Sendable {
 }
 
 public enum ProjectBrainTrustedSnapshotError: Error, Equatable, Sendable {
-    case invalidRevision
+    case invalidBrainRevision
     case invalidAuthorityReceiptID
+    case invalidSnapshotDigest
     case tooManyFacts(actual: Int, maximum: Int)
     case crossProjectFact(ProjectBrainFactID)
     case invalidFact(ProjectBrainFactID, ProjectBrainValidationError)
@@ -109,33 +179,39 @@ public enum ProjectBrainTrustedSnapshotError: Error, Equatable, Sendable {
 /// Public/Codable `ProjectBrainFact` values are candidate transport. Their provenance labels are
 /// structurally validated, but they do not authenticate that a user, source file, runtime, test,
 /// or checkpoint actually produced the fact. Construction is therefore module-internal. A future
-/// canonical Project Brain store/host adapter must authenticate the complete fact set and mint this
-/// non-Codable binding before downstream retrieval may produce an authority-bearing context slice.
+/// canonical Project Brain store/host adapter must authenticate the complete fact set *and* exact
+/// accepted project-state/checkpoint/project-root identity before minting this non-Codable binding.
+///
+/// `brainRevision` is only a positive revision asserted by that authenticated producer. This type
+/// does not prove monotonicity; the canonical store/adapter owns revision ordering. `snapshotDigest`
+/// must identify the authenticated whole snapshot (source identity + exact fact set) so downstream
+/// cache/receipt keys do not collapse two different snapshots that happen to share a receipt/revision.
 public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
     public static let maximumFacts = 16_384
 
     public let projectID: ProjectID
-    public let revision: UInt64
+    public let brainRevision: UInt64
+    public let sourceIdentity: ProjectBrainSourceIdentity
     public let authorityReceiptID: String
+    public let snapshotDigest: String
     public let facts: [ProjectBrainFact]
 
     init(
         authenticatedProjectID projectID: ProjectID,
-        revision: UInt64,
+        brainRevision: UInt64,
+        sourceIdentity: ProjectBrainSourceIdentity,
         authorityReceiptID: String,
+        snapshotDigest: String,
         facts: [ProjectBrainFact]
     ) throws {
-        guard revision > 0 else {
-            throw ProjectBrainTrustedSnapshotError.invalidRevision
+        guard brainRevision > 0 else {
+            throw ProjectBrainTrustedSnapshotError.invalidBrainRevision
         }
-        let canonicalReceipt = authorityReceiptID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard authorityReceiptID == canonicalReceipt,
-              !authorityReceiptID.isEmpty,
-              authorityReceiptID.utf8.count <= 512,
-              authorityReceiptID.unicodeScalars.allSatisfy({
-                  !CharacterSet.controlCharacters.contains($0)
-              }) else {
+        guard Self.isCanonicalOpaqueIdentity(authorityReceiptID) else {
             throw ProjectBrainTrustedSnapshotError.invalidAuthorityReceiptID
+        }
+        guard Self.isCanonicalOpaqueIdentity(snapshotDigest) else {
+            throw ProjectBrainTrustedSnapshotError.invalidSnapshotDigest
         }
         guard facts.count <= Self.maximumFacts else {
             throw ProjectBrainTrustedSnapshotError.tooManyFacts(
@@ -158,15 +234,27 @@ public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
         }
 
         self.projectID = projectID
-        self.revision = revision
+        self.brainRevision = brainRevision
+        self.sourceIdentity = sourceIdentity
         self.authorityReceiptID = authorityReceiptID
+        self.snapshotDigest = snapshotDigest
         self.facts = facts
+    }
+
+    private static func isCanonicalOpaqueIdentity(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value == trimmed
+            && !value.isEmpty
+            && value.utf8.count <= 512
+            && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
     }
 }
 
 public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case invalidRequest(ProjectBrainContextRequestValidationError)
     case trustedSnapshotProjectMismatch
+    case missingExpectedSourceIdentity
+    case trustedSnapshotSourceMismatch
     case invalidFact(ProjectBrainFactID, ProjectBrainValidationError)
     case duplicateFactID(ProjectBrainFactID)
     case candidateFactLimitExceeded(actual: Int, maximum: Int)
@@ -183,8 +271,11 @@ public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
 public struct ProjectBrainContextSlice: Equatable, Sendable {
     public let projectID: ProjectID
     public let missionID: MissionID?
-    public let snapshotRevision: UInt64
+    public let snapshotBrainRevision: UInt64
+    public let sourceIdentity: ProjectBrainSourceIdentity
     public let snapshotAuthorityReceiptID: String
+    public let snapshotDigest: String
+    public let isTrustedSnapshotBound: Bool
     public let facts: [ProjectBrainFact]
     public let budgetOmittedFactIDs: [ProjectBrainFactID]
     public let matchedFactCount: Int
@@ -194,8 +285,11 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
     init(
         projectID: ProjectID,
         missionID: MissionID?,
-        snapshotRevision: UInt64,
+        snapshotBrainRevision: UInt64,
+        sourceIdentity: ProjectBrainSourceIdentity,
         snapshotAuthorityReceiptID: String,
+        snapshotDigest: String,
+        isTrustedSnapshotBound: Bool,
         facts: [ProjectBrainFact],
         budgetOmittedFactIDs: [ProjectBrainFactID],
         matchedFactCount: Int,
@@ -204,8 +298,11 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
     ) {
         self.projectID = projectID
         self.missionID = missionID
-        self.snapshotRevision = snapshotRevision
+        self.snapshotBrainRevision = snapshotBrainRevision
+        self.sourceIdentity = sourceIdentity
         self.snapshotAuthorityReceiptID = snapshotAuthorityReceiptID
+        self.snapshotDigest = snapshotDigest
+        self.isTrustedSnapshotBound = isTrustedSnapshotBound
         self.facts = facts
         self.budgetOmittedFactIDs = budgetOmittedFactIDs
         self.matchedFactCount = matchedFactCount
@@ -219,19 +316,32 @@ public struct ProjectBrainContextSlice: Equatable, Sendable {
 public enum ProjectBrainContextSelector {
     public static let maximumCandidateFacts = 4_096
 
-    /// Authoritative selection accepts only a module-authenticated whole Project Brain subject.
+    /// Authoritative selection accepts only a module-authenticated whole Project Brain subject and
+    /// fails closed unless the caller's current accepted source/checkpoint identity matches exactly.
     public static func select(
         from snapshot: ProjectBrainTrustedSnapshot,
         request: ProjectBrainContextRequest
     ) throws -> ProjectBrainContextSlice {
+        if let error = request.validationError {
+            throw ProjectBrainContextSelectionError.invalidRequest(error)
+        }
         guard snapshot.projectID == request.projectID else {
             throw ProjectBrainContextSelectionError.trustedSnapshotProjectMismatch
+        }
+        guard let expectedSourceIdentity = request.expectedSourceIdentity else {
+            throw ProjectBrainContextSelectionError.missingExpectedSourceIdentity
+        }
+        guard snapshot.sourceIdentity == expectedSourceIdentity else {
+            throw ProjectBrainContextSelectionError.trustedSnapshotSourceMismatch
         }
         return try selectCandidateFacts(
             snapshot.facts,
             request: request,
-            snapshotRevision: snapshot.revision,
-            snapshotAuthorityReceiptID: snapshot.authorityReceiptID
+            snapshotBrainRevision: snapshot.brainRevision,
+            sourceIdentity: snapshot.sourceIdentity,
+            snapshotAuthorityReceiptID: snapshot.authorityReceiptID,
+            snapshotDigest: snapshot.snapshotDigest,
+            isTrustedSnapshotBound: true
         )
     }
 
@@ -244,16 +354,22 @@ public enum ProjectBrainContextSelector {
         try selectCandidateFacts(
             facts,
             request: request,
-            snapshotRevision: 0,
-            snapshotAuthorityReceiptID: "internal-candidate-only"
+            snapshotBrainRevision: 0,
+            sourceIdentity: .internalCandidateOnly,
+            snapshotAuthorityReceiptID: "internal-candidate-only",
+            snapshotDigest: "internal-candidate-only",
+            isTrustedSnapshotBound: false
         )
     }
 
     private static func selectCandidateFacts(
         _ facts: [ProjectBrainFact],
         request: ProjectBrainContextRequest,
-        snapshotRevision: UInt64,
-        snapshotAuthorityReceiptID: String
+        snapshotBrainRevision: UInt64,
+        sourceIdentity: ProjectBrainSourceIdentity,
+        snapshotAuthorityReceiptID: String,
+        snapshotDigest: String,
+        isTrustedSnapshotBound: Bool
     ) throws -> ProjectBrainContextSlice {
         if let error = request.validationError {
             throw ProjectBrainContextSelectionError.invalidRequest(error)
@@ -378,8 +494,11 @@ public enum ProjectBrainContextSelector {
         return ProjectBrainContextSlice(
             projectID: request.projectID,
             missionID: request.missionID,
-            snapshotRevision: snapshotRevision,
+            snapshotBrainRevision: snapshotBrainRevision,
+            sourceIdentity: sourceIdentity,
             snapshotAuthorityReceiptID: snapshotAuthorityReceiptID,
+            snapshotDigest: snapshotDigest,
+            isTrustedSnapshotBound: isTrustedSnapshotBound,
             facts: selected,
             budgetOmittedFactIDs: omitted,
             matchedFactCount: candidates.count,
