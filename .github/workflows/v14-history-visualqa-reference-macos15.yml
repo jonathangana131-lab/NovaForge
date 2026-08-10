@@ -1,0 +1,39 @@
+name: V14 History Visual QA reference macOS 15 validation
+
+on:
+  pull_request:
+    paths:
+      - 'Packages/ForgeHistoryCore/**'
+      - '.github/workflows/v14-history-visualqa-reference-macos15.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  forge-history-core:
+    name: ForgeHistoryCore macOS 15 ${{ matrix.configuration }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Assert exact product blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test "$(git rev-parse HEAD:Packages/ForgeHistoryCore/Sources/ForgeHistoryCore/ForgeHistoryQualityEvidence.swift)" = "aa6b7212b913cd4ff23b649873a199429cee7955"
+          test "$(git rev-parse HEAD:Packages/ForgeHistoryCore/Tests/ForgeHistoryCoreTests/ForgeHistoryQualityEvidenceTests.swift)" = "b21659101bda657de5225bf8182472f6a217b2f8"
+      - name: Test ForgeHistoryCore
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            swift test --package-path Packages/ForgeHistoryCore -c release -Xswiftc -warnings-as-errors
+          else
+            swift test --package-path Packages/ForgeHistoryCore -Xswiftc -warnings-as-errors
+          fi
