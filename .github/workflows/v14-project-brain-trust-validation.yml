@@ -1,0 +1,32 @@
+name: V14 Project Brain Trust Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-PBRAIN-TRUST-0809/exact/**
+
+jobs:
+  exact-agent-domain:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Assert exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "f7030e319d7842dac9c60c27c03c136d3d9e0468"
+          git diff --check HEAD^
+
+      - name: Debug Project Brain context tests with warnings as errors
+        run: swift test --package-path Packages/AgentHarnessKit --filter ProjectBrainContext -Xswiftc -warnings-as-errors
+
+      - name: Release Project Brain context tests with warnings as errors
+        run: swift test --package-path Packages/AgentHarnessKit -c release --filter ProjectBrainContext -Xswiftc -warnings-as-errors
