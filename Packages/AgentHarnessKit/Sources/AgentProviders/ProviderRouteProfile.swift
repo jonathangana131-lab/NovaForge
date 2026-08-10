@@ -197,9 +197,10 @@ public enum ProviderRouteProfileValidationError: Error, Equatable, Sendable {
 /// One immutable, credential-free product routing snapshot. The concrete
 /// adapter remains the executable serializer/parser authority; this profile
 /// makes that exact choice visible to selection, dispatch, and receipts.
-/// Profiles are intentionally not Codable: durable state stores only the receipt
-/// projection, then recovery re-resolves package-owned route authority. Decoding
-/// arbitrary bytes must never manufacture a current supported route.
+/// Profiles are intentionally not Codable, and ordinary package consumers
+/// cannot mint them. Durable state stores only the receipt projection, then
+/// recovery re-resolves package-owned current route authority. Decoding or
+/// caller-shaped metadata must never manufacture a current supported route.
 public struct ProviderRouteProfile: Equatable, Sendable {
     public let descriptor: ProviderAdapterDescriptor
     public let endpoint: ProviderEndpointAuthority
@@ -213,7 +214,7 @@ public struct ProviderRouteProfile: Equatable, Sendable {
     public let supportState: ProviderProductSupportState
     public let evidence: ProviderRouteEvidence
 
-    public init(
+    init(
         descriptor: ProviderAdapterDescriptor,
         endpoint: ProviderEndpointAuthority,
         authenticationMode: ProviderAuthenticationMode,
