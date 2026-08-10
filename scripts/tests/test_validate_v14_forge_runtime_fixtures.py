@@ -51,6 +51,18 @@ class FixtureValidatorTests(unittest.TestCase):
         with self.assertRaisesRegex(validator.ValidationError, "fixture set"):
             validator.validate_all(self.root)
 
+    def test_hidden_resource_reference_fails_closed(self):
+        page = self.root / "focus-notes" / "index.html"
+        page.write_text(page.read_text().replace('</main>', '<img src="pixel.png" alt=""></main>'))
+        with self.assertRaisesRegex(validator.ValidationError, "resource references"):
+            validator.validate_all(self.root)
+
+    def test_unexpected_fixture_file_fails_closed(self):
+        extra = self.root / "focus-notes" / "untracked.js"
+        extra.write_text("console.log('shadow dependency')")
+        with self.assertRaisesRegex(validator.ValidationError, "unexpected fixture files"):
+            validator.validate_all(self.root)
+
 
 if __name__ == "__main__":
     unittest.main()
