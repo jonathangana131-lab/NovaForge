@@ -1,0 +1,14 @@
+{
+  "formatVersion": {"major": 1, "minor": 0},
+  "projectID": "fixture.focus-notes",
+  "projectVersion": "fixture-v14-focus-notes-r1",
+  "runtimeVersion": {"major": 1, "minor": 0},
+  "entryPoint": "index.html",
+  "display": {"name": "Focus Notes", "iconPath": null},
+  "presentation": {"orientation": "portrait", "viewport": "safeArea"},
+  "storage": {"namespace": "fixture.focus-notes", "schemaVersion": 1, "quotaBytes": 1048576},
+  "capabilities": [],
+  "network": {"mode": "denied", "allowedHosts": []},
+  "bundledAssets": [],
+  "modules": []
+}
