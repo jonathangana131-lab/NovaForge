@@ -1,0 +1,31 @@
+name: V14 Home truth validation
+
+on:
+  pull_request:
+    paths:
+      - "Packages/ForgeHomeCore/**"
+      - ".github/workflows/v14-home-truth-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forge-home-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact validation composition
+        uses: actions/checkout@v4
+
+      - name: Swift toolchain
+        run: swift --version
+
+      - name: Diff hygiene
+        run: git diff --check HEAD^ -- Packages/ForgeHomeCore .github/workflows/v14-home-truth-validation.yml
+
+      - name: Debug package tests
+        run: swift test --package-path Packages/ForgeHomeCore -Xswiftc -warnings-as-errors
+
+      - name: Release package tests
+        run: swift test -c release --package-path Packages/ForgeHomeCore -Xswiftc -warnings-as-errors
