@@ -1,0 +1,27 @@
+name: V14 Local Settings Truth Contract
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/Views/SettingsComponents.swift'
+      - 'scripts/verify_v14_local_settings_truth.sh'
+      - '.github/workflows/v14-local-settings-truth.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/Views/SettingsComponents.swift'
+      - 'scripts/verify_v14_local_settings_truth.sh'
+      - '.github/workflows/v14-local-settings-truth.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify Local Settings presentation truth
+        run: bash scripts/verify_v14_local_settings_truth.sh
