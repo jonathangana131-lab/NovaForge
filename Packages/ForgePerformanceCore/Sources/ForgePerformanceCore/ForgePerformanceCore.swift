@@ -165,25 +165,28 @@ public struct ForgePerformancePolicy: Codable, Equatable, Sendable {
     public let policyID: String
     public let target: ForgePerformanceTarget
     public let scenarioID: String
+    public let scenarioDefinitionDigest: String
     public let budgets: [ForgePerformanceBudget]
 
-    public init(policyID: String, target: ForgePerformanceTarget, scenarioID: String, budgets: [ForgePerformanceBudget]) throws {
+    public init(policyID: String, target: ForgePerformanceTarget, scenarioID: String, scenarioDefinitionDigest: String, budgets: [ForgePerformanceBudget]) throws {
         self.policyID = try ForgePerformanceValidation.identifier(policyID, field: "policy.policyID")
         self.target = target
         self.scenarioID = try ForgePerformanceValidation.identifier(scenarioID, field: "policy.scenarioID")
+        self.scenarioDefinitionDigest = try ForgePerformanceValidation.identifier(scenarioDefinitionDigest, field: "policy.scenarioDefinitionDigest", maximumLength: 256)
         guard !budgets.isEmpty, budgets.count <= Self.maximumBudgets else { throw ForgePerformanceError.invalidBudget("policy.budgets") }
         var seen = Set<ForgePerformanceMetricKind>()
         for budget in budgets where !seen.insert(budget.metric).inserted { throw ForgePerformanceError.duplicateBudgetMetric(budget.metric) }
         self.budgets = budgets.sorted { $0.metric.rawValue < $1.metric.rawValue }
     }
 
-    private enum CodingKeys: String, CodingKey { case policyID, target, scenarioID, budgets }
+    private enum CodingKeys: String, CodingKey { case policyID, target, scenarioID, scenarioDefinitionDigest, budgets }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
             policyID: c.decode(String.self, forKey: .policyID),
             target: c.decode(ForgePerformanceTarget.self, forKey: .target),
             scenarioID: c.decode(String.self, forKey: .scenarioID),
+            scenarioDefinitionDigest: c.decode(String.self, forKey: .scenarioDefinitionDigest),
             budgets: c.decode([ForgePerformanceBudget].self, forKey: .budgets)
         )
     }
@@ -227,15 +230,17 @@ public struct ForgePerformanceRunEvidence: Codable, Equatable, Sendable {
     public let target: ForgePerformanceTarget
     public let executionContext: ForgePerformanceExecutionContext
     public let scenarioID: String
+    public let scenarioDefinitionDigest: String
     public let authority: ForgePerformanceEvidenceAuthority
     public let producerReceiptID: String
     public let observations: [ForgePerformanceObservation]
 
-    public init(runID: String, target: ForgePerformanceTarget, executionContext: ForgePerformanceExecutionContext, scenarioID: String, authority: ForgePerformanceEvidenceAuthority, producerReceiptID: String, observations: [ForgePerformanceObservation]) throws {
+    public init(runID: String, target: ForgePerformanceTarget, executionContext: ForgePerformanceExecutionContext, scenarioID: String, scenarioDefinitionDigest: String, authority: ForgePerformanceEvidenceAuthority, producerReceiptID: String, observations: [ForgePerformanceObservation]) throws {
         self.runID = try ForgePerformanceValidation.identifier(runID, field: "run.runID")
         self.target = target
         self.executionContext = executionContext
         self.scenarioID = try ForgePerformanceValidation.identifier(scenarioID, field: "run.scenarioID")
+        self.scenarioDefinitionDigest = try ForgePerformanceValidation.identifier(scenarioDefinitionDigest, field: "run.scenarioDefinitionDigest", maximumLength: 256)
         self.authority = authority
         self.producerReceiptID = try ForgePerformanceValidation.identifier(producerReceiptID, field: "run.producerReceiptID", maximumLength: 512)
         guard !observations.isEmpty, observations.count <= Self.maximumObservations else { throw ForgePerformanceError.invalidObservation("run.observations") }
@@ -244,7 +249,7 @@ public struct ForgePerformanceRunEvidence: Codable, Equatable, Sendable {
         self.observations = observations.sorted { $0.metric.rawValue < $1.metric.rawValue }
     }
 
-    private enum CodingKeys: String, CodingKey { case runID, target, executionContext, scenarioID, authority, producerReceiptID, observations }
+    private enum CodingKeys: String, CodingKey { case runID, target, executionContext, scenarioID, scenarioDefinitionDigest, authority, producerReceiptID, observations }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -252,6 +257,7 @@ public struct ForgePerformanceRunEvidence: Codable, Equatable, Sendable {
             target: c.decode(ForgePerformanceTarget.self, forKey: .target),
             executionContext: c.decode(ForgePerformanceExecutionContext.self, forKey: .executionContext),
             scenarioID: c.decode(String.self, forKey: .scenarioID),
+            scenarioDefinitionDigest: c.decode(String.self, forKey: .scenarioDefinitionDigest),
             authority: c.decode(ForgePerformanceEvidenceAuthority.self, forKey: .authority),
             producerReceiptID: c.decode(String.self, forKey: .producerReceiptID),
             observations: c.decode([ForgePerformanceObservation].self, forKey: .observations)
@@ -267,6 +273,7 @@ public struct ForgePerformanceTrustedProducerReceipt: Equatable, Sendable {
     public var target: ForgePerformanceTarget { authenticatedRun.target }
     public var executionContext: ForgePerformanceExecutionContext { authenticatedRun.executionContext }
     public var scenarioID: String { authenticatedRun.scenarioID }
+    public var scenarioDefinitionDigest: String { authenticatedRun.scenarioDefinitionDigest }
     public var authority: ForgePerformanceEvidenceAuthority { authenticatedRun.authority }
 
     init(authenticatedRun: ForgePerformanceRunEvidence) { self.authenticatedRun = authenticatedRun }
@@ -287,6 +294,7 @@ public struct ForgePerformanceAcceptedReceipt: Equatable, Sendable {
     public var runID: String { acceptedRun.runID }
     public var target: ForgePerformanceTarget { acceptedRun.target }
     public var scenarioID: String { acceptedRun.scenarioID }
+    public var scenarioDefinitionDigest: String { acceptedRun.scenarioDefinitionDigest }
     public var producerReceiptID: String { acceptedRun.producerReceiptID }
     public var executionContext: ForgePerformanceExecutionContext { acceptedRun.executionContext }
     public var budgets: [ForgePerformanceBudget] { acceptedPolicy.budgets }
@@ -312,7 +320,8 @@ public struct ForgePerformanceEvaluation: Equatable, Sendable {
 public enum ForgePerformanceEvaluator {
     public static func evaluate(policy: ForgePerformancePolicy, run: ForgePerformanceRunEvidence, trustedProducer: ForgePerformanceTrustedProducerReceipt) throws -> ForgePerformanceEvaluation {
         guard policy.target == run.target else { throw ForgePerformanceError.targetMismatch }
-        guard policy.scenarioID == run.scenarioID else { throw ForgePerformanceError.scenarioMismatch }
+        guard policy.scenarioID == run.scenarioID,
+              policy.scenarioDefinitionDigest == run.scenarioDefinitionDigest else { throw ForgePerformanceError.scenarioMismatch }
         guard trustedProducer.exactlyMatches(run) else { throw ForgePerformanceError.untrustedProducer }
 
         let observations = Dictionary(uniqueKeysWithValues: run.observations.map { ($0.metric, $0) })
@@ -354,7 +363,8 @@ public struct ForgePerformanceArchive: Codable, Equatable, Sendable {
 
     public init(policy: ForgePerformancePolicy, run: ForgePerformanceRunEvidence) throws {
         guard policy.target == run.target else { throw ForgePerformanceError.targetMismatch }
-        guard policy.scenarioID == run.scenarioID else { throw ForgePerformanceError.scenarioMismatch }
+        guard policy.scenarioID == run.scenarioID,
+              policy.scenarioDefinitionDigest == run.scenarioDefinitionDigest else { throw ForgePerformanceError.scenarioMismatch }
         self.schemaVersion = Self.currentSchemaVersion
         self.policy = policy
         self.run = run
