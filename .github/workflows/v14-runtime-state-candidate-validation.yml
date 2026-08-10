@@ -1,0 +1,38 @@
+name: V14 Runtime State Candidate Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-STATE-RECOVER-0809/runtime-state-candidate-gate/e1
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-state-candidate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent and diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "b280651e685b52d6d230d42795b25c9e51874f5c"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Sources/ForgeRuntime/ForgeRuntimeStateObservation.swift)" = "111e776336ae64973b2a3843b5574075757d16fd"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateObservationTests.swift)" = "f7872fb8161f14b67af95c85730578fbf9b79993"
+          test "$(git hash-object Packages/ForgeRuntimeKit/Tests/ForgeRuntimeTests/ForgeRuntimeStateStaticTrustBoundaryTests.swift)" = "8ada05711e6ef5e83283094a0d31c29611682d94"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/v14-runtime-state-candidate-validation.yml"
+          git diff --check 2424e2ba57a62044bf9cfca74f98455353ae8bc0 HEAD^
+
+      - name: Swift version
+        run: swift --version
+
+      - name: ForgeRuntimeKit debug tests
+        run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
+
+      - name: ForgeRuntimeKit release tests
+        run: swift test --package-path Packages/ForgeRuntimeKit -c release -Xswiftc -warnings-as-errors
