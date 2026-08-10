@@ -54,14 +54,29 @@ public struct ContinuityExecutionGrant: Hashable, Sendable {
     }
 }
 
-/// Fresh Mission authority used for checkpoint and terminal projections. Persisted/model-authored
-/// identity strings are never enough to move continuity across accepted Mission state.
+public enum ContinuityMissionProjection: String, Hashable, Sendable {
+    case ready
+    case needsDecision
+    case blocked
+    case completed
+}
+
+public enum ContinuityMissionAuthorityPurpose: Hashable, Sendable {
+    case checkpointAdvance
+    case stateProjection(ContinuityMissionProjection)
+}
+
+/// Fresh Mission authority used for one exact operation. Persisted/model-authored identity strings
+/// are never enough to move continuity across accepted Mission state, and a checkpoint grant cannot
+/// be replayed as completion authority.
 public struct ContinuityMissionAuthority: Hashable, Sendable {
     public let identity: ContinuityIdentity
+    public let purpose: ContinuityMissionAuthorityPurpose
     public let authorityReceiptID: String
 
-    init(identity: ContinuityIdentity, authorityReceiptID: String) {
+    init(identity: ContinuityIdentity, purpose: ContinuityMissionAuthorityPurpose, authorityReceiptID: String) {
         self.identity = identity
+        self.purpose = purpose
         self.authorityReceiptID = authorityReceiptID
     }
 }
@@ -88,13 +103,13 @@ public struct ContinuitySnapshot: Hashable, Sendable {
     public let activeLease: ContinuityWorkLease?
     public let epoch: UInt64
 
-    /// Public construction starts only from neutral ready state. Mission-owned projections and
-    /// executing state are reducer/authority outputs and cannot be caller-minted.
-    public init(identity: ContinuityIdentity, epoch: UInt64 = 0) {
+    /// Public construction starts only from neutral ready state at epoch zero. Mission-owned
+    /// projections, execution state, and replay-protection epochs are reducer/authority outputs.
+    public init(identity: ContinuityIdentity) {
         self.identity = identity
         self.state = .ready
         self.activeLease = nil
-        self.epoch = epoch
+        self.epoch = 0
     }
 
     init(identity: ContinuityIdentity, state: ContinuityRunState, activeLease: ContinuityWorkLease?, epoch: UInt64) {
@@ -173,7 +188,10 @@ public enum ContinuityReducer {
         try validate(snapshot)
         try validate(grant: grant, for: snapshot.identity, mode: .foregroundOnDevice)
         switch snapshot.state {
-        case .ready, .suspended:
+        case .ready:
+            return try mintExecution(.foregroundOnDevice, from: snapshot, grant: grant)
+        case let .suspended(reason):
+            guard reason != .missionStateRevalidationRequired else { throw ContinuityMutationError.unsupportedTransition }
             return try mintExecution(.foregroundOnDevice, from: snapshot, grant: grant)
         case .needsDecision, .blocked, .completed, .executing:
             throw ContinuityMutationError.unsupportedTransition
@@ -186,9 +204,7 @@ public enum ContinuityReducer {
     public static func enterBackground(from snapshot: ContinuitySnapshot, systemGrant: ContinuityExecutionGrant?) throws -> (ContinuitySnapshot, ContinuityWorkLease?) {
         try validate(snapshot)
         guard case .executing(.foregroundOnDevice) = snapshot.state else { throw ContinuityMutationError.noActiveExecution }
-        guard let systemGrant else {
-            return (try suspend(snapshot, reason: .backgroundExecutionUnavailable), nil)
-        }
+        guard let systemGrant else { return (try suspend(snapshot, reason: .backgroundExecutionUnavailable), nil) }
         try validate(grant: systemGrant, for: snapshot.identity, mode: .systemManagedOnDevice)
         let (next, lease) = try mintExecution(.systemManagedOnDevice, from: snapshot, grant: systemGrant)
         return (next, lease)
@@ -228,7 +244,7 @@ public enum ContinuityReducer {
 
     public static func advanceCheckpoint(authority: ContinuityMissionAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
         try validate(snapshot)
-        try validate(authority: authority)
+        try validate(authority: authority, purpose: .checkpointAdvance)
         let identity = authority.identity
         guard identity.missionID == snapshot.identity.missionID, identity.projectID == snapshot.identity.projectID else {
             throw ContinuityMutationError.checkpointIdentityMismatch
@@ -237,7 +253,9 @@ public enum ContinuityReducer {
         let epoch = try successor(snapshot.epoch)
         let nextState: ContinuityRunState = switch snapshot.state {
         case .executing: .ready
-        case .ready, .suspended, .needsDecision, .blocked, .completed: snapshot.state
+        case .ready: .ready
+        case .suspended: snapshot.state
+        case .needsDecision, .blocked, .completed: .suspended(.missionStateRevalidationRequired)
         }
         return ContinuitySnapshot(identity: identity, state: nextState, activeLease: nil, epoch: epoch)
     }
@@ -269,17 +287,30 @@ public enum ContinuityReducer {
         return (next, accepted)
     }
 
-    public static func reflectMissionCompletion(authority: ContinuityMissionAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
+    public static func reflectMissionState(authority: ContinuityMissionAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
         try validate(snapshot)
-        try validate(authority: authority)
         guard authority.identity == snapshot.identity else { throw ContinuityMutationError.missionCompletionIdentityMismatch }
         guard snapshot.activeLease == nil else { throw ContinuityMutationError.unsupportedTransition }
-        return ContinuitySnapshot(identity: snapshot.identity, state: .completed, activeLease: nil, epoch: try successor(snapshot.epoch))
+        guard case let .stateProjection(projection) = authority.purpose else { throw ContinuityMutationError.invalidAuthority }
+        try validate(authority: authority, purpose: .stateProjection(projection))
+        let state: ContinuityRunState = switch projection {
+        case .ready: .ready
+        case .needsDecision: .needsDecision
+        case .blocked: .blocked
+        case .completed: .completed
+        }
+        return ContinuitySnapshot(identity: snapshot.identity, state: state, activeLease: nil, epoch: try successor(snapshot.epoch))
+    }
+
+    public static func reflectMissionCompletion(authority: ContinuityMissionAuthority, in snapshot: ContinuitySnapshot) throws -> ContinuitySnapshot {
+        try validate(authority: authority, purpose: .stateProjection(.completed))
+        return try reflectMissionState(authority: authority, in: snapshot)
     }
 
     private static func allowsHandoff(_ state: ContinuityRunState) -> Bool {
         switch state {
-        case .ready, .suspended, .executing: true
+        case .ready, .executing: true
+        case let .suspended(reason): reason != .missionStateRevalidationRequired
         case .needsDecision, .blocked, .completed: false
         }
     }
@@ -300,8 +331,8 @@ public enum ContinuityReducer {
         }
     }
 
-    private static func validate(authority: ContinuityMissionAuthority) throws {
-        guard isValidIdentity(authority.identity), isCanonicalID(authority.authorityReceiptID) else {
+    private static func validate(authority: ContinuityMissionAuthority, purpose: ContinuityMissionAuthorityPurpose) throws {
+        guard isValidIdentity(authority.identity), authority.purpose == purpose, isCanonicalID(authority.authorityReceiptID) else {
             throw ContinuityMutationError.invalidAuthority
         }
     }
@@ -322,7 +353,10 @@ public enum ContinuityReducer {
     }
 
     static func isValidIdentity(_ identity: ContinuityIdentity) -> Bool {
-        isCanonicalID(identity.missionID) && isCanonicalID(identity.projectID) && isCanonicalID(identity.checkpointID)
+        identity.missionRevision > 0
+            && isCanonicalID(identity.missionID)
+            && isCanonicalID(identity.projectID)
+            && isCanonicalID(identity.checkpointID)
     }
 
     static func isCanonicalID(_ value: String) -> Bool {

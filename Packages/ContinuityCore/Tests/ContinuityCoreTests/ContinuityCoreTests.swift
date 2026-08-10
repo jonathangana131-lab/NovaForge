@@ -46,13 +46,56 @@ final class ContinuityCoreTests: XCTestCase {
     func testMissionAuthorityBindsCheckpointAdvanceAndCompletion() throws {
         let s = ready()
         let newer = ContinuityIdentity(missionID: s.identity.missionID, projectID: s.identity.projectID, checkpointID: "checkpoint-2", missionRevision: 2)
-        let advanced = try ContinuityReducer.advanceCheckpoint(authority: missionAuthority(newer), in: s)
+        let advanced = try ContinuityReducer.advanceCheckpoint(authority: checkpointAuthority(newer), in: s)
         XCTAssertEqual(advanced.identity, newer)
 
-        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(authority: missionAuthority(s.identity), in: advanced)) {
+        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: s.identity), in: advanced)) {
             XCTAssertEqual($0 as? ContinuityMutationError, .missionCompletionIdentityMismatch)
         }
-        XCTAssertEqual(try ContinuityReducer.reflectMissionCompletion(authority: missionAuthority(newer), in: advanced).state, .completed)
+        XCTAssertEqual(try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: newer), in: advanced).state, .completed)
+    }
+
+    func testMissionAuthorityPurposeCannotBeReplayedAcrossOperations() throws {
+        let s = ready()
+        let newer = ContinuityIdentity(missionID: s.identity.missionID, projectID: s.identity.projectID, checkpointID: "checkpoint-2", missionRevision: 2)
+
+        XCTAssertThrowsError(try ContinuityReducer.advanceCheckpoint(authority: projectionAuthority(.completed, identity: newer), in: s)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .invalidAuthority)
+        }
+        XCTAssertThrowsError(try ContinuityReducer.reflectMissionCompletion(authority: checkpointAuthority(s.identity), in: s)) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .invalidAuthority)
+        }
+    }
+
+    func testCheckpointAdvanceCannotCarryOldMissionProjectionAcrossRevision() throws {
+        let s = ready()
+        let completed = try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: s.identity), in: s)
+        let newer = ContinuityIdentity(missionID: s.identity.missionID, projectID: s.identity.projectID, checkpointID: "checkpoint-2", missionRevision: 2)
+        let advanced = try ContinuityReducer.advanceCheckpoint(authority: checkpointAuthority(newer), in: completed)
+
+        XCTAssertEqual(advanced.identity, newer)
+        XCTAssertEqual(advanced.state, .suspended(.missionStateRevalidationRequired))
+    }
+
+    func testMissionRevalidationSuspensionCannotResumeOnExecutionAuthorityAlone() throws {
+        let s = ready()
+        let completed = try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: s.identity), in: s)
+        let restored = try ContinuityArchive(snapshot: completed).restore()
+        XCTAssertEqual(restored.state, .suspended(.missionStateRevalidationRequired))
+
+        XCTAssertThrowsError(try ContinuityReducer.startForeground(from: restored, grant: executionGrant(.foregroundOnDevice))) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
+        }
+        XCTAssertThrowsError(try ContinuityReducer.handoffToCloud(from: restored, grant: executionGrant(.verifiedCloud))) {
+            XCTAssertEqual($0 as? ContinuityMutationError, .unsupportedTransition)
+        }
+
+        let revalidated = try ContinuityReducer.reflectMissionState(
+            authority: projectionAuthority(.ready, identity: restored.identity),
+            in: restored
+        )
+        XCTAssertEqual(revalidated.state, .ready)
+        XCTAssertNoThrow(try ContinuityReducer.startForeground(from: revalidated, grant: executionGrant(.foregroundOnDevice)))
     }
 
     func testCanonicalIdentityRejectsWhitespaceAliasesAndControls() {
@@ -60,6 +103,7 @@ final class ContinuityCoreTests: XCTestCase {
             ContinuityIdentity(missionID: " mission-1", projectID: "project-1", checkpointID: "checkpoint-1", missionRevision: 1),
             ContinuityIdentity(missionID: "mission-1", projectID: "project-1\n", checkpointID: "checkpoint-1", missionRevision: 1),
             ContinuityIdentity(missionID: "mission-1", projectID: "project-1", checkpointID: "checkpoint\u{0000}1", missionRevision: 1),
+            ContinuityIdentity(missionID: "mission-1", projectID: "project-1", checkpointID: "checkpoint-1", missionRevision: 0),
         ] {
             XCTAssertThrowsError(try ContinuityReducer.validate(ContinuitySnapshot(identity: bad))) { XCTAssertEqual($0 as? ContinuityMutationError, .invalidIdentity) }
         }
@@ -96,7 +140,7 @@ final class ContinuityCoreTests: XCTestCase {
 
     func testArchiveNeverRestoresMissionOwnedCompletionProjection() throws {
         let base = ready()
-        let completed = try ContinuityReducer.reflectMissionCompletion(authority: missionAuthority(base.identity), in: base)
+        let completed = try ContinuityReducer.reflectMissionCompletion(authority: projectionAuthority(.completed, identity: base.identity), in: base)
         let archive = try ContinuityArchive(snapshot: completed)
         XCTAssertEqual(archive.snapshot.state, .suspended(.missionStateRevalidationRequired))
         XCTAssertEqual(try archive.restore().state, .suspended(.missionStateRevalidationRequired))
@@ -160,5 +204,10 @@ final class ContinuityCoreTests: XCTestCase {
     private func executionGrant(_ mode: ContinuityExecutionMode, identity: ContinuityIdentity? = nil) -> ContinuityExecutionGrant {
         .init(identity: identity ?? self.identity(), mode: mode, authorityReceiptID: "host-receipt-\(mode)")
     }
-    private func missionAuthority(_ identity: ContinuityIdentity) -> ContinuityMissionAuthority { .init(identity: identity, authorityReceiptID: "mission-authority") }
+    private func checkpointAuthority(_ identity: ContinuityIdentity) -> ContinuityMissionAuthority {
+        .init(identity: identity, purpose: .checkpointAdvance, authorityReceiptID: "mission-checkpoint-authority")
+    }
+    private func projectionAuthority(_ projection: ContinuityMissionProjection, identity: ContinuityIdentity) -> ContinuityMissionAuthority {
+        .init(identity: identity, purpose: .stateProjection(projection), authorityReceiptID: "mission-projection-authority-\(projection.rawValue)")
+    }
 }

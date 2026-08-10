@@ -30,6 +30,33 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
         )
     }
 
+    func testExternalConsumerCannotMintMissionAuthority() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "MintMissionAuthority.swift",
+            source: """
+            import ContinuityCore
+
+            let identity = ContinuityIdentity(
+                missionID: "mission-1",
+                projectID: "project-1",
+                checkpointID: "checkpoint-1",
+                missionRevision: 1
+            )
+            let _ = ContinuityMissionAuthority(
+                identity: identity,
+                purpose: .stateProjection(.completed),
+                authorityReceiptID: "forged"
+            )
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
+                || diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible"),
+            "Expected external Mission-authority construction to fail on access control, got: \(diagnostics)"
+        )
+    }
+
     func testExternalConsumerCannotMintTerminalSnapshot() throws {
         let diagnostics = try typecheckExternalConsumer(
             named: "MintTerminalSnapshot.swift",
@@ -50,6 +77,29 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
             diagnostics.localizedCaseInsensitiveContains("extra argument 'state'")
                 || diagnostics.localizedCaseInsensitiveContains("extra argument"),
             "Expected external terminal snapshot construction to be unavailable, got: \(diagnostics)"
+        )
+    }
+
+    func testExternalConsumerCannotSeedReplayEpoch() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "SeedReplayEpoch.swift",
+            source: """
+            import ContinuityCore
+
+            let identity = ContinuityIdentity(
+                missionID: "mission-1",
+                projectID: "project-1",
+                checkpointID: "checkpoint-1",
+                missionRevision: 1
+            )
+            let _ = ContinuitySnapshot(identity: identity, epoch: 99)
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("extra argument 'epoch'")
+                || diagnostics.localizedCaseInsensitiveContains("extra argument"),
+            "Expected external replay-epoch seeding to be unavailable, got: \(diagnostics)"
         )
     }
 
