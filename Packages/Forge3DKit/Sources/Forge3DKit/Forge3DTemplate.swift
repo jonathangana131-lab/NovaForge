@@ -33,6 +33,9 @@ enum Forge3DTemplate {
           acceleration: \#(format(blueprint.acceleration)),
           steeringRate: \#(format(blueprint.steeringRate)),
           saveKey: "\#(escapeJavaScript(blueprint.persistenceKey))",
+          semanticActionEventName: "\#(escapeJavaScript(Forge3DWebSemanticContract.actionEventName))",
+          semanticThrottleActionID: "\#(escapeJavaScript(Forge3DSemanticTargetCatalog.throttle.id))",
+          semanticSteeringActionID: "\#(escapeJavaScript(Forge3DSemanticTargetCatalog.steering.id))",
           step: 1 / 60,
           maxFrameDelta: 0.2,
           maximumMarkers: 40
