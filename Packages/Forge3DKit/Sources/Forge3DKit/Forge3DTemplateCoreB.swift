@@ -4,8 +4,25 @@ extension Forge3DTemplate {
     static let scriptCoreB = #"""
 const accessibleThrottle = document.getElementById("accessible-throttle");
 const accessibleSteer = document.getElementById("accessible-steer");
-accessibleThrottle.addEventListener("input", () => { input.accessibleThrottle = clamp(Number(accessibleThrottle.value) || 0, -1, 1); });
-accessibleSteer.addEventListener("input", () => { input.accessibleSteer = clamp(Number(accessibleSteer.value) || 0, -1, 1); });
+
+function normalizedActionValue(rawValue) {
+  const value = Number(rawValue);
+  return Number.isFinite(value) ? clamp(value, -1, 1) : 0;
+}
+function bindActionValue(element, actionID, inputKey) {
+  const apply = rawValue => {
+    const value = normalizedActionValue(rawValue);
+    element.value = String(value);
+    input[inputKey] = value;
+  };
+  element.addEventListener("input", () => apply(element.value));
+  element.addEventListener("novaforge:action", event => {
+    if (event.detail?.actionID !== actionID) return;
+    apply(event.detail.value);
+  });
+}
+bindActionValue(accessibleThrottle, "drive.throttle", "accessibleThrottle");
+bindActionValue(accessibleSteer, "drive.steer", "accessibleSteer");
 
 function updateKeyboard() {
   input.keyThrottle = (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0) - (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0);
