@@ -1,19 +1,11 @@
-import Foundation
 import XCTest
-import AgentDomain
 import ForgePlanCore
 @testable import ForgePlanMissionAdapter
 
 final class ForgePlanMissionAdapterTests: XCTestCase {
-    private let missionID = MissionID(rawValue: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!)
-    private let projectID = ProjectID(rawValue: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!)
-
     private func context() throws -> ForgePlanMissionContext {
         try .init(
-            missionID: missionID,
-            projectID: projectID,
-            constitutionRevision: 7,
-            projectedAcceptedAt: .init(rawValue: 1234),
+            handoffRevision: 7,
             planAcceptanceReceiptID: "plan-accept-7"
         )
     }
@@ -23,14 +15,6 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             composerDraftRevision: 11,
             planRevision: 4,
             planReferenceID: "plan-space-4"
-        )
-    }
-
-    private func supplement() -> ForgePlanMissionSupplement {
-        .init(
-            projectType: "iPhone app",
-            acceptanceJourneys: MissionStringSet(["Launch and complete the primary flow"]),
-            expectedEvidence: MissionEvidenceSet([.compiled, .runtimeTested, .visuallyInspected])
         )
     }
 
@@ -54,29 +38,31 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
 
     private func summary(
         profile: ForgeComposerV14ControlProfile? = nil,
-        decisions: [PlanResolvedDecision] = []
+        decisions: [PlanResolvedDecision] = [],
+        intentSummary: String = "Build a calm local-first timer"
     ) throws -> ReadyToForgeSummary {
-        let resolvedProfile = try profile ?? controls()
+        let resolvedProfile: ForgeComposerV14ControlProfile
+        if let profile {
+            resolvedProfile = profile
+        } else {
+            resolvedProfile = try controls()
+        }
         return .init(
-            intentSummary: "Build a calm local-first timer",
+            intentSummary: intentSummary,
             decisions: decisions,
             controls: resolvedProfile
         )
     }
 
-    private func makeHandoff(
-        summary: ReadyToForgeSummary,
-        supplement: ForgePlanMissionSupplement? = nil
-    ) throws -> ForgePlanMissionHandoff {
+    private func makeHandoff(summary: ReadyToForgeSummary) throws -> ForgePlanMissionHandoff {
         try ForgePlanMissionAdapter.makeHandoff(
             summary: summary,
             context: context(),
-            sourceBinding: sourceBinding(),
-            supplement: supplement ?? self.supplement()
+            sourceBinding: sourceBinding()
         )
     }
 
-    func testLocalOnlySurvivesAsTypedMissionAndRoutingTruth() throws {
+    func testLocalOnlyAndFullForgeSurviveAsTypedRoutingRequirements() throws {
         let profile = try controls(
             buildDepth: .obsessive,
             creativity: 0.8,
@@ -85,43 +71,33 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
             privacy: .localOnly
         )
         let handoff = try makeHandoff(summary: summary(profile: profile))
+        let binding = try sourceBinding()
 
-        XCTAssertEqual(handoff.constitution.missionID, missionID)
-        XCTAssertEqual(handoff.constitution.projectID, projectID)
-        XCTAssertEqual(handoff.constitution.revision, 7)
-        XCTAssertEqual(handoff.constitution.buildDepth, .obsessive)
-        XCTAssertEqual(handoff.constitution.creativity, .inventive)
-        XCTAssertEqual(handoff.constitution.refactorRisk, .preserve)
-        XCTAssertEqual(handoff.constitution.localityPreference, .localOnly)
+        XCTAssertEqual(handoff.revision, 7)
+        XCTAssertEqual(handoff.intentSummary, "Build a calm local-first timer")
+        XCTAssertEqual(handoff.planAcceptanceReceiptID, "plan-accept-7")
+        XCTAssertEqual(handoff.controlProfile, profile)
+        XCTAssertEqual(handoff.controlProfile.buildDepth, .obsessive)
+        XCTAssertEqual(handoff.controlProfile.creativity.value, 0.8, accuracy: 0.000_001)
+        XCTAssertEqual(handoff.controlProfile.refactorRisk.value, 0.1, accuracy: 0.000_001)
         XCTAssertEqual(handoff.privacyIntent, .localOnly)
         XCTAssertEqual(handoff.autonomyIntent, .fullForge)
-        XCTAssertEqual(handoff.controlProfile, profile)
-        XCTAssertEqual(handoff.sourceBinding, try sourceBinding())
+        XCTAssertEqual(handoff.sourceBinding, binding)
+        XCTAssertTrue(handoff.executionPreconditions.contains(.sourceRevisionMatch(binding: binding)))
+        XCTAssertTrue(handoff.executionPreconditions.contains(.planAcceptanceVerification(receiptID: "plan-accept-7")))
         XCTAssertTrue(handoff.executionPreconditions.contains(.localOnlyRouting))
-        XCTAssertTrue(
-            handoff.executionPreconditions.contains(
-                .autonomyPolicyResolution(intent: .fullForge)
-            )
-        )
+        XCTAssertTrue(handoff.executionPreconditions.contains(.autonomyPolicyResolution(intent: .fullForge)))
         XCTAssertFalse(handoff.requiresExternalModelQualification)
         XCTAssertFalse(handoff.requiresDelegatedDecisionResolution)
     }
 
-    func testReceiptAndSourceRevisionNeverSelfAuthenticate() throws {
+    func testReceiptAndSourceRevisionRemainVerificationRequirements() throws {
         let binding = try sourceBinding()
         let handoff = try makeHandoff(summary: summary())
 
         XCTAssertEqual(handoff.sourceBinding, binding)
-        XCTAssertTrue(
-            handoff.executionPreconditions.contains(
-                .sourceRevisionMatch(binding: binding)
-            )
-        )
-        XCTAssertTrue(
-            handoff.executionPreconditions.contains(
-                .planAcceptanceVerification(receiptID: "plan-accept-7")
-            )
-        )
+        XCTAssertTrue(handoff.executionPreconditions.contains(.sourceRevisionMatch(binding: binding)))
+        XCTAssertTrue(handoff.executionPreconditions.contains(.planAcceptanceVerification(receiptID: "plan-accept-7")))
     }
 
     func testProviderAllowlistRemainsExactAndRequiresEnforcement() throws {
@@ -129,7 +105,6 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         let profile = try controls(privacy: privacy)
         let handoff = try makeHandoff(summary: summary(profile: profile))
 
-        XCTAssertEqual(handoff.constitution.localityPreference, .unspecified)
         XCTAssertEqual(handoff.privacyIntent, try .providers(["anthropic", "openai"]))
         XCTAssertTrue(handoff.privacyIntent.allowsProvider("openai"))
         XCTAssertTrue(handoff.privacyIntent.allowsProvider("anthropic"))
@@ -209,7 +184,7 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         XCTAssertEqual(handoff.autonomyIntent, .fullForge)
     }
 
-    func testConcreteDecisionIsPreservedNotFlattenedIntoConstraints() throws {
+    func testConcreteDecisionRemainsStructuredAndDoesNotBecomeDelegated() throws {
         let decision = PlanResolvedDecision(
             id: "theme",
             prompt: "Theme?",
@@ -218,52 +193,16 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         let handoff = try makeHandoff(summary: summary(decisions: [decision]))
 
         XCTAssertEqual(handoff.planDecisions, [decision])
-        XCTAssertTrue(handoff.constitution.constraints.values.isEmpty)
         XCTAssertFalse(handoff.requiresDelegatedDecisionResolution)
-    }
-
-    func testV14BuildDepthMappingsAreDeterministic() throws {
-        func mapped(_ depth: ForgeComposerBuildDepthIntent) throws -> MissionBuildDepth {
-            let handoff = try makeHandoff(
-                summary: summary(profile: controls(buildDepth: depth))
+        XCTAssertFalse(
+            handoff.executionPreconditions.contains(
+                .delegatedDecisionResolution(decisionID: "theme")
             )
-            return handoff.constitution.buildDepth
-        }
-
-        XCTAssertEqual(try mapped(.quick), .prototype)
-        XCTAssertEqual(try mapped(.complete), .polished)
-        XCTAssertEqual(try mapped(.obsessive), .obsessive)
-    }
-
-    func testThresholdMappingsAreDeterministicAtEdges() throws {
-        func mapped(_ creativity: Double, _ risk: Double) throws -> (MissionCreativity, MissionRefactorRisk) {
-            let handoff = try makeHandoff(
-                summary: summary(
-                    profile: controls(creativity: creativity, refactorRisk: risk)
-                )
-            )
-            return (handoff.constitution.creativity, handoff.constitution.refactorRisk)
-        }
-
-        let low = try mapped((1.0 / 3.0) - 0.0001, (1.0 / 3.0) - 0.0001)
-        XCTAssertEqual(low.0, .faithful)
-        XCTAssertEqual(low.1, .preserve)
-
-        let mid = try mapped(1.0 / 3.0, 1.0 / 3.0)
-        XCTAssertEqual(mid.0, .balanced)
-        XCTAssertEqual(mid.1, .balanced)
-
-        let high = try mapped(2.0 / 3.0, 2.0 / 3.0)
-        XCTAssertEqual(high.0, .inventive)
-        XCTAssertEqual(high.1, .rebuild)
+        )
     }
 
     func testDirectlyConstructedBlankSummaryFailsClosed() throws {
-        let bad = ReadyToForgeSummary(
-            intentSummary: "  ",
-            decisions: [],
-            controls: try controls()
-        )
+        let bad = try summary(intentSummary: "  ")
         XCTAssertThrowsError(try makeHandoff(summary: bad)) {
             XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSummary("intentSummary"))
         }
@@ -279,11 +218,41 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         }
     }
 
+    func testTooManyDecisionsFailsClosed() throws {
+        let decisions = (0..<129).map { index in
+            PlanResolvedDecision(
+                id: "decision-\(index)",
+                prompt: "Decision \(index)?",
+                value: .text("value")
+            )
+        }
+        XCTAssertThrowsError(
+            try makeHandoff(summary: summary(decisions: decisions))
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSummary("tooManyDecisions"))
+        }
+    }
+
     func testInvalidNonFiniteDecisionFailsClosed() throws {
         let bad = PlanResolvedDecision(id: "risk", prompt: "Risk?", value: .scalar(.infinity))
         XCTAssertThrowsError(
             try makeHandoff(summary: summary(decisions: [bad]))
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("risk"))
+        }
+    }
+
+    func testInvalidIntervalOrderingFailsClosed() throws {
+        let bad = PlanResolvedDecision(
+            id: "range",
+            prompt: "Range?",
+            value: .interval(lower: 2, upper: 1)
         )
+        XCTAssertThrowsError(
+            try makeHandoff(summary: summary(decisions: [bad]))
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("range"))
+        }
     }
 
     func testSelectedOptionIdentityRejectsControlCharacters() throws {
@@ -299,64 +268,43 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
         }
     }
 
-    func testMissingAcceptanceJourneyFailsClosed() throws {
-        let badSupplement = ForgePlanMissionSupplement(
-            projectType: "app",
-            acceptanceJourneys: MissionStringSet([]),
-            expectedEvidence: MissionEvidenceSet([.compiled])
+    func testTextAllowsNewlinesButRejectsOtherControlCharacters() throws {
+        let good = PlanResolvedDecision(
+            id: "notes",
+            prompt: "Notes?",
+            value: .text("line one\nline two")
         )
-        XCTAssertThrowsError(
-            try makeHandoff(summary: summary(), supplement: badSupplement)
-        ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .missingAcceptanceJourneys)
-        }
-    }
+        XCTAssertNoThrow(try makeHandoff(summary: summary(decisions: [good])))
 
-    func testMissingExpectedEvidenceFailsClosed() throws {
-        let badSupplement = ForgePlanMissionSupplement(
-            projectType: "app",
-            acceptanceJourneys: MissionStringSet(["launch"]),
-            expectedEvidence: MissionEvidenceSet([])
+        let bad = PlanResolvedDecision(
+            id: "bad-notes",
+            prompt: "Notes?",
+            value: .text("nope\u{0000}")
         )
         XCTAssertThrowsError(
-            try makeHandoff(summary: summary(), supplement: badSupplement)
+            try makeHandoff(summary: summary(decisions: [bad]))
         ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .missingExpectedEvidence)
-        }
-    }
-
-    func testInvalidSupplementConstitutionFailsClosed() throws {
-        let badSupplement = ForgePlanMissionSupplement(
-            projectType: " ",
-            acceptanceJourneys: MissionStringSet(["launch"]),
-            expectedEvidence: MissionEvidenceSet([.compiled])
-        )
-        XCTAssertThrowsError(
-            try makeHandoff(summary: summary(), supplement: badSupplement)
-        ) {
-            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidConstitution(.missingProjectType))
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidDecision("bad-notes"))
         }
     }
 
     func testContextRejectsNonCanonicalReceiptIDAndZeroRevision() throws {
         XCTAssertThrowsError(
             try ForgePlanMissionContext(
-                missionID: missionID,
-                projectID: projectID,
-                constitutionRevision: 0,
-                projectedAcceptedAt: .init(rawValue: 1),
+                handoffRevision: 0,
                 planAcceptanceReceiptID: "ok"
             )
-        )
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidContext("handoffRevision"))
+        }
         XCTAssertThrowsError(
             try ForgePlanMissionContext(
-                missionID: missionID,
-                projectID: projectID,
-                constitutionRevision: 1,
-                projectedAcceptedAt: .init(rawValue: 1),
+                handoffRevision: 1,
                 planAcceptanceReceiptID: " padded "
             )
-        )
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidContext("planAcceptanceReceiptID"))
+        }
     }
 
     func testSourceBindingRejectsZeroRevisionAndNonCanonicalReference() throws {
@@ -366,21 +314,27 @@ final class ForgePlanMissionAdapterTests: XCTestCase {
                 planRevision: 1,
                 planReferenceID: "plan-1"
             )
-        )
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSourceBinding("composerDraftRevision"))
+        }
         XCTAssertThrowsError(
             try ForgePlanMissionSourceBinding(
                 composerDraftRevision: 1,
                 planRevision: 0,
                 planReferenceID: "plan-1"
             )
-        )
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSourceBinding("planRevision"))
+        }
         XCTAssertThrowsError(
             try ForgePlanMissionSourceBinding(
                 composerDraftRevision: 1,
                 planRevision: 1,
                 planReferenceID: " plan-1 "
             )
-        )
+        ) {
+            XCTAssertEqual($0 as? ForgePlanMissionHandoffError, .invalidSourceBinding("planReferenceID"))
+        }
     }
 
     func testDecisionOrderingAndDelegatedPreconditionsAreCanonical() throws {
