@@ -4,22 +4,24 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 theme="$repo_root/AgentPad/Design/AgentTheme.swift"
 settings="$repo_root/AgentPad/Views/SettingsView.swift"
+components="$repo_root/AgentPad/Views/SettingsComponents.swift"
 app="$repo_root/AgentPad/App/AgentPadApp.swift"
 ui_tests="$repo_root/AgentPadUITests/AgentPadUITests.swift"
 
-for path in "$theme" "$settings" "$app" "$ui_tests"; do
+for path in "$theme" "$settings" "$components" "$app" "$ui_tests"; do
   [[ -f "$path" ]] || { echo "Preview theme contract: missing ${path#$repo_root/}" >&2; exit 1; }
 done
 
-python3 - "$theme" "$settings" "$app" "$ui_tests" <<'PY'
+python3 - "$theme" "$settings" "$components" "$app" "$ui_tests" <<'PY'
 from pathlib import Path
 import re
 import sys
 
 theme = Path(sys.argv[1]).read_text()
 settings = Path(sys.argv[2]).read_text()
-app = Path(sys.argv[3]).read_text()
-ui_tests = Path(sys.argv[4]).read_text()
+components = Path(sys.argv[3]).read_text()
+app = Path(sys.argv[4]).read_text()
+ui_tests = Path(sys.argv[5]).read_text()
 
 expected = [
     ("matrixRain", "Matrix Rain"),
@@ -58,11 +60,13 @@ required_settings = [
     'selectedThemeRawValue = theme.rawValue',
     'AgentPalette.refreshThemeCache(theme)',
     'AgentThemeUIKit.apply(theme)',
-    '.accessibilityIdentifier("settingsThemeStudioCard-\\(theme.rawValue)")',
 ]
 for needle in required_settings:
     if needle not in settings:
         raise SystemExit(f"missing Settings theme-selection contract: {needle}")
+
+if '.accessibilityIdentifier("settingsThemeStudioCard-\\(theme.rawValue)")' not in components:
+    raise SystemExit('missing stable accessibility identity for theme studio cards')
 
 required_app = [
     '@AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue',
