@@ -3,6 +3,25 @@ import XCTest
 @testable import ForgePerformanceCore
 
 final class ForgePerformanceStaticTrustBoundaryTests: XCTestCase {
+    func testExternalConsumerCannotMintTrustedPolicyReceipt() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "TrustedPolicyMint.swift",
+            source: """
+            import ForgePerformanceCore
+
+            func attemptMint(_ policy: ForgePerformancePolicy) {
+                _ = ForgePerformanceTrustedPolicyReceipt(authenticatedPolicy: policy)
+            }
+            """
+        )
+
+        XCTAssertTrue(
+            diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible")
+                || diagnostics.localizedCaseInsensitiveContains("'init' is inaccessible"),
+            "Expected external policy-trust minting to be inaccessible, got: \(diagnostics)"
+        )
+    }
+
     func testExternalConsumerCannotMintTrustedProducerReceipt() throws {
         let diagnostics = try typecheckExternalConsumer(
             named: "TrustedProducerMint.swift",
