@@ -150,7 +150,7 @@ enum ProjectCapsuleRenderer {
                 result.append("\\r")
             case 0x09:
                 result.append("\\t")
-            case 0x85, 0x2028, 0x2029:
+            case 0x80...0x9F, 0x2028, 0x2029:
                 result.append("\\u{")
                 result.append(String(scalar.value, radix: 16, uppercase: true))
                 result.append("}")
