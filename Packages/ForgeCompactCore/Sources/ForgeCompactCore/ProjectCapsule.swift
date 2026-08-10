@@ -23,30 +23,9 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         self.budgetBytes = budgetBytes
         self.selectedItems = selectedItems
         self.omittedItems = omittedItems
-        self.renderedContext = selectedItems.map(\.renderedLine).joined(separator: "\n")
+        self.renderedContext = ProjectCapsuleRenderer.renderedContext(for: selectedItems)
         self.renderedUTF8Bytes = renderedContext.utf8.count
         self.sourceItemCount = selectedItems.count + omittedItems.count
-        try validate()
-    }
-
-    private init(
-        schemaVersion: Int,
-        authority: ProjectCapsuleAuthority,
-        budgetBytes: Int,
-        selectedItems: [ForgeCompactContextItem],
-        omittedItems: [ForgeCompactOmittedItem],
-        renderedContext: String,
-        renderedUTF8Bytes: Int,
-        sourceItemCount: Int
-    ) throws {
-        self.schemaVersion = schemaVersion
-        self.authority = authority
-        self.budgetBytes = budgetBytes
-        self.selectedItems = selectedItems
-        self.omittedItems = omittedItems
-        self.renderedContext = renderedContext
-        self.renderedUTF8Bytes = renderedUTF8Bytes
-        self.sourceItemCount = sourceItemCount
         try validate()
     }
 
@@ -87,7 +66,7 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
             throw ForgeCompactError.invalidCapsuleShape
         }
 
-        let recomputed = selectedItems.map(\.renderedLine).joined(separator: "\n")
+        let recomputed = ProjectCapsuleRenderer.renderedContext(for: selectedItems)
         guard recomputed == renderedContext,
               recomputed.utf8.count == renderedUTF8Bytes,
               renderedUTF8Bytes <= budgetBytes
@@ -102,16 +81,88 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        let authority = try c.decode(ProjectCapsuleAuthority.self, forKey: .authority)
+        let budgetBytes = try c.decode(Int.self, forKey: .budgetBytes)
+        let selectedItems = try c.decode([ForgeCompactContextItem].self, forKey: .selectedItems)
+        let omittedItems = try c.decode([ForgeCompactOmittedItem].self, forKey: .omittedItems)
+        let storedRenderedContext = try c.decode(String.self, forKey: .renderedContext)
+        let storedRenderedUTF8Bytes = try c.decode(Int.self, forKey: .renderedUTF8Bytes)
+        let storedSourceItemCount = try c.decode(Int.self, forKey: .sourceItemCount)
+
+        guard schemaVersion == Self.currentSchemaVersion else {
+            throw ForgeCompactError.invalidCapsuleSchema(schemaVersion)
+        }
+        guard storedSourceItemCount == selectedItems.count + omittedItems.count else {
+            throw ForgeCompactError.invalidCapsuleShape
+        }
+
+        let canonicalRenderedContext = ProjectCapsuleRenderer.renderedContext(for: selectedItems)
+        let legacyRenderedContext = ProjectCapsuleRenderer.legacyRenderedContext(for: selectedItems)
+        let storedRenderingIsKnown =
+            (storedRenderedContext == canonicalRenderedContext
+                && storedRenderedUTF8Bytes == canonicalRenderedContext.utf8.count)
+            || (storedRenderedContext == legacyRenderedContext
+                && storedRenderedUTF8Bytes == legacyRenderedContext.utf8.count)
+        guard storedRenderingIsKnown else {
+            throw ForgeCompactError.invalidCapsuleShape
+        }
+
         try self.init(
-            schemaVersion: c.decode(Int.self, forKey: .schemaVersion),
-            authority: c.decode(ProjectCapsuleAuthority.self, forKey: .authority),
-            budgetBytes: c.decode(Int.self, forKey: .budgetBytes),
-            selectedItems: c.decode([ForgeCompactContextItem].self, forKey: .selectedItems),
-            omittedItems: c.decode([ForgeCompactOmittedItem].self, forKey: .omittedItems),
-            renderedContext: c.decode(String.self, forKey: .renderedContext),
-            renderedUTF8Bytes: c.decode(Int.self, forKey: .renderedUTF8Bytes),
-            sourceItemCount: c.decode(Int.self, forKey: .sourceItemCount)
+            authority: authority,
+            budgetBytes: budgetBytes,
+            selectedItems: selectedItems,
+            omittedItems: omittedItems
         )
+    }
+}
+
+enum ProjectCapsuleRenderer {
+    static func renderedContext(for items: [ForgeCompactContextItem]) -> String {
+        items.map(renderedLine).joined(separator: "\n")
+    }
+
+    static func renderedLine(for item: ForgeCompactContextItem) -> String {
+        let authority = item.isAuthoritative ? "truth" : "advisory"
+        let freshnessLabel = item.freshness == .current ? "current" : "stale"
+        return "[\(item.tier.renderLabel)][\(item.kind.rawValue)][\(authority)][\(freshnessLabel)][\(item.id)] \(escapedContent(item.content))"
+    }
+
+    static func renderedUTF8Bytes(for item: ForgeCompactContextItem) -> Int {
+        renderedLine(for: item).utf8.count
+    }
+
+    static func legacyRenderedContext(for items: [ForgeCompactContextItem]) -> String {
+        items.map(\.renderedLine).joined(separator: "\n")
+    }
+
+    private static func escapedContent(_ content: String) -> String {
+        var result = String()
+        result.reserveCapacity(content.utf8.count)
+
+        for scalar in content.unicodeScalars {
+            switch scalar.value {
+            case 0x5C:
+                result.append("\\\\")
+            case 0x0A:
+                result.append("\\n")
+            case 0x0D:
+                result.append("\\r")
+            case 0x09:
+                result.append("\\t")
+            case 0x80...0x9F, 0x2028, 0x2029:
+                result.append("\\u{")
+                result.append(String(scalar.value, radix: 16, uppercase: true))
+                result.append("}")
+            case 0x01...0x08, 0x0B...0x0C, 0x0E...0x1F, 0x7F:
+                result.append("\\u{")
+                result.append(String(scalar.value, radix: 16, uppercase: true))
+                result.append("}")
+            default:
+                result.unicodeScalars.append(scalar)
+            }
+        }
+        return result
     }
 }
 
@@ -153,7 +204,7 @@ public enum ProjectCapsuleBuilder {
 
         for item in optional {
             let separatorBytes = selected.isEmpty ? 0 : 1
-            let candidateBytes = separatorBytes + item.renderedUTF8Bytes
+            let candidateBytes = separatorBytes + ProjectCapsuleRenderer.renderedUTF8Bytes(for: item)
             if usedBytes + candidateBytes <= budgetBytes {
                 selected.append(item)
                 usedBytes += candidateBytes
@@ -174,7 +225,7 @@ public enum ProjectCapsuleBuilder {
 
     private static func renderedBytes(for items: [ForgeCompactContextItem]) -> Int {
         guard !items.isEmpty else { return 0 }
-        return items.reduce(0) { $0 + $1.renderedUTF8Bytes } + (items.count - 1)
+        return items.reduce(0) { $0 + ProjectCapsuleRenderer.renderedUTF8Bytes(for: $1) } + (items.count - 1)
     }
 
     fileprivate static func canonicalOrder(_ lhs: ForgeCompactContextItem, _ rhs: ForgeCompactContextItem) -> Bool {
