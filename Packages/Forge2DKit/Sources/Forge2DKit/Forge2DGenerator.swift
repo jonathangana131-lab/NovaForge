@@ -6,8 +6,14 @@ public enum Forge2DGenerator {
 
         let files = [
             Forge2DGeneratedFile(path: "index.html", contents: html(for: blueprint)),
-            Forge2DGeneratedFile(path: "styles.css", contents: Forge2DTemplate.styles),
-            Forge2DGeneratedFile(path: "game.js", contents: Forge2DTemplate.script(for: blueprint)),
+            Forge2DGeneratedFile(
+                path: "styles.css",
+                contents: Forge2DTemplate.styles + "\n" + Forge2DV14Hardening.styles
+            ),
+            Forge2DGeneratedFile(
+                path: "game.js",
+                contents: Forge2DTemplate.script(for: blueprint) + "\n" + Forge2DV14Hardening.script
+            ),
         ]
 
         return Forge2DGeneratedProject(
