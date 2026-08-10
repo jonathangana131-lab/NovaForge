@@ -24,16 +24,54 @@ final class ForgePlaytestDefectTrustBoundaryTests: XCTestCase {
             """
         )
 
+        assertInternalInitializerBlocked(
+            diagnostics,
+            context: "authenticated defect evidence"
+        )
+    }
+
+    func testExternalConsumerCannotMintExecutionBinding() throws {
+        let diagnostics = try typecheckExternalConsumer(
+            named: "ForgePlaytestExecutionTrustBypass.swift",
+            source: """
+            import ForgePlaytestCore
+
+            func forgeBinding(
+                evidence: ForgePlaytestEvidenceReference,
+                trace: ForgePlaytestTrace
+            ) throws {
+                _ = try ForgePlaytestExecutionBinding(
+                    executionEvidence: evidence,
+                    trace: trace
+                )
+            }
+            """
+        )
+
+        assertInternalInitializerBlocked(
+            diagnostics,
+            context: "runtime execution evidence"
+        )
+    }
+
+    private func assertInternalInitializerBlocked(
+        _ diagnostics: String,
+        context: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
         XCTAssertTrue(
             diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
                 || diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible"),
-            "Expected ordinary imports to be unable to mint authenticated defect evidence, got: \(diagnostics)"
+            "Expected ordinary imports to be unable to mint \(context), got: \(diagnostics)",
+            file: file,
+            line: line
         )
     }
 
     private func typecheckExternalConsumer(named fileName: String, source: String) throws -> String {
         let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("forge-playtest-defect-trust-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("forge-playtest-trust-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
@@ -62,7 +100,7 @@ final class ForgePlaytestDefectTrustBoundaryTests: XCTestCase {
             decoding: output.fileHandleForReading.readDataToEndOfFile(),
             as: UTF8.self
         )
-        XCTAssertNotEqual(process.terminationStatus, 0, "External defect-trust bypass unexpectedly compiled")
+        XCTAssertNotEqual(process.terminationStatus, 0, "External Playtest trust bypass unexpectedly compiled")
         XCTAssertFalse(
             diagnostics.localizedCaseInsensitiveContains("no such module 'forgeplaytestcore'"),
             "Trust probe failed before reaching ForgePlaytestCore access control: \(diagnostics)"
