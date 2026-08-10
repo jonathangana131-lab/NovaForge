@@ -99,11 +99,17 @@ final class Forge2DKitTests: XCTestCase {
         XCTAssertTrue(css.contains("right: max(14px, env(safe-area-inset-right))"))
         XCTAssertFalse(css.contains("body { padding: env(safe-area-inset-top)"))
 
-        XCTAssertTrue(js.contains("event.detail === 0"))
+        XCTAssertTrue(js.contains("const pointerActivationControls = new Set()"))
+        XCTAssertTrue(js.contains("button.addEventListener(\"pointerdown\""))
+        XCTAssertTrue(js.contains("button.addEventListener(\"pointercancel\""))
+        XCTAssertTrue(js.contains("if (pointerActivationControls.delete(button.id)) return"))
+        XCTAssertTrue(js.contains("registerAssistiveActivation(controls.left"))
+        XCTAssertTrue(js.contains("registerAssistiveActivation(controls.right"))
+        XCTAssertTrue(js.contains("registerAssistiveActivation(controls.jump, queueJump)"))
         XCTAssertTrue(js.contains("pulseAssistiveDirection(\"keyboardLeft\", \"left\")"))
         XCTAssertTrue(js.contains("pulseAssistiveDirection(\"keyboardRight\", \"right\")"))
-        XCTAssertTrue(js.contains("if (event.detail === 0) queueJump()"))
         XCTAssertTrue(js.contains("window.setTimeout"))
+        XCTAssertFalse(js.contains("event.detail === 0"))
     }
 
     func testGeneratedControlsKeepStableRuntimeAutomationSelectors() throws {
