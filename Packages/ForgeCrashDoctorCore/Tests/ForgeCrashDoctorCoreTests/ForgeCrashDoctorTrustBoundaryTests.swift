@@ -65,9 +65,30 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        let bundleRoot = Bundle(for: ForgeCrashDoctorTrustBoundaryTests.self).bundleURL
+        let executableRoot = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
 
-        for _ in 0..<10 {
+        if let modulesURL = findModulesURL(startingAt: bundleRoot) {
+            return modulesURL
+        }
+        if let modulesURL = findModulesURL(startingAt: executableRoot) {
+            return modulesURL
+        }
+
+        throw NSError(
+            domain: "ForgeCrashDoctorTrustBoundaryTests",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "ForgeCrashDoctorCore module is missing from the active SwiftPM XCTest bundle and executable ancestry"
+            ]
+        )
+    }
+
+    private func findModulesURL(startingAt start: URL) -> URL? {
+        var directory = start
+
+        for _ in 0..<12 {
             let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
             let moduleURL = modulesURL.appendingPathComponent("ForgeCrashDoctorCore.swiftmodule")
             if FileManager.default.fileExists(atPath: moduleURL.path) {
@@ -79,13 +100,6 @@ final class ForgeCrashDoctorTrustBoundaryTests: XCTestCase {
             directory = parent
         }
 
-        throw NSError(
-            domain: "ForgeCrashDoctorTrustBoundaryTests",
-            code: 1,
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "ForgeCrashDoctorCore module is missing from the active SwiftPM test executable ancestry"
-            ]
-        )
+        return nil
     }
 }
