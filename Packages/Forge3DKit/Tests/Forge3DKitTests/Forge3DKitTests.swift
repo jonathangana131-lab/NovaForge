@@ -10,7 +10,8 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.entryPath, "index.html")
         XCTAssertEqual(first.files.map(\.path), ["index.html", "styles.css", "game.js"])
-        XCTAssertEqual(first.semanticCapabilities, [.localSave, .controller, .touch, .keyboard])
+        XCTAssertEqual(first.semanticCapabilities, [.localSave, .controller, .touch, .keyboard, .automation])
+        XCTAssertEqual(first.semanticTargets, Forge3DSemanticTargetCatalog.all)
     }
 
     func testGeneratedProjectDeniesNetworkAndUsesOnlyLocalAssets() throws {
@@ -36,7 +37,8 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(js.contains("localStorage.setItem"))
         XCTAssertTrue(js.contains("webglcontextlost"))
         XCTAssertTrue(js.contains("maximumMarkers: 40"))
-        XCTAssertTrue(js.contains("input.keyThrottle + input.touchThrottle + input.accessibleThrottle + input.padThrottle"))
+        XCTAssertTrue(js.contains("input.keyThrottle + input.touchThrottle + input.accessibleThrottle + automationInput.throttle + input.padThrottle"))
+        XCTAssertTrue(js.contains("input.keySteer + input.touchSteer + input.accessibleSteer + automationInput.steering + input.padSteer"))
         XCTAssertTrue(js.contains("accessible-throttle"))
         XCTAssertTrue(js.contains("accessible-steer"))
         XCTAssertFalse(js.contains("powerPreference: \"high-performance\""))
@@ -50,12 +52,40 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(html.contains("aria-live=\"polite\""))
         XCTAssertTrue(html.contains("aria-label=\"Drive joystick."))
         XCTAssertTrue(html.contains("aria-label=\"Pause scene\""))
-        XCTAssertTrue(html.contains("id=\"accessible-throttle\" type=\"range\""))
-        XCTAssertTrue(html.contains("id=\"accessible-steer\" type=\"range\""))
+        XCTAssertTrue(html.contains("id=\"accessible-throttle\" data-novaforge-action=\"drive.throttle\" type=\"range\""))
+        XCTAssertTrue(html.contains("id=\"accessible-steer\" data-novaforge-action=\"drive.steering\" type=\"range\""))
         XCTAssertTrue(css.contains("env(safe-area-inset-left)"))
         XCTAssertTrue(css.contains("env(safe-area-inset-bottom)"))
         XCTAssertTrue(css.contains("prefers-reduced-transparency"))
         XCTAssertTrue(css.contains(".assistive-driving"))
+    }
+
+    func testGeneratedProjectExposesCanonicalSemanticSelfPlayTargets() throws {
+        let project = try Forge3DGenerator.generate(blueprint)
+        let html = try XCTUnwrap(project.files.first(where: { $0.path == "index.html" })?.contents)
+        let js = try XCTUnwrap(project.files.first(where: { $0.path == "game.js" })?.contents)
+
+        XCTAssertEqual(project.semanticTargets.map(\.id), ["scene.pause", "drive.throttle", "drive.steering"])
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.pause.kind, .control)
+        XCTAssertNil(Forge3DSemanticTargetCatalog.pause.minimumValue)
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.throttle.kind, .action)
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.throttle.minimumValue, -1)
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.throttle.maximumValue, 1)
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.throttle.neutralValue, 0)
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.steering.minimumValue, -1)
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.steering.maximumValue, 1)
+        XCTAssertEqual(Forge3DSemanticTargetCatalog.steering.neutralValue, 0)
+
+        XCTAssertTrue(html.contains("data-novaforge-control=\"scene.pause\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive.throttle\""))
+        XCTAssertTrue(html.contains("data-novaforge-action=\"drive.steering\""))
+        XCTAssertTrue(js.contains("semanticActionEventName: \"novaforge:action\""))
+        XCTAssertTrue(js.contains("semanticThrottleActionID: \"drive.throttle\""))
+        XCTAssertTrue(js.contains("semanticSteeringActionID: \"drive.steering\""))
+        XCTAssertTrue(js.contains("bindAutomationAction(accessibleThrottle, CONFIG.semanticThrottleActionID, \"throttle\")"))
+        XCTAssertTrue(js.contains("bindAutomationAction(accessibleSteer, CONFIG.semanticSteeringActionID, \"steering\")"))
+        XCTAssertTrue(js.contains("Number.isFinite(detail.value)"))
+        XCTAssertTrue(js.contains("automationInput[inputChannel] = clamp(detail.value, -1, 1)"))
     }
 
     func testBlueprintRoundTripsThroughCodable() throws {
