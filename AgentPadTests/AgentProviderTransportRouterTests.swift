@@ -101,6 +101,19 @@ final class AgentProviderTransportRouterTests: XCTestCase {
     }
 }
 
+final class AgentOrchestrationPresentationContractTests: XCTestCase {
+    func testUltraKeepsInternalUltraCodeIdentityAndStrongestBehaviorCopy() {
+        let mode = AgentOrchestrationMode.ultraCode
+
+        XCTAssertEqual(mode.rawValue, "ultraCode")
+        XCTAssertEqual(mode.title, "Ultra")
+        XCTAssertEqual(mode.shortTitle, "Ultra")
+        XCTAssertTrue(mode.detail.contains("isolated coding workspaces"))
+        XCTAssertTrue(mode.detail.contains("verification"))
+        XCTAssertTrue(mode.detail.contains("integrating lead agent"))
+    }
+}
+
 private actor RecordingProviderTransport: ProviderTransport {
     private var descriptors: [ProviderAdapterDescriptor] = []
 
