@@ -11,14 +11,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 16
 
-      - name: Assert exact product parent
+      - name: Assert product bytes are exact
+        shell: bash
         run: |
-          test "$(git rev-parse HEAD^)" = "b19598f22383158d99feb7e4433e14911beba1ef"
-          git diff --check HEAD^
+          product_head="b19598f22383158d99feb7e4433e14911beba1ef"
+          git merge-base --is-ancestor "$product_head" HEAD
+          unexpected="$(git diff --name-only "$product_head"...HEAD | grep -v '^\.github/workflows/v14-plan-mission-adapter-diagnostic\.yml$' || true)"
+          test -z "$unexpected"
+          git diff --check "$product_head"...HEAD
 
-      - name: Debug package with surfaced diagnostic
+      - name: Debug package with surfaced diagnostics
         shell: bash
         run: |
           set +e
@@ -26,13 +30,20 @@ jobs:
           status=$?
           cat /tmp/planmission-debug.log
           if [ "$status" -ne 0 ]; then
-            diagnostic="$(grep -m1 -E '(^|: )(error:|fatal error:)|error:' /tmp/planmission-debug.log | head -c 3000)"
-            if [ -z "$diagnostic" ]; then
-              diagnostic="$(tail -n 20 /tmp/planmission-debug.log | tr '\n' ' ' | head -c 3000)"
+            mapfile -t diagnostics < <(
+              grep -E 'error:|fatal error:' /tmp/planmission-debug.log \
+                | grep -v 'emit-module command failed' \
+                | head -n 8
+            )
+            if [ "${#diagnostics[@]}" -eq 0 ]; then
+              diagnostics=("$(tail -n 20 /tmp/planmission-debug.log | tr '\n' ' ' | head -c 3000)")
             fi
-            diagnostic="${diagnostic//'%'/'%25'}"
-            diagnostic="${diagnostic//$'\r'/'%0D'}"
-            diagnostic="${diagnostic//$'\n'/'%0A'}"
-            echo "::error title=Swift package diagnostic::$diagnostic"
+            for diagnostic in "${diagnostics[@]}"; do
+              diagnostic="${diagnostic:0:3000}"
+              diagnostic="${diagnostic//'%'/'%25'}"
+              diagnostic="${diagnostic//$'\r'/'%0D'}"
+              diagnostic="${diagnostic//$'\n'/'%0A'}"
+              echo "::error title=Swift package diagnostic::$diagnostic"
+            done
             exit "$status"
           fi
