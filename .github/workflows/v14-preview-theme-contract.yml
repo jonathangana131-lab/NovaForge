@@ -1,0 +1,34 @@
+name: V14 Preview theme contract
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/Design/AgentTheme.swift'
+      - 'AgentPad/Views/SettingsView.swift'
+      - 'AgentPad/Views/SettingsComponents.swift'
+      - 'AgentPad/App/AgentPadApp.swift'
+      - 'AgentPadUITests/AgentPadUITests.swift'
+      - 'scripts/verify_v14_preview_theme_contract.sh'
+      - '.github/workflows/v14-preview-theme-contract.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/Design/AgentTheme.swift'
+      - 'AgentPad/Views/SettingsView.swift'
+      - 'AgentPad/Views/SettingsComponents.swift'
+      - 'AgentPad/App/AgentPadApp.swift'
+      - 'AgentPadUITests/AgentPadUITests.swift'
+      - 'scripts/verify_v14_preview_theme_contract.sh'
+      - '.github/workflows/v14-preview-theme-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preview-theme-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify five-theme selection and persistence wiring
+        run: bash scripts/verify_v14_preview_theme_contract.sh
