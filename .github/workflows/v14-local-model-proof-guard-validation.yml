@@ -1,0 +1,74 @@
+name: V14 Local Model proof guard validation
+
+on:
+  push:
+    branches:
+      - worker/GPT56SOL-NF-V14-GUARD-8A10/local-model-proof-guard-coverage-validation/e1
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax and exact current presentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/verify-local-model-proof-copy.sh
+          bash scripts/verify-local-model-proof-copy.sh
+          git diff --check
+
+      - name: Prove superseded benchmark labels are rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="AgentPad/Views/ModelManagerPanels.swift"
+          original="$(mktemp)"
+          cp "$target" "$original"
+
+          expect_reject() {
+            local label="$1"
+            local from="$2"
+            local to="$3"
+            cp "$original" "$target"
+            python3 - "$target" "$from" "$to" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          old = sys.argv[2]
+          new = sys.argv[3]
+          text = path.read_text()
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one occurrence of {old!r}, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+            if bash scripts/verify-local-model-proof-copy.sh; then
+              echo "guard unexpectedly accepted superseded benchmark label: $label" >&2
+              exit 1
+            fi
+          }
+
+          expect_reject \
+            "tok/s" \
+            'unit: "e2e chars/s"' \
+            'unit: "tok/s"'
+
+          expect_reject \
+            "first token" \
+            'unit: "first output"' \
+            'unit: "first token"'
+
+          expect_reject \
+            "qualification-sounding benchmark prompt" \
+            'Run a local timing sample on this device. Results are session diagnostics, not qualification evidence.' \
+            'Measure real generation speed on this device'
+
+          cp "$original" "$target"
+          bash scripts/verify-local-model-proof-copy.sh
