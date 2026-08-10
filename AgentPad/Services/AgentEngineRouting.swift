@@ -1,3 +1,5 @@
+import AgentDomain
+import AgentProviders
 import Foundation
 
 /// Stable engine identity captured by the harness acceptance contract. V1
@@ -100,6 +102,77 @@ enum AgentEngineRoutingPolicy {
 
     static func storageKey(for feature: AgentHarnessFeature) -> String {
         "NovaForge.AgentHarnessV2.feature.\(feature.rawValue)"
+    }
+}
+
+/// Derives the reducer-enforced work budget from the existing Composer
+/// reasoning/orchestration preference. `AgentRunPreferenceStore` remains the
+/// sole user-facing effort authority; this policy only freezes that intent into
+/// accepted run truth.
+enum AgentRunEffortBudgetPolicy {
+    /// Medium preserves the exact pre-Preview budget so the existing default
+    /// does not silently become more expensive or less capable.
+    static let medium = AgentBudget(limits: .standard)
+
+    static func budget(
+        reasoningEffort: ProviderReasoningEffort,
+        orchestrationMode: AgentOrchestrationMode
+    ) -> AgentBudget {
+        switch orchestrationMode {
+        case .ultraCode:
+            return makeBudget(
+                iterations: 128,
+                providerAttempts: 192,
+                toolInvocations: 256
+            )
+        case .ultra:
+            // Legacy `.ultra` is migrated by AgentRunPreferenceStore to
+            // `.standard + .xhigh`. Mirror that migration if an in-memory
+            // legacy value reaches this pure policy before normalization.
+            return makeBudget(
+                iterations: 64,
+                providerAttempts: 96,
+                toolInvocations: 128
+            )
+        case .standard:
+            switch reasoningEffort {
+            case .none, .low:
+                return makeBudget(
+                    iterations: 8,
+                    providerAttempts: 12,
+                    toolInvocations: 24
+                )
+            case .medium:
+                return medium
+            case .high:
+                return makeBudget(
+                    iterations: 48,
+                    providerAttempts: 72,
+                    toolInvocations: 96
+                )
+            case .xhigh, .max:
+                // The current five-stop Composer treats `.max` in standard
+                // orchestration as Extra High. Only `.ultraCode` is the top
+                // orchestration stop, so stale state cannot self-promote.
+                return makeBudget(
+                    iterations: 64,
+                    providerAttempts: 96,
+                    toolInvocations: 128
+                )
+            }
+        }
+    }
+
+    private static func makeBudget(
+        iterations: UInt64,
+        providerAttempts: UInt64,
+        toolInvocations: UInt64
+    ) -> AgentBudget {
+        var limits = AgentBudgetLimits.standard
+        limits.iterations = iterations
+        limits.providerAttempts = providerAttempts
+        limits.toolInvocations = toolInvocations
+        return AgentBudget(limits: limits)
     }
 }
 
