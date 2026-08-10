@@ -11,23 +11,20 @@ let package = Package(
         .library(name: "ForgePlanMissionAdapter", targets: ["ForgePlanMissionAdapter"])
     ],
     dependencies: [
-        .package(path: "../ForgePlanCore"),
-        .package(path: "../AgentHarnessKit")
+        .package(path: "../ForgePlanCore")
     ],
     targets: [
         .target(
             name: "ForgePlanMissionAdapter",
             dependencies: [
-                .product(name: "ForgePlanCore", package: "ForgePlanCore"),
-                .product(name: "AgentDomain", package: "AgentHarnessKit")
+                .product(name: "ForgePlanCore", package: "ForgePlanCore")
             ]
         ),
         .testTarget(
             name: "ForgePlanMissionAdapterTests",
             dependencies: [
                 "ForgePlanMissionAdapter",
-                .product(name: "ForgePlanCore", package: "ForgePlanCore"),
-                .product(name: "AgentDomain", package: "AgentHarnessKit")
+                .product(name: "ForgePlanCore", package: "ForgePlanCore")
             ]
         )
     ]
