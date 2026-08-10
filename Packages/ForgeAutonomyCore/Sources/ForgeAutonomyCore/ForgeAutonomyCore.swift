@@ -417,7 +417,7 @@ public struct ForgeAutonomyCandidateProjection: Codable, Equatable, Sendable {
 
     public var authorizesExecution: Bool { false }
 
-    private init(
+    fileprivate init(
         authority: ForgeAutonomyAuthority,
         budget: ForgeAutonomyBudget,
         observation: ForgeAutonomyObservation,
@@ -505,7 +505,6 @@ private enum ForgeAutonomyGate {
     ) -> Projection {
         let hasFreshCheckpoint = observation.hasExactFreshCheckpoint(for: authority)
 
-        // User intent and unresolved material authority always outrank candidate continuation.
         if observation.userDirective == .cancel {
             return Projection(
                 disposition: .cancel,
@@ -557,7 +556,6 @@ private enum ForgeAutonomyGate {
             )
         }
 
-        // Exhaustion checks use >= so the candidate never recommends beyond a configured hard ceiling.
         if observation.elapsedMilliseconds >= budget.maximumElapsedMilliseconds {
             return Projection(
                 disposition: .pause,
@@ -602,7 +600,6 @@ private enum ForgeAutonomyGate {
             )
         }
 
-        // Near-limit checks avoid addition/overflow by comparing already-bounded counters to subtraction thresholds.
         let elapsedCheckpointThreshold = budget.maximumElapsedMilliseconds - budget.checkpointLeadMilliseconds
         if budget.checkpointLeadMilliseconds > 0,
            observation.elapsedMilliseconds >= elapsedCheckpointThreshold,
