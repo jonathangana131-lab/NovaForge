@@ -13,7 +13,7 @@ Run from the repository root:
 
 ```sh
 python3 scripts/validate-v14-forge-runtime-fixtures.py
-python3 -m unittest -v scripts/tests/test_validate_v14_forge-runtime-fixtures.py
+python3 -m unittest -v scripts/tests/test_validate_v14_forge_runtime_fixtures.py
 ```
 
 The validator intentionally fails closed on unknown fixture directories, unexpected files inside a fixture, cross-project storage namespaces, external-network primitives/references, hidden resource-loading references, duplicate semantic target IDs, and contract drift in the expected semantic target set.
