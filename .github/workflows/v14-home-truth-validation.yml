@@ -27,5 +27,53 @@ jobs:
       - name: Debug package tests
         run: swift test --package-path Packages/ForgeHomeCore -Xswiftc -warnings-as-errors
 
+      - name: External consumer cannot mint Home trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          module_file="$(find Packages/ForgeHomeCore/.build -type f -path '*/debug/Modules/ForgeHomeCore.swiftmodule' -print -quit)"
+          if [[ -z "$module_file" ]]; then
+            echo "ForgeHomeCore.swiftmodule not found after debug build" >&2
+            exit 1
+          fi
+          module_dir="$(dirname "$module_file")"
+          cat > /tmp/ForgeHomeExternalTrustProbe.swift <<'SWIFT'
+          import Foundation
+          import ForgeHomeCore
+
+          let candidate = ForgeCreationRecord(
+              name: "forged",
+              lastChangedAt: Date(),
+              currentSourceRevision: "r1"
+          )
+          _ = ForgeHomeTrustBinding(authenticatedRecord: candidate)
+          SWIFT
+          if swiftc -typecheck -I "$module_dir" /tmp/ForgeHomeExternalTrustProbe.swift > /tmp/forge-home-trust-probe.log 2>&1; then
+            echo "External consumer unexpectedly constructed ForgeHomeTrustBinding" >&2
+            exit 1
+          fi
+          cat /tmp/forge-home-trust-probe.log
+          grep -Eq "inaccessible due to 'internal' protection|initializer is inaccessible" /tmp/forge-home-trust-probe.log
+
+      - name: Derived Home presentation is not persistable authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          module_file="$(find Packages/ForgeHomeCore/.build -type f -path '*/debug/Modules/ForgeHomeCore.swiftmodule' -print -quit)"
+          module_dir="$(dirname "$module_file")"
+          cat > /tmp/ForgeHomeCodableProbe.swift <<'SWIFT'
+          import ForgeHomeCore
+
+          func requireCodable<T: Codable>(_: T.Type) {}
+          requireCodable(ForgeHomeSnapshot.self)
+          requireCodable(ForgeCreationCard.self)
+          SWIFT
+          if swiftc -typecheck -I "$module_dir" /tmp/ForgeHomeCodableProbe.swift > /tmp/forge-home-codable-probe.log 2>&1; then
+            echo "Derived Home authority unexpectedly conforms to Codable" >&2
+            exit 1
+          fi
+          cat /tmp/forge-home-codable-probe.log
+          grep -Eq "requires that 'ForgeHomeSnapshot' conform to '(Decodable|Encodable)'|requires that 'ForgeCreationCard' conform to '(Decodable|Encodable)'" /tmp/forge-home-codable-probe.log
+
       - name: Release package tests
         run: swift test -c release --package-path Packages/ForgeHomeCore -Xswiftc -warnings-as-errors
