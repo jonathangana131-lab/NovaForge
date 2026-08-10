@@ -18,6 +18,9 @@ let package = Package(
         .library(name: "AgentPolicy", targets: ["AgentPolicy"]),
         .library(name: "AgentTransport", targets: ["AgentTransport"]),
     ],
+    dependencies: [
+        .package(path: "../ForgeCompactCore"),
+    ],
     targets: [
         .target(name: "AgentDomain"),
         .target(
@@ -33,6 +36,7 @@ let package = Package(
                 "AgentReducerCore",
                 "AgentStore",
                 "AgentTools",
+                .product(name: "ForgeCompactCore", package: "ForgeCompactCore"),
             ]
         ),
         .target(
