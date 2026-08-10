@@ -1,0 +1,36 @@
+diff --git a/AgentPad/Views/ChatComposer.swift b/AgentPad/Views/ChatComposer.swift
+--- a/AgentPad/Views/ChatComposer.swift
++++ b/AgentPad/Views/ChatComposer.swift
+@@
+         case .ultra:
+             "Extra High"
+         case .ultraCode:
+-            "UltraCode"
++            "Ultra"
+@@
+             case .high: "High"
+             case .extraHigh: "Extra High"
+-            case .ultraCode: "UltraCode"
++            case .ultraCode: "Ultra"
+@@
+-                    Text(presentation.mode.title)
++                    Text(presentation.mode == .ultraCode ? "Ultra" : presentation.mode.title)
+                         .font(.headline.weight(.bold))
+
+diff --git a/AgentPad/Services/AIProvider.swift b/AgentPad/Services/AIProvider.swift
+--- a/AgentPad/Services/AIProvider.swift
++++ b/AgentPad/Services/AIProvider.swift
+@@
+         switch self {
+         case .standard: "Standard"
+         case .ultra: "Ultra"
+-        case .ultraCode: "UltraCode"
++        case .ultraCode: "Ultra"
+         }
+@@
+         switch self {
+         case .standard: "Think"
+         case .ultra: "Ultra"
+-        case .ultraCode: "UltraCode"
++        case .ultraCode: "Ultra"
+         }
