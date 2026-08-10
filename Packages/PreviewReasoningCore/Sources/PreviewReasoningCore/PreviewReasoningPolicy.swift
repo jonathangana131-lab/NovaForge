@@ -59,7 +59,7 @@ public enum PreviewReasoningVerification: String, Codable, Sendable {
 /// not tokens, RAM, latency, or device performance. Runtime adapters still own
 /// exact provider/device qualification and may fail closed when a requirement
 /// cannot be satisfied.
-public struct PreviewReasoningProfile: Equatable, Codable, Sendable {
+public struct PreviewReasoningProfile: Equatable, Sendable {
     public let level: PreviewReasoningLevel
     public let orchestration: PreviewReasoningOrchestration
     public let contextDepth: PreviewReasoningContextDepth
