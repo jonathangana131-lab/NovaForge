@@ -17,6 +17,7 @@ struct ForgePerformanceCoreTests {
             policyID: "perf-policy-1",
             target: target ?? self.target(),
             scenarioID: "goal-runner",
+            scenarioDefinitionDigest: "sha256-scenario-goal-runner-v1",
             budgets: [
                 try ForgePerformanceBudget(metric: .frameTimeP95Milliseconds, maximumAllowedValue: 20, minimumSampleCount: 120),
                 try ForgePerformanceBudget(metric: .droppedFrameRatio, maximumAllowedValue: 0.02, minimumSampleCount: 120),
@@ -31,6 +32,7 @@ struct ForgePerformanceCoreTests {
             target: target ?? self.target(),
             executionContext: context ?? self.context(),
             scenarioID: "goal-runner",
+            scenarioDefinitionDigest: "sha256-scenario-goal-runner-v1",
             authority: .hostRuntimeProfiler,
             producerReceiptID: "host-perf-receipt-1",
             observations: [
@@ -96,14 +98,32 @@ struct ForgePerformanceCoreTests {
         }
     }
 
+    @Test func sameScenarioIDWithChangedDefinitionDigestFailsClosed() throws {
+        let p = try policy()
+        let original = try run()
+        let changed = try ForgePerformanceRunEvidence(
+            runID: original.runID,
+            target: original.target,
+            executionContext: original.executionContext,
+            scenarioID: original.scenarioID,
+            scenarioDefinitionDigest: "sha256-scenario-goal-runner-v2",
+            authority: original.authority,
+            producerReceiptID: original.producerReceiptID,
+            observations: original.observations
+        )
+        #expect(throws: ForgePerformanceError.scenarioMismatch) {
+            _ = try ForgePerformanceEvaluator.evaluate(policy: p, run: changed, trustedProducer: .init(authenticatedRun: changed))
+        }
+    }
+
     @Test func duplicateMetricsFailClosed() throws {
         let observation = try ForgePerformanceObservation(metric: .launchTimeMilliseconds, measuredValue: 50, sampleCount: 1)
         #expect(throws: ForgePerformanceError.duplicateObservationMetric(.launchTimeMilliseconds)) {
-            _ = try ForgePerformanceRunEvidence(runID: "r", target: target(), executionContext: context(), scenarioID: "s", authority: .xctestMetricHarness, producerReceiptID: "p", observations: [observation, observation])
+            _ = try ForgePerformanceRunEvidence(runID: "r", target: target(), executionContext: context(), scenarioID: "s", scenarioDefinitionDigest: "sha256-s", authority: .xctestMetricHarness, producerReceiptID: "p", observations: [observation, observation])
         }
         let budget = try ForgePerformanceBudget(metric: .launchTimeMilliseconds, maximumAllowedValue: 100, minimumSampleCount: 1)
         #expect(throws: ForgePerformanceError.duplicateBudgetMetric(.launchTimeMilliseconds)) {
-            _ = try ForgePerformancePolicy(policyID: "p", target: target(), scenarioID: "s", budgets: [budget, budget])
+            _ = try ForgePerformancePolicy(policyID: "p", target: target(), scenarioID: "s", scenarioDefinitionDigest: "sha256-s", budgets: [budget, budget])
         }
     }
 
@@ -126,6 +146,7 @@ struct ForgePerformanceCoreTests {
             target: original.target,
             executionContext: original.executionContext,
             scenarioID: original.scenarioID,
+            scenarioDefinitionDigest: original.scenarioDefinitionDigest,
             authority: .instrumentsImport,
             producerReceiptID: original.producerReceiptID,
             observations: original.observations
