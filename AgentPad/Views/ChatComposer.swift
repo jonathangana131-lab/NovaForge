@@ -1357,7 +1357,7 @@ private struct ComposerModelChooserSheet: View {
         let liveModels = providerCatalog.models(for: selectedProvider)
         let selectedIdentity = selectedProvider.visibleModelIdentity(settings.modelID)
         guard !liveModels.contains(where: {
-                  selectedProvider.visibleModelIdentity($0.id) == selectedIdentity
+                  selectedProvider.visibleModelIdentity($0) == selectedIdentity
               }),
               let first = liveModels.first
         else { return }
