@@ -232,8 +232,8 @@ struct ModelBenchmarkPanel: View {
                     .foregroundStyle(AgentPalette.secondaryText)
             case .finished(let result):
                 HStack(spacing: 8) {
-                    benchmarkMetric(value: String(format: "%.0f", charactersPerSecond(result)), unit: "chars/s", tint: AgentPalette.green)
-                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "first token", tint: AgentPalette.cyan)
+                    benchmarkMetric(value: String(format: "%.0f", endToEndCharactersPerSecond(result)), unit: "e2e chars/s", tint: AgentPalette.green)
+                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "first output", tint: AgentPalette.cyan)
                     benchmarkMetric(value: String(format: "%.1fs", result.totalDuration), unit: "total", tint: AgentPalette.lilac)
                 }
                 Text("\(result.modelName) · \(result.generatedCharacters) observed characters · not qualification evidence")
@@ -268,7 +268,7 @@ struct ModelBenchmarkPanel: View {
         .agentControlSurface(radius: 11, tint: tint.opacity(0.08), selected: false)
     }
 
-    private func charactersPerSecond(_ result: LocalModelBenchmarkResult) -> Double {
+    private func endToEndCharactersPerSecond(_ result: LocalModelBenchmarkResult) -> Double {
         guard result.totalDuration > 0 else { return 0 }
         return Double(result.generatedCharacters) / result.totalDuration
     }
