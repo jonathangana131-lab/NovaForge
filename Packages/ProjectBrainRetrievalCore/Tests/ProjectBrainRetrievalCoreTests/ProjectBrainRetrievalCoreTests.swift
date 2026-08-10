@@ -125,6 +125,42 @@ final class ProjectBrainRetrievalCoreTests: XCTestCase {
         }
     }
 
+    func testRequiredStaleFactCannotBeEvictedByFresherOptionalContext() throws {
+        let request = try ProjectBrainRetrievalRequest(
+            requestID: "req",
+            projectID: "project",
+            sourceRevisionID: "rev-1",
+            requiredFactIDs: ["stale-blocker"],
+            budget: try .init(maximumItems: 1, maximumUTF8Bytes: 128)
+        )
+
+        let plan = try ProjectBrainRetrievalPlanner.plan(
+            request: request,
+            candidates: [
+                try candidate(
+                    "stale-blocker",
+                    tier: .l2ProjectMemory,
+                    freshness: .stale,
+                    priority: 0,
+                    text: "stale but required blocker"
+                ),
+                try candidate(
+                    "fresh-optional",
+                    tier: .l1ActiveWorkingSet,
+                    freshness: .current,
+                    priority: .max,
+                    text: "fresh optional"
+                ),
+            ]
+        )
+
+        XCTAssertEqual(plan.selected.map(\.factID), ["stale-blocker"])
+        XCTAssertEqual(
+            plan.omissions,
+            [.init(factID: "fresh-optional", reason: .itemBudget)]
+        )
+    }
+
     func testCurrentFactsPrecedeUnknownAndStaleWithinSameTier() throws {
         let plan = try ProjectBrainRetrievalPlanner.plan(
             request: request(maximumItems: 3, maximumBytes: 128),
