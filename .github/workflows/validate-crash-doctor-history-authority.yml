@@ -1,0 +1,25 @@
+name: Validate Crash Doctor history authority
+
+on:
+  push:
+    branches:
+      - validation/GPT56SOL-NF-V14-CRASH-HISTORY-0810/history-authority/e2
+
+permissions:
+  contents: read
+
+jobs:
+  crash-doctor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exact product diff check
+        run: |
+          test "$(git rev-parse HEAD^)" = "c82b7fb629564d3bd8597d3e24496185aec01c64"
+          git diff --check 39ab1b750098ae3f960ee606f7d22c717328ff63...HEAD^
+      - name: Debug package tests
+        run: swift test --package-path Packages/ForgeCrashDoctorCore -Xswiftc -warnings-as-errors
+      - name: Release package tests
+        run: swift test --package-path Packages/ForgeCrashDoctorCore --configuration release -Xswiftc -warnings-as-errors
