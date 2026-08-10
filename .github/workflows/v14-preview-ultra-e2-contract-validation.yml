@@ -1,0 +1,144 @@
+name: V14 Preview Ultra E2 Contract Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PREVIEW-ULTRA-0810/e2-contract
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bind validation to exact product head
+        shell: bash
+        env:
+          PRODUCT_HEAD: ab91f7fa2a9747368021c1ffb20c85b314124672
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_HEAD"
+          mapfile -t changed < <(git diff --name-only "$PRODUCT_HEAD"...HEAD)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = ".github/workflows/v14-preview-ultra-e2-contract-validation.yml"
+          git diff --check "$PRODUCT_HEAD"...HEAD
+
+      - name: Verify five-stop Preview effort contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          composer_path = Path("AgentPad/Views/ChatComposer.swift")
+          provider_path = Path("AgentPad/Services/AIProvider.swift")
+          composer = composer_path.read_text()
+          provider = provider_path.read_text()
+
+          def require(condition: bool, message: str) -> None:
+              if not condition:
+                  raise SystemExit(message)
+
+          level_match = re.search(
+              r"private enum Level: String, CaseIterable, Identifiable \{(?P<body>.*?)\n    \}",
+              composer,
+              re.S,
+          )
+          require(level_match is not None, "Composer reasoning Level enum not found")
+          level_body = level_match.group("body")
+          cases = re.findall(r"^        case (\w+)$", level_body, re.M)
+          require(
+              cases[:5] == ["low", "medium", "high", "extraHigh", "ultraCode"],
+              f"Unexpected five-stop order: {cases[:5]}",
+          )
+
+          expected_titles = {
+              "low": "Low",
+              "medium": "Medium",
+              "high": "High",
+              "extraHigh": "Extra High",
+              "ultraCode": "Ultra",
+          }
+          for case, title in expected_titles.items():
+              require(
+                  re.search(rf'case \.{case}: "{re.escape(title)}"', level_body) is not None,
+                  f"Missing user-facing title {case} -> {title}",
+              )
+
+          require(
+              'case .ultraCode:\n            "Ultra"' in composer,
+              "Collapsed composer control does not present enhanced mode as Ultra",
+          )
+          require(
+              'case .ultraCode: "Ultra"' in provider,
+              "Shared orchestration title does not present enhanced mode as Ultra",
+          )
+
+          select_match = re.search(
+              r"private func select\(_ level: Level\) \{(?P<body>.*?)\n    \}\n\}",
+              composer,
+              re.S,
+          )
+          require(select_match is not None, "Reasoning level selector not found")
+          select_body = select_match.group("body")
+          require(
+              re.search(
+                  r"case \.ultraCode:\s*preferences\.reasoningEffort = \.max\s*preferences\.orchestrationMode = \.ultraCode",
+                  select_body,
+                  re.S,
+              ) is not None,
+              "Ultra no longer maps to max reasoning plus enhanced orchestration",
+          )
+          require(
+              re.search(
+                  r"case \.extraHigh:\s*preferences\.reasoningEffort = \.xhigh\s*preferences\.orchestrationMode = \.standard",
+                  select_body,
+                  re.S,
+              ) is not None,
+              "Extra High mapping drifted",
+          )
+
+          require(
+              re.search(
+                  r"if preferences\.orchestrationMode == \.ultra \{\s*preferences\.reasoningEffort = \.xhigh\s*preferences\.orchestrationMode = \.standard",
+                  composer,
+                  re.S,
+              ) is not None,
+              "Legacy Ultra migration to Extra High drifted",
+          )
+
+          roots = [Path("AgentPad"), Path("AgentPadTests"), Path("Packages")]
+          quoted_legacy = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob("*.swift"):
+                  for number, line in enumerate(path.read_text().splitlines(), 1):
+                      if '"UltraCode"' in line:
+                          quoted_legacy.append(f"{path}:{number}:{line.strip()}")
+          require(
+              not quoted_legacy,
+              "Quoted developer-facing UltraCode remains in Swift user contract:\n" + "\n".join(quoted_legacy),
+          )
+
+          print("PASS: Low -> Medium -> High -> Extra High -> Ultra")
+          print("PASS: Ultra -> reasoningEffort .max + orchestrationMode .ultraCode")
+          print("PASS: legacy .ultra migrates to Extra High")
+          print("PASS: no quoted UltraCode literal remains in AgentPad/AgentPadTests/Packages Swift")
+          PY
+
+      - name: Record validation boundary
+        shell: bash
+        run: |
+          cat <<'EOF'
+          STATIC CONTRACT VALIDATION ONLY.
+          This run does not claim Xcode build, Simulator interaction, persistence,
+          provider capability, accessibility, visual acceptance, performance,
+          or physical-device evidence.
+          EOF
