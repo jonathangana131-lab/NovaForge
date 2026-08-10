@@ -17,12 +17,14 @@ jobs:
     steps:
       - name: Checkout exact validation composition
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Swift toolchain
         run: swift --version
 
       - name: Diff hygiene
-        run: git diff --check HEAD^ -- Packages/ForgeHomeCore .github/workflows/v14-home-truth-validation.yml
+        run: git diff --check origin/main...HEAD -- Packages/ForgeHomeCore .github/workflows/v14-home-truth-validation.yml
 
       - name: Debug package tests
         run: swift test --package-path Packages/ForgeHomeCore -Xswiftc -warnings-as-errors
@@ -60,6 +62,10 @@ jobs:
         run: |
           set -euo pipefail
           module_file="$(find Packages/ForgeHomeCore/.build -type f -path '*/debug/Modules/ForgeHomeCore.swiftmodule' -print -quit)"
+          if [[ -z "$module_file" ]]; then
+            echo "ForgeHomeCore.swiftmodule not found after debug build" >&2
+            exit 1
+          fi
           module_dir="$(dirname "$module_file")"
           cat > /tmp/ForgeHomeCodableProbe.swift <<'SWIFT'
           import ForgeHomeCore
