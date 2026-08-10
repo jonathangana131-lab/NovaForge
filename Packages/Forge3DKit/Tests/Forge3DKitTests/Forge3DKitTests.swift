@@ -86,6 +86,27 @@ final class Forge3DKitTests: XCTestCase {
         XCTAssertTrue(js.contains("Number.isFinite(value) ? clamp(value, -1.0, 1.0) : 0.0"))
     }
 
+    func testGeneratedProjectNormalizesAutomationCapabilityToDescriptorTruth() {
+        let withoutDescriptor = Forge3DGeneratedProject(
+            blueprint: blueprint,
+            entryPath: "index.html",
+            files: [],
+            semanticCapabilities: [.localSave, .semanticAutomation]
+        )
+        XCTAssertEqual(withoutDescriptor.semanticCapabilities, [.localSave])
+        XCTAssertNil(withoutDescriptor.semanticAutomation)
+
+        let withDescriptor = Forge3DGeneratedProject(
+            blueprint: blueprint,
+            entryPath: "index.html",
+            files: [],
+            semanticCapabilities: [.localSave],
+            semanticAutomation: Forge3DSemanticContract.descriptor
+        )
+        XCTAssertEqual(withDescriptor.semanticCapabilities, [.localSave, .semanticAutomation])
+        XCTAssertEqual(withDescriptor.semanticAutomation, Forge3DSemanticContract.descriptor)
+    }
+
     func testBlueprintRoundTripsThroughCodable() throws {
         let data = try JSONEncoder().encode(blueprint)
         XCTAssertEqual(try JSONDecoder().decode(Forge3DBlueprint.self, from: data), blueprint)
