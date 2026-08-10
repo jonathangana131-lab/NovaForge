@@ -1,0 +1,63 @@
+name: V14 Forge3D semantic self-play validation
+
+on:
+  push:
+    branches:
+      - 'validation/GPT56-SOL-NF-V14-SELFPLAY-0810/forge3d-semantic'
+
+permissions:
+  contents: read
+
+jobs:
+  forge-3d-kit:
+    name: Forge3DKit ${{ matrix.configuration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Assert exact current-main product bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "f5d1bc3ecc39f208a103022ba20bbcc697076050"
+          git diff --check HEAD^
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Package.swift)" = "274d5d2da2cd59caec930ebd02921a921d3bd50d"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Sources/Forge3DKit/Forge3DGenerator.swift)" = "1b01d82f3c11f72e6e27e68490d646dcec640043"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Sources/Forge3DKit/Forge3DModels.swift)" = "bce7f1a4b8d86b2efe6819667c3cf7846a3a3b6a"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Sources/Forge3DKit/Forge3DSemanticAutomation.swift)" = "b2cb9d047932fd036bb33fe91102663b6d4d9a1d"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Sources/Forge3DKit/Forge3DTemplate.swift)" = "93a4d4b840be26719e11a0808f20d146da2161f3"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Sources/Forge3DKit/Forge3DTemplateCoreA.swift)" = "8bef88d6f1e0af9d82c0dc2fe8306ed27b99e931"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Sources/Forge3DKit/Forge3DTemplateCoreB.swift)" = "3012146480f8fee039231b3b184d528bc5a31133"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Sources/Forge3DKit/Forge3DTemplateCoreC.swift)" = "77dc32379b0efb2207007438c0e24d09f34a86b8"
+          test "$(git rev-parse HEAD:Packages/Forge3DKit/Tests/Forge3DKitTests/Forge3DKitTests.swift)" = "9087a8af3b69899e3d79ef20320805b723fb69d6"
+      - name: Test Forge3DKit
+        shell: bash
+        run: |
+          set -uo pipefail
+          swift --version
+          node --version
+          if [[ "${{ matrix.configuration }}" == "release" ]]; then
+            command=(swift test --package-path Packages/Forge3DKit -c release -Xswiftc -warnings-as-errors)
+          else
+            command=(swift test --package-path Packages/Forge3DKit -Xswiftc -warnings-as-errors)
+          fi
+          set +e
+          output="$("${command[@]}" 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $status -ne 0 ]]; then
+            while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              safe="${line//'%'/'%25'}"
+              safe="${safe//$'\r'/'%0D'}"
+              safe="${safe//$'\n'/'%0A'}"
+              echo "::error title=Forge3D validation::$safe"
+            done < <(printf '%s\n' "$output" | tail -n 40)
+            exit "$status"
+          fi
