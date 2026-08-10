@@ -27,7 +27,7 @@ struct ForgePlaytestCoreTests {
             runtimeVersion: "runtime-7",
             persona: .goalRunner,
             deterministicSeed: 42,
-            maximumAuthorizedActions: 4,
+            maximumPlannedActions: 4,
             milestones: [milestone("goal-reached")],
             actions: [
                 activate(1, id: "start", target: "start-button"),
@@ -193,7 +193,7 @@ struct ForgePlaytestCoreTests {
                 runtimeVersion: "runtime-1",
                 persona: .persistenceTester,
                 deterministicSeed: 1,
-                maximumAuthorizedActions: 2,
+                maximumPlannedActions: 2,
                 milestones: [save],
                 actions: [activate(1, id: "save", target: "save-button", milestones: ["save-restored"])]
             )
@@ -209,7 +209,7 @@ struct ForgePlaytestCoreTests {
                 runtimeVersion: "runtime-1",
                 persona: .persistenceTester,
                 deterministicSeed: 1,
-                maximumAuthorizedActions: 2,
+                maximumPlannedActions: 2,
                 milestones: [save],
                 actions: [activate(1, id: "save", target: "save-button", milestones: ["save-restored"]), restart]
             )
@@ -227,7 +227,7 @@ struct ForgePlaytestCoreTests {
             runtimeVersion: "runtime-1",
             persona: .persistenceTester,
             deterministicSeed: 1,
-            maximumAuthorizedActions: 3,
+            maximumPlannedActions: 3,
             milestones: [restored],
             actions: [
                 activate(1, id: "save", target: "save-button"),
