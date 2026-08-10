@@ -227,14 +227,17 @@ public enum ForgeCreationAction: String, CaseIterable, Hashable, Sendable {
     case details
 }
 
-public enum ForgeCreationRunState: Hashable, Sendable {
-    case unavailable
-    case available(ForgeRuntimeEvidence)
+/// Read-only presentation of Home run capability. External callers cannot construct
+/// a runnable value; only package-owned projection from authenticated Home trust may do so.
+public struct ForgeCreationRunState: Hashable, Sendable {
+    private let acceptedRuntimeEvidence: ForgeRuntimeEvidence?
 
-    public var isRunnable: Bool {
-        if case .available = self { return true }
-        return false
+    init(acceptedRuntimeEvidence: ForgeRuntimeEvidence?) {
+        self.acceptedRuntimeEvidence = acceptedRuntimeEvidence
     }
+
+    public var isRunnable: Bool { acceptedRuntimeEvidence != nil }
+    public var runtimeEvidence: ForgeRuntimeEvidence? { acceptedRuntimeEvidence }
 }
 
 /// Derived presentation state. Intentionally non-Codable: relaunch must rebuild
@@ -252,6 +255,8 @@ public struct ForgeCreationCard: Hashable, Sendable, Identifiable {
 public struct ForgeHomeSnapshot: Hashable, Sendable {
     public static let creationPrompt = "What do you want to make?"
     public let cards: [ForgeCreationCard]
+    /// Duplicate persisted identities are quarantined rather than selecting a caller-controlled winner.
+    public let conflictedCreationIDs: [ForgeCreationID]
 }
 
 public enum ForgeHomeProjector {
@@ -259,9 +264,18 @@ public enum ForgeHomeProjector {
         _ records: [ForgeCreationRecord],
         trustedBindings: Set<ForgeHomeTrustBinding> = []
     ) -> ForgeHomeSnapshot {
-        let cards = records.map { makeCard($0, trustedBindings: trustedBindings) }
+        let grouped = Dictionary(grouping: records, by: \.id)
+        let conflictedCreationIDs = grouped
+            .filter { $0.value.count > 1 }
+            .map(\.key)
+            .sorted()
+        let uniqueRecords = grouped
+            .filter { $0.value.count == 1 }
+            .compactMap { $0.value.first }
+        let cards = uniqueRecords
+            .map { makeCard($0, trustedBindings: trustedBindings) }
             .sorted(by: cardComesBefore)
-        return ForgeHomeSnapshot(cards: cards)
+        return ForgeHomeSnapshot(cards: cards, conflictedCreationIDs: conflictedCreationIDs)
     }
 
     public static func makeCard(
@@ -282,7 +296,7 @@ public enum ForgeHomeProjector {
             acceptedRuntime = nil
         }
 
-        let runState: ForgeCreationRunState = acceptedRuntime.map(ForgeCreationRunState.available) ?? .unavailable
+        let runState = ForgeCreationRunState(acceptedRuntimeEvidence: acceptedRuntime)
 
         let thumbnail: ForgeThumbnailEvidence?
         if isTrusted,
