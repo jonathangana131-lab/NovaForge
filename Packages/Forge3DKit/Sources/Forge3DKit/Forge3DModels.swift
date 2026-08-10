@@ -11,6 +11,68 @@ public enum Forge3DSemanticCapability: String, Codable, CaseIterable, Sendable {
     case controller
     case touch
     case keyboard
+    /// The generated artifact exposes deterministic semantic targets for a host-authorized runtime bridge.
+    /// This does not grant runtime authority or prove that an interaction was delivered.
+    case semanticAutomation
+}
+
+public struct Forge3DSemanticActionDescriptor: Equatable, Sendable {
+    public let targetID: String
+    public let minimumValue: Double
+    public let maximumValue: Double
+    public let neutralValue: Double
+
+    init(targetID: String, minimumValue: Double, maximumValue: Double, neutralValue: Double) {
+        self.targetID = targetID
+        self.minimumValue = minimumValue
+        self.maximumValue = maximumValue
+        self.neutralValue = neutralValue
+    }
+}
+
+/// Starter-owned discoverability metadata for semantic runtime automation.
+///
+/// These IDs/ranges describe generated project surfaces only. ForgeRuntimeKit remains responsible for
+/// session authorization, source-revision binding, interaction budgets, dispatch, and trusted evidence.
+public struct Forge3DSemanticAutomationDescriptor: Equatable, Sendable {
+    public let pauseControlID: String
+    public let throttleAction: Forge3DSemanticActionDescriptor
+    public let steeringAction: Forge3DSemanticActionDescriptor
+
+    init(
+        pauseControlID: String,
+        throttleAction: Forge3DSemanticActionDescriptor,
+        steeringAction: Forge3DSemanticActionDescriptor
+    ) {
+        self.pauseControlID = pauseControlID
+        self.throttleAction = throttleAction
+        self.steeringAction = steeringAction
+    }
+}
+
+enum Forge3DSemanticContract {
+    static let pauseControlID = "scene.pause-toggle"
+    static let throttleActionID = "drive.throttle"
+    static let steeringActionID = "drive.steer"
+    static let minimumActionValue = -1.0
+    static let maximumActionValue = 1.0
+    static let neutralActionValue = 0.0
+
+    static let descriptor = Forge3DSemanticAutomationDescriptor(
+        pauseControlID: pauseControlID,
+        throttleAction: .init(
+            targetID: throttleActionID,
+            minimumValue: minimumActionValue,
+            maximumValue: maximumActionValue,
+            neutralValue: neutralActionValue
+        ),
+        steeringAction: .init(
+            targetID: steeringActionID,
+            minimumValue: minimumActionValue,
+            maximumValue: maximumActionValue,
+            neutralValue: neutralActionValue
+        )
+    )
 }
 
 public struct Forge3DBlueprint: Codable, Equatable, Sendable {
@@ -137,16 +199,19 @@ public struct Forge3DGeneratedProject: Equatable, Sendable {
     public let entryPath: String
     public let files: [Forge3DGeneratedFile]
     public let semanticCapabilities: Set<Forge3DSemanticCapability>
+    public let semanticAutomation: Forge3DSemanticAutomationDescriptor?
 
     public init(
         blueprint: Forge3DBlueprint,
         entryPath: String,
         files: [Forge3DGeneratedFile],
-        semanticCapabilities: Set<Forge3DSemanticCapability>
+        semanticCapabilities: Set<Forge3DSemanticCapability>,
+        semanticAutomation: Forge3DSemanticAutomationDescriptor? = nil
     ) {
         self.blueprint = blueprint
         self.entryPath = entryPath
         self.files = files
         self.semanticCapabilities = semanticCapabilities
+        self.semanticAutomation = semanticAutomation
     }
 }
