@@ -115,21 +115,33 @@ final class ContinuityStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ContinuityCore.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) {
-                return modulesURL
+        let anchors = [
+            Bundle(for: ContinuityStaticTrustBoundaryTests.self).bundleURL,
+            URL(fileURLWithPath: CommandLine.arguments[0]),
+        ]
+
+        for anchor in anchors {
+            var directory = anchor.deletingLastPathComponent()
+
+            for _ in 0..<10 {
+                let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+                let moduleURL = modulesURL.appendingPathComponent("ContinuityCore.swiftmodule")
+                if FileManager.default.fileExists(atPath: moduleURL.path) {
+                    return modulesURL
+                }
+
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path {
+                    break
+                }
+                directory = parent
             }
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { break }
-            directory = parent
         }
+
         throw NSError(
             domain: "ContinuityStaticTrustBoundaryTests",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "ContinuityCore module is missing from active SwiftPM test executable ancestry"]
+            userInfo: [NSLocalizedDescriptionKey: "ContinuityCore module is missing from active SwiftPM test bundle/executable ancestry"]
         )
     }
 }
