@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
       - name: Swift version
         run: swift --version
       - name: Verify recovered product ancestry and blobs
