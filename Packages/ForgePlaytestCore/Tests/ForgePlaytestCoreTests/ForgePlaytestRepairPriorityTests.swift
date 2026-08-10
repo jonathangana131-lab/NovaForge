@@ -133,7 +133,7 @@ final class ForgePlaytestRepairPriorityTests: XCTestCase {
             receiptID: "other-binding",
             project: project,
             journeyID: journeyID,
-            kind: .consoleLog
+            kind: .runtimeEventLog
         )
         XCTAssertThrowsError(
             try ForgePlaytestAuthenticatedDefectBinding(
