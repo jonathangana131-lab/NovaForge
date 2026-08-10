@@ -1,0 +1,81 @@
+name: NovaForge truthful Ultra capability copy patch
+
+on:
+  push:
+    branches:
+      - worker/GPT56-SOL-NF-V14-PREVIEW-ULTRA-COPY-0810/capability-copy/e1
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: worker/GPT56-SOL-NF-V14-PREVIEW-ULTRA-COPY-0810/capability-copy/e1
+          fetch-depth: 0
+      - name: Apply narrow capability-copy patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          composer = Path('AgentPad/Views/ChatComposer.swift')
+          text = composer.read_text()
+          replacements = [
+              (
+                  '            case .ultraCode: "Max reasoning + isolated workspace agents"',
+                  '            case .ultraCode: "Isolated specialist agents + lead verification"',
+                  1,
+              ),
+              (
+                  '''                Text(selection == .ultraCode\n                     ? "Max reasoning + isolated workspace agents"\n                     : selection.detail)''',
+                  '''                Text(selection == .ultraCode\n                     ? ultraDetail\n                     : selection.detail)''',
+                  1,
+              ),
+              (
+                  '''    private var activeTint: Color {\n        selection == .ultraCode ? AgentPalette.indigo : provider.tint\n    }\n\n    private var selection: Level {''',
+                  '''    private var activeTint: Color {\n        selection == .ultraCode ? AgentPalette.indigo : provider.tint\n    }\n\n    private var ultraDetail: String {\n        guard let effectiveEffort = preferences.effectiveReasoningEffort(\n            provider: provider,\n            modelID: modelID\n        ) else {\n            return "Isolated specialist agents + lead verification"\n        }\n        return "\\(effectiveEffort.title) model reasoning + isolated specialist agents"\n    }\n\n    private var selection: Level {''',
+                  1,
+              ),
+          ]
+          for old, new, expected in replacements:
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'ChatComposer replacement mismatch: expected {expected}, found {count}: {old[:100]!r}')
+              text = text.replace(old, new, expected)
+          composer.write_text(text)
+
+          ui = Path('AgentPadUITests/AgentPadUITests.swift')
+          tests = ui.read_text()
+          old = '''        XCTAssertTrue(\n            app.staticTexts.containing(\n                NSPredicate(format: "label CONTAINS[c] %@", "workspace")\n            ).firstMatch.waitForExistence(timeout: 5),\n            "UltraCode should compactly explain its maximum-reasoning workspace behavior."\n        )'''
+          new = '''        let ultraCapabilityDetail = app.staticTexts.containing(\n            NSPredicate(\n                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@",\n                "Extra High model reasoning",\n                "isolated specialist agents"\n            )\n        ).firstMatch\n        XCTAssertTrue(\n            ultraCapabilityDetail.waitForExistence(timeout: 5),\n            "GPT-5.5 Ultra must describe the actual xhigh model ceiling plus real isolated-agent orchestration."\n        )\n        XCTAssertFalse(\n            app.staticTexts.containing(\n                NSPredicate(format: "label CONTAINS[c] %@", "Max reasoning + isolated")\n            ).firstMatch.exists,\n            "GPT-5.5 Ultra must not claim provider-native Max reasoning when capability mapping clamps it to Extra High."\n        )'''
+          count = tests.count(old)
+          if count != 1:
+              raise SystemExit(f'UI regression replacement mismatch: expected 1, found {count}')
+          tests = tests.replace(old, new, 1)
+          ui.write_text(tests)
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          c = Path('AgentPad/Views/ChatComposer.swift').read_text()
+          t = Path('AgentPadUITests/AgentPadUITests.swift').read_text()
+          assert 'Max reasoning + isolated workspace agents' not in c
+          assert 'preferences.effectiveReasoningEffort(' in c
+          assert 'return "\\(effectiveEffort.title) model reasoning + isolated specialist agents"' in c
+          assert 'Extra High model reasoning' in t
+          assert 'Max reasoning + isolated' in t
+          PY
+
+          git diff --check
+          git diff -- AgentPad/Views/ChatComposer.swift AgentPadUITests/AgentPadUITests.swift
+
+          git config user.name "NovaForge GO Worker"
+          git config user.email "novaforge-go-worker@users.noreply.github.com"
+          git rm .github/workflows/nf-preview-ultra-copy-patch.yml
+          git add AgentPad/Views/ChatComposer.swift AgentPadUITests/AgentPadUITests.swift
+          git commit -m "Preview: make Ultra capability copy truthful"
+          git push origin HEAD:worker/GPT56-SOL-NF-V14-PREVIEW-ULTRA-COPY-0810/capability-copy/e1
