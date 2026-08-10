@@ -1,4 +1,4 @@
-name: Publish Playtest repair priority
+name: Publish Playtest repair coordination
 
 on:
   push:
@@ -28,55 +28,6 @@ jobs:
           parent="$(gh api "repos/$REPO/git/ref/heads/$PARENT_BRANCH" --jq '.object.sha')"
           test "$product" = "$EXPECTED_PRODUCT"
           test "$parent" = "$EXPECTED_PARENT"
-      - name: Open stacked repair PR
-        id: pr
-        run: |
-          set -euo pipefail
-          existing="$(gh pr list --repo "$REPO" --head "$PRODUCT_BRANCH" --state all --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            echo "number=$existing" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          cat > /tmp/pr-body.md <<'EOF'
-          ## V14 stacked repair
-
-          Repairs the remaining Playtest truth-ordering P1 on canonical draft #103 at exact parent `ee4ed30a523f201bf30bad1adf603b3d9ddd0826`.
-
-          ### Problem
-
-          `ForgePlaytestGateEvaluator` already scanned high/critical defects across every validated result, including `.failed` and `.interrupted`, but returned `.blocked(...)` before that scan. A required journey could therefore fail with a receipted severe defect and no completed replacement, yet Full Forge would only see `missingCompletedJourneys` and lose the actionable repair truth.
-
-          ### Fix
-
-          - Preserve completed-only persona/evidence/milestone qualification.
-          - Preserve the public exact execution-binding gate unchanged.
-          - Evaluate deterministic high/critical repair items after all plan/result identity validation but **before** generic acceptance blockers.
-          - Add a regression through the public five-argument evaluator for both `.failed` and `.interrupted` required Goal Runner journeys with an evidence-backed critical runtime defect.
-
-          This is deliberately a two-file semantic repair. It adds no new authority type and does not widen Runtime, Mission, Completion, VisualQA, app/UI, or provider ownership.
-
-          ### Exact validation
-
-          Product head: `3d9788cbe25bea4bec64a454c8f2a481130ee8d0`
-
-          Validation-only Actions run `31370048305`, job `93396760183`, Ubuntu 24.04 / Swift 6.3.3:
-          - exact parent assertion: PASS
-          - `git diff --check ee4ed30a...HEAD^`: PASS
-          - Debug warnings-as-errors: **38/38 PASS**
-          - Release warnings-as-errors: **38/38 PASS**
-          - new public-gate failed/interrupted repair-priority regression: PASS in both configurations
-
-          ### Truth boundary
-
-          This changes verdict ordering only. Opaque evidence references are still not authenticated by this package; runtime execution remains gated by the existing canonical `ForgePlaytestExecutionBinding` handoff. `.accepted` remains playtest evidence, not mission completion. No iPhone/WebKit execution, screenshot, accessibility, performance, thermal, or completion evidence is claimed here.
-
-          ### Swarm convergence note
-
-          A late independent review also found draft #209 introduces a second incompatible `Packages/ForgePlaytestCore/**` lineage while #103 remains open/canonical, and #209's Persistence Tester can currently satisfy its candidate verdict with a reused milestone first observed before restart. This PR intentionally stacks on #103 rather than multiplying Playtest authority.
-          EOF
-          url="$(gh pr create --repo "$REPO" --title "[V14] Prioritize known severe playtest defects before blockers" --head "$PRODUCT_BRANCH" --base "$PARENT_BRANCH" --draft --body-file /tmp/pr-body.md)"
-          number="${url##*/}"
-          echo "number=$number" >> "$GITHUB_OUTPUT"
       - name: Persist swarm coordination
         run: |
           set -euo pipefail
@@ -84,17 +35,17 @@ jobs:
           if gh api --paginate "repos/$REPO/issues/23/comments?per_page=100" --jq '.[].body' | grep -Fq "$marker"; then
             exit 0
           fi
-          cat > /tmp/coordination.md <<EOF
-          CLAIM + VALIDATED HANDOFF | worker=$marker | protocol=NF-SWARM-v14 | lane=playtest-known-defect-repair-priority | dependency=PR#103@$EXPECTED_PARENT | product_head=$EXPECTED_PRODUCT | stacked_pr=#${{ steps.pr.outputs.number }} | validation=Actions 31370048305 / job 93396760183 GREEN, Swift 6.3.3 Ubuntu, 38/38 Debug + 38/38 Release warnings-as-errors, exact diff guard PASS. Scope: canonical ForgePlaytestCore now surfaces validated exact-revision high/critical defects from failed/interrupted required journeys as repairRequired before generic missing-completed blockers; completed-only acceptance qualification and public execution binding remain unchanged. Product diff=2 files only. Note: connector issue/review content creation was under GitHub secondary rate limit during implementation; branch ownership and exact validation were durable before this coordination post.
+          cat > /tmp/coordination.md <<'EOF'
+          CLAIM + VALIDATED HANDOFF | worker=GPT56SOL-NF-V14-PLAYTEST-REPAIR-0810 | protocol=NF-SWARM-v14 | lane=playtest-known-defect-repair-priority | dependency=PR#103@ee4ed30a523f201bf30bad1adf603b3d9ddd0826 | product_head=3d9788cbe25bea4bec64a454c8f2a481130ee8d0 | branch=worker/GPT56SOL-NF-V14-PLAYTEST-REPAIR-0810/repair-priority/e1 | validation=Actions 31370048305 / job 93396760183 GREEN, Swift 6.3.3 Ubuntu, 38/38 Debug + 38/38 Release warnings-as-errors, exact diff guard PASS. Scope: canonical ForgePlaytestCore now surfaces validated exact-revision high/critical defects from failed/interrupted required journeys as repairRequired before generic missing-completed blockers; completed-only acceptance qualification and public execution binding remain unchanged. Product diff=2 files only. Connector issue/review/PR creation was under GitHub secondary rate limit during implementation; branch ownership and exact validation were durable first. GitHub Actions also has repository policy preventing PR creation, so the validated stacked branch is ready for PR publication through the normal connector once its write throttle clears.
 
           CONVERGENCE RELEASE | prior lane=crash-doctor-repair-history-authority-hardening | my validated alternative head=6024e1bb9bed181bf954eb6b03715f445c0c37c6, Actions 31368891851 / job 93393209622 GREEN 26/26 Debug + 26/26 Release. Late refresh found active stronger owner branch agent/v14-crashdoctor-control-trust-8b10@1fbde67ae3f6e457183bb9cae4cc204bbdf4c2e1 binding history+policy to exact runtime subject, so I did not open a duplicate Crash Doctor PR. Prefer that canonical design once its owner's stated fallback-key blocker is durably repaired/validated.
           EOF
           gh issue comment 23 --repo "$REPO" --body-file /tmp/coordination.md
-      - name: Persist PR 209 convergence review
+      - name: Persist PR 209 convergence finding
         run: |
           set -euo pipefail
           marker='GPT56SOL-NF-V14-PLAYTEST-REPAIR-0810'
-          if gh api --paginate "repos/$REPO/pulls/209/reviews?per_page=100" --jq '.[].body // ""' | grep -Fq "$marker"; then
+          if gh api --paginate "repos/$REPO/issues/209/comments?per_page=100" --jq '.[].body' | grep -Fq "$marker"; then
             exit 0
           fi
           cat > /tmp/review.md <<'EOF'
@@ -102,8 +53,8 @@ jobs:
 
           **P1 — Persistence Tester can project `satisfiedCandidate` without post-restart milestone observation.** Journey construction only checks that a required milestone ID is referenced by some action after the first `runtimeRestart`. Evaluation then uses that milestone's earliest expected sequence anywhere in the journey. A valid shape can reference `save-restored` at action 1, restart at action 2, reference it again at action 3, report all actions delivered, and provide the sole milestone observation as `firstObservedAfterActionSequence = 1`. Construction passes because action 3 is post-restart; evaluation passes because the earliest expected sequence is 1; no post-restart observation exists. Fail closed by requiring the persistence-proof milestone's expected/observed boundary to be after restart, or model an explicit post-restart observation, and regress the reused pre/post milestone case.
 
-          **P1 convergence/ownership — #209 is a second incompatible `Packages/ForgePlaytestCore/**` authority while draft #103 remains open/canonical.** #103 already defines all eight V14 personas plus execution/evidence/repair gating. There is no durable release/supersession making a parallel six-persona package safe. #209 should explicitly supersede #103 through one documented convergence or yield to #103; both cannot merge into the same package path/API. The remaining known-defect ordering P1 on #103 is repaired in the stacked PR created by this worker and validated 38/38 Debug + 38/38 Release.
+          **P1 convergence/ownership — #209 is a second incompatible `Packages/ForgePlaytestCore/**` authority while draft #103 remains open/canonical.** #103 already defines all eight V14 personas plus execution/evidence/repair gating. There is no durable release/supersession making a parallel six-persona package safe. #209 should explicitly supersede #103 through one documented convergence or yield to #103; both cannot merge into the same package path/API. The remaining known-defect ordering P1 on #103 is repaired on `worker/GPT56SOL-NF-V14-PLAYTEST-REPAIR-0810/repair-priority/e1` at `3d9788cbe25bea4bec64a454c8f2a481130ee8d0`, validated 38/38 Debug + 38/38 Release.
 
           I support #209's candidate-only/non-authorizing direction; the blockers are persistence semantics and duplicate authority, not a request to mint fake trusted receipts.
           EOF
-          gh pr review 209 --repo "$REPO" --comment --body-file /tmp/review.md
+          gh pr comment 209 --repo "$REPO" --body-file /tmp/review.md
