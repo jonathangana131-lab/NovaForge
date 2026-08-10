@@ -25,7 +25,7 @@ The Vector Drift geometry regression test parses the fixture's actual rover, bea
 
 The accessibility source regressions require document language, live status announcements, named controls, semantic automation targets, keyboard paths, and no autofocus. They are source-level guards only and do not substitute for VoiceOver, Accessibility Inspector, simulator, or physical-device evidence.
 
-The Swift validation script compiles the repository's actual `ForgeRuntimeManifest`, `ForgeRuntimeManifestValidator`, and `ForgeRuntimeLaunchAuthorization` sources with a temporary harness, then requires both fixture manifests to decode and be launchable under the default host support snapshot. It does not modify RuntimeKit or grant runtime authority.
+The Swift validation script compiles the repository's actual `ForgeRuntimeManifest`, `ForgeRuntimeManifestValidator`, `ForgeRuntimeLaunchAuthorization`, and `ForgeRuntimeProjectLoader` sources with a temporary harness. Each fixture must pass the host validator, derive bounded authorization, resolve its real `index.html` through the project sandbox, expose no unexpected assets, grant no capabilities/modules, and remain network-denied. The script does not modify RuntimeKit or execute WebKit.
 
 ## Worker evidence — 2026-08-10
 
@@ -38,8 +38,8 @@ On branch `agent/v14-generated-runtime-acceptance-fixtures`:
 - combined Python fixture tests: PASS, 10/10;
 - `python3 -m py_compile` for validator/tests: PASS;
 - inline JavaScript extracted from both fixtures and checked with `node --check`: PASS, 2/2;
-- current RuntimeKit manifest decoder + validator logic: PASS for both manifests, zero warnings;
-- repeatable Swift validator script syntax/end-to-end harness check: PASS in the worker environment using the current extracted RuntimeKit source logic; in a normal repository checkout the script compiles those three RuntimeKit files directly;
+- current RuntimeKit decoder/validator/project-loader logic: PASS for both fixtures; sandbox-resolved `index.html`, zero widened capability/module/network authority, and no bundled assets;
+- repeatable Swift project-loader script syntax/end-to-end harness check: PASS in the worker environment using the current extracted RuntimeKit source logic; in a normal repository checkout the script compiles those four RuntimeKit files directly;
 - active semantic-input bridge review: `novaforge:action` carries `detail.value` and `novaforge:gesture` carries `detail.gestureID`, matching Vector Drift listeners;
 - collision-aware 6 px grid reachability scan: all three Vector Drift beacon targets are reachable from spawn in the current obstacle geometry;
 - remote Git blob identity was checked against the locally tested bytes for both manifests, both HTML files, Python validator, and Python validator tests.
@@ -48,4 +48,4 @@ Headless Chromium screenshot attempts timed out in the worker environment becaus
 
 ## Truth boundary
 
-Passing these fixture validators proves only the checked source/structure, source-accessibility, geometry, and manifest-acceptance invariants. It does not prove a real ForgeRuntime launch, autonomous self-play completion, screenshot quality, Accessibility Inspector/VoiceOver behavior, simulator/physical-device behavior, performance, thermal behavior, or Completion Constitution acceptance. Those require their own receipts from the relevant NovaForge authorities.
+Passing these fixture validators proves only the checked source/structure, source-accessibility, geometry, manifest-acceptance, and pre-launch sandbox/authorization invariants. It does not prove WebKit launch, autonomous self-play completion, screenshot quality, Accessibility Inspector/VoiceOver behavior, simulator/physical-device behavior, performance, thermal behavior, or Completion Constitution acceptance. Those require their own receipts from the relevant NovaForge authorities.
