@@ -61,7 +61,7 @@ struct ComposerReasoningControl: View {
         case .ultra:
             "Extra High"
         case .ultraCode:
-            "UltraCode"
+            "Ultra"
         }
     }
 
@@ -157,7 +157,7 @@ private struct ComposerReasoningPicker: View {
             case .medium: "Medium"
             case .high: "High"
             case .extraHigh: "Extra High"
-            case .ultraCode: "UltraCode"
+            case .ultraCode: "Ultra"
             }
         }
 
@@ -447,7 +447,7 @@ struct AgentOrchestrationStatusCard: View {
                     .frame(width: 38, height: 38)
                     .background(tint.opacity(0.13), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(presentation.mode.title)
+                    Text(presentation.mode == .ultraCode ? "Ultra" : presentation.mode.title)
                         .font(.headline.weight(.bold))
                     Text(presentation.headline)
                         .font(.caption)
