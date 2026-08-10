@@ -1,0 +1,38 @@
+name: V14 Visual Selection Validation
+
+on:
+  pull_request:
+    paths:
+      - "Packages/ForgeVisualQAKit/**"
+      - ".github/workflows/v14-visual-selection-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-package:
+    name: Visual selection portable debug + release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeVisualQAKit -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeVisualQAKit -Xswiftc -warnings-as-errors
+
+  macos-package:
+    name: Visual selection macOS debug + release
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeVisualQAKit -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test -c release --package-path Packages/ForgeVisualQAKit -Xswiftc -warnings-as-errors
