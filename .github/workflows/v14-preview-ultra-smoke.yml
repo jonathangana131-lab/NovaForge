@@ -1,0 +1,32 @@
+name: V14 Preview Ultra Smoke
+
+on:
+  push:
+    branches:
+      - worker/GPT56SOL-NF-V14-PREVIEW-ULTRA-INTEGRATION-0810/e1
+    paths:
+      - .github/workflows/v14-preview-ultra-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Exact-head Ultra smoke
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run NovaForge smoke lane
+        env:
+          NOVAFORGE_TEST_LANE: smoke
+          XCODEBUILD_CAP_MINUTES: 18
+        run: bash ci/verify.sh
+      - name: Upload smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-ultra-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/verify-smoke
+          if-no-files-found: warn
+          retention-days: 7
