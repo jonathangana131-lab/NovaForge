@@ -1,0 +1,32 @@
+name: V14 Accessibility Policy Trust Validation
+
+on:
+  push:
+    branches:
+      - validation/GPT56-NF-V14-A11Y-POLICY-0810/policy-trust/e1
+
+permissions:
+  contents: read
+
+jobs:
+  accessibility-policy-trust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent and clean patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "290e89efff31262fa63569f2b2b1ba761edad0ad"
+          git diff --check HEAD^
+
+      - name: Debug package tests with warnings as errors
+        run: swift test --package-path Packages/ForgeAccessibilityCore -Xswiftc -warnings-as-errors
+
+      - name: Release package tests with warnings as errors
+        run: swift test --package-path Packages/ForgeAccessibilityCore -c release -Xswiftc -warnings-as-errors
