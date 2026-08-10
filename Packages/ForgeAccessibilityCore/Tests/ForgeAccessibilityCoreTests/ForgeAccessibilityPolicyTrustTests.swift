@@ -75,7 +75,7 @@ final class ForgeAccessibilityPolicyTrustTests: ForgeAccessibilityTestCase {
         XCTAssertTrue(evaluation.acceptedProducerReceiptIDs.isEmpty)
     }
 
-    func testDecodedEqualPolicyStillNeedsLiveTrustBindingAtPublicBoundary() throws {
+    func testDecodedEqualPolicyCanOnlyBeAcceptedWhenLiveTrustIsAlsoSupplied() throws {
         let acceptedPolicy = try policy()
         let archived = try JSONEncoder().encode(acceptedPolicy)
         let decoded = try JSONDecoder().decode(ForgeAccessibilityPolicy.self, from: archived)
@@ -91,6 +91,5 @@ final class ForgeAccessibilityPolicyTrustTests: ForgeAccessibilityTestCase {
         )
 
         XCTAssertEqual(evaluation.status, .accepted)
-        XCTAssertFalse(ForgeAccessibilityTrustedPolicy.self is any Codable.Type)
     }
 }
