@@ -759,7 +759,7 @@ struct LocalModelVariantRow: View {
 
     private var fitColor: Color {
         switch variant.deviceFit {
-        case .deviceProven: AgentPalette.green
+        case .deviceProven: AgentPalette.cyan
         case .ultraLight: AgentPalette.cyan
         case .memorySaver: AgentPalette.lilac
         }

@@ -17,7 +17,7 @@ enum LocalModelDeviceFit: String, Sendable, Hashable {
 
     var title: String {
         switch self {
-        case .deviceProven: "Device proven"
+        case .deviceProven: "Qualification pending"
         case .ultraLight: "Ultra light"
         case .memorySaver: "Memory saver"
         }
@@ -25,7 +25,7 @@ enum LocalModelDeviceFit: String, Sendable, Hashable {
 
     var symbol: String {
         switch self {
-        case .deviceProven: "checkmark.shield.fill"
+        case .deviceProven: "iphone"
         case .ultraLight: "bolt.fill"
         case .memorySaver: "memorychip.fill"
         }
@@ -116,13 +116,13 @@ enum LocalModelCatalog {
             releaseDateLabel: "Sep 18, 2024",
             parameterLabel: "1.5B",
             licenseLabel: "Apache 2.0",
-            benchmarkSummary: "Official Qwen coder baseline · physical-device canary proven",
+            benchmarkSummary: "Official Qwen coder baseline · exact-device qualification pending",
             capabilitySummary: "Code generation · editing · explanations",
             deviceFit: .deviceProven,
             estimatedPeakMemoryBytes: 1_900_000_000,
             minimumAvailableMemoryBeforeLoadBytes: 2_150_000_000,
             sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
-            details: "The proven iPhone 12 default. Conservative Metal offload, a 2,048-token context, and a 256-token answer cap protect first-prompt stability."
+            details: "The default iPhone 12-targeted profile. Conservative Metal offload, a 2,048-token context, and a 256-token answer cap are intended to reduce first-prompt memory pressure; exact-device qualification remains pending until receipt-backed evidence is available."
         ),
         .init(
             id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q3_K_M",
