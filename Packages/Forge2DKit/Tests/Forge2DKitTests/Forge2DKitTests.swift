@@ -78,6 +78,109 @@ final class Forge2DKitTests: XCTestCase {
             XCTFail(diagnostic)
         }
     }
+
+    func testGeneratedControlScriptPassesDeterministicNodeSemanticSmokeWhenNodeIsAvailable() throws {
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        probe.arguments = ["node", "--version"]
+        probe.standardOutput = Pipe()
+        probe.standardError = Pipe()
+        try probe.run()
+        probe.waitUntilExit()
+        guard probe.terminationStatus == 0 else {
+            throw XCTSkip("Node is unavailable on this SwiftPM host")
+        }
+
+        let js = try XCTUnwrap(try Forge2DGenerator.generate(blueprint).files.first(where: { $0.path == "game.js" })?.contents)
+        let harness = #"""
+        const __timers = [];
+        const __windowListeners = {};
+
+        function makeElement(id) {
+          const listeners = {};
+          return {
+            id,
+            dataset: {},
+            clientWidth: 960,
+            clientHeight: 540,
+            width: 960,
+            height: 540,
+            textContent: "",
+            addEventListener(type, callback) { (listeners[type] ||= []).push(callback); },
+            setPointerCapture() {},
+            setAttribute() {},
+            getContext() { return {}; },
+            __listeners: listeners
+          };
+        }
+
+        const __elements = Object.fromEntries(["game", "status", "pause", "left", "right", "jump"].map(id => [id, makeElement(id)]));
+        globalThis.document = {
+          hidden: false,
+          getElementById(id) { return __elements[id]; },
+          addEventListener() {}
+        };
+        globalThis.localStorage = {
+          getItem() { return null; },
+          setItem() {}
+        };
+        globalThis.navigator = { getGamepads() { return []; } };
+        globalThis.requestAnimationFrame = () => 1;
+        globalThis.window = {
+          devicePixelRatio: 1,
+          AudioContext: undefined,
+          webkitAudioContext: undefined,
+          addEventListener(type, callback) { (__windowListeners[type] ||= []).push(callback); },
+          setTimeout(callback) { __timers.push(callback); return __timers.length; },
+          clearTimeout() {}
+        };
+
+        function __emit(element, type, event = {}) {
+          for (const callback of element.__listeners[type] || []) callback(event);
+        }
+        """#
+        let assertions = #"""
+        for (const control of [controls.left, controls.right, controls.jump, pauseButton]) {
+          let stopped = false;
+          __emit(control, "keydown", { code: "Space", stopPropagation() { stopped = true; } });
+          if (!stopped) throw new Error(`Space leaked from focused control ${control.id}`);
+        }
+
+        input.keyboardLeft = false;
+        __emit(controls.left, "click");
+        if (!input.keyboardLeft) throw new Error("Non-pointer left activation did not drive movement");
+
+        input.keyboardLeft = false;
+        __emit(controls.left, "pointerdown", { preventDefault() {}, pointerId: 7 });
+        __emit(controls.left, "pointerup", { preventDefault() {}, pointerId: 7 });
+        __emit(controls.left, "click");
+        if (input.keyboardLeft) throw new Error("Pointer left activation double-fired assistive movement");
+
+        input.jumpQueued = false;
+        __emit(controls.jump, "click");
+        if (!input.jumpQueued) throw new Error("Non-pointer jump activation did not queue jump");
+
+        console.log("forge2d-semantic-smoke-ok");
+        """#
+        let temporaryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("novaforge-forge2d-semantic-\(UUID().uuidString)")
+            .appendingPathExtension("js")
+        try (harness + "\n" + js + "\n" + assertions).write(to: temporaryURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["node", temporaryURL.path]
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        process.waitUntilExit()
+        let diagnostic = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+
+        XCTAssertEqual(process.terminationStatus, 0, diagnostic)
+        XCTAssertTrue(diagnostic.contains("forge2d-semantic-smoke-ok"), diagnostic)
+    }
     #endif
 
     func testGeneratedTouchControlsAreAccessibleLargeAndAssistiveActivatable() throws {
