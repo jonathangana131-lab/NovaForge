@@ -1,0 +1,28 @@
+name: V14 Preview chat delete draft contract
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/Views/AppRootView.swift'
+      - 'AgentPad/Views/ChatView.swift'
+      - 'scripts/verify_v14_preview_chat_delete_draft_contract.sh'
+      - '.github/workflows/v14-preview-chat-delete-draft-contract.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/Views/AppRootView.swift'
+      - 'AgentPad/Views/ChatView.swift'
+      - 'scripts/verify_v14_preview_chat_delete_draft_contract.sh'
+      - '.github/workflows/v14-preview-chat-delete-draft-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  chat-delete-draft-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify durable chat deletion owns composer draft cleanup
+        run: bash scripts/verify_v14_preview_chat_delete_draft_contract.sh
