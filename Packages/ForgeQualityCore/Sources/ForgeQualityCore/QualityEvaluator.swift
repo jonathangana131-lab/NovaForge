@@ -27,7 +27,7 @@ public enum ForgeQualityEvaluator {
     public static func evaluate(
         policy: ForgeQualityTrustedPolicy,
         binding: ForgeQualityTrustedRunBinding,
-        measurements: [ForgeQualityTrustedMeasurement]
+        batches: [ForgeQualityTrustedMeasurementBatch]
     ) throws -> ForgeQualityAssessment {
         guard binding.completionTarget == policy.completionTarget else {
             throw ForgeQualityError.completionBindingMismatch
@@ -36,17 +36,17 @@ public enum ForgeQualityEvaluator {
         return try evaluateAuthenticated(
             policy: policy,
             binding: binding.binding,
-            measurements: measurements
+            batches: batches
         )
     }
 
-    /// Private evaluator reached only after the non-Codable trusted run has retained and matched
-    /// the exact Completion target. Keeping the raw-binding seam private prevents future package
-    /// adapters from accidentally discarding that authenticated relationship.
+    /// Private evaluator reached only after non-Codable trusted run and whole-batch producer
+    /// authority have been retained. Individual trusted measurements are intentionally not an
+    /// acceptance API: quality evidence must arrive as the exact producer batch that was attested.
     private static func evaluateAuthenticated(
         policy: ForgeQualityTrustedPolicy,
         binding: ForgeQualityRunBinding,
-        measurements: [ForgeQualityTrustedMeasurement]
+        batches: [ForgeQualityTrustedMeasurementBatch]
     ) throws -> ForgeQualityAssessment {
         guard binding.projectID == policy.completionTarget.projectID,
               binding.sourceRevision == policy.completionTarget.sourceRevision,
@@ -54,17 +54,17 @@ public enum ForgeQualityEvaluator {
             throw ForgeQualityError.completionBindingMismatch
         }
 
-        let candidateMeasurements = measurements.map(\.candidate)
-        let measurementsByTarget = try validateMeasurements(
+        let candidateBatches = batches.map(\.candidate)
+        let measurementsByTarget = try validateBatches(
             targets: policy.targets,
             measurementProtocol: policy.measurementProtocol,
             binding: binding,
-            measurements: candidateMeasurements
+            batches: candidateBatches
         )
 
         var findings: [ForgeQualityFinding] = []
-        var contributingReceipts: [ForgeQualityID] = []
-        var passingReceipts: [ForgeQualityID] = []
+        var contributingReceipts = Set<ForgeQualityID>()
+        var nonPassingReceipts = Set<ForgeQualityID>()
         var hasFailure = false
         var hasBlocker = false
 
@@ -75,12 +75,13 @@ public enum ForgeQualityEvaluator {
                 continue
             }
 
-            contributingReceipts.append(measurement.producerReceiptID)
+            contributingReceipts.insert(measurement.producerReceiptID)
 
             guard target.environmentRequirement.matches(binding) else {
                 findings.append(
                     ForgeQualityFinding(target: target, reason: .environmentMismatch, measurement: measurement)
                 )
+                nonPassingReceipts.insert(measurement.producerReceiptID)
                 hasBlocker = true
                 continue
             }
@@ -89,6 +90,7 @@ public enum ForgeQualityEvaluator {
                 findings.append(
                     ForgeQualityFinding(target: target, reason: .insufficientSamples, measurement: measurement)
                 )
+                nonPassingReceipts.insert(measurement.producerReceiptID)
                 hasBlocker = true
                 continue
             }
@@ -97,11 +99,10 @@ public enum ForgeQualityEvaluator {
                 findings.append(
                     ForgeQualityFinding(target: target, reason: .thresholdViolated, measurement: measurement)
                 )
+                nonPassingReceipts.insert(measurement.producerReceiptID)
                 hasFailure = true
                 continue
             }
-
-            passingReceipts.append(measurement.producerReceiptID)
         }
 
         let status: ForgeQualityGateStatus
@@ -113,54 +114,101 @@ public enum ForgeQualityEvaluator {
             status = .passed
         }
 
+        let passingReceipts = contributingReceipts.subtracting(nonPassingReceipts)
+
         return ForgeQualityAssessment(
             trustedPolicy: policy,
             binding: binding,
             status: status,
             findings: findings,
-            contributingProducerReceiptIDs: contributingReceipts,
-            passingProducerReceiptIDs: passingReceipts
+            contributingProducerReceiptIDs: contributingReceipts.sorted(),
+            passingProducerReceiptIDs: passingReceipts.sorted()
         )
     }
 
-    private static func validateMeasurements(
+    private static func validateBatches(
         targets: [ForgeQualityTarget],
         measurementProtocol: ForgeQualityMeasurementProtocolIdentity,
         binding: ForgeQualityRunBinding,
-        measurements: [ForgeQualityMeasurement]
+        batches: [ForgeQualityMeasurementBatch]
     ) throws -> [ForgeQualityTargetKey: ForgeQualityMeasurement] {
         let targetKeys = Set(targets.map(\.key))
         var byTarget: [ForgeQualityTargetKey: ForgeQualityMeasurement] = [:]
         var measurementIDs = Set<ForgeQualityID>()
         var producerReceiptIDs = Set<ForgeQualityID>()
 
-        for measurement in measurements {
-            guard measurement.binding == binding else {
-                throw ForgeQualityError.evidenceBindingMismatch(measurementID: measurement.measurementID)
+        for batch in batches {
+            let firstMeasurementID = batch.measurements[0].measurementID
+            guard batch.binding == binding else {
+                throw ForgeQualityError.evidenceBindingMismatch(measurementID: firstMeasurementID)
             }
-            guard measurement.measurementProtocol == measurementProtocol else {
-                throw ForgeQualityError.measurementProtocolMismatch(measurementID: measurement.measurementID)
+            guard batch.measurementProtocol == measurementProtocol else {
+                throw ForgeQualityError.measurementProtocolMismatch(measurementID: firstMeasurementID)
             }
-            guard targetKeys.contains(measurement.key) else {
-                throw ForgeQualityError.unexpectedMeasurement(
-                    metric: measurement.metric,
-                    scope: measurement.scope
-                )
+            guard producerReceiptIDs.insert(batch.producerReceiptID).inserted else {
+                throw ForgeQualityError.duplicateProducerReceiptID(batch.producerReceiptID)
             }
-            guard measurementIDs.insert(measurement.measurementID).inserted else {
-                throw ForgeQualityError.duplicateMeasurementID(measurement.measurementID)
-            }
-            guard producerReceiptIDs.insert(measurement.producerReceiptID).inserted else {
-                throw ForgeQualityError.duplicateProducerReceiptID(measurement.producerReceiptID)
-            }
-            guard byTarget.updateValue(measurement, forKey: measurement.key) == nil else {
-                throw ForgeQualityError.duplicateMeasurement(
-                    metric: measurement.metric,
-                    scope: measurement.scope
-                )
+
+            for measurement in batch.measurements {
+                guard targetKeys.contains(measurement.key) else {
+                    throw ForgeQualityError.unexpectedMeasurement(
+                        metric: measurement.metric,
+                        scope: measurement.scope
+                    )
+                }
+                guard measurementIDs.insert(measurement.measurementID).inserted else {
+                    throw ForgeQualityError.duplicateMeasurementID(measurement.measurementID)
+                }
+                guard byTarget.updateValue(measurement, forKey: measurement.key) == nil else {
+                    throw ForgeQualityError.duplicateMeasurement(
+                        metric: measurement.metric,
+                        scope: measurement.scope
+                    )
+                }
             }
         }
 
+        try validateFrameStatisticSetCoherence(
+            targets: targets,
+            measurementsByTarget: byTarget
+        )
         return byTarget
+    }
+
+    /// Frame statistics selected together for one scope must describe one producer-attested sample
+    /// population. Mean ordering is deliberately not constrained: a small extreme upper tail can
+    /// validly make arithmetic mean exceed p95. Percentile monotonicity (p95 <= p99) is mandatory.
+    private static func validateFrameStatisticSetCoherence(
+        targets: [ForgeQualityTarget],
+        measurementsByTarget: [ForgeQualityTargetKey: ForgeQualityMeasurement]
+    ) throws {
+        let frameTargets = targets.filter { target in
+            switch target.metric {
+            case .averageFrameTimeMilliseconds,
+                 .p95FrameTimeMilliseconds,
+                 .p99FrameTimeMilliseconds:
+                true
+            default:
+                false
+            }
+        }
+        let targetsByScope = Dictionary(grouping: frameTargets) { $0.scope }
+
+        for (scope, scopedTargets) in targetsByScope {
+            let measurements = scopedTargets.compactMap { measurementsByTarget[$0.key] }
+            guard measurements.count > 1 else { continue }
+
+            guard Set(measurements.map(\.producerReceiptID)).count == 1,
+                  Set(measurements.map(\.sampleCount)).count == 1 else {
+                throw ForgeQualityError.incoherentMeasurementSet(scope: scope)
+            }
+
+            let byMetric = Dictionary(uniqueKeysWithValues: measurements.map { ($0.metric, $0) })
+            if let p95 = byMetric[.p95FrameTimeMilliseconds],
+               let p99 = byMetric[.p99FrameTimeMilliseconds],
+               p95.value > p99.value {
+                throw ForgeQualityError.incoherentMeasurementSet(scope: scope)
+            }
+        }
     }
 }
