@@ -40,7 +40,7 @@ extension ForgeQualityCoreTests {
 
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy,
-            binding: binding,
+            binding: trustedRunBinding(binding),
             measurements: measurements
         )
 
@@ -58,7 +58,7 @@ extension ForgeQualityCoreTests {
         )
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
-            binding: runBinding(),
+            binding: trustedRunBinding(),
             measurements: []
         )
         XCTAssertEqual(result.status, .blocked)
@@ -78,7 +78,7 @@ extension ForgeQualityCoreTests {
         )
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [frame, a11y]),
-            binding: runBinding(),
+            binding: trustedRunBinding(),
             measurements: [trusted(try measurement(metric: .p95FrameTimeMilliseconds, value: 30, receipt: "slow"))]
         )
         XCTAssertEqual(result.status, .failed)
@@ -94,7 +94,7 @@ extension ForgeQualityCoreTests {
         )
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
-            binding: runBinding(),
+            binding: trustedRunBinding(),
             measurements: [trusted(try measurement(metric: .p95FrameTimeMilliseconds, value: 15, samples: 10, receipt: "few"))]
         )
         XCTAssertEqual(result.status, .blocked)
@@ -117,7 +117,7 @@ extension ForgeQualityCoreTests {
         let simMeasurement = try measurement(binding: simulator, metric: .p95FrameTimeMilliseconds, value: 15, receipt: "sim")
         let simResult = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
-            binding: simulator,
+            binding: trustedRunBinding(simulator),
             measurements: [trusted(simMeasurement)]
         )
         XCTAssertEqual(simResult.status, .blocked)
@@ -127,13 +127,12 @@ extension ForgeQualityCoreTests {
         let otherMeasurement = try measurement(binding: otherOS, metric: .p95FrameTimeMilliseconds, value: 15, receipt: "other")
         let otherResult = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
-            binding: otherOS,
+            binding: trustedRunBinding(otherOS),
             measurements: [trusted(otherMeasurement)]
         )
         XCTAssertEqual(otherResult.status, .blocked)
         XCTAssertEqual(otherResult.findings.map(\.reason), [.environmentMismatch])
     }
-
 
     func testPolicyBindsCurrentProjectSourceAndCheckpoint() throws {
         let target = try ForgeQualityTarget(
@@ -149,7 +148,11 @@ extension ForgeQualityCoreTests {
             environmentKind: .physicalDevice, deviceProfileID: id("iPhone13,2"), osBuild: id("ios-build-27A1")
         )
         XCTAssertThrowsError(
-            try ForgeQualityEvaluator.evaluate(policy: acceptedPolicy, binding: wrongProject, measurements: [])
+            try ForgeQualityEvaluator.evaluate(
+                policy: acceptedPolicy,
+                binding: trustedRunBinding(wrongProject),
+                measurements: []
+            )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .completionBindingMismatch)
         }
@@ -160,10 +163,13 @@ extension ForgeQualityCoreTests {
             environmentKind: .physicalDevice, deviceProfileID: id("iPhone13,2"), osBuild: id("ios-build-27A1")
         )
         XCTAssertThrowsError(
-            try ForgeQualityEvaluator.evaluate(policy: acceptedPolicy, binding: wrongCheckpoint, measurements: [])
+            try ForgeQualityEvaluator.evaluate(
+                policy: acceptedPolicy,
+                binding: trustedRunBinding(wrongCheckpoint),
+                measurements: []
+            )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .completionBindingMismatch)
         }
     }
-
 }
