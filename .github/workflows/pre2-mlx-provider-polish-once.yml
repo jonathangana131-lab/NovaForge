@@ -1,0 +1,60 @@
+name: Pre2 MLX provider polish once
+
+on:
+  push:
+    branches: [feat/pre2-nanbeige-mlx-a14]
+    paths:
+      - .github/workflows/pre2-mlx-provider-polish-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/pre2-nanbeige-mlx-a14
+          fetch-depth: 0
+      - name: Keep qualified Local default and update copy
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('AgentPad/Services/AIProvider.swift')
+          text = path.read_text()
+
+          old_default = '''    var defaultModel: String {
+                  modelOptions.first ?? ""
+              }
+          '''
+          new_default = '''    var defaultModel: String {
+                  if self == .local {
+                      return LocalModelCatalog.defaultVariant.id
+                  }
+                  return modelOptions.first ?? ""
+              }
+          '''
+          if text.count(old_default) != 1:
+              raise SystemExit(f'defaultModel seam count={text.count(old_default)}')
+          text = text.replace(old_default, new_default, 1)
+
+          old_copy = '            "On-device Qwen Coder agent"'
+          new_copy = '            "On-device MLX + GGUF coding agent"'
+          if text.count(old_copy) != 1:
+              raise SystemExit(f'local subtitle seam count={text.count(old_copy)}')
+          text = text.replace(old_copy, new_copy, 1)
+          path.write_text(text)
+          PY
+          git diff --check
+          grep -q 'return LocalModelCatalog.defaultVariant.id' AgentPad/Services/AIProvider.swift
+          grep -q 'On-device MLX + GGUF coding agent' AgentPad/Services/AIProvider.swift
+      - name: Commit provider polish
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Services/AIProvider.swift
+          git commit -m 'Expose MLX without changing safe Local default'
+          git push origin HEAD:feat/pre2-nanbeige-mlx-a14
