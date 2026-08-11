@@ -177,7 +177,11 @@ jobs:
 
           grep -Fq '** TEST SUCCEEDED **' "$ARTIFACT_DIR/accessibility-xctest.log"
           screenshot_count="$(find "$screenshot_dir" -type f -name '*.png' | wc -l | tr -d ' ')"
-          printf 'xctest=PASS\nscreenshotCount=%s\n' "$screenshot_count" > "$ARTIFACT_DIR/verdict.txt"
+          if [[ "$screenshot_count" -lt 4 ]]; then
+            echo "Expected at least 4 accessibility/readability screenshots, found $screenshot_count" >&2
+            exit 1
+          fi
+          printf 'xctest=PASS\nscreenshotCount=%s\nminimumScreenshotCount=4\n' "$screenshot_count" > "$ARTIFACT_DIR/verdict.txt"
 
       - name: Publish exact-head receipt summary
         if: always()
