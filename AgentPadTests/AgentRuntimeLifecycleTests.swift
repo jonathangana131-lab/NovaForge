@@ -31,6 +31,7 @@ enum TestModelSchema {
 private final class RuntimeLifecycleEffectsRecorder {
     private(set) var starts: [(projectName: String, statusLine: String)] = []
     private(set) var endings: [(statusLine: String, succeeded: Bool)] = []
+    private(set) var cancellations: [String] = []
 
     lazy var effects = AgentRuntimeLifecycleEffects(
         runStarted: { [weak self] projectName, statusLine in
@@ -38,6 +39,9 @@ private final class RuntimeLifecycleEffectsRecorder {
         },
         runEnded: { [weak self] statusLine, succeeded in
             self?.endings.append((statusLine, succeeded))
+        },
+        runCancelled: { [weak self] statusLine in
+            self?.cancellations.append(statusLine)
         }
     )
 }
@@ -755,8 +759,8 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
 
         XCTAssertEqual(runtime.runState, .cancelled)
         XCTAssertFalse(runtime.debugHasActiveWorkSession)
-        XCTAssertEqual(recorder.endings.count, 1)
-        XCTAssertFalse(recorder.endings[0].succeeded, "Stopping from approval must end the session as unsuccessful.")
+        XCTAssertTrue(recorder.endings.isEmpty, "User stop must not be reported through the success/failure callback.")
+        XCTAssertEqual(recorder.cancellations.count, 1)
     }
 
     func testClearCurrentRunStateCancelsOwnershipAndLiveHandoffAtomically() async throws {
@@ -781,8 +785,8 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertNil(runtime.pendingTool)
         XCTAssertTrue(runtime.liveStream.isEmpty)
         XCTAssertNil(runtime.liveStream.handoffMessageID)
-        XCTAssertEqual(recorder.endings.count, 1)
-        XCTAssertFalse(recorder.endings[0].succeeded)
+        XCTAssertTrue(recorder.endings.isEmpty, "Clearing a cancelled run must not emit a failure ending.")
+        XCTAssertEqual(recorder.cancellations.count, 1)
 
         try await Task.sleep(for: .milliseconds(220))
         XCTAssertEqual(runtime.runState, .idle)
