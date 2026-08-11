@@ -18,20 +18,28 @@ extension ForgeQualityCoreTests {
         )
     }
 
-    func policy(targets: [ForgeQualityTarget]) throws -> ForgeQualityPolicy {
+    func policy(
+        targets: [ForgeQualityTarget],
+        completionTarget acceptedTarget: ForgeQualityCompletionTarget? = nil
+    ) throws -> ForgeQualityPolicy {
         try ForgeQualityPolicy(
             policyID: id("quality-policy"),
             policyRevision: 3,
             policyAuthorityReceiptID: id("quality-authority"),
             criterionID: id("quality-criterion"),
-            completionTarget: completionTarget(),
+            completionTarget: acceptedTarget ?? completionTarget(),
             checkpointID: id("checkpoint-7"),
             targets: targets
         )
     }
 
-    func trustedPolicy(targets: [ForgeQualityTarget]) -> ForgeQualityTrustedPolicy {
-        ForgeQualityTrustedPolicy(authenticatedPolicy: try! policy(targets: targets))
+    func trustedPolicy(
+        targets: [ForgeQualityTarget],
+        completionTarget acceptedTarget: ForgeQualityCompletionTarget? = nil
+    ) -> ForgeQualityTrustedPolicy {
+        ForgeQualityTrustedPolicy(
+            authenticatedPolicy: try! policy(targets: targets, completionTarget: acceptedTarget)
+        )
     }
 
     func runBinding(
@@ -49,6 +57,16 @@ extension ForgeQualityCoreTests {
             environmentKind: environmentKind,
             deviceProfileID: id("iPhone13,2"),
             osBuild: id(osBuild)
+        )
+    }
+
+    func trustedRunBinding(
+        _ binding: ForgeQualityRunBinding? = nil,
+        completionTarget acceptedTarget: ForgeQualityCompletionTarget? = nil
+    ) -> ForgeQualityTrustedRunBinding {
+        ForgeQualityTrustedRunBinding(
+            authenticatedBinding: binding ?? runBinding(),
+            authenticatedCompletionTarget: acceptedTarget ?? (try! completionTarget())
         )
     }
 
