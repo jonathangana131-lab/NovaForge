@@ -11,6 +11,12 @@ public enum ForgeQualityError: Error, Equatable, Sendable {
     case invalidMinimumSampleCount
     case invalidMeasurement(ForgeQualityMetric)
     case invalidSampleCount
+    case emptyMeasurementBatch
+    case tooManyMeasurementsInBatch
+    case mixedMeasurementBatchBinding
+    case mixedMeasurementBatchProtocol
+    case mixedMeasurementBatchProducerReceipt
+    case incoherentMeasurementSet(scope: ForgeQualityScope)
     case evidenceKindMismatch(metric: ForgeQualityMetric, expected: ForgeQualityEvidenceKind, actual: ForgeQualityEvidenceKind)
     case duplicateMeasurement(metric: ForgeQualityMetric, scope: ForgeQualityScope)
     case duplicateMeasurementID(ForgeQualityID)
