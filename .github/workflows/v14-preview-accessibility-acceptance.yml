@@ -2,7 +2,15 @@ name: V14 Preview Accessibility Acceptance
 
 on:
   pull_request:
+    paths:
+      - .github/workflows/v14-preview-accessibility-acceptance.yml
+      - QA/v14-preview-accessibility-acceptance.md
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact NovaForge commit SHA to qualify (defaults to dispatched workflow SHA)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -20,7 +28,7 @@ jobs:
       SIMULATOR_ID: 4B9AB34A-404C-485F-B0BC-964F24D0AE83
       DERIVED_DATA_PATH: QA/DerivedData/v14-preview-accessibility
       ARTIFACT_DIR: artifacts/v14-preview-accessibility
-      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - uses: actions/checkout@v6
@@ -33,11 +41,18 @@ jobs:
           set -euo pipefail
           mkdir -p "$ARTIFACT_DIR"
 
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Accessibility acceptance requires an exact 40-character commit SHA, got: $SOURCE_SHA" >&2
+            exit 2
+          fi
+
           actual_sha="$(git rev-parse HEAD)"
-          if [[ "$actual_sha" != "$SOURCE_SHA" ]]; then
+          if [[ "${actual_sha,,}" != "${SOURCE_SHA,,}" ]]; then
             echo "Checked-out source $actual_sha does not match requested source $SOURCE_SHA" >&2
             exit 1
           fi
+          SOURCE_SHA="${actual_sha,,}"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
 
           /usr/bin/python3 - "$SIMULATOR_ID" "$ARTIFACT_DIR/simulator-identity.txt" <<'PY'
           import json
@@ -76,7 +91,7 @@ jobs:
           PY
 
           {
-            echo "sourceSHA=$actual_sha"
+            echo "sourceSHA=$SOURCE_SHA"
             xcodebuild -version
             xcrun swift --version
           } > "$ARTIFACT_DIR/toolchain.txt"
@@ -126,7 +141,7 @@ jobs:
             exit 1
           fi
           embedded_sha="$(/usr/libexec/PlistBuddy -c 'Print :NovaForgeSourceCommit' "$app/Info.plist")"
-          if [[ "$embedded_sha" != "$SOURCE_SHA" ]]; then
+          if [[ "${embedded_sha,,}" != "$SOURCE_SHA" ]]; then
             echo "Built app source marker $embedded_sha does not match $SOURCE_SHA" >&2
             exit 1
           fi
