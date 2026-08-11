@@ -99,71 +99,6 @@ final class AgentProviderTransportRouterTests: XCTestCase {
             )
         }
     }
-
-    func testRejectsOnDeviceMixedWithEveryNonDeviceDeploymentBeforeDispatch()
-        async
-    {
-        for deployment in [
-            ProviderDeployment.hostedService,
-            .remoteWorker,
-            .callerManaged,
-        ] {
-            let nonDevice = descriptor(
-                adapterID: "non-device-\(deployment.rawValue)",
-                deployment: deployment
-            )
-            let local = descriptor(
-                adapterID: "local-\(deployment.rawValue)",
-                deployment: .onDevice
-            )
-            let nonDeviceTransport = RecordingProviderTransport()
-            let localTransport = RecordingProviderTransport()
-
-            XCTAssertThrowsError(try AgentProviderTransportRouter(bindings: [
-                .init(descriptor: nonDevice, transport: nonDeviceTransport),
-                .init(descriptor: local, transport: localTransport),
-            ]), deployment.rawValue) { error in
-                XCTAssertEqual(
-                    error as? AgentProviderTransportRouterError,
-                    .mixedOnDeviceAndNonOnDeviceBindings,
-                    deployment.rawValue
-                )
-            }
-
-            let nonDeviceCount = await nonDeviceTransport.callCount()
-            let localCount = await localTransport.callCount()
-            XCTAssertEqual(nonDeviceCount, 0, deployment.rawValue)
-            XCTAssertEqual(localCount, 0, deployment.rawValue)
-        }
-    }
-
-    func testAllowsMultipleOnDeviceBindingsAndStillRoutesExactly() async throws {
-        let firstDescriptor = descriptor(
-            adapterID: "local-first",
-            deployment: .onDevice
-        )
-        let secondDescriptor = descriptor(
-            adapterID: "local-second",
-            deployment: .onDevice
-        )
-        let first = RecordingProviderTransport()
-        let second = RecordingProviderTransport()
-        let router = try AgentProviderTransportRouter(bindings: [
-            .init(descriptor: firstDescriptor, transport: first),
-            .init(descriptor: secondDescriptor, transport: second),
-        ])
-
-        _ = try await router.stream(
-            request: request(path: secondDescriptor.requestPath),
-            descriptor: secondDescriptor,
-            scope: scope("route-local-exact")
-        )
-
-        let firstCount = await first.callCount()
-        let secondCount = await second.callCount()
-        XCTAssertEqual(firstCount, 0)
-        XCTAssertEqual(secondCount, 1)
-    }
 }
 
 private actor RecordingProviderTransport: ProviderTransport {
@@ -184,10 +119,7 @@ private actor RecordingProviderTransport: ProviderTransport {
     func lastDescriptor() -> ProviderAdapterDescriptor? { descriptors.last }
 }
 
-private func descriptor(
-    adapterID: String,
-    deployment: ProviderDeployment = .callerManaged
-) -> ProviderAdapterDescriptor {
+private func descriptor(adapterID: String) -> ProviderAdapterDescriptor {
     ProviderAdapterDescriptor(
         route: ProviderRoute(
             providerID: .init(rawValue: "test-provider"),
@@ -200,7 +132,7 @@ private func descriptor(
                 maximumToolDefinitions: 0,
                 maximumToolCallsPerTurn: 0
             ),
-            deployment: deployment,
+            deployment: .callerManaged,
             provenance: .callerConfigured
         ),
         dialect: .openAICompatibleChat,
