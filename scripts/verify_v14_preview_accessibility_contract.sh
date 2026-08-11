@@ -37,49 +37,134 @@ require_regex() {
   grep -Eq -- "$pattern" "$file" || fail "$message"
 }
 
+section_text() {
+  local file="$1"
+  local start_marker="$2"
+  local end_marker="$3"
+  awk -v start_marker="$start_marker" -v end_marker="$end_marker" '
+    index($0, start_marker) { inside = 1 }
+    inside { print }
+    inside && index($0, end_marker) && !index($0, start_marker) { exit }
+  ' "$file"
+}
+
+require_section_literal() {
+  local file="$1"
+  local start_marker="$2"
+  local end_marker="$3"
+  local needle="$4"
+  local message="$5"
+  local section
+  section="$(section_text "$file" "$start_marker" "$end_marker")"
+  [[ -n "$section" ]] || fail "$message (section missing)"
+  grep -Fq -- "$needle" <<<"$section" || fail "$message"
+}
+
 require_file "$composer"
 require_file "$drawer"
 
-# Composer: the five-stop effort control must remain operable without drag-only
-# interaction, expose useful VoiceOver state, and suppress decorative motion.
-require_literal "$composer" '@Environment(\.accessibilityReduceMotion) private var reduceMotion' \
-  "Composer must observe Reduce Motion"
-require_literal "$composer" '.accessibilityLabel("Reasoning effort")' \
+# Composer reasoning: the five-stop effort control must remain operable without
+# drag-only interaction, expose useful VoiceOver state, and suppress motion.
+require_section_literal "$composer" \
+  'private struct ComposerReasoningPicker: View {' \
+  'private struct UltraCodePowerRipple: View {' \
+  '@Environment(\.accessibilityReduceMotion) private var reduceMotion' \
+  "reasoning picker must observe Reduce Motion"
+require_section_literal "$composer" \
+  'private struct ComposerReasoningPicker: View {' \
+  'private struct UltraCodePowerRipple: View {' \
+  '.accessibilityLabel("Reasoning effort")' \
   "reasoning effort slider must keep a VoiceOver label"
-require_literal "$composer" '.accessibilityValue(selection.title)' \
+require_section_literal "$composer" \
+  'private struct ComposerReasoningPicker: View {' \
+  'private struct UltraCodePowerRipple: View {' \
+  '.accessibilityValue(selection.title)' \
   "reasoning effort slider must announce the selected level"
-require_literal "$composer" '.accessibilityAdjustableAction { direction in' \
+require_section_literal "$composer" \
+  'private struct ComposerReasoningPicker: View {' \
+  'private struct UltraCodePowerRipple: View {' \
+  '.accessibilityAdjustableAction { direction in' \
   "reasoning effort must remain VoiceOver-adjustable instead of drag-only"
-require_literal "$composer" '.accessibilityIdentifier("reasoningEffortSlider")' \
+require_section_literal "$composer" \
+  'private struct ComposerReasoningPicker: View {' \
+  'private struct UltraCodePowerRipple: View {' \
+  '.accessibilityIdentifier("reasoningEffortSlider")' \
   "reasoning effort slider must keep its stable accessibility identifier"
-require_literal "$composer" 'withAnimation(reduceMotion ? nil : .snappy' \
+require_section_literal "$composer" \
+  'private struct ComposerReasoningPicker: View {' \
+  'private struct UltraCodePowerRipple: View {' \
+  'withAnimation(reduceMotion ? nil : .snappy' \
   "reasoning effort changes must suppress custom motion under Reduce Motion"
-require_literal "$composer" 'if reduceMotion || !AgentPerformance.allowsDecorativeMotion {' \
+
+# Ultra animation is decorative. Check its own struct so an unrelated hidden
+# view cannot mask a regression here.
+require_section_literal "$composer" \
+  'private struct UltraCodePowerRipple: View {' \
+  'struct AgentOrchestrationStatusCard: View {' \
+  '@Environment(\.accessibilityReduceMotion) private var reduceMotion' \
+  "Ultra decorative ripple must observe Reduce Motion"
+require_section_literal "$composer" \
+  'private struct UltraCodePowerRipple: View {' \
+  'struct AgentOrchestrationStatusCard: View {' \
+  'if reduceMotion || !AgentPerformance.allowsDecorativeMotion {' \
   "Ultra decorative ripple must have a non-animated Reduce Motion path"
-require_literal "$composer" '.accessibilityHidden(true)' \
+require_section_literal "$composer" \
+  'private struct UltraCodePowerRipple: View {' \
+  'struct AgentOrchestrationStatusCard: View {' \
+  '.accessibilityHidden(true)' \
   "decorative Ultra ripple must stay hidden from accessibility"
 
-# Composer controls: primary run/model controls must preserve semantic labels,
-# stable identifiers, and the shared minimum touch target.
-require_literal "$composer" '.accessibilityLabel("Stop generating")' \
+# Live-run rail: Stop and progress controls must preserve semantics and touch
+# sizing inside the rail itself, not elsewhere in the file.
+require_section_literal "$composer" \
+  'struct ComposerLiveRunRail: View {' \
+  'struct ComposerChromeStyle: Equatable {' \
+  '.accessibilityLabel("Stop generating")' \
   "Stop control must keep its VoiceOver action label"
-require_literal "$composer" '.accessibilityIdentifier("composerStopButton")' \
+require_section_literal "$composer" \
+  'struct ComposerLiveRunRail: View {' \
+  'struct ComposerChromeStyle: Equatable {' \
+  '.accessibilityIdentifier("composerStopButton")' \
   "Stop control must keep its stable accessibility identifier"
-require_literal "$composer" '.accessibilityIdentifier("runProgressToggle")' \
+require_section_literal "$composer" \
+  'struct ComposerLiveRunRail: View {' \
+  'struct ComposerChromeStyle: Equatable {' \
+  '.accessibilityIdentifier("runProgressToggle")' \
   "run progress disclosure must keep its stable accessibility identifier"
-require_literal "$composer" '.accessibilityIdentifier("composerModelNativeMenu")' \
-  "model chooser must keep its stable accessibility identifier"
-require_literal "$composer" 'minHeight: AgentDesign.minimumTouchTarget' \
-  "Composer interactive controls must retain the shared minimum touch target"
+require_section_literal "$composer" \
+  'struct ComposerLiveRunRail: View {' \
+  'struct ComposerChromeStyle: Equatable {' \
+  'minHeight: AgentDesign.minimumTouchTarget' \
+  "live-run controls must retain the shared minimum touch target"
 
-# Reduce Transparency is an explicit Preview acceptance requirement. The
-# Composer glass surface must retain an opaque/fallback path rather than only
-# rendering Liquid Glass.
-require_literal "$composer" '@Environment(\.accessibilityReduceTransparency) private var reduceTransparency' \
-  "Composer must observe Reduce Transparency"
-require_regex "$composer" 'if reduceTransparency \|\|' \
+# Model chooser must remain a semantic, touch-sized control.
+require_section_literal "$composer" \
+  'struct ComposerModelMenu: View {' \
+  'private struct ComposerModelChooserSheet: View {' \
+  '.accessibilityIdentifier("composerModelNativeMenu")' \
+  "model chooser must keep its stable accessibility identifier"
+require_section_literal "$composer" \
+  'struct ComposerModelMenu: View {' \
+  'private struct ComposerModelChooserSheet: View {' \
+  'height: AgentDesign.minimumTouchTarget' \
+  "model chooser must retain the shared minimum touch target"
+
+# Reduce Transparency is an explicit Preview acceptance requirement. Check the
+# glass modifier itself so another fallback call cannot satisfy the contract.
+require_section_literal "$composer" \
+  'struct ComposerGlassSurfaceModifier: ViewModifier {' \
+  'extension View {' \
+  '@Environment(\.accessibilityReduceTransparency) private var reduceTransparency' \
+  "Composer glass must observe Reduce Transparency"
+require_section_literal "$composer" \
+  'struct ComposerGlassSurfaceModifier: ViewModifier {' \
+  'extension View {' \
+  'if reduceTransparency ||' \
   "Composer glass must fail over when Reduce Transparency is enabled"
-require_literal "$composer" 'fallback(content: content)' \
+require_section_literal "$composer" \
+  'struct ComposerGlassSurfaceModifier: ViewModifier {' \
+  'extension View {' \
+  'fallback(content: content)' \
   "Composer glass must retain an opaque fallback renderer"
 
 # Chat drawer: core navigation has to remain discoverable by VoiceOver/XCUI,
