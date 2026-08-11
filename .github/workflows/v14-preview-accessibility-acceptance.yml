@@ -183,6 +183,60 @@ jobs:
           fi
           printf 'xctest=PASS\nscreenshotCount=%s\nminimumScreenshotCount=4\n' "$screenshot_count" > "$ARTIFACT_DIR/verdict.txt"
 
+      - name: Capture all five Preview theme worlds
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(sed -n 's/^app=//p' "$ARTIFACT_DIR/app-source-binding.txt")"
+          if [[ -z "$app_path" || ! -d "$app_path" ]]; then
+            echo "Exact-source NovaForge.app path is unavailable for theme capture" >&2
+            exit 1
+          fi
+
+          theme_dir="$ARTIFACT_DIR/theme-screenshots"
+          theme_log_dir="$ARTIFACT_DIR/theme-capture-logs"
+          mkdir -p "$theme_dir" "$theme_log_dir"
+          : > "$ARTIFACT_DIR/theme-manifest.txt"
+
+          themes=(matrixRain midnightBlack whiteGold arcticGlass emberCore)
+          for theme in "${themes[@]}"; do
+            screenshot_path="$PWD/$theme_dir/${theme}.png"
+            echo "Capturing exact-source theme world: $theme"
+            env \
+              APP_PATH="$app_path" \
+              CONFIGURATION=Debug \
+              SIMULATOR_ID="$SIMULATOR_ID" \
+              INSTALL_APP=1 \
+              INSTALL_IF_NEWER=0 \
+              BOOT_SIMULATOR=0 \
+              SHUTDOWN_SIMULATOR_AFTER_CAPTURE=0 \
+              TERMINATE_AFTER_CAPTURE=1 \
+              WAIT_SECONDS=1 \
+              MIN_SCREENSHOT_BYTES=120000 \
+              SCREENSHOT_DIR="$PWD/$theme_dir" \
+              SCREENSHOT_PATH="$screenshot_path" \
+              LOG_DIR="$PWD/$theme_log_dir/$theme" \
+              zsh scripts/codex-fast-screenshot.sh \
+                --reset-ui \
+                "--theme-world=$theme" \
+                --canonical-activity-a11y-demo \
+                --open-chat \
+                > "$ARTIFACT_DIR/theme-${theme}.log" 2>&1
+
+            [[ -s "$screenshot_path" ]]
+            bytes="$(wc -c < "$screenshot_path" | tr -d '[:space:]')"
+            digest="$(shasum -a 256 "$screenshot_path" | awk '{print $1}')"
+            printf 'theme=%s\nfile=%s\nbytes=%s\nsha256=%s\n---\n' \
+              "$theme" "${theme}.png" "$bytes" "$digest" >> "$ARTIFACT_DIR/theme-manifest.txt"
+          done
+
+          theme_count="$(find "$theme_dir" -type f -name '*.png' | wc -l | tr -d ' ')"
+          if [[ "$theme_count" -ne 5 ]]; then
+            echo "Expected exactly 5 theme screenshots, found $theme_count" >&2
+            exit 1
+          fi
+          printf 'themeCapture=PASS\nthemeScreenshotCount=%s\n' "$theme_count" > "$ARTIFACT_DIR/theme-verdict.txt"
+
       - name: Publish exact-head receipt summary
         if: always()
         shell: bash
@@ -199,6 +253,12 @@ jobs:
             else
               echo '- verdict=INCOMPLETE_OR_FAILED'
             fi
+            if [[ -f "$ARTIFACT_DIR/theme-verdict.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/theme-verdict.txt"
+            else
+              echo '- themeCapture=INCOMPLETE_OR_FAILED'
+            fi
+            echo '- Five-theme PNGs are evidence inputs for human/screenshot critique; successful capture alone is not visual acceptance.'
             echo '- Scope: Simulator accessibility/layout/readability evidence only; no physical-device, Local AI, provider, thermal, memory, or energy claim.'
           } >> "$GITHUB_STEP_SUMMARY"
 
