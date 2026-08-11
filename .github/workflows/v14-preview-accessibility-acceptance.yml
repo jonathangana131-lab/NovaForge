@@ -47,11 +47,13 @@ jobs:
           fi
 
           actual_sha="$(git rev-parse HEAD)"
-          if [[ "${actual_sha,,}" != "${SOURCE_SHA,,}" ]]; then
-            echo "Checked-out source $actual_sha does not match requested source $SOURCE_SHA" >&2
+          expected_sha="$(printf '%s' "$SOURCE_SHA" | tr '[:upper:]' '[:lower:]')"
+          actual_sha="$(printf '%s' "$actual_sha" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            echo "Checked-out source $actual_sha does not match requested source $expected_sha" >&2
             exit 1
           fi
-          SOURCE_SHA="${actual_sha,,}"
+          SOURCE_SHA="$actual_sha"
           echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
 
           /usr/bin/python3 - "$SIMULATOR_ID" "$ARTIFACT_DIR/simulator-identity.txt" <<'PY'
@@ -128,20 +130,21 @@ jobs:
             build-for-testing \
             2>&1 | tee "$ARTIFACT_DIR/build-for-testing.log"
 
-          xctestrun="$(find "$DERIVED_DATA_PATH/Build/Products" -name 'AgentPad_*.xctestrun' -type f -print -quit)"
+          xctestrun="$(find "$DERIVED_DATA_PATH/Build/Products" -name 'AgentPad_*.xctestrun' -type f -print | sed -n '1p')"
           if [[ -z "$xctestrun" ]]; then
             echo "No AgentPad .xctestrun was produced" >&2
             exit 1
           fi
           printf '%s\n' "$xctestrun" > "$ARTIFACT_DIR/xctestrun.path"
 
-          app="$(find "$DERIVED_DATA_PATH/Build/Products" -path '*Debug-iphonesimulator/NovaForge.app' -type d -print -quit)"
+          app="$(find "$DERIVED_DATA_PATH/Build/Products" -path '*Debug-iphonesimulator/NovaForge.app' -type d -print | sed -n '1p')"
           if [[ -z "$app" ]]; then
             echo "NovaForge.app was not produced" >&2
             exit 1
           fi
           embedded_sha="$(/usr/libexec/PlistBuddy -c 'Print :NovaForgeSourceCommit' "$app/Info.plist")"
-          if [[ "${embedded_sha,,}" != "$SOURCE_SHA" ]]; then
+          embedded_sha="$(printf '%s' "$embedded_sha" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$embedded_sha" != "$SOURCE_SHA" ]]; then
             echo "Built app source marker $embedded_sha does not match $SOURCE_SHA" >&2
             exit 1
           fi
