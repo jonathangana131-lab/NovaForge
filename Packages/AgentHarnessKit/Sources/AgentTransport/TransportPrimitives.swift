@@ -1,5 +1,5 @@
 import AgentDomain
-import CryptoKit
+import Crypto
 import Foundation
 
 /// Wire compatibility for the authenticated worker channel. Major versions are
