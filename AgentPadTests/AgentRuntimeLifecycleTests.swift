@@ -4109,6 +4109,21 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(AgentTheme.theme(matching: "aurora"), .arcticGlass)
         XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme-world=white-gold"]), .whiteGold)
         XCTAssertEqual(AgentTheme.launchOverride(from: ["--theme", "matrix"]), .matrixRain)
+        XCTAssertEqual(
+            AgentTheme.resolvedForLaunch(
+                storedRawValue: AgentTheme.emberCore.rawValue,
+                arguments: ["NovaForge"]
+            ),
+            .emberCore
+        )
+        XCTAssertEqual(
+            AgentTheme.resolvedForLaunch(
+                storedRawValue: AgentTheme.emberCore.rawValue,
+                arguments: ["NovaForge", "--theme-world=white-gold"]
+            ),
+            .whiteGold,
+            "A launch-only theme override must affect the active launch without redefining the stored theme."
+        )
 
         for theme in AgentTheme.allCases {
             let palette = theme.palette

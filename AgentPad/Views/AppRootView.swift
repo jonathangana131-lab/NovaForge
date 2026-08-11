@@ -522,12 +522,16 @@ struct AppRootView: View {
     private var rootContentAppearanceLifecycle: some View {
         rootContentRuntimeLifecycle
             .onChange(of: selectedThemeRawValue, initial: true) { _, newValue in
-                let theme = AgentTheme.resolved(from: newValue)
-                if newValue != theme.rawValue {
-                    selectedThemeRawValue = theme.rawValue
+                let storedTheme = AgentTheme.resolved(from: newValue)
+                if newValue != storedTheme.rawValue {
+                    selectedThemeRawValue = storedTheme.rawValue
                 }
-                AgentPalette.refreshThemeCache(theme)
-                AgentThemeUIKit.apply(theme)
+                let activeTheme = AgentTheme.resolvedForLaunch(
+                    storedRawValue: storedTheme.rawValue,
+                    arguments: ProcessInfo.processInfo.arguments
+                )
+                AgentPalette.refreshThemeCache(activeTheme)
+                AgentThemeUIKit.apply(activeTheme)
             }
             .onChange(of: performanceModeEnabled, initial: true) { _, _ in
                 AgentPerformance.invalidatePerformanceModeCache()
