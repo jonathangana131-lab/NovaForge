@@ -14,7 +14,7 @@ extension ForgeQualityCoreTests {
             try ForgeQualityEvaluator.evaluate(
                 policy: trustedPolicy(targets: [target]),
                 binding: trustedRunBinding(),
-                measurements: [trusted(other)]
+                batches: [trustedBatch(other)]
             )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .evidenceBindingMismatch(measurementID: id("measurement-other")))
@@ -42,7 +42,7 @@ extension ForgeQualityCoreTests {
             try ForgeQualityEvaluator.evaluate(
                 policy: policyForB,
                 binding: trustedForA,
-                measurements: []
+                batches: []
             )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .completionBindingMismatch)
@@ -69,7 +69,7 @@ extension ForgeQualityCoreTests {
                     protocolIdentity: measurementProtocol(revision: 7)
                 ),
                 binding: trustedRunBinding(),
-                measurements: [trusted(stale)]
+                batches: [trustedBatch(stale)]
             )
         ) { error in
             XCTAssertEqual(
@@ -106,7 +106,7 @@ extension ForgeQualityCoreTests {
             try ForgeQualityEvaluator.evaluate(
                 policy: trustedPolicy(targets: [target]),
                 binding: trustedRunBinding(),
-                measurements: [trusted(stale)]
+                batches: [trustedBatch(stale)]
             )
         ) { error in
             XCTAssertEqual(
@@ -119,32 +119,30 @@ extension ForgeQualityCoreTests {
         }
     }
 
-    func testDuplicateMetricScopeFailsClosed() throws {
+    func testDuplicateMetricScopeFailsClosedAcrossBatches() throws {
         let target = try ForgeQualityTarget(
             metric: .p95FrameTimeMilliseconds,
             comparator: .atMost,
             threshold: 20
         )
         let one = try measurement(metric: .p95FrameTimeMilliseconds, value: 15, receipt: "r1")
-        let two = try ForgeQualityMeasurement(
-            measurementID: id("m2"),
-            producerReceiptID: id("r2"),
-            binding: runBinding(),
-            measurementProtocol: measurementProtocol(),
-            metric: .p95FrameTimeMilliseconds,
-            evidenceKind: .runtimeTelemetry,
-            value: 16,
-            sampleCount: 1
-        )
+        let two = try measurement(metric: .p95FrameTimeMilliseconds, value: 16, receipt: "r2")
+
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [target]), binding: trustedRunBinding(),
-                measurements: [trusted(one), trusted(two)]
+                policy: trustedPolicy(targets: [target]),
+                binding: trustedRunBinding(),
+                batches: [trustedBatch(one), trustedBatch(two)]
             )
-        )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeQualityError,
+                .duplicateMeasurement(metric: .p95FrameTimeMilliseconds, scope: .run)
+            )
+        }
     }
 
-    func testDuplicateProducerReceiptCannotSatisfyTwoTargets() throws {
+    func testProducerReceiptCannotBeSplitAcrossTrustedBatches() throws {
         let frame = try ForgeQualityTarget(
             metric: .p95FrameTimeMilliseconds,
             comparator: .atMost,
@@ -155,25 +153,180 @@ extension ForgeQualityCoreTests {
             comparator: .atLeast,
             threshold: 50
         )
-        let one = try measurement(metric: .p95FrameTimeMilliseconds, value: 15, receipt: "shared")
-        let two = try ForgeQualityMeasurement(
-            measurementID: id("measurement-shared-2"),
-            producerReceiptID: id("shared"),
-            binding: runBinding(),
-            measurementProtocol: measurementProtocol(),
-            metric: .sustainedFramesPerSecond,
-            evidenceKind: .runtimeTelemetry,
-            value: 60,
-            sampleCount: 1
+        let one = try measurement(
+            measurementID: "measurement-shared-frame",
+            metric: .p95FrameTimeMilliseconds,
+            value: 15,
+            receipt: "shared"
         )
+        let two = try measurement(
+            measurementID: "measurement-shared-fps",
+            metric: .sustainedFramesPerSecond,
+            value: 60,
+            receipt: "shared"
+        )
+
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [frame, fps]), binding: trustedRunBinding(),
-                measurements: [trusted(one), trusted(two)]
+                policy: trustedPolicy(targets: [frame, fps]),
+                binding: trustedRunBinding(),
+                batches: [trustedBatch(one), trustedBatch(two)]
             )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .duplicateProducerReceiptID(id("shared")))
         }
+    }
+
+    func testOneTrustedBatchCanSatisfyMultipleTargetsWithOneProducerReceipt() throws {
+        let frame = try ForgeQualityTarget(
+            metric: .p95FrameTimeMilliseconds,
+            comparator: .atMost,
+            threshold: 20,
+            minimumSampleCount: 120
+        )
+        let fps = try ForgeQualityTarget(
+            metric: .sustainedFramesPerSecond,
+            comparator: .atLeast,
+            threshold: 50,
+            minimumSampleCount: 120
+        )
+        let frameMeasurement = try measurement(
+            measurementID: "measurement-batch-frame",
+            metric: .p95FrameTimeMilliseconds,
+            value: 15,
+            samples: 180,
+            receipt: "telemetry-batch"
+        )
+        let fpsMeasurement = try measurement(
+            measurementID: "measurement-batch-fps",
+            metric: .sustainedFramesPerSecond,
+            value: 60,
+            samples: 180,
+            receipt: "telemetry-batch"
+        )
+
+        let result = try ForgeQualityEvaluator.evaluate(
+            policy: trustedPolicy(targets: [frame, fps]),
+            binding: trustedRunBinding(),
+            batches: [trustedBatch([frameMeasurement, fpsMeasurement])]
+        )
+
+        XCTAssertEqual(result.status, .passed)
+        XCTAssertEqual(result.contributingProducerReceiptIDs, [id("telemetry-batch")])
+        XCTAssertEqual(result.passingProducerReceiptIDs, [id("telemetry-batch")])
+    }
+
+    func testImpossibleP95GreaterThanP99FailsBatchConstruction() throws {
+        let p95 = try measurement(
+            measurementID: "measurement-p95",
+            metric: .p95FrameTimeMilliseconds,
+            value: 22,
+            samples: 180,
+            receipt: "frame-batch"
+        )
+        let p99 = try measurement(
+            measurementID: "measurement-p99",
+            metric: .p99FrameTimeMilliseconds,
+            value: 18,
+            samples: 180,
+            receipt: "frame-batch"
+        )
+
+        XCTAssertThrowsError(try batch([p95, p99])) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .incoherentMeasurementSet(scope: .run))
+        }
+    }
+
+    func testFrameStatisticsSelectedTogetherCannotComeFromSplitPopulations() throws {
+        let p95Target = try ForgeQualityTarget(
+            metric: .p95FrameTimeMilliseconds,
+            comparator: .atMost,
+            threshold: 20
+        )
+        let p99Target = try ForgeQualityTarget(
+            metric: .p99FrameTimeMilliseconds,
+            comparator: .atMost,
+            threshold: 30
+        )
+        let p95 = try measurement(
+            metric: .p95FrameTimeMilliseconds,
+            value: 18,
+            samples: 180,
+            receipt: "population-a"
+        )
+        let p99 = try measurement(
+            metric: .p99FrameTimeMilliseconds,
+            value: 24,
+            samples: 180,
+            receipt: "population-b"
+        )
+
+        XCTAssertThrowsError(
+            try ForgeQualityEvaluator.evaluate(
+                policy: trustedPolicy(targets: [p95Target, p99Target]),
+                binding: trustedRunBinding(),
+                batches: [trustedBatch(p95), trustedBatch(p99)]
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .incoherentMeasurementSet(scope: .run))
+        }
+    }
+
+    func testFrameStatisticsSelectedTogetherRequireMatchingSampleCounts() throws {
+        let p95 = try measurement(
+            measurementID: "measurement-count-p95",
+            metric: .p95FrameTimeMilliseconds,
+            value: 18,
+            samples: 180,
+            receipt: "count-batch"
+        )
+        let p99 = try measurement(
+            measurementID: "measurement-count-p99",
+            metric: .p99FrameTimeMilliseconds,
+            value: 24,
+            samples: 181,
+            receipt: "count-batch"
+        )
+
+        XCTAssertThrowsError(try batch([p95, p99])) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .incoherentMeasurementSet(scope: .run))
+        }
+    }
+
+    func testAverageMayValidlyExceedP95ForOnePopulation() throws {
+        let averageTarget = try ForgeQualityTarget(
+            metric: .averageFrameTimeMilliseconds,
+            comparator: .atMost,
+            threshold: 50
+        )
+        let p95Target = try ForgeQualityTarget(
+            metric: .p95FrameTimeMilliseconds,
+            comparator: .atMost,
+            threshold: 20
+        )
+        let average = try measurement(
+            measurementID: "measurement-average-tail",
+            metric: .averageFrameTimeMilliseconds,
+            value: 40,
+            samples: 100,
+            receipt: "tail-population"
+        )
+        let p95 = try measurement(
+            measurementID: "measurement-p95-tail",
+            metric: .p95FrameTimeMilliseconds,
+            value: 10,
+            samples: 100,
+            receipt: "tail-population"
+        )
+
+        let result = try ForgeQualityEvaluator.evaluate(
+            policy: trustedPolicy(targets: [averageTarget, p95Target]),
+            binding: trustedRunBinding(),
+            batches: [trustedBatch([average, p95])]
+        )
+
+        XCTAssertEqual(result.status, .passed)
+        XCTAssertTrue(result.findings.isEmpty)
     }
 
     func testUnexpectedMeasurementIsRejectedInsteadOfAppearingInProjection() throws {
@@ -185,8 +338,9 @@ extension ForgeQualityCoreTests {
         let extra = try measurement(metric: .fatalRuntimeErrorCount, value: 0, receipt: "extra")
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [target]), binding: trustedRunBinding(),
-                measurements: [trusted(extra)]
+                policy: trustedPolicy(targets: [target]),
+                binding: trustedRunBinding(),
+                batches: [trustedBatch(extra)]
             )
         )
     }
@@ -215,8 +369,9 @@ extension ForgeQualityCoreTests {
         )
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [target]), binding: trustedRunBinding(),
-                measurements: [trusted(wrong)]
+                policy: trustedPolicy(targets: [target]),
+                binding: trustedRunBinding(),
+                batches: [trustedBatch(wrong)]
             )
         )
     }
@@ -243,5 +398,11 @@ extension ForgeQualityCoreTests {
         let measurementTrust = ForgeQualityTrustedMeasurement(authenticatedMeasurement: measurementA)
         XCTAssertTrue(measurementTrust.exactlyMatches(measurementA))
         XCTAssertFalse(measurementTrust.exactlyMatches(measurementB))
+
+        let batchA = try batch([measurementA])
+        let batchB = try batch([measurementB])
+        let batchTrust = ForgeQualityTrustedMeasurementBatch(authenticatedBatch: batchA)
+        XCTAssertTrue(batchTrust.exactlyMatches(batchA))
+        XCTAssertFalse(batchTrust.exactlyMatches(batchB))
     }
 }
