@@ -28,3 +28,20 @@ jobs:
         run: python3 scripts/validate_v14_local_model_snapshot_pins.py --self-test --repo-root .
       - name: Validate repository MLX snapshot pins
         run: python3 scripts/validate_v14_local_model_snapshot_pins.py --repo-root .
+      - name: Reject mutable MLX cache revision fallback
+        shell: bash
+        run: |
+          runtime='Vendor/swift-llama-cpp/Sources/SwiftLlama/NovaForgeMLXRuntime.swift'
+          if [[ ! -f "$runtime" ]]; then
+            echo '[PASS] MLX runtime is not present on this head.'
+            exit 0
+          fi
+          if grep -Eq 'ref:[[:space:]]*"(main|master|latest)"' "$runtime"; then
+            echo '[FAIL] MLX cache lookup must not resolve a mutable branch/latest label.' >&2
+            exit 1
+          fi
+          if grep -Fq 'revision ??' "$runtime"; then
+            echo '[FAIL] Optional MLX download revisions must fail closed instead of defaulting.' >&2
+            exit 1
+          fi
+          echo '[PASS] MLX cache lookup has no mutable branch/latest or optional-revision fallback.'
