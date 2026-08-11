@@ -52,6 +52,51 @@ final class ProviderRouteProfileReviewRegressionTests: XCTestCase {
         }
     }
 
+    func testDescriptorLookupRejectsEveryNonSelectableSupportState() throws {
+        let blockedStates: [ProviderProductSupportState] = [
+            .legacy,
+            .broken,
+            .unverified,
+            .removedDoNotOffer,
+        ]
+
+        for state in blockedStates {
+            let profile = try makeProfile(supportState: state)
+            let registry = try ProviderRouteRegistry([profile])
+
+            XCTAssertThrowsError(
+                try registry.profile(
+                    matching: profile.descriptor,
+                    allowExperimental: true
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? ProviderRouteRegistryFailure,
+                    .unavailableSupportState(profile.key, state)
+                )
+            }
+        }
+    }
+
+    func testDescriptorLookupRequiresExplicitExperimentalOptIn() throws {
+        let profile = try makeProfile(supportState: .experimental)
+        let registry = try ProviderRouteRegistry([profile])
+
+        XCTAssertThrowsError(try registry.profile(matching: profile.descriptor)) { error in
+            XCTAssertEqual(
+                error as? ProviderRouteRegistryFailure,
+                .unavailableSupportState(profile.key, .experimental)
+            )
+        }
+        XCTAssertEqual(
+            try registry.profile(
+                matching: profile.descriptor,
+                allowExperimental: true
+            ),
+            profile
+        )
+    }
+
     private func makeProfile(
         supportState: ProviderProductSupportState = .supported,
         authenticationMode: ProviderAuthenticationMode = .apiKeyBearer,
