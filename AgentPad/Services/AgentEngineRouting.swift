@@ -120,6 +120,16 @@ enum AgentRunEffortBudgetPolicy {
     ) -> AgentBudget {
         switch orchestrationMode {
         case .ultraCode:
+            // Reasoning effort and orchestration are persisted independently.
+            // Only the canonical top-stop pair may mint the full Ultra budget;
+            // interrupted/stale mixed pairs fail closed to the matching
+            // standard-orchestration effort instead of self-promoting.
+            guard reasoningEffort == .max else {
+                return budget(
+                    reasoningEffort: reasoningEffort,
+                    orchestrationMode: .standard
+                )
+            }
             return makeBudget(
                 iterations: 128,
                 providerAttempts: 192,
