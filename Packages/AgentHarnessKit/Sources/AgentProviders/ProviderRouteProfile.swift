@@ -371,15 +371,22 @@ public struct ProviderRouteRegistry: Sendable {
         profilesByKey[ProviderRouteKey(providerID: providerID, modelID: modelID)]?.supportState ?? .unverified
     }
 
-    /// Recovery/runtime verification must match the exact accepted adapter,
-    /// dialect, path, capabilities, deployment, and provenance snapshot.
-    public func profile(matching descriptor: ProviderAdapterDescriptor) throws -> ProviderRouteProfile {
+    /// Current descriptor verification is dispatch-authorizing only for routes
+    /// that remain selectable under the caller's explicit experimental policy.
+    /// Historical receipt verification below stays a separate recovery path.
+    public func profile(
+        matching descriptor: ProviderAdapterDescriptor,
+        allowExperimental: Bool = false
+    ) throws -> ProviderRouteProfile {
         let key = ProviderRouteKey(route: descriptor.route)
         guard let profile = profilesByKey[key] else {
             throw ProviderRouteRegistryFailure.unknownRoute(key)
         }
         guard profile.descriptor == descriptor else {
             throw ProviderRouteRegistryFailure.descriptorDrift(key)
+        }
+        guard profile.isSelectable(allowExperimental: allowExperimental) else {
+            throw ProviderRouteRegistryFailure.unavailableSupportState(key, profile.supportState)
         }
         return profile
     }
