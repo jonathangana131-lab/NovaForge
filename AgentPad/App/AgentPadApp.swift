@@ -1574,7 +1574,10 @@ struct NovaForgeMainApp: App {
     }
 
     private var selectedTheme: AgentTheme {
-        AgentTheme.resolved(from: selectedThemeRawValue)
+        AgentTheme.resolvedForLaunch(
+            storedRawValue: selectedThemeRawValue,
+            arguments: ProcessInfo.processInfo.arguments
+        )
     }
 
     // MARK: - Static Helpers

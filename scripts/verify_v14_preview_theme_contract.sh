@@ -78,6 +78,9 @@ if '.accessibilityIdentifier("settingsThemeStudioCard-\\(theme.rawValue)")' not 
 required_app = [
     '@AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue',
     '.preferredColorScheme(selectedTheme.preferredColorScheme)',
+    'private var selectedTheme: AgentTheme {',
+    'storedRawValue: selectedThemeRawValue,',
+    'arguments: ProcessInfo.processInfo.arguments',
 ]
 for needle in required_app:
     if needle not in app:
