@@ -57,6 +57,7 @@ public enum ForgeQualityEvaluator {
         let candidateMeasurements = measurements.map(\.candidate)
         let measurementsByTarget = try validateMeasurements(
             targets: policy.targets,
+            measurementProtocol: policy.measurementProtocol,
             binding: binding,
             measurements: candidateMeasurements
         )
@@ -124,6 +125,7 @@ public enum ForgeQualityEvaluator {
 
     private static func validateMeasurements(
         targets: [ForgeQualityTarget],
+        measurementProtocol: ForgeQualityMeasurementProtocolIdentity,
         binding: ForgeQualityRunBinding,
         measurements: [ForgeQualityMeasurement]
     ) throws -> [ForgeQualityTargetKey: ForgeQualityMeasurement] {
@@ -135,6 +137,9 @@ public enum ForgeQualityEvaluator {
         for measurement in measurements {
             guard measurement.binding == binding else {
                 throw ForgeQualityError.evidenceBindingMismatch(measurementID: measurement.measurementID)
+            }
+            guard measurement.measurementProtocol == measurementProtocol else {
+                throw ForgeQualityError.measurementProtocolMismatch(measurementID: measurement.measurementID)
             }
             guard targetKeys.contains(measurement.key) else {
                 throw ForgeQualityError.unexpectedMeasurement(
