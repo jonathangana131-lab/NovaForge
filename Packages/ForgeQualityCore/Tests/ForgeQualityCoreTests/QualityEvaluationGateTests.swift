@@ -45,6 +45,7 @@ extension ForgeQualityCoreTests {
         )
 
         XCTAssertEqual(result.status, .passed)
+        XCTAssertEqual(result.measurementProtocol, measurementProtocol())
         XCTAssertTrue(result.findings.isEmpty)
         XCTAssertEqual(result.contributingProducerReceiptIDs, [id("a11y"), id("frame"), id("fps")])
         XCTAssertEqual(result.passingProducerReceiptIDs, result.contributingProducerReceiptIDs)
