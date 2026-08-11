@@ -39,8 +39,17 @@ if mark.index("deletedConversationIDs.insert(conversationID)") > mark.index("pur
     raise SystemExit("deleted conversation tombstone must be installed before purge")
 if "return !deletedConversationIDs.contains(conversationID)" not in helper:
     raise SystemExit("deleted conversations must be rejected by draft persistence")
+if "let storedValue = defaults.object(forKey: Self.storageKey)" not in helper:
+    raise SystemExit("purge must inspect the raw stored draft value before decoding")
+if "defaults.removeObject(forKey: Self.storageKey)" not in helper:
+    raise SystemExit("corrupt or wrong-type draft storage must be cleared after successful deletion")
 if "drafts.removeValue(forKey: conversationID.uuidString)" not in helper:
-    raise SystemExit("purge must remove the deleted conversation's stored draft")
+    raise SystemExit("valid draft storage must remove only the deleted conversation's draft")
+corrupt_guard = "guard let raw = storedValue as? String,"
+corrupt_clear = "defaults.removeObject(forKey: Self.storageKey)"
+valid_remove = "drafts.removeValue(forKey: conversationID.uuidString)"
+if not (helper.index(corrupt_guard) < helper.index(corrupt_clear) < helper.index(valid_remove)):
+    raise SystemExit("corrupt storage must fail closed before valid target-only removal")
 
 persist = function_slice(
     chat,
@@ -79,9 +88,9 @@ if delete.count(mark_deleted) != 1:
 if not (delete.index(durable_delete) < delete.index(catch_return) < delete.index(mark_deleted) < delete.index(commit_revision)):
     raise SystemExit("draft invalidation must happen only after durable deletion failure has returned, and before reroute commit")
 
-unit_test = "func testDeletedConversationDraftPurgesOnlyTargetAndInstallsTombstone() throws {"
-if tests.count(unit_test) != 1:
-    raise SystemExit("executable chat-delete draft regression must exist exactly once")
+valid_unit_test = "func testDeletedConversationDraftPurgesOnlyTargetAndInstallsTombstone() throws {"
+if tests.count(valid_unit_test) != 1:
+    raise SystemExit("valid-storage chat-delete draft regression must exist exactly once")
 for token in (
     "ConversationDraftPersistence.shared.markDeletedAndPurge(",
     "XCTAssertNil(drafts[deletedConversationID.uuidString])",
@@ -90,16 +99,33 @@ for token in (
     "XCTAssertTrue(",
 ):
     if token not in tests:
-        raise SystemExit(f"executable chat-delete draft regression is missing: {token}")
+        raise SystemExit(f"valid-storage executable regression is missing: {token}")
+
+corrupt_unit_test = "func testDeletedConversationDraftClearsMalformedStorageAndInstallsTombstone() throws {"
+if tests.count(corrupt_unit_test) != 1:
+    raise SystemExit("malformed-storage chat-delete regression must exist exactly once")
+corrupt_test_start = tests.index(corrupt_unit_test)
+corrupt_test_end = tests.index("\n    func ", corrupt_test_start + len(corrupt_unit_test))
+corrupt_test = tests[corrupt_test_start:corrupt_test_end]
+for token in (
+    '"{malformed-draft-json"',
+    "ConversationDraftPersistence.shared.markDeletedAndPurge(",
+    "defaults.object(forKey: ConversationDraftPersistence.storageKey)",
+    "XCTAssertFalse(",
+):
+    if token not in corrupt_test:
+        raise SystemExit(f"malformed-storage executable regression is missing: {token}")
 
 for temporary_path in (
     ".github/workflows/one-shot-chat-delete-draft-patch.yml",
     "scripts/one_shot_chat_delete_draft_patch.py",
     ".github/workflows/one-shot-chat-delete-draft-testability.yml",
     "scripts/one_shot_move_chat_draft_persistence_for_tests.py",
+    ".github/workflows/one-shot-chat-delete-corrupt-draft.yml",
+    "scripts/one_shot_chat_delete_corrupt_draft_patch.py",
 ):
     if Path(temporary_path).exists():
         raise SystemExit(f"temporary mutation helper leaked into the permanent branch: {temporary_path}")
 
-print("PASS: Preview chat deletion purges persisted drafts only after durable success, blocks selected-chat resurrection, and is wired to an executable XCTest.")
+print("PASS: Preview chat deletion purges valid drafts narrowly, clears corrupt storage after durable success, blocks selected-chat resurrection, and is wired to executable XTests.")
 PY
