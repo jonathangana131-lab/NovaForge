@@ -2474,6 +2474,7 @@ struct AppRootView: View {
             }
 
             optimisticSelectedConversation = nil
+            ConversationDraftPersistence.shared.markDeletedAndPurge(conversationID)
             persistenceCommitRevision &+= 1
             await Task.yield()
             destructivePersistenceTask = nil

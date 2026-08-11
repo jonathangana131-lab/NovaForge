@@ -402,6 +402,39 @@ private enum AgentCanonicalStreamingPerformanceFixture {
 }
 #endif
 
+final class ConversationDraftPersistence: @unchecked Sendable {
+    static let shared = ConversationDraftPersistence()
+    static let storageKey = "novaForgeChatDraftsByConversation"
+
+    private let lock = NSLock()
+    private var deletedConversationIDs: Set<UUID> = []
+
+    private init() {}
+
+    func markDeletedAndPurge(_ conversationID: UUID, defaults: UserDefaults = .standard) {
+        lock.lock()
+        deletedConversationIDs.insert(conversationID)
+        lock.unlock()
+        purge(conversationID, defaults: defaults)
+    }
+
+    func shouldPersist(_ conversationID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !deletedConversationIDs.contains(conversationID)
+    }
+
+    func purge(_ conversationID: UUID, defaults: UserDefaults = .standard) {
+        guard let raw = defaults.string(forKey: Self.storageKey),
+              let data = raw.data(using: .utf8),
+              var drafts = try? JSONDecoder().decode([String: String].self, from: data),
+              drafts.removeValue(forKey: conversationID.uuidString) != nil,
+              let encoded = try? JSONEncoder().encode(drafts),
+              let updated = String(data: encoded, encoding: .utf8) else { return }
+        defaults.set(updated, forKey: Self.storageKey)
+    }
+}
+
 struct ChatView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2094,6 +2127,10 @@ struct ChatView: View {
     }
 
     private func persistDraft(_ draft: String, for conversationID: UUID) {
+        guard ConversationDraftPersistence.shared.shouldPersist(conversationID) else {
+            ConversationDraftPersistence.shared.purge(conversationID)
+            return
+        }
         var drafts = persistedDrafts()
         let key = conversationID.uuidString
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
