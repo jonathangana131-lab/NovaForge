@@ -27,11 +27,11 @@ enum AgentActivityPresentation {
         arguments: [String: String],
         detail: String?
     ) -> (title: String, target: String?) {
-        let target = arguments["path"] ??
-            arguments["file"] ??
-            arguments["to"] ??
-            arguments["from"] ??
-            sanitizedDetail(detail ?? "")
+        let target = sanitizedDetail(arguments["path"]) ??
+            sanitizedDetail(arguments["file"]) ??
+            sanitizedDetail(arguments["to"]) ??
+            sanitizedDetail(arguments["from"]) ??
+            sanitizedDetail(detail)
         let loweredName = name.lowercased()
         if loweredName.contains("word tree") ||
             loweredName.contains("live feed") ||
