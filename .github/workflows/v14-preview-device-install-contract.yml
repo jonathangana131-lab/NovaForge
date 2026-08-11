@@ -1,0 +1,32 @@
+name: V14 Preview device install contract
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/codex-device-preview-install.sh'
+      - 'scripts/verify_v14_preview_device_install_contract.py'
+      - '.github/workflows/v14-preview-device-install-contract.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/codex-device-preview-install.sh'
+      - 'scripts/verify_v14_preview_device_install_contract.py'
+      - '.github/workflows/v14-preview-device-install-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  device-install-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: bash -n scripts/codex-device-preview-install.sh
+      - name: Compile static verifier
+        run: python3 -m py_compile scripts/verify_v14_preview_device_install_contract.py
+      - name: Run adversarial verifier self-test
+        run: python3 scripts/verify_v14_preview_device_install_contract.py --self-test --repo-root .
+      - name: Validate connected-device Preview install contract
+        run: python3 scripts/verify_v14_preview_device_install_contract.py --repo-root .
