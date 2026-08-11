@@ -3,31 +3,70 @@ import XCTest
 @testable import ForgeQualityCore
 
 final class ForgeQualityStaticTrustBoundaryTests: XCTestCase {
-    func testExternalConsumerCannotMintTrustedPolicyRunOrMeasurement() throws {
+    func testExternalConsumerCannotMintTrustedPolicy() throws {
+        try assertExternalMintRejected(
+            source: """
+            import ForgeQualityCore
+            func attempt(_ policy: ForgeQualityPolicy) {
+                _ = ForgeQualityTrustedPolicy(authenticatedPolicy: policy)
+            }
+            """,
+            expectedSymbol: "ForgeQualityTrustedPolicy"
+        )
+    }
+
+    func testExternalConsumerCannotMintTrustedMeasurement() throws {
+        try assertExternalMintRejected(
+            source: """
+            import ForgeQualityCore
+            func attempt(_ measurement: ForgeQualityMeasurement) {
+                _ = ForgeQualityTrustedMeasurement(authenticatedMeasurement: measurement)
+            }
+            """,
+            expectedSymbol: "ForgeQualityTrustedMeasurement"
+        )
+    }
+
+    func testExternalConsumerCannotMintTrustedMeasurementBatch() throws {
+        try assertExternalMintRejected(
+            source: """
+            import ForgeQualityCore
+            func attempt(_ batch: ForgeQualityMeasurementBatch) {
+                _ = ForgeQualityTrustedMeasurementBatch(authenticatedBatch: batch)
+            }
+            """,
+            expectedSymbol: "ForgeQualityTrustedMeasurementBatch"
+        )
+    }
+
+    func testExternalConsumerCannotMintTrustedRunBinding() throws {
+        try assertExternalMintRejected(
+            source: """
+            import ForgeQualityCore
+            func attempt(_ binding: ForgeQualityRunBinding, _ target: ForgeQualityCompletionTarget) {
+                _ = ForgeQualityTrustedRunBinding(
+                    authenticatedBinding: binding,
+                    authenticatedCompletionTarget: target
+                )
+            }
+            """,
+            expectedSymbol: "ForgeQualityTrustedRunBinding"
+        )
+    }
+
+    private func assertExternalMintRejected(
+        source: String,
+        expectedSymbol: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("forge-quality-static-trust-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
         let sourceURL = temporaryDirectory.appendingPathComponent("ExternalTrustMint.swift")
-        try """
-        import ForgeQualityCore
-
-        func attemptPolicy(_ policy: ForgeQualityPolicy) {
-            _ = ForgeQualityTrustedPolicy(authenticatedPolicy: policy)
-        }
-
-        func attemptMeasurement(_ measurement: ForgeQualityMeasurement) {
-            _ = ForgeQualityTrustedMeasurement(authenticatedMeasurement: measurement)
-        }
-
-        func attemptRunBinding(_ binding: ForgeQualityRunBinding, _ target: ForgeQualityCompletionTarget) {
-            _ = ForgeQualityTrustedRunBinding(
-                authenticatedBinding: binding,
-                authenticatedCompletionTarget: target
-            )
-        }
-        """.write(to: sourceURL, atomically: true, encoding: .utf8)
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
 
         let modulesURL = try activeModulesURL()
         let process = Process()
@@ -52,19 +91,31 @@ final class ForgeQualityStaticTrustBoundaryTests: XCTestCase {
             as: UTF8.self
         )
 
-        XCTAssertNotEqual(process.terminationStatus, 0, "External trust mint unexpectedly compiled")
+        XCTAssertNotEqual(
+            process.terminationStatus,
+            0,
+            "External trust mint unexpectedly compiled",
+            file: file,
+            line: line
+        )
         XCTAssertFalse(
             diagnostics.localizedCaseInsensitiveContains("no such module 'ForgeQualityCore'"),
-            "Static boundary probe failed before reaching the trust API: \(diagnostics)"
+            "Static boundary probe failed before reaching the trust API: \(diagnostics)",
+            file: file,
+            line: line
         )
         XCTAssertTrue(
-            diagnostics.contains("ForgeQualityTrustedRunBinding"),
-            "Expected a run-binding trust rejection, got: \(diagnostics)"
+            diagnostics.contains(expectedSymbol),
+            "Expected \(expectedSymbol) trust rejection, got: \(diagnostics)",
+            file: file,
+            line: line
         )
         XCTAssertTrue(
             diagnostics.localizedCaseInsensitiveContains("inaccessible")
                 || diagnostics.localizedCaseInsensitiveContains("internal protection level"),
-            "Expected access-control rejection, got: \(diagnostics)"
+            "Expected access-control rejection, got: \(diagnostics)",
+            file: file,
+            line: line
         )
     }
 
