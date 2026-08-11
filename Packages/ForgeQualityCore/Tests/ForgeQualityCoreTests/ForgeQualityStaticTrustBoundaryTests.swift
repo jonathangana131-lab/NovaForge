@@ -21,8 +21,11 @@ final class ForgeQualityStaticTrustBoundaryTests: XCTestCase {
             _ = ForgeQualityTrustedMeasurement(authenticatedMeasurement: measurement)
         }
 
-        func attemptRunBinding(_ binding: ForgeQualityRunBinding) {
-            _ = ForgeQualityTrustedRunBinding(authenticatedBinding: binding)
+        func attemptRunBinding(_ binding: ForgeQualityRunBinding, _ target: ForgeQualityCompletionTarget) {
+            _ = ForgeQualityTrustedRunBinding(
+                authenticatedBinding: binding,
+                authenticatedCompletionTarget: target
+            )
         }
         """.write(to: sourceURL, atomically: true, encoding: .utf8)
 
@@ -66,17 +69,25 @@ final class ForgeQualityStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ForgeQualityCore.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) {
-                return modulesURL
+        let starts = [
+            Bundle(for: ForgeQualityStaticTrustBoundaryTests.self).bundleURL,
+            URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent(),
+        ]
+
+        for start in starts {
+            var directory = start
+            for _ in 0..<10 {
+                let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+                let moduleURL = modulesURL.appendingPathComponent("ForgeQualityCore.swiftmodule")
+                if FileManager.default.fileExists(atPath: moduleURL.path) {
+                    return modulesURL
+                }
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path { break }
+                directory = parent
             }
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { break }
-            directory = parent
         }
+
         throw NSError(
             domain: "ForgeQualityStaticTrustBoundaryTests",
             code: 1,
