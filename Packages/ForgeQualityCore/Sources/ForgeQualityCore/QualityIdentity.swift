@@ -17,6 +17,7 @@ public enum ForgeQualityError: Error, Equatable, Sendable {
     case duplicateProducerReceiptID(ForgeQualityID)
     case unexpectedMeasurement(metric: ForgeQualityMetric, scope: ForgeQualityScope)
     case evidenceBindingMismatch(measurementID: ForgeQualityID)
+    case measurementProtocolMismatch(measurementID: ForgeQualityID)
     case completionBindingMismatch
     case unsupportedSchemaVersion(Int)
 }
@@ -51,6 +52,35 @@ public struct ForgeQualityID: Hashable, Codable, Sendable, Comparable, CustomStr
         guard !value.isEmpty, value.utf8.count <= 512 else { return false }
         guard value == value.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
         return !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+}
+
+/// Exact producer protocol identity shared by an accepted quality policy and every measurement
+/// evaluated against it. A metric name or evidence-kind label alone is not enough to prove that
+/// collection semantics are still current after the profiler/audit protocol changes.
+public struct ForgeQualityMeasurementProtocolIdentity: Codable, Hashable, Sendable {
+    public let protocolID: ForgeQualityID
+    public let revision: UInt64
+
+    public init(protocolID: ForgeQualityID, revision: UInt64) throws {
+        guard revision > 0 else {
+            throw ForgeQualityError.invalidRevision(field: "measurementProtocol.revision")
+        }
+        self.protocolID = protocolID
+        self.revision = revision
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case protocolID
+        case revision
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            protocolID: container.decode(ForgeQualityID.self, forKey: .protocolID),
+            revision: container.decode(UInt64.self, forKey: .revision)
+        )
     }
 }
 
