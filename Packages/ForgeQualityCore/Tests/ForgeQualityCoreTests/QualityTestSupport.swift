@@ -95,6 +95,7 @@ extension ForgeQualityCoreTests {
     }
 
     func measurement(
+        measurementID explicitMeasurementID: String? = nil,
         binding: ForgeQualityRunBinding? = nil,
         protocolIdentity: ForgeQualityMeasurementProtocolIdentity? = nil,
         metric: ForgeQualityMetric,
@@ -105,7 +106,7 @@ extension ForgeQualityCoreTests {
     ) throws -> ForgeQualityMeasurement {
         let evidenceKind = metric.expectedEvidenceKind
         return try ForgeQualityMeasurement(
-            measurementID: id("measurement-\(receipt)"),
+            measurementID: id(explicitMeasurementID ?? "measurement-\(receipt)"),
             producerReceiptID: id(receipt),
             binding: binding ?? runBinding(),
             measurementProtocol: protocolIdentity ?? measurementProtocol(),
@@ -115,6 +116,20 @@ extension ForgeQualityCoreTests {
             value: value,
             sampleCount: samples
         )
+    }
+
+    func batch(_ measurements: [ForgeQualityMeasurement]) throws -> ForgeQualityMeasurementBatch {
+        try ForgeQualityMeasurementBatch(measurements: measurements)
+    }
+
+    func trustedBatch(_ measurements: [ForgeQualityMeasurement]) -> ForgeQualityTrustedMeasurementBatch {
+        ForgeQualityTrustedMeasurementBatch(
+            authenticatedBatch: try! ForgeQualityMeasurementBatch(measurements: measurements)
+        )
+    }
+
+    func trustedBatch(_ measurement: ForgeQualityMeasurement) -> ForgeQualityTrustedMeasurementBatch {
+        trustedBatch([measurement])
     }
 
     func trusted(_ measurement: ForgeQualityMeasurement) -> ForgeQualityTrustedMeasurement {
