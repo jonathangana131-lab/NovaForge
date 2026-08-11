@@ -137,4 +137,69 @@ extension ForgeQualityCoreTests {
             )
         )
     }
+
+    func testMeasurementBatchRejectsEmptyAndMixedAuthorities() throws {
+        XCTAssertThrowsError(try ForgeQualityMeasurementBatch(measurements: [])) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .emptyMeasurementBatch)
+        }
+
+        let anchor = try measurement(
+            measurementID: "batch-anchor",
+            metric: .p95FrameTimeMilliseconds,
+            value: 15,
+            receipt: "batch-receipt"
+        )
+        let otherReceipt = try measurement(
+            measurementID: "batch-other-receipt",
+            metric: .sustainedFramesPerSecond,
+            value: 60,
+            receipt: "other-receipt"
+        )
+        XCTAssertThrowsError(try batch([anchor, otherReceipt])) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .mixedMeasurementBatchProducerReceipt)
+        }
+
+        let otherBinding = try measurement(
+            measurementID: "batch-other-binding",
+            binding: runBinding(runID: "run-2"),
+            metric: .sustainedFramesPerSecond,
+            value: 60,
+            receipt: "batch-receipt"
+        )
+        XCTAssertThrowsError(try batch([anchor, otherBinding])) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .mixedMeasurementBatchBinding)
+        }
+
+        let otherProtocol = try measurement(
+            measurementID: "batch-other-protocol",
+            protocolIdentity: measurementProtocol(revision: 8),
+            metric: .sustainedFramesPerSecond,
+            value: 60,
+            receipt: "batch-receipt"
+        )
+        XCTAssertThrowsError(try batch([anchor, otherProtocol])) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .mixedMeasurementBatchProtocol)
+        }
+    }
+
+    func testMeasurementBatchDecodeRevalidatesTopLevelReceipt() throws {
+        let measurement = try measurement(
+            measurementID: "batch-decode-measurement",
+            metric: .p95FrameTimeMilliseconds,
+            value: 15,
+            receipt: "batch-decode-receipt"
+        )
+        let valid = try batch([measurement])
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(valid)) as? [String: Any]
+        )
+        object["producerReceiptID"] = "forged-receipt"
+        let data = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(ForgeQualityMeasurementBatch.self, from: data)
+        ) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .mixedMeasurementBatchProducerReceipt)
+        }
+    }
 }
