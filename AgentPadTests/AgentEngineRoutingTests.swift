@@ -225,4 +225,45 @@ final class AgentEngineRoutingTests: XCTestCase {
         XCTAssertEqual(staleStandardMax, extraHigh)
         XCTAssertNotEqual(staleStandardMax, ultra)
     }
+
+    func testPreviewUltraCodeRequiresExactMaxPairAndMalformedPairsFailClosed() {
+        let malformedReasoningEfforts: [ProviderReasoningEffort] = [
+            .none,
+            .low,
+            .medium,
+            .high,
+            .xhigh,
+        ]
+
+        for reasoningEffort in malformedReasoningEfforts {
+            let malformedPairBudget = AgentRunEffortBudgetPolicy.budget(
+                reasoningEffort: reasoningEffort,
+                orchestrationMode: .ultraCode
+            )
+            let matchingStandardBudget = AgentRunEffortBudgetPolicy.budget(
+                reasoningEffort: reasoningEffort,
+                orchestrationMode: .standard
+            )
+
+            XCTAssertEqual(
+                malformedPairBudget,
+                matchingStandardBudget,
+                "A malformed \(reasoningEffort) + ultraCode pair must not self-promote."
+            )
+        }
+
+        let canonicalUltra = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .ultraCode
+        )
+        let staleStandardMax = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .standard
+        )
+
+        XCTAssertEqual(canonicalUltra.limits.iterations, 128)
+        XCTAssertEqual(canonicalUltra.limits.providerAttempts, 192)
+        XCTAssertEqual(canonicalUltra.limits.toolInvocations, 256)
+        XCTAssertNotEqual(canonicalUltra, staleStandardMax)
+    }
 }
