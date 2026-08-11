@@ -8,6 +8,23 @@ extension ForgeQualityCoreTests {
         try! ForgeQualityID(value)
     }
 
+    func measurementProtocol(revision: UInt64 = 7) -> ForgeQualityMeasurementProtocolIdentity {
+        try! ForgeQualityMeasurementProtocolIdentity(
+            protocolID: id("quality-protocol"),
+            revision: revision
+        )
+    }
+
+    func journeyScope(
+        id journeyID: String = "journey-1",
+        definitionDigest: String = "journey-definition-v1"
+    ) -> ForgeQualityScope {
+        .journey(
+            id: id(journeyID),
+            definitionDigest: id(definitionDigest)
+        )
+    }
+
     func completionTarget() throws -> ForgeQualityCompletionTarget {
         try ForgeQualityCompletionTarget(
             missionID: id("mission-1"),
@@ -20,7 +37,8 @@ extension ForgeQualityCoreTests {
 
     func policy(
         targets: [ForgeQualityTarget],
-        completionTarget acceptedTarget: ForgeQualityCompletionTarget? = nil
+        completionTarget acceptedTarget: ForgeQualityCompletionTarget? = nil,
+        protocolIdentity: ForgeQualityMeasurementProtocolIdentity? = nil
     ) throws -> ForgeQualityPolicy {
         try ForgeQualityPolicy(
             policyID: id("quality-policy"),
@@ -29,16 +47,22 @@ extension ForgeQualityCoreTests {
             criterionID: id("quality-criterion"),
             completionTarget: acceptedTarget ?? completionTarget(),
             checkpointID: id("checkpoint-7"),
+            measurementProtocol: protocolIdentity ?? measurementProtocol(),
             targets: targets
         )
     }
 
     func trustedPolicy(
         targets: [ForgeQualityTarget],
-        completionTarget acceptedTarget: ForgeQualityCompletionTarget? = nil
+        completionTarget acceptedTarget: ForgeQualityCompletionTarget? = nil,
+        protocolIdentity: ForgeQualityMeasurementProtocolIdentity? = nil
     ) -> ForgeQualityTrustedPolicy {
         ForgeQualityTrustedPolicy(
-            authenticatedPolicy: try! policy(targets: targets, completionTarget: acceptedTarget)
+            authenticatedPolicy: try! policy(
+                targets: targets,
+                completionTarget: acceptedTarget,
+                protocolIdentity: protocolIdentity
+            )
         )
     }
 
@@ -72,7 +96,9 @@ extension ForgeQualityCoreTests {
 
     func measurement(
         binding: ForgeQualityRunBinding? = nil,
+        protocolIdentity: ForgeQualityMeasurementProtocolIdentity? = nil,
         metric: ForgeQualityMetric,
+        scope: ForgeQualityScope = .run,
         value: Double,
         samples: Int = 1,
         receipt: String
@@ -82,7 +108,9 @@ extension ForgeQualityCoreTests {
             measurementID: id("measurement-\(receipt)"),
             producerReceiptID: id(receipt),
             binding: binding ?? runBinding(),
+            measurementProtocol: protocolIdentity ?? measurementProtocol(),
             metric: metric,
+            scope: scope,
             evidenceKind: evidenceKind,
             value: value,
             sampleCount: samples
