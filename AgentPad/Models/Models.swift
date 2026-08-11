@@ -41,10 +41,14 @@ final class ConversationDraftPersistence: @unchecked Sendable {
     }
 
     func purge(_ conversationID: UUID, defaults: UserDefaults = .standard) {
-        guard let raw = defaults.string(forKey: Self.storageKey),
+        guard let storedValue = defaults.object(forKey: Self.storageKey) else { return }
+        guard let raw = storedValue as? String,
               let data = raw.data(using: .utf8),
-              var drafts = try? JSONDecoder().decode([String: String].self, from: data),
-              drafts.removeValue(forKey: conversationID.uuidString) != nil,
+              var drafts = try? JSONDecoder().decode([String: String].self, from: data) else {
+            defaults.removeObject(forKey: Self.storageKey)
+            return
+        }
+        guard drafts.removeValue(forKey: conversationID.uuidString) != nil,
               let encoded = try? JSONEncoder().encode(drafts),
               let updated = String(data: encoded, encoding: .utf8) else { return }
         defaults.set(updated, forKey: Self.storageKey)

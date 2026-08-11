@@ -294,6 +294,31 @@ final class AgentRuntimeLifecycleTests: XCTestCase {
         )
     }
 
+    func testDeletedConversationDraftClearsMalformedStorageAndInstallsTombstone() throws {
+        let suiteName = "NovaForge.ChatDeleteDraft.Corrupt.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let deletedConversationID = UUID()
+        defaults.set(
+            "{malformed-draft-json",
+            forKey: ConversationDraftPersistence.storageKey
+        )
+
+        ConversationDraftPersistence.shared.markDeletedAndPurge(
+            deletedConversationID,
+            defaults: defaults
+        )
+
+        XCTAssertNil(
+            defaults.object(forKey: ConversationDraftPersistence.storageKey),
+            "Successful deletion must not leave undecodable user-authored draft bytes behind."
+        )
+        XCTAssertFalse(
+            ConversationDraftPersistence.shared.shouldPersist(deletedConversationID)
+        )
+    }
+
     func testLiveStreamBufferRevealsLargeChunksGradually() async throws {
         let stream = LiveStreamBuffer()
         let text = String(repeating: "NovaForge should flow like a native chat response instead of spawning a full provider batch. ", count: 24)
