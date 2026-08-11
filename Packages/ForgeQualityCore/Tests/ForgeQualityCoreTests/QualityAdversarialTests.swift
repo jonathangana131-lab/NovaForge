@@ -49,6 +49,76 @@ extension ForgeQualityCoreTests {
         }
     }
 
+    func testMeasurementProtocolRevisionDriftFailsClosed() throws {
+        let target = try ForgeQualityTarget(
+            metric: .p95FrameTimeMilliseconds,
+            comparator: .atMost,
+            threshold: 20
+        )
+        let stale = try measurement(
+            protocolIdentity: measurementProtocol(revision: 6),
+            metric: .p95FrameTimeMilliseconds,
+            value: 15,
+            receipt: "stale-protocol"
+        )
+
+        XCTAssertThrowsError(
+            try ForgeQualityEvaluator.evaluate(
+                policy: trustedPolicy(
+                    targets: [target],
+                    protocolIdentity: measurementProtocol(revision: 7)
+                ),
+                binding: trustedRunBinding(),
+                measurements: [trusted(stale)]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeQualityError,
+                .measurementProtocolMismatch(measurementID: id("measurement-stale-protocol"))
+            )
+        }
+    }
+
+    func testSameJourneyIDDifferentDefinitionCannotReplay() throws {
+        let currentScope = journeyScope(
+            id: "journey-same",
+            definitionDigest: "journey-definition-v2"
+        )
+        let staleScope = journeyScope(
+            id: "journey-same",
+            definitionDigest: "journey-definition-v1"
+        )
+        let target = try ForgeQualityTarget(
+            metric: .inputLatencyP95Milliseconds,
+            scope: currentScope,
+            comparator: .atMost,
+            threshold: 50
+        )
+        let stale = try measurement(
+            metric: .inputLatencyP95Milliseconds,
+            scope: staleScope,
+            value: 20,
+            samples: 30,
+            receipt: "stale-journey"
+        )
+
+        XCTAssertThrowsError(
+            try ForgeQualityEvaluator.evaluate(
+                policy: trustedPolicy(targets: [target]),
+                binding: trustedRunBinding(),
+                measurements: [trusted(stale)]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ForgeQualityError,
+                .unexpectedMeasurement(
+                    metric: .inputLatencyP95Milliseconds,
+                    scope: staleScope
+                )
+            )
+        }
+    }
+
     func testDuplicateMetricScopeFailsClosed() throws {
         let target = try ForgeQualityTarget(
             metric: .p95FrameTimeMilliseconds,
@@ -57,8 +127,14 @@ extension ForgeQualityCoreTests {
         )
         let one = try measurement(metric: .p95FrameTimeMilliseconds, value: 15, receipt: "r1")
         let two = try ForgeQualityMeasurement(
-            measurementID: id("m2"), producerReceiptID: id("r2"), binding: runBinding(),
-            metric: .p95FrameTimeMilliseconds, evidenceKind: .runtimeTelemetry, value: 16, sampleCount: 1
+            measurementID: id("m2"),
+            producerReceiptID: id("r2"),
+            binding: runBinding(),
+            measurementProtocol: measurementProtocol(),
+            metric: .p95FrameTimeMilliseconds,
+            evidenceKind: .runtimeTelemetry,
+            value: 16,
+            sampleCount: 1
         )
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
@@ -81,8 +157,14 @@ extension ForgeQualityCoreTests {
         )
         let one = try measurement(metric: .p95FrameTimeMilliseconds, value: 15, receipt: "shared")
         let two = try ForgeQualityMeasurement(
-            measurementID: id("measurement-shared-2"), producerReceiptID: id("shared"), binding: runBinding(),
-            metric: .sustainedFramesPerSecond, evidenceKind: .runtimeTelemetry, value: 60, sampleCount: 1
+            measurementID: id("measurement-shared-2"),
+            producerReceiptID: id("shared"),
+            binding: runBinding(),
+            measurementProtocol: measurementProtocol(),
+            metric: .sustainedFramesPerSecond,
+            evidenceKind: .runtimeTelemetry,
+            value: 60,
+            sampleCount: 1
         )
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
@@ -110,18 +192,26 @@ extension ForgeQualityCoreTests {
     }
 
     func testJourneyEvidenceCannotSatisfyDifferentJourney() throws {
-        let journeyA = ForgeQualityScope.journey(id("journey-a"))
-        let journeyB = ForgeQualityScope.journey(id("journey-b"))
+        let journeyA = journeyScope(
+            id: "journey-a",
+            definitionDigest: "journey-a-definition-v1"
+        )
+        let journeyB = journeyScope(
+            id: "journey-b",
+            definitionDigest: "journey-b-definition-v1"
+        )
         let target = try ForgeQualityTarget(
             metric: .inputLatencyP95Milliseconds,
             scope: journeyA,
             comparator: .atMost,
             threshold: 50
         )
-        let wrong = try ForgeQualityMeasurement(
-            measurementID: id("latency-b"), producerReceiptID: id("receipt-b"), binding: runBinding(),
-            metric: .inputLatencyP95Milliseconds, scope: journeyB, evidenceKind: .interactionHarness,
-            value: 20, sampleCount: 30
+        let wrong = try measurement(
+            metric: .inputLatencyP95Milliseconds,
+            scope: journeyB,
+            value: 20,
+            samples: 30,
+            receipt: "receipt-b"
         )
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
