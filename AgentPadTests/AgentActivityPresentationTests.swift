@@ -73,6 +73,33 @@ final class AgentActivityPresentationTests: XCTestCase {
             "Writing answer…"
         )
     }
+
+    func testToolTargetsUseTheVisibleDetailRedactionBoundary() {
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "Sources/App.swift"]
+            ).target,
+            "Sources/App.swift"
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "  {\"internal\":true}  "]
+            ).target,
+            "Details saved in History."
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: [
+                    "path": "   ",
+                    "file": "Sources/Fallback.swift",
+                ]
+            ).target,
+            "Sources/Fallback.swift"
+        )
+    }
 }
 
 @MainActor
