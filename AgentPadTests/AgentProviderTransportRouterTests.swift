@@ -99,6 +99,63 @@ final class AgentProviderTransportRouterTests: XCTestCase {
             )
         }
     }
+
+    func testLocalTransportRejectsEveryNonOnDeviceDeploymentBeforeInference()
+        async throws
+    {
+        let variant = LocalModelCatalog.defaultVariant
+        let localDescriptor = try LocalModelAdapter(configuration: .init(
+            modelID: .init(rawValue: variant.id),
+            contextWindowTokens: UInt64(variant.contextTokens),
+            maximumOutputTokens: UInt64(variant.maxNewTokens),
+            toolMode: .textOnly
+        )).descriptor
+        let inference = RecordingLocalModelInference()
+        let transport = AgentLocalModelProviderTransport(inference: inference)
+        let encoded = ProviderEncodedRequest(
+            relativePath: localDescriptor.requestPath,
+            body: .object([:])
+        )
+
+        for deployment in [
+            ProviderDeployment.hostedService,
+            .remoteWorker,
+            .callerManaged,
+        ] {
+            let nonDeviceDescriptor = ProviderAdapterDescriptor(
+                route: ProviderRoute(
+                    providerID: localDescriptor.route.providerID,
+                    modelID: localDescriptor.route.modelID,
+                    adapterID: localDescriptor.route.adapterID,
+                    capabilities: localDescriptor.route.capabilities,
+                    deployment: deployment,
+                    provenance: localDescriptor.route.provenance
+                ),
+                dialect: localDescriptor.dialect,
+                requestPath: localDescriptor.requestPath
+            )
+
+            do {
+                _ = try await transport.stream(
+                    request: encoded,
+                    descriptor: nonDeviceDescriptor,
+                    scope: scope("local-non-device-\(deployment.rawValue)")
+                )
+                XCTFail(
+                    "Local transport accepted non-device deployment \(deployment.rawValue)"
+                )
+            } catch {
+                XCTAssertEqual(
+                    error as? AgentLocalModelProviderTransportError,
+                    .invalidDescriptor,
+                    deployment.rawValue
+                )
+            }
+        }
+
+        let callCount = await inference.callCount()
+        XCTAssertEqual(callCount, 0)
+    }
 }
 
 private actor RecordingProviderTransport: ProviderTransport {
@@ -117,6 +174,21 @@ private actor RecordingProviderTransport: ProviderTransport {
 
     func callCount() -> Int { descriptors.count }
     func lastDescriptor() -> ProviderAdapterDescriptor? { descriptors.last }
+}
+
+private actor RecordingLocalModelInference: AgentLocalModelInferenceStreaming {
+    private var streamRequests: [AgentLocalModelInferenceRequest] = []
+
+    func stream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent _: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        streamRequests.append(request)
+    }
+
+    func stop(request _: AgentLocalModelInferenceRequest) async {}
+
+    func callCount() -> Int { streamRequests.count }
 }
 
 private func descriptor(adapterID: String) -> ProviderAdapterDescriptor {
