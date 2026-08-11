@@ -100,32 +100,41 @@ final class AgentProviderTransportRouterTests: XCTestCase {
         }
     }
 
-    func testRejectsMixedHostedAndOnDeviceBindingsBeforeDispatch() async {
-        let hosted = descriptor(
-            adapterID: "hosted",
-            deployment: .hostedService
-        )
-        let local = descriptor(
-            adapterID: "local",
-            deployment: .onDevice
-        )
-        let hostedTransport = RecordingProviderTransport()
-        let localTransport = RecordingProviderTransport()
-
-        XCTAssertThrowsError(try AgentProviderTransportRouter(bindings: [
-            .init(descriptor: hosted, transport: hostedTransport),
-            .init(descriptor: local, transport: localTransport),
-        ])) { error in
-            XCTAssertEqual(
-                error as? AgentProviderTransportRouterError,
-                .mixedHostedAndOnDeviceBindings
+    func testRejectsOnDeviceMixedWithEveryNonDeviceDeploymentBeforeDispatch()
+        async
+    {
+        for deployment in [
+            ProviderDeployment.hostedService,
+            .remoteWorker,
+            .callerManaged,
+        ] {
+            let nonDevice = descriptor(
+                adapterID: "non-device-\(deployment.rawValue)",
+                deployment: deployment
             )
-        }
+            let local = descriptor(
+                adapterID: "local-\(deployment.rawValue)",
+                deployment: .onDevice
+            )
+            let nonDeviceTransport = RecordingProviderTransport()
+            let localTransport = RecordingProviderTransport()
 
-        let hostedCount = await hostedTransport.callCount()
-        let localCount = await localTransport.callCount()
-        XCTAssertEqual(hostedCount, 0)
-        XCTAssertEqual(localCount, 0)
+            XCTAssertThrowsError(try AgentProviderTransportRouter(bindings: [
+                .init(descriptor: nonDevice, transport: nonDeviceTransport),
+                .init(descriptor: local, transport: localTransport),
+            ]), deployment.rawValue) { error in
+                XCTAssertEqual(
+                    error as? AgentProviderTransportRouterError,
+                    .mixedOnDeviceAndNonOnDeviceBindings,
+                    deployment.rawValue
+                )
+            }
+
+            let nonDeviceCount = await nonDeviceTransport.callCount()
+            let localCount = await localTransport.callCount()
+            XCTAssertEqual(nonDeviceCount, 0, deployment.rawValue)
+            XCTAssertEqual(localCount, 0, deployment.rawValue)
+        }
     }
 
     func testAllowsMultipleOnDeviceBindingsAndStillRoutesExactly() async throws {
