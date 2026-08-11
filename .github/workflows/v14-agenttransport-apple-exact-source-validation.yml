@@ -1,0 +1,74 @@
+name: V14 AgentTransport Apple Exact-Source Validation
+
+on:
+  push:
+    branches:
+      - worker/GPT56-SOL-NF-V14-TRANSPORT-PORTABILITY-0810/validation-e4
+
+permissions:
+  contents: read
+
+jobs:
+  exact-source-agenttransport:
+    name: Exact-source AgentTransport contract tests (macos-15)
+    runs-on: macos-15
+    steps:
+      - name: Checkout validation commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Verify exact product parent
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "228eeb286bc48ee13ead3c084290062052532738"
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Assemble exact-source isolated package
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/AgentTransportProbe"
+          mkdir -p "$probe/Sources" "$probe/Tests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain "$probe/Sources/AgentDomain"
+          cp -R Packages/AgentHarnessKit/Sources/AgentTransport "$probe/Sources/AgentTransport"
+          cp -R Packages/AgentHarnessKit/Tests/AgentTransportTests "$probe/Tests/AgentTransportTests"
+          cat > "$probe/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+
+          let package = Package(
+              name: "AgentTransportProbe",
+              dependencies: [
+                  .package(
+                      url: "https://github.com/apple/swift-crypto.git",
+                      "1.0.0" ..< "5.0.0"
+                  ),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(
+                      name: "AgentTransport",
+                      dependencies: [
+                          "AgentDomain",
+                          .product(name: "Crypto", package: "swift-crypto"),
+                      ]
+                  ),
+                  .testTarget(
+                      name: "AgentTransportTests",
+                      dependencies: [
+                          "AgentDomain",
+                          "AgentTransport",
+                          .product(name: "Crypto", package: "swift-crypto"),
+                      ]
+                  ),
+              ]
+          )
+          SWIFT
+
+      - name: Run byte-copied AgentTransport contract tests
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/AgentTransportProbe"
+          swift test --filter AgentTransportContractTests
