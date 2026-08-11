@@ -20,15 +20,17 @@ The workflow runs these existing tests against one exact built source revision:
    - launches the canonical activity fixture at `UICTContentSizeCategoryAccessibilityXXXL`;
    - exercises the approval surface in White Gold;
    - checks critical controls remain reachable, non-overlapping, and large enough for touch;
-   - rejects legacy duplicate approval presentation.
+   - rejects legacy duplicate approval presentation;
+   - captures the expanded accessibility state.
 2. `testAccessibilityLayoutTouchTargetsAndCompactLabels`
    - exercises the normal Forge surface with the deterministic provider-list fixture;
    - checks compact labels and touch-target/layout invariants used by the normal Preview harness.
 3. `testGoalMatrixChatReadabilityAndThemeSwitchingScreenshots`
    - exercises representative Matrix Rain chat/readability state plus theme switching;
+   - captures Matrix chat, Midnight settings after a real theme change, and the returned Midnight Forge surface;
    - contributes screenshot evidence for theme/readability interaction instead of treating source inspection as visual proof.
 
-The workflow captures XCTest output and test screenshots under `artifacts/v14-preview-accessibility/` and uploads them even on failure.
+The workflow captures XCTest output and test screenshots under `artifacts/v14-preview-accessibility/` and uploads them even on failure. A successful XCTest log is **not sufficient** if the screenshot evidence channel is broken: the gate requires at least four PNGs from the selected journeys before it writes `xctest=PASS`.
 
 ## Fail-closed identity checks
 
@@ -39,9 +41,10 @@ Before XCTest is allowed to count as evidence, the workflow requires:
 - the configured Simulator UDID exists and identifies an available **iPhone 12**;
 - that Simulator belongs to an **iOS 27** runtime;
 - the built `NovaForge.app` contains `NovaForgeSourceCommit` exactly matching the tested source SHA;
-- all three focused XCTest journeys succeed.
+- all three focused XCTest journeys succeed;
+- at least four accessibility/readability screenshots are actually emitted.
 
-A mutable branch name, stale app, wrong simulator class/runtime, missing source marker, missing test bundle, or XCTest failure makes the workflow red.
+A mutable branch name, stale app, wrong simulator class/runtime, missing source marker, missing test bundle, XCTest failure, or missing visual artifacts makes the workflow red.
 
 ## Truth boundary
 
