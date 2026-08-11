@@ -1,0 +1,34 @@
+name: V14 AgentTransport Portability Validation
+
+on:
+  push:
+    branches:
+      - worker/GPT56-SOL-NF-V14-TRANSPORT-PORTABILITY-0810/validation-e1
+
+permissions:
+  contents: read
+
+jobs:
+  agenttransport-package:
+    name: AgentTransport package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout exact validation commit
+        uses: actions/checkout@v4
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Run AgentTransport contract tests
+        working-directory: Packages/AgentHarnessKit
+        run: swift test --filter AgentTransportContractTests
+
+      - name: Run package-wide tests
+        working-directory: Packages/AgentHarnessKit
+        run: swift test
