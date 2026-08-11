@@ -1,0 +1,91 @@
+name: Pre2 MLX app wire once v3
+
+on:
+  push:
+    branches: [feat/pre2-nanbeige-mlx-a14]
+    paths:
+      - .github/workflows/pre2-mlx-app-wire-once-v3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/pre2-nanbeige-mlx-a14
+          fetch-depth: 0
+      - name: Reuse guarded v2 patch with resilient delete anchor
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/pre2-mlx-app-wire-once-v2.yml').read_text()
+          marker = "python3 - <<'PY'\n"
+          if marker not in workflow:
+              raise SystemExit('could not find v2 python patch')
+          block = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+          script_lines = []
+          for line in block.splitlines():
+              if line.startswith('          '):
+                  script_lines.append(line[10:])
+              else:
+                  script_lines.append(line)
+          script = '\n'.join(script_lines)
+
+          start_token = "rep('''            await LocalModelClient.shared.unload(modelID: variant.id)"
+          end_token = "''','delete-dispatch')"
+          start = script.find(start_token)
+          end = script.find(end_token, start)
+          if start < 0 or end < 0:
+              raise SystemExit('could not locate v2 delete-dispatch patch')
+          end += len(end_token)
+          resilient = r'''needle = "await LocalModelClient.shared.unload(modelID: variant.id)"
+          if text.count(needle) != 1:
+              raise SystemExit(f'delete-dispatch anchor: expected one match, found {text.count(needle)}')
+          text = text.replace(
+              needle,
+              needle + """
+
+                  #if canImport(SwiftLlama)
+                  if let profile = variant.mlxProfile {
+                      do {
+                          try await NovaForgeMLXRuntime.shared.removeCached(profile: profile)
+                      } catch {
+                          await MainActor.run {
+                              guard self?.selectedVariantID == variant.id else { return }
+                              self?.status = .failed("Could not delete \\(variant.shortName): \\(error.localizedDescription)")
+                          }
+                          return
+                      }
+                      await MainActor.run {
+                          guard self?.selectedVariantID == variant.id else { return }
+                          self?.refreshStatus()
+                      }
+                      return
+                  }
+                  #endif
+          """,
+              1,
+          )'''
+          script = script[:start] + resilient + script[end:]
+          exec(compile(script, '<v2-resilient-patch>', 'exec'), {})
+          PY
+
+          git diff --check
+          grep -q 'Nanbeige 4.2 3B — MLX 3-bit' AgentPad/Services/LocalModelRuntime.swift
+          grep -q 'performMLXAgentDecision' AgentPad/Services/LocalModelRuntime.swift
+          grep -q 'NovaForgeMLXRuntime.shared.generate' AgentPad/Services/LocalModelRuntime.swift
+          grep -q 'On-device MLX + GGUF coding agent' AgentPad/Services/AIProvider.swift
+
+      - name: Commit product wiring
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift AgentPad/Services/AIProvider.swift
+          git commit -m 'Wire Nanbeige MLX into local app route'
+          git push origin HEAD:feat/pre2-nanbeige-mlx-a14
