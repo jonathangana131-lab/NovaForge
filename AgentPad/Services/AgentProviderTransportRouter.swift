@@ -3,7 +3,7 @@ import Foundation
 
 enum AgentProviderTransportRouterError: Error, Equatable, Sendable {
     case duplicateAdapter(ProviderAdapterID)
-    case mixedHostedAndOnDeviceBindings
+    case mixedOnDeviceAndNonOnDeviceBindings
     case unknownAdapter(ProviderAdapterID)
     case descriptorMismatch(ProviderAdapterID)
 }
@@ -11,11 +11,11 @@ enum AgentProviderTransportRouterError: Error, Equatable, Sendable {
 /// Immutable app-side transport multiplexer for one `ModelGateway` catalog.
 ///
 /// Routing is exact by adapter ID and then by the complete descriptor value.
-/// A single router may never straddle the hosted-service/on-device trust
-/// boundary: Local Only must not acquire a hidden cloud fallback merely because
-/// another adapter is added to the same gateway later. Explicit hosted-only and
-/// on-device-only catalogs remain valid, as do caller-managed test catalogs.
-/// The selected transport remains responsible for its own credential and
+/// A router containing an on-device route may contain only on-device bindings:
+/// Local Only must not acquire a hidden hosted, remote-worker, or caller-managed
+/// fallback merely because another adapter is added to the same gateway later.
+/// Homogeneous hosted, remote, caller-managed, and on-device catalogs remain
+/// valid. The selected transport remains responsible for its own credential and
 /// package-capability validation, so this type cannot widen authority or rewrite
 /// an endpoint.
 struct AgentProviderTransportRouter: ProviderTransport, Sendable {
@@ -37,22 +37,19 @@ struct AgentProviderTransportRouter: ProviderTransport, Sendable {
     init(bindings: [Binding]) throws {
         var indexed: [ProviderAdapterID: Binding] = [:]
         indexed.reserveCapacity(bindings.count)
-        var containsHostedService = false
         var containsOnDevice = false
+        var containsNonOnDevice = false
 
         for binding in bindings {
             let route = binding.descriptor.route
-            switch route.deployment {
-            case .hostedService:
-                containsHostedService = true
-            case .onDevice:
+            if route.deployment == .onDevice {
                 containsOnDevice = true
-            default:
-                break
+            } else {
+                containsNonOnDevice = true
             }
-            guard !(containsHostedService && containsOnDevice) else {
+            guard !(containsOnDevice && containsNonOnDevice) else {
                 throw AgentProviderTransportRouterError
-                    .mixedHostedAndOnDeviceBindings
+                    .mixedOnDeviceAndNonOnDeviceBindings
             }
 
             let adapterID = route.adapterID
