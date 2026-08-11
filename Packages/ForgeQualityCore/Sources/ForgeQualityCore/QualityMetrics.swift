@@ -121,17 +121,19 @@ public struct ForgeQualityRunBinding: Codable, Hashable, Sendable {
     }
 }
 
-/// Scope prevents evidence from one autonomous journey from satisfying another journey's budget.
+/// Scope prevents evidence from one autonomous journey or one version of that journey from
+/// satisfying another journey's budget. Journey definition digests must be computed by the
+/// canonical journey/scenario authority; a stable human-readable journey ID is not sufficient.
 public enum ForgeQualityScope: Codable, Hashable, Sendable {
     case run
-    case journey(ForgeQualityID)
+    case journey(id: ForgeQualityID, definitionDigest: ForgeQualityID)
 
     internal var sortKey: String {
         switch self {
         case .run:
             "0:run"
-        case let .journey(journeyID):
-            "1:\(journeyID.rawValue)"
+        case let .journey(journeyID, definitionDigest):
+            "1:\(journeyID.rawValue):\(definitionDigest.rawValue)"
         }
     }
 }
