@@ -18,6 +18,12 @@ let package = Package(
         .library(name: "AgentPolicy", targets: ["AgentPolicy"]),
         .library(name: "AgentTransport", targets: ["AgentTransport"]),
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/apple/swift-crypto.git",
+            "1.0.0" ..< "5.0.0"
+        ),
+    ],
     targets: [
         .target(name: "AgentDomain"),
         .target(
@@ -62,7 +68,10 @@ let package = Package(
         ),
         .target(
             name: "AgentTransport",
-            dependencies: ["AgentDomain"]
+            dependencies: [
+                "AgentDomain",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ]
         ),
         .testTarget(
             name: "AgentDomainTests",
@@ -108,7 +117,11 @@ let package = Package(
         ),
         .testTarget(
             name: "AgentTransportTests",
-            dependencies: ["AgentDomain", "AgentTransport"]
+            dependencies: [
+                "AgentDomain",
+                "AgentTransport",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ]
         ),
     ]
 )
