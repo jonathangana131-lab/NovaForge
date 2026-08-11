@@ -112,13 +112,13 @@ run_with_timeout() {
 }
 
 echo "Inspecting connected device..."
-if ! run_with_timeout "$DEVICE_TIMEOUT" xcrun devicectl device info details \
+run_with_timeout "$DEVICE_TIMEOUT" xcrun devicectl device info details \
   --device "$DEVICE_ID" \
-  --json-output "$DEVICE_JSON" >"$DEVICE_LOG" 2>&1; then
-  status=$?
-  echo "Could not inspect connected device. See: $DEVICE_LOG" >&2
-  exit "${status:-1}"
-fi
+  --json-output "$DEVICE_JSON" >"$DEVICE_LOG" 2>&1 || {
+    status=$?
+    echo "Could not inspect connected device. See: $DEVICE_LOG" >&2
+    exit "$status"
+  }
 
 python3 - "$DEVICE_JSON" "$EXPECTED_PRODUCT_TYPE" "$EXPECTED_IOS_MAJOR" <<'PY'
 import json
@@ -157,8 +157,7 @@ if not any(version_pattern.fullmatch(item) for item in strings):
     )
 PY
 
-printf -v device_id_hash '%s' "$DEVICE_ID"
-DEVICE_ID_SHA256="$(printf '%s' "$device_id_hash" | shasum -a 256 | awk '{print $1}')"
+DEVICE_ID_SHA256="$(printf '%s' "$DEVICE_ID" | shasum -a 256 | awk '{print $1}')"
 
 BUILD_ARGS=(
   -project "$PROJECT_PATH"
@@ -185,12 +184,12 @@ fi
 
 echo "Building exact source $SOURCE_SHA for connected iOS device..."
 rm -rf "$DERIVED_DATA_PATH"
-if ! run_with_timeout "$BUILD_TIMEOUT" xcodebuild "${BUILD_ARGS[@]}" build >"$BUILD_LOG" 2>&1; then
+run_with_timeout "$BUILD_TIMEOUT" xcodebuild "${BUILD_ARGS[@]}" build >"$BUILD_LOG" 2>&1 || {
   status=$?
   echo "Device build failed. Last 100 lines from $BUILD_LOG:" >&2
   tail -n 100 "$BUILD_LOG" >&2 || true
-  exit "${status:-1}"
-fi
+  exit "$status"
+}
 
 APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products" -path "*${CONFIGURATION}-iphoneos/$APP_NAME" -type d -print | sed -n '1p')"
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
@@ -218,14 +217,14 @@ if [[ "$APP_BUNDLE_ID" != "$BUNDLE_ID" ]]; then
 fi
 
 echo "Installing $APP_NAME on the selected connected device..."
-if ! run_with_timeout "$DEVICE_TIMEOUT" xcrun devicectl device install app \
+run_with_timeout "$DEVICE_TIMEOUT" xcrun devicectl device install app \
   --device "$DEVICE_ID" \
-  "$APP_PATH" >"$INSTALL_LOG" 2>&1; then
-  status=$?
-  echo "Device install failed. See: $INSTALL_LOG" >&2
-  tail -n 100 "$INSTALL_LOG" >&2 || true
-  exit "${status:-1}"
-fi
+  "$APP_PATH" >"$INSTALL_LOG" 2>&1 || {
+    status=$?
+    echo "Device install failed. See: $INSTALL_LOG" >&2
+    tail -n 100 "$INSTALL_LOG" >&2 || true
+    exit "$status"
+  }
 
 if [[ "$LAUNCH_AFTER_INSTALL" == "1" ]]; then
   echo "Launching $BUNDLE_ID on the selected device..."
@@ -234,7 +233,7 @@ if [[ "$LAUNCH_AFTER_INSTALL" == "1" ]]; then
     "$BUNDLE_ID" >>"$INSTALL_LOG" 2>&1 || {
       status=$?
       echo "Install succeeded, but automatic launch failed. Open NovaForge manually or inspect $INSTALL_LOG." >&2
-      exit "${status:-1}"
+      exit "$status"
     }
 fi
 
