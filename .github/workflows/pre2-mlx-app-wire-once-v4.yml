@@ -1,0 +1,96 @@
+name: Pre2 MLX app wire once v4
+
+on:
+  push:
+    branches: [feat/pre2-nanbeige-mlx-a14]
+    paths:
+      - .github/workflows/pre2-mlx-app-wire-once-v4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/pre2-nanbeige-mlx-a14
+          fetch-depth: 0
+      - name: Apply functional MLX app wiring only
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/pre2-mlx-app-wire-once-v2.yml').read_text()
+          marker = "python3 - <<'PY'\n"
+          block = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in block.splitlines())
+
+          # Replace the formatting-sensitive delete patch with a semantic anchor.
+          start_token = "rep('''            await LocalModelClient.shared.unload(modelID: variant.id)"
+          end_token = "''','delete-dispatch')"
+          start = script.find(start_token)
+          end = script.find(end_token, start)
+          if start < 0 or end < 0:
+              raise SystemExit('could not locate delete patch')
+          end += len(end_token)
+          resilient = r'''needle = "await LocalModelClient.shared.unload(modelID: variant.id)"
+          if text.count(needle) != 1:
+              raise SystemExit(f'delete anchor: expected one match, found {text.count(needle)}')
+          text = text.replace(
+              needle,
+              needle + """
+
+                  #if canImport(SwiftLlama)
+                  if let profile = variant.mlxProfile {
+                      do {
+                          try await NovaForgeMLXRuntime.shared.removeCached(profile: profile)
+                      } catch {
+                          await MainActor.run {
+                              guard self?.selectedVariantID == variant.id else { return }
+                              self?.status = .failed("Could not delete \\(variant.shortName): \\(error.localizedDescription)")
+                          }
+                          return
+                      }
+                      await MainActor.run {
+                          guard self?.selectedVariantID == variant.id else { return }
+                          self?.refreshStatus()
+                      }
+                      return
+                  }
+                  #endif
+          """,
+              1,
+          )'''
+          script = script[:start] + resilient + script[end:]
+
+          # The provider subtitle is cosmetic and changed upstream. Keep this
+          # product commit focused on the functional LocalModelRuntime seam.
+          provider_start = script.find("provider = provider_path.read_text()")
+          provider_end_token = "provider_path.write_text(provider.replace(old, new, 1))"
+          provider_end = script.find(provider_end_token, provider_start)
+          if provider_start < 0 or provider_end < 0:
+              raise SystemExit('could not locate cosmetic provider patch')
+          provider_end += len(provider_end_token)
+          script = script[:provider_start] + "# cosmetic provider copy intentionally skipped\n" + script[provider_end:]
+
+          exec(compile(script, '<functional-mlx-app-wire>', 'exec'), {})
+          PY
+
+          git diff --check
+          grep -q 'Nanbeige 4.2 3B — MLX 3-bit' AgentPad/Services/LocalModelRuntime.swift
+          grep -q 'Nanbeige 4.2 3B — MLX 2-bit' AgentPad/Services/LocalModelRuntime.swift
+          grep -q 'installSelectedMLX' AgentPad/Services/LocalModelRuntime.swift
+          grep -q 'performMLXAgentDecision' AgentPad/Services/LocalModelRuntime.swift
+          test "$(grep -c 'NovaForgeMLXRuntime.shared.generate' AgentPad/Services/LocalModelRuntime.swift)" -ge 2
+
+      - name: Commit product wiring
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift
+          git commit -m 'Wire Nanbeige MLX into local app route'
+          git push origin HEAD:feat/pre2-nanbeige-mlx-a14
