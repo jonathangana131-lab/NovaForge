@@ -23,6 +23,25 @@ extension ForgeQualityCoreTests {
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeQualityCompletionTarget.self, from: json))
     }
 
+    func testMeasurementProtocolRejectsZeroRevisionAndDecodeRevalidates() throws {
+        XCTAssertThrowsError(
+            try ForgeQualityMeasurementProtocolIdentity(
+                protocolID: id("quality-protocol"),
+                revision: 0
+            )
+        )
+
+        let json = """
+        {"protocolID":"quality-protocol","revision":0}
+        """.data(using: .utf8)!
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                ForgeQualityMeasurementProtocolIdentity.self,
+                from: json
+            )
+        )
+    }
+
     func testMetricDirectionIsExplicit() throws {
         XCTAssertNoThrow(
             try ForgeQualityTarget(
@@ -82,7 +101,7 @@ extension ForgeQualityCoreTests {
         var object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: JSONEncoder().encode(valid)) as? [String: Any]
         )
-        object["schemaVersion"] = 2
+        object["schemaVersion"] = ForgeQualityPolicy.currentSchemaVersion + 1
         let data = try JSONSerialization.data(withJSONObject: object)
         XCTAssertThrowsError(try JSONDecoder().decode(ForgeQualityPolicy.self, from: data))
     }
@@ -107,7 +126,10 @@ extension ForgeQualityCoreTests {
     func testMeasurementRequiresMetricEvidenceKind() throws {
         XCTAssertThrowsError(
             try ForgeQualityMeasurement(
-                measurementID: id("m"), producerReceiptID: id("r"), binding: runBinding(),
+                measurementID: id("m"),
+                producerReceiptID: id("r"),
+                binding: runBinding(),
+                measurementProtocol: measurementProtocol(),
                 metric: .accessibilityCriticalViolationCount,
                 evidenceKind: .runtimeTelemetry,
                 value: 0,
@@ -115,5 +137,4 @@ extension ForgeQualityCoreTests {
             )
         )
     }
-
 }
