@@ -92,9 +92,48 @@ public struct NovaForgeMLXRuntimeSnapshot: Equatable, Sendable {
 
 public enum NovaForgeMLXRuntimeError: Error, Equatable, Sendable {
     case generationAlreadyInProgress
+    case runtimeBusy
     case invalidMaximumTokens
     case invalidRepositoryID(String)
     case modelNotCached(String)
+}
+
+/// Actor-isolated lease state that stays held across async model loading and
+/// streaming callbacks. Swift actors are reentrant at `await` points, so actor
+/// isolation alone does not prevent `warm()` or `unload()` from entering while
+/// a generation is suspended.
+enum NovaForgeMLXRuntimeOperation: Equatable, Sendable {
+    case warm
+    case generation
+}
+
+struct NovaForgeMLXRuntimeOperationGate: Sendable {
+    private(set) var activeOperation: NovaForgeMLXRuntimeOperation?
+
+    var isGenerating: Bool {
+        activeOperation == .generation
+    }
+
+    mutating func begin(_ operation: NovaForgeMLXRuntimeOperation) throws {
+        guard activeOperation == nil else {
+            if operation == .generation, activeOperation == .generation {
+                throw NovaForgeMLXRuntimeError.generationAlreadyInProgress
+            }
+            throw NovaForgeMLXRuntimeError.runtimeBusy
+        }
+        activeOperation = operation
+    }
+
+    mutating func end(_ operation: NovaForgeMLXRuntimeOperation) {
+        precondition(activeOperation == operation)
+        activeOperation = nil
+    }
+
+    func requireIdle() throws {
+        guard activeOperation == nil else {
+            throw NovaForgeMLXRuntimeError.runtimeBusy
+        }
+    }
 }
 
 /// A cache-only MLX downloader used during inference.
@@ -146,22 +185,22 @@ private struct NovaForgeCachedHubDownloader: Downloader {
 
 /// Serializes MLX access for the local NovaForge agent lane.
 ///
-/// `ChatSession` itself documents that it is not thread-safe. Keeping the model
-/// and active session behind one actor also prevents two local generations from
-/// competing for the A14 GPU and memory at the same time.
+/// `ChatSession` itself documents that it is not thread-safe. The operation
+/// lease remains held across actor suspension points so model loading, warming,
+/// generation, and unload cannot mutate the same MLX container concurrently.
 public actor NovaForgeMLXRuntime {
     public static let shared = NovaForgeMLXRuntime()
 
     private var loadedProfile: NovaForgeMLXProfile?
     private var modelContainer: ModelContainer?
-    private var isGenerating = false
+    private var operationGate = NovaForgeMLXRuntimeOperationGate()
 
     public init() {}
 
     public func snapshot() -> NovaForgeMLXRuntimeSnapshot {
         NovaForgeMLXRuntimeSnapshot(
             loadedProfile: loadedProfile,
-            isGenerating: isGenerating
+            isGenerating: operationGate.isGenerating
         )
     }
 
@@ -175,12 +214,16 @@ public actor NovaForgeMLXRuntime {
     /// allowed to use Hugging Face networking. Once warm succeeds, normal
     /// generation can be reconstructed from the local snapshot with zero Hub I/O.
     public func warm(profile: NovaForgeMLXProfile) async throws {
+        try operationGate.begin(.warm)
+        defer { operationGate.end(.warm) }
         _ = try await container(for: profile, networkPolicy: .installationAllowed)
     }
 
     /// Releases NovaForge's strong references. MLX may reclaim backing resources
-    /// asynchronously after this returns.
-    public func unload() {
+    /// asynchronously after this returns. A suspended warm/generation owns the
+    /// container until its operation lease ends, so unload fails closed while busy.
+    public func unload() throws {
+        try operationGate.requireIdle()
         modelContainer = nil
         loadedProfile = nil
     }
@@ -200,15 +243,12 @@ public actor NovaForgeMLXRuntime {
         options: NovaForgeMLXGenerationOptions = .init(),
         onText: @escaping @Sendable (String) async throws -> Void
     ) async throws {
-        guard !isGenerating else {
-            throw NovaForgeMLXRuntimeError.generationAlreadyInProgress
-        }
+        try operationGate.begin(.generation)
+        defer { operationGate.end(.generation) }
+
         guard options.maximumTokens > 0 else {
             throw NovaForgeMLXRuntimeError.invalidMaximumTokens
         }
-
-        isGenerating = true
-        defer { isGenerating = false }
 
         let container = try await container(for: profile, networkPolicy: .cacheOnly)
         let parameters = GenerateParameters(
