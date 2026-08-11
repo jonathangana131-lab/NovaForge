@@ -61,7 +61,7 @@ public struct ForgeQualityTarget: Codable, Hashable, Sendable {
 
 /// Candidate policy data is durable, but is not accepted authority by itself.
 public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public static let maximumTargets = 64
 
     public let schemaVersion: Int
@@ -71,6 +71,7 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
     public let criterionID: ForgeQualityID
     public let completionTarget: ForgeQualityCompletionTarget
     public let checkpointID: ForgeQualityID
+    public let measurementProtocol: ForgeQualityMeasurementProtocolIdentity
     public let targets: [ForgeQualityTarget]
 
     public init(
@@ -80,6 +81,7 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
         criterionID: ForgeQualityID,
         completionTarget: ForgeQualityCompletionTarget,
         checkpointID: ForgeQualityID,
+        measurementProtocol: ForgeQualityMeasurementProtocolIdentity,
         targets: [ForgeQualityTarget]
     ) throws {
         guard policyRevision > 0 else {
@@ -102,6 +104,7 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
         self.criterionID = criterionID
         self.completionTarget = completionTarget
         self.checkpointID = checkpointID
+        self.measurementProtocol = measurementProtocol
         self.targets = targets.sorted { lhs, rhs in
             if lhs.scope.sortKey == rhs.scope.sortKey {
                 return lhs.metric.rawValue < rhs.metric.rawValue
@@ -118,6 +121,7 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
         case criterionID
         case completionTarget
         case checkpointID
+        case measurementProtocol
         case targets
     }
 
@@ -134,6 +138,7 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
             criterionID: container.decode(ForgeQualityID.self, forKey: .criterionID),
             completionTarget: container.decode(ForgeQualityCompletionTarget.self, forKey: .completionTarget),
             checkpointID: container.decode(ForgeQualityID.self, forKey: .checkpointID),
+            measurementProtocol: container.decode(ForgeQualityMeasurementProtocolIdentity.self, forKey: .measurementProtocol),
             targets: container.decode([ForgeQualityTarget].self, forKey: .targets)
         )
     }
@@ -151,6 +156,7 @@ public struct ForgeQualityTrustedPolicy: Equatable, Sendable {
     public var criterionID: ForgeQualityID { authenticatedPolicy.criterionID }
     public var completionTarget: ForgeQualityCompletionTarget { authenticatedPolicy.completionTarget }
     public var checkpointID: ForgeQualityID { authenticatedPolicy.checkpointID }
+    public var measurementProtocol: ForgeQualityMeasurementProtocolIdentity { authenticatedPolicy.measurementProtocol }
     public var targets: [ForgeQualityTarget] { authenticatedPolicy.targets }
 
     init(authenticatedPolicy: ForgeQualityPolicy) {
