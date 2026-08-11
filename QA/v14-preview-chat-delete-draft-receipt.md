@@ -14,82 +14,80 @@ That left user-authored chat data behind after the drawer confirmed that deletin
 
 A second edge made a simple post-delete `UserDefaults` removal insufficient: when the currently visible chat is deleted, `ChatView.onChange(of: conversation.id)` flushes the old prompt during reroute. Without a tombstone, that teardown flush can recreate the draft after it was purged.
 
+Independent adversarial review `4902379276` then found a further P1 corruption edge: if the shared draft payload was malformed, the first purge implementation returned without deleting anything. The conversation could therefore be durably deleted while undecodable user-authored draft bytes remained stored indefinitely.
+
 ## Repair
 
-The repair makes successful chat deletion authoritative for draft invalidation:
+Successful chat deletion is now authoritative for draft invalidation:
 
-1. `SwiftDataAgentStore.deleteConversationFromHistory(...)` still executes first.
-2. The existing `catch` path still reports the failed delete and returns. It does not purge the draft.
-3. After durable deletion succeeds, `ConversationDraftPersistence.shared.markDeletedAndPurge(conversationID)` installs an in-process tombstone and removes that conversation key from the canonical draft dictionary.
-4. `ChatView.persistDraft` checks the tombstone before loading or writing draft storage. A late selected-chat teardown flush therefore re-purges and returns instead of resurrecting the deleted draft.
-5. Other conversations' drafts remain untouched.
+1. `SwiftDataAgentStore.deleteConversationFromHistory(...)` executes first.
+2. The existing `catch` path reports a failed delete and returns without touching draft storage.
+3. After durable deletion succeeds, `ConversationDraftPersistence.shared.markDeletedAndPurge(conversationID)` installs an in-process tombstone and purges persisted draft data.
+4. For a valid `[String: String]` draft dictionary, purge removes only the deleted conversation key and preserves other conversations' drafts.
+5. For malformed or wrong-type data under the canonical draft-storage key, purge fails closed by removing that unusable storage value. Existing composer loading already treats absent/corrupt storage as no saved drafts, so this does not create a new readable-data loss mode; it prevents corrupt user-authored bytes surviving a successful destructive action.
+6. `ChatView.persistDraft` checks the tombstone before reading/writing storage, so a late selected-chat teardown flush cannot resurrect the deleted draft.
 
-`ConversationDraftPersistence` now lives in `AgentPad/Models/Models.swift`, which the existing Xcode project already compiles into both the app and unit-test targets. That keeps the behavior testable without changing `project.pbxproj` or widening app dependencies.
+`ConversationDraftPersistence` lives in `AgentPad/Models/Models.swift`, already compiled by both app and unit-test targets. No `project.pbxproj` mutation was required.
 
-The tombstone only needs process lifetime: the resurrection risk exists while the old `ChatView` is still alive during the same-process reroute. The durable `UserDefaults` entry itself is removed on successful deletion.
+The tombstone only needs process lifetime: the resurrection risk exists while the old `ChatView` is still alive during the same-process reroute. The persisted value itself is removed or rewritten durably after successful deletion.
 
 ## Failure semantics
 
-Draft cleanup is intentionally after the awaited SwiftData delete and after the failure `catch` return. A storage failure therefore preserves the unsent draft along with the not-deleted conversation instead of losing user text on an unsuccessful destructive action.
+Draft cleanup remains after the awaited SwiftData delete and after the failure `catch` return. A storage failure therefore preserves unsent text along with the not-deleted conversation instead of losing user text on an unsuccessful destructive action.
+
+Corrupt-storage clearing happens only after the conversation delete succeeds.
 
 ## Exact mutation evidence
 
-The production views are large and concurrently active in the Preview swarm. To avoid whole-file connector replacement, this worker used the repository's established branch-only one-shot Actions mutation pattern:
+Large concurrently active Swift files were changed through the repository's established branch-only one-shot Actions mutation pattern:
 
-- validate exact source anchors;
-- patch only the intended source locations;
-- run `git diff --check` and source assertions;
-- commit the product/test repair;
-- delete each temporary workflow and patch script in the same resulting product commit.
+- exact source anchors are validated;
+- only intended locations are patched;
+- `git diff --check` and source assertions run before commit;
+- temporary workflow/script files remove themselves from the permanent branch.
 
-Initial product commit `f1b6b864a94a9803c9f82ec3886f14a84db90644` changed only `AppRootView.swift` (+1) and `ChatView.swift` (+37) against the claimed base. Follow-up commit `d450ef7d6e18a73e32198b02b5ce550b971f7796` moved the helper into already-shared `Models.swift` and added an executable XCTest without touching `project.pbxproj`.
+Initial product commit `f1b6b864a94a9803c9f82ec3886f14a84db90644` added successful-delete invalidation and selected-chat anti-resurrection. Commit `d450ef7d6e18a73e32198b02b5ce550b971f7796` moved the helper into shared `Models.swift` and added executable XCTest coverage. Review-blocker repair commit `c7a8a5c445be6443fb5d63475de15f791fc3846e` added fail-closed corrupt-storage clearing and its malformed-payload regression.
 
-No temporary one-shot file remains in the permanent branch state.
+No one-shot mutation helper remains in the permanent branch state.
 
-## Executable regression
+## Executable regressions
 
-`AgentPadTests/AgentRuntimeLifecycleTests.swift` now includes `testDeletedConversationDraftPurgesOnlyTargetAndInstallsTombstone()`.
+`AgentPadTests/AgentRuntimeLifecycleTests.swift` includes:
 
-Using an isolated `UserDefaults` suite and fresh UUIDs, it verifies that:
+- `testDeletedConversationDraftPurgesOnlyTargetAndInstallsTombstone()` — proves a valid draft dictionary loses only the deleted conversation, preserves an unrelated draft, tombstones the deleted UUID, and leaves an unrelated UUID persistable.
+- `testDeletedConversationDraftClearsMalformedStorageAndInstallsTombstone()` — writes malformed JSON into an isolated `UserDefaults` suite, performs successful-delete draft invalidation, then proves the corrupt storage value is absent and the deleted UUID is tombstoned.
 
-- the deleted conversation's draft disappears;
-- another conversation's draft remains byte-for-byte meaningful;
-- the deleted UUID is tombstoned from future persistence;
-- an unrelated UUID remains eligible for persistence.
-
-The unique UUIDs avoid cross-test coupling from the intentionally process-lifetime tombstone set.
+Fresh UUIDs avoid cross-test coupling from the intentionally process-lifetime tombstone set.
 
 ## Durable regression contract
 
-Added/strengthened:
+`script/verify` coverage is persisted in:
 
 - `scripts/verify_v14_preview_chat_delete_draft_contract.sh`
 - `.github/workflows/v14-preview-chat-delete-draft-contract.yml`
 
 The contract fails if:
 
-- draft invalidation stops binding the canonical composer-draft storage key;
-- the helper moves out of `Models.swift` or `Models.swift` stops being compiled into the unit-test target;
-- the deleted-conversation tombstone is removed;
-- purge stops deleting only the target conversation key;
-- `persistDraft` can read/write storage before rejecting a deleted conversation;
-- the selected-chat reroute no longer routes its old-prompt flush through guarded persistence;
-- deletion invalidates a draft before the durable store call can fail and return;
-- invalidation moves after the post-delete routing commit point;
-- the executable XCTest disappears or loses its target/preserved draft assertions;
-- a temporary one-shot mutation helper leaks into the permanent branch.
+- invalidation stops binding the canonical composer-draft storage key;
+- the helper moves out of shared `Models.swift` or that source stops being unit-test compiled;
+- the tombstone is removed or installed after purge;
+- corrupt/wrong-type storage is no longer cleared;
+- valid storage stops removing only the target conversation key;
+- `persistDraft` can touch storage before rejecting a deleted conversation;
+- selected-chat reroute no longer flushes through guarded persistence;
+- invalidation moves before durable-delete failure has returned or after the post-delete routing commit point;
+- either executable regression disappears or loses its required assertions;
+- temporary one-shot mutation helpers leak into the permanent branch.
 
-## Current exact-head evidence
+## Exact validation evidence
 
-At head `0f36cbd1be771164e298cfa8a855f022f4875dbd`:
+Review-blocker validation head: `4e1f582a221888cf1d53a5c28240fddb2a013761`.
 
-- `V14 Preview chat delete draft contract` run `31450986466`: **SUCCESS**.
-- Repository `CI` run `31450986464`: **QUEUED** at the time of this receipt update.
+- `V14 Preview chat delete draft contract` run `31451229415`: **SUCCESS**.
+- Repository `CI` run `31451229409`: **QUEUED** at this receipt update.
 
-Therefore the source-level contract and executable-test wiring are proven at this head, but the XCTest itself is not yet claimed green until the macOS CI runner executes it.
+The dedicated contract therefore proves the source ordering, valid/corrupt storage branches, anti-resurrection wiring, unit-test presence/wiring, and temporary-file cleanup at the review-blocker validation head. The macOS CI runner has not yet executed the XCTest on that head.
 
 ## Truth boundary
 
-This receipt proves the source-level durability ordering, selected-chat anti-resurrection guard, target-scoped draft purge behavior represented by XCTest, shared-source test wiring, and the green exact-head static CI contract.
-
-It does **not** claim the XCTest executed successfully, a full app compile, iOS 27 Simulator interaction evidence, physical iPhone 12 evidence, or visual acceptance until those corresponding CI/runtime layers actually report success.
+This receipt does **not** claim the XCTest executed successfully, a full app compile, iOS 27 Simulator interaction, physical iPhone 12 evidence, visual acceptance, accessibility acceptance, or performance acceptance until those corresponding validation layers actually report success.
