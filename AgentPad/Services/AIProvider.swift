@@ -75,7 +75,10 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 
     var defaultModel: String {
-        modelOptions.first ?? ""
+        if self == .local {
+            return LocalModelCatalog.defaultVariant.id
+        }
+        return modelOptions.first ?? ""
     }
 
     var apiKeyAccount: String {
@@ -240,7 +243,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     var subtitle: String {
         switch self {
         case .local:
-            "On-device Qwen Coder agent"
+            "On-device MLX + GGUF coding agent"
         case .openAI:
             "Native OpenAI key"
         case .openAICodex:
