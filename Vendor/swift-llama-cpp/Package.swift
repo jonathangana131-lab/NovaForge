@@ -35,6 +35,14 @@ let package = Package(
             url: "https://github.com/ml-explore/mlx-swift.git",
             exact: "0.31.4"
         ),
+        // mlx-swift-lm accepts SwiftSyntax 602..<604. Without an upper-graph pin,
+        // SwiftPM selects 603.x, whose prebuilt MacroSupport is for Swift 6.3 and
+        // cannot be imported by NovaForge's Xcode 26.6 / Swift 6.2 critical lane.
+        // Pin the matching Swift 6.2 line so MLXHuggingFaceMacros resolves.
+        .package(
+            url: "https://github.com/swiftlang/swift-syntax.git",
+            exact: "602.0.0"
+        ),
         .package(
             url: "https://github.com/huggingface/swift-huggingface.git",
             from: "0.9.0"
