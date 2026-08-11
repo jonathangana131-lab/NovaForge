@@ -41,4 +41,52 @@ final class NovaForgeMLXRuntimeTests: XCTestCase {
         XCTAssertEqual(options.temperature, 0.15, accuracy: 0.0001)
         XCTAssertEqual(options.topP, 0.95, accuracy: 0.0001)
     }
+
+    func testGenerationLeaseRejectsWarmAndUnloadUntilGenerationEnds() throws {
+        var gate = NovaForgeMLXRuntimeOperationGate()
+        try gate.begin(.generation)
+
+        XCTAssertTrue(gate.isGenerating)
+        XCTAssertThrowsError(try gate.begin(.warm)) { error in
+            XCTAssertEqual(error as? NovaForgeMLXRuntimeError, .runtimeBusy)
+        }
+        XCTAssertThrowsError(try gate.requireIdle()) { error in
+            XCTAssertEqual(error as? NovaForgeMLXRuntimeError, .runtimeBusy)
+        }
+
+        gate.end(.generation)
+        XCTAssertFalse(gate.isGenerating)
+        XCTAssertNoThrow(try gate.requireIdle())
+    }
+
+    func testWarmLeaseRejectsGenerationUntilWarmEnds() throws {
+        var gate = NovaForgeMLXRuntimeOperationGate()
+        try gate.begin(.warm)
+
+        XCTAssertFalse(gate.isGenerating)
+        XCTAssertThrowsError(try gate.begin(.generation)) { error in
+            XCTAssertEqual(error as? NovaForgeMLXRuntimeError, .runtimeBusy)
+        }
+        XCTAssertThrowsError(try gate.begin(.warm)) { error in
+            XCTAssertEqual(error as? NovaForgeMLXRuntimeError, .runtimeBusy)
+        }
+
+        gate.end(.warm)
+        XCTAssertNoThrow(try gate.begin(.generation))
+        gate.end(.generation)
+    }
+
+    func testDuplicateGenerationKeepsSpecificAlreadyInProgressError() throws {
+        var gate = NovaForgeMLXRuntimeOperationGate()
+        try gate.begin(.generation)
+
+        XCTAssertThrowsError(try gate.begin(.generation)) { error in
+            XCTAssertEqual(
+                error as? NovaForgeMLXRuntimeError,
+                .generationAlreadyInProgress
+            )
+        }
+
+        gate.end(.generation)
+    }
 }
