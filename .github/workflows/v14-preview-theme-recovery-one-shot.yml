@@ -37,56 +37,63 @@ jobs:
             AgentPadTests/AgentRuntimeLifecycleTests.swift \
             AgentPadUITests/AgentPadUITests.swift
 
-          # AgentPadApp *did* gain the newer reset-cache repair on main. Reconcile only
-          # the two theme launch blocks by exact source shape so that repair is preserved.
+          # AgentPadApp did gain the newer reset-cache repair on main. Reconcile only
+          # the two exact launch-theme regions. Explicit line arrays keep the match
+          # independent of YAML block-scalar indentation while still failing closed.
           python3 <<'PY'
           from pathlib import Path
 
           path = Path('AgentPad/App/AgentPadApp.swift')
           text = path.read_text()
 
-          old_launch = '''        let arguments = ProcessInfo.processInfo.arguments
-          if let launchTheme = AgentTheme.launchOverride(from: arguments) {
-              UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)
-              AgentPalette.refreshThemeCache(launchTheme)
-          } else {
-              AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())
-          }
-          AgentThemeUIKit.apply(AgentTheme.current)
-          '''
-          new_launch = '''        let arguments = ProcessInfo.processInfo.arguments
-          let storedThemeRawValue = UserDefaults.standard.string(forKey: AgentTheme.storageKey)
-          let launchTheme = AgentTheme.resolvedForLaunch(
-              storedRawValue: storedThemeRawValue,
-              arguments: arguments
-          )
-          if AgentTheme.launchOverride(from: arguments) == nil {
-              _ = AgentTheme.normalizeStoredTheme()
-          }
-          AgentPalette.refreshThemeCache(launchTheme)
-          AgentThemeUIKit.apply(launchTheme)
-          '''
+          old_launch = "\n".join([
+              "        let arguments = ProcessInfo.processInfo.arguments",
+              "        if let launchTheme = AgentTheme.launchOverride(from: arguments) {",
+              "            UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)",
+              "            AgentPalette.refreshThemeCache(launchTheme)",
+              "        } else {",
+              "            AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())",
+              "        }",
+              "        AgentThemeUIKit.apply(AgentTheme.current)",
+          ])
+          new_launch = "\n".join([
+              "        let arguments = ProcessInfo.processInfo.arguments",
+              "        let storedThemeRawValue = UserDefaults.standard.string(forKey: AgentTheme.storageKey)",
+              "        let launchTheme = AgentTheme.resolvedForLaunch(",
+              "            storedRawValue: storedThemeRawValue,",
+              "            arguments: arguments",
+              "        )",
+              "        if AgentTheme.launchOverride(from: arguments) == nil {",
+              "            _ = AgentTheme.normalizeStoredTheme()",
+              "        }",
+              "        AgentPalette.refreshThemeCache(launchTheme)",
+              "        AgentThemeUIKit.apply(launchTheme)",
+          ])
 
-          old_reset = '''            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)
-              if let launchTheme = AgentTheme.launchOverride(from: arguments) {
-                  UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)
-              }
-              AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())
-              AgentThemeUIKit.apply(AgentTheme.current)
-          '''
-          new_reset = '''            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)
-              let resetLaunchTheme = AgentTheme.resolvedForLaunch(
-                  storedRawValue: AgentTheme.defaultTheme.rawValue,
-                  arguments: arguments
-              )
-              AgentPalette.refreshThemeCache(resetLaunchTheme)
-              AgentThemeUIKit.apply(resetLaunchTheme)
-          '''
+          old_reset = "\n".join([
+              "            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)",
+              "            if let launchTheme = AgentTheme.launchOverride(from: arguments) {",
+              "                UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)",
+              "            }",
+              "            AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())",
+              "            AgentThemeUIKit.apply(AgentTheme.current)",
+          ])
+          new_reset = "\n".join([
+              "            UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)",
+              "            let resetLaunchTheme = AgentTheme.resolvedForLaunch(",
+              "                storedRawValue: AgentTheme.defaultTheme.rawValue,",
+              "                arguments: arguments",
+              "            )",
+              "            AgentPalette.refreshThemeCache(resetLaunchTheme)",
+              "            AgentThemeUIKit.apply(resetLaunchTheme)",
+          ])
 
-          if text.count(old_launch) != 1:
-              raise SystemExit(f'expected one current launch-theme persistence block, found {text.count(old_launch)}')
-          if text.count(old_reset) != 1:
-              raise SystemExit(f'expected one current reset-theme block, found {text.count(old_reset)}')
+          launch_count = text.count(old_launch)
+          reset_count = text.count(old_reset)
+          if launch_count != 1:
+              raise SystemExit(f'expected one current launch-theme persistence block, found {launch_count}')
+          if reset_count != 1:
+              raise SystemExit(f'expected one current reset-theme persistence block, found {reset_count}')
           text = text.replace(old_launch, new_launch, 1)
           text = text.replace(old_reset, new_reset, 1)
           path.write_text(text)
@@ -97,9 +104,8 @@ jobs:
             > scripts/verify_v14_preview_theme_contract.sh
           chmod +x scripts/verify_v14_preview_theme_contract.sh
 
-          # Main's reset-cache contract predated ephemeral overrides and therefore
-          # required the now-forbidden storage write. Preserve its cache determinism
-          # purpose while updating it to the resolved active-launch theme.
+          # Main's reset-cache contract predates ephemeral overrides. Preserve its
+          # stale-cache protection while binding it to the resolved active launch theme.
           cat > scripts/verify_v14_preview_theme_reset_cache.sh <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -139,8 +145,7 @@ jobs:
               if needle not in reset:
                   raise SystemExit(f'missing reset-theme determinism contract: {needle}')
 
-          forbidden = 'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)'
-          if forbidden in reset:
+          if 'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)' in reset:
               raise SystemExit('reset launch override must remain ephemeral')
           if 'AgentPalette.refreshThemeCache(AgentTheme.current)' in reset:
               raise SystemExit('reset fixture may not refresh AgentPalette from stale cached current theme')
