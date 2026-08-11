@@ -1,0 +1,197 @@
+name: V14 Preview Accessibility Acceptance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-preview-a11y-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-accessibility:
+    name: iPhone 12 iOS 27 accessibility proof
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      SIMULATOR_ID: 4B9AB34A-404C-485F-B0BC-964F24D0AE83
+      DERIVED_DATA_PATH: QA/DerivedData/v14-preview-accessibility
+      ARTIFACT_DIR: artifacts/v14-preview-accessibility
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Bind exact source and Simulator identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "$actual_sha" != "$SOURCE_SHA" ]]; then
+            echo "Checked-out source $actual_sha does not match requested source $SOURCE_SHA" >&2
+            exit 1
+          fi
+
+          /usr/bin/python3 - "$SIMULATOR_ID" "$ARTIFACT_DIR/simulator-identity.txt" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          udid, receipt_path = sys.argv[1:]
+          payload = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "-j"]))
+          match = None
+          for runtime, devices in payload.get("devices", {}).items():
+              for device in devices:
+                  if device.get("udid") == udid:
+                      match = (runtime, device)
+                      break
+              if match:
+                  break
+
+          if match is None:
+              raise SystemExit(f"Required Simulator {udid} is not installed")
+
+          runtime, device = match
+          name = device.get("name", "")
+          available = bool(device.get("isAvailable", False))
+          if name != "iPhone 12":
+              raise SystemExit(f"Expected iPhone 12 for {udid}, found {name!r}")
+          if ".iOS-27-" not in runtime:
+              raise SystemExit(f"Expected an iOS 27 runtime, found {runtime!r}")
+          if not available:
+              raise SystemExit(f"Required Simulator {udid} is unavailable")
+
+          with open(receipt_path, "w", encoding="utf-8") as handle:
+              handle.write(f"simulatorUDID={udid}\n")
+              handle.write(f"simulatorName={name}\n")
+              handle.write(f"runtime={runtime}\n")
+              handle.write(f"state={device.get('state', '')}\n")
+          PY
+
+          {
+            echo "sourceSHA=$actual_sha"
+            xcodebuild -version
+            xcrun swift --version
+          } > "$ARTIFACT_DIR/toolchain.txt"
+
+      - name: Boot clean qualification Simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl terminate "$SIMULATOR_ID" com.joey.NovaForge >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          xcrun simctl boot "$SIMULATOR_ID"
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+
+      - name: Build exact source for testing
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$DERIVED_DATA_PATH"
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            NOVAFORGE_SOURCE_COMMIT="$SOURCE_SHA" \
+            build-for-testing \
+            2>&1 | tee "$ARTIFACT_DIR/build-for-testing.log"
+
+          xctestrun="$(find "$DERIVED_DATA_PATH/Build/Products" -name 'AgentPad_*.xctestrun' -type f -print -quit)"
+          if [[ -z "$xctestrun" ]]; then
+            echo "No AgentPad .xctestrun was produced" >&2
+            exit 1
+          fi
+          printf '%s\n' "$xctestrun" > "$ARTIFACT_DIR/xctestrun.path"
+
+          app="$(find "$DERIVED_DATA_PATH/Build/Products" -path '*Debug-iphonesimulator/NovaForge.app' -type d -print -quit)"
+          if [[ -z "$app" ]]; then
+            echo "NovaForge.app was not produced" >&2
+            exit 1
+          fi
+          embedded_sha="$(/usr/libexec/PlistBuddy -c 'Print :NovaForgeSourceCommit' "$app/Info.plist")"
+          if [[ "$embedded_sha" != "$SOURCE_SHA" ]]; then
+            echo "Built app source marker $embedded_sha does not match $SOURCE_SHA" >&2
+            exit 1
+          fi
+          printf 'app=%s\nsourceMarker=%s\n' "$app" "$embedded_sha" > "$ARTIFACT_DIR/app-source-binding.txt"
+
+      - name: Run focused Preview accessibility journeys
+        shell: bash
+        run: |
+          set -euo pipefail
+          xctestrun="$(cat "$ARTIFACT_DIR/xctestrun.path")"
+          screenshot_dir="$ARTIFACT_DIR/screenshots"
+          mkdir -p "$screenshot_dir"
+
+          env \
+            NOVAFORGE_CAPTURE_MODE=all \
+            TEST_RUNNER_NOVAFORGE_CAPTURE_MODE=all \
+            NOVAFORGE_SCREENSHOT_DIR="$PWD/$screenshot_dir" \
+            TEST_RUNNER_NOVAFORGE_SCREENSHOT_DIR="$PWD/$screenshot_dir" \
+            xcodebuild \
+              -xctestrun "$xctestrun" \
+              -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+              -destination-timeout 120 \
+              -parallel-testing-enabled NO \
+              -maximum-concurrent-test-simulator-destinations 1 \
+              test-without-building \
+              -only-testing:AgentPadUITests/AgentPadUITests/testCanonicalActivityApprovalIsAccessibleCompactAndLegacyFree \
+              -only-testing:AgentPadUITests/AgentPadUITests/testAccessibilityLayoutTouchTargetsAndCompactLabels \
+              -only-testing:AgentPadUITests/AgentPadUITests/testGoalMatrixChatReadabilityAndThemeSwitchingScreenshots \
+              2>&1 | tee "$ARTIFACT_DIR/accessibility-xctest.log"
+
+          grep -Fq '** TEST SUCCEEDED **' "$ARTIFACT_DIR/accessibility-xctest.log"
+          screenshot_count="$(find "$screenshot_dir" -type f -name '*.png' | wc -l | tr -d ' ')"
+          printf 'xctest=PASS\nscreenshotCount=%s\n' "$screenshot_count" > "$ARTIFACT_DIR/verdict.txt"
+
+      - name: Publish exact-head receipt summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## V14 Preview accessibility acceptance'
+            echo
+            echo "- Source: \`$SOURCE_SHA\`"
+            if [[ -f "$ARTIFACT_DIR/simulator-identity.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/simulator-identity.txt"
+            fi
+            if [[ -f "$ARTIFACT_DIR/verdict.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/verdict.txt"
+            else
+              echo '- verdict=INCOMPLETE_OR_FAILED'
+            fi
+            echo '- Scope: Simulator accessibility/layout/readability evidence only; no physical-device, Local AI, provider, thermal, memory, or energy claim.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload accessibility evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: v14-preview-accessibility-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Shut down qualification Simulator
+        if: always()
+        shell: bash
+        run: |
+          xcrun simctl terminate "$SIMULATOR_ID" com.joey.NovaForge >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
