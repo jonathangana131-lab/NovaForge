@@ -4,15 +4,22 @@ import Foundation
 ///
 /// A public `ForgeQualityRunBinding` is transport metadata only. A future canonical Runtime/Mission
 /// adapter inside this module must mint this subject only after proving the run is the currently
-/// accepted execution for the completion target. This prevents a caller from replaying an older
-/// otherwise-authentic measurement bundle from the same source/checkpoint.
+/// accepted execution for the exact Completion target retained here. Keeping the whole relation
+/// prevents a trusted run from one mission/Constitution from being replayed against another target
+/// that happens to share project/source/checkpoint identity.
 public struct ForgeQualityTrustedRunBinding: Equatable, Sendable {
     private let authenticatedBinding: ForgeQualityRunBinding
+    private let authenticatedCompletionTarget: ForgeQualityCompletionTarget
 
     public var binding: ForgeQualityRunBinding { authenticatedBinding }
+    public var completionTarget: ForgeQualityCompletionTarget { authenticatedCompletionTarget }
 
-    init(authenticatedBinding: ForgeQualityRunBinding) {
+    init(
+        authenticatedBinding: ForgeQualityRunBinding,
+        authenticatedCompletionTarget: ForgeQualityCompletionTarget
+    ) {
         self.authenticatedBinding = authenticatedBinding
+        self.authenticatedCompletionTarget = authenticatedCompletionTarget
     }
 }
 
@@ -22,16 +29,21 @@ public enum ForgeQualityEvaluator {
         binding: ForgeQualityTrustedRunBinding,
         measurements: [ForgeQualityTrustedMeasurement]
     ) throws -> ForgeQualityAssessment {
-        try evaluate(
+        guard binding.completionTarget == policy.completionTarget else {
+            throw ForgeQualityError.completionBindingMismatch
+        }
+
+        return try evaluateAuthenticated(
             policy: policy,
             binding: binding.binding,
             measurements: measurements
         )
     }
 
-    /// Package-internal seam used by canonical producer adapters and package tests after run trust
-    /// has already been established. Ordinary external consumers cannot select an arbitrary run.
-    internal static func evaluate(
+    /// Private evaluator reached only after the non-Codable trusted run has retained and matched
+    /// the exact Completion target. Keeping the raw-binding seam private prevents future package
+    /// adapters from accidentally discarding that authenticated relationship.
+    private static func evaluateAuthenticated(
         policy: ForgeQualityTrustedPolicy,
         binding: ForgeQualityRunBinding,
         measurements: [ForgeQualityTrustedMeasurement]
