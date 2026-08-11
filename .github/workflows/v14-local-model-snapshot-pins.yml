@@ -1,0 +1,30 @@
+name: V14 Local model snapshot pins
+
+on:
+  pull_request:
+    paths:
+      - 'Vendor/swift-llama-cpp/Sources/SwiftLlama/NovaForgeMLXRuntime.swift'
+      - 'scripts/validate_v14_local_model_snapshot_pins.py'
+      - '.github/workflows/v14-local-model-snapshot-pins.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'Vendor/swift-llama-cpp/Sources/SwiftLlama/NovaForgeMLXRuntime.swift'
+      - 'scripts/validate_v14_local_model_snapshot_pins.py'
+      - '.github/workflows/v14-local-model-snapshot-pins.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  immutable-model-snapshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile validator
+        run: python3 -m py_compile scripts/validate_v14_local_model_snapshot_pins.py
+      - name: Run adversarial self-test
+        run: python3 scripts/validate_v14_local_model_snapshot_pins.py --self-test --repo-root .
+      - name: Validate repository MLX snapshot pins
+        run: python3 scripts/validate_v14_local_model_snapshot_pins.py --repo-root .
