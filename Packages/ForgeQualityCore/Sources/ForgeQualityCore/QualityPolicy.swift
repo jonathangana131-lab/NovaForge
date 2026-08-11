@@ -167,6 +167,3 @@ public struct ForgeQualityTrustedPolicy: Equatable, Sendable {
         authenticatedPolicy == candidate
     }
 }
-
-/// Candidate producer measurement. Structural validation and an evidence-kind label do not prove
-/// provenance; quality acceptance separately requires a host-authenticated whole-measurement binding.
