@@ -78,8 +78,10 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
     }
 }
 
-/// Non-Codable exact producer trust subject. A caller cannot promote a persisted/model-shaped
-/// `ForgeQualityMeasurement` merely by copying its receipt IDs or authority labels.
+/// Non-Codable exact scalar producer trust subject. This can preserve an authenticated observation
+/// while a canonical producer assembles a batch, but it is intentionally **not** accepted directly
+/// by `ForgeQualityEvaluator`. Quality acceptance requires whole-batch trust so related metrics
+/// cannot be fragmented, replayed, or recombined across producer populations.
 public struct ForgeQualityTrustedMeasurement: Equatable, Sendable {
     private let authenticatedMeasurement: ForgeQualityMeasurement
 
