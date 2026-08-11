@@ -13,11 +13,39 @@ extension ForgeQualityCoreTests {
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
                 policy: trustedPolicy(targets: [target]),
-                binding: runBinding(),
+                binding: trustedRunBinding(),
                 measurements: [trusted(other)]
             )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .evidenceBindingMismatch(measurementID: id("measurement-other")))
+        }
+    }
+
+    func testTrustedRunCannotReplayAcrossDifferentCompletionTarget() throws {
+        let target = try ForgeQualityTarget(
+            metric: .p95FrameTimeMilliseconds,
+            comparator: .atMost,
+            threshold: 20
+        )
+        let completionA = try completionTarget()
+        let completionB = try ForgeQualityCompletionTarget(
+            missionID: id("mission-2"),
+            projectID: completionA.projectID,
+            sourceRevision: completionA.sourceRevision,
+            constitutionRevision: completionA.constitutionRevision + 1,
+            constitutionReceiptID: id("constitution-receipt-5")
+        )
+        let trustedForA = trustedRunBinding(completionTarget: completionA)
+        let policyForB = trustedPolicy(targets: [target], completionTarget: completionB)
+
+        XCTAssertThrowsError(
+            try ForgeQualityEvaluator.evaluate(
+                policy: policyForB,
+                binding: trustedForA,
+                measurements: []
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeQualityError, .completionBindingMismatch)
         }
     }
 
@@ -34,7 +62,7 @@ extension ForgeQualityCoreTests {
         )
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [target]), binding: runBinding(),
+                policy: trustedPolicy(targets: [target]), binding: trustedRunBinding(),
                 measurements: [trusted(one), trusted(two)]
             )
         )
@@ -58,7 +86,7 @@ extension ForgeQualityCoreTests {
         )
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [frame, fps]), binding: runBinding(),
+                policy: trustedPolicy(targets: [frame, fps]), binding: trustedRunBinding(),
                 measurements: [trusted(one), trusted(two)]
             )
         ) { error in
@@ -75,7 +103,7 @@ extension ForgeQualityCoreTests {
         let extra = try measurement(metric: .fatalRuntimeErrorCount, value: 0, receipt: "extra")
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [target]), binding: runBinding(),
+                policy: trustedPolicy(targets: [target]), binding: trustedRunBinding(),
                 measurements: [trusted(extra)]
             )
         )
@@ -97,7 +125,7 @@ extension ForgeQualityCoreTests {
         )
         XCTAssertThrowsError(
             try ForgeQualityEvaluator.evaluate(
-                policy: trustedPolicy(targets: [target]), binding: runBinding(),
+                policy: trustedPolicy(targets: [target]), binding: trustedRunBinding(),
                 measurements: [trusted(wrong)]
             )
         )
@@ -126,5 +154,4 @@ extension ForgeQualityCoreTests {
         XCTAssertTrue(measurementTrust.exactlyMatches(measurementA))
         XCTAssertFalse(measurementTrust.exactlyMatches(measurementB))
     }
-
 }
