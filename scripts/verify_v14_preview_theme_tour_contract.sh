@@ -5,18 +5,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOUR="$REPO_ROOT/scripts/codex-preview-theme-tour.sh"
 VERIFY="$REPO_ROOT/scripts/codex-preview-theme-tour-verify.sh"
 THEME="$REPO_ROOT/AgentPad/Design/AgentTheme.swift"
+APP="$REPO_ROOT/AgentPad/App/AgentPadApp.swift"
 FAST="$REPO_ROOT/scripts/codex-fast-screenshot.sh"
-RESET_GUARD="$REPO_ROOT/scripts/verify_v14_preview_theme_reset_cache.sh"
 
-for required in "$TOUR" "$VERIFY" "$THEME" "$FAST" "$RESET_GUARD"; do
+for required in "$TOUR" "$VERIFY" "$THEME" "$APP" "$FAST"; do
   [[ -f "$required" ]] || { echo "missing Preview theme-tour dependency: $required" >&2; exit 1; }
 done
 
 bash -n "$TOUR"
 bash -n "$VERIFY"
-bash "$RESET_GUARD"
 
-python3 - "$TOUR" "$VERIFY" "$THEME" "$FAST" <<'PY'
+python3 - "$TOUR" "$VERIFY" "$THEME" "$APP" "$FAST" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -24,7 +23,8 @@ import sys
 tour = Path(sys.argv[1]).read_text()
 verify = Path(sys.argv[2]).read_text()
 theme = Path(sys.argv[3]).read_text()
-fast = Path(sys.argv[4]).read_text()
+app = Path(sys.argv[4]).read_text()
+fast = Path(sys.argv[5]).read_text()
 
 canonical = [
     ("matrixRain", "01-matrix-rain"),
@@ -38,6 +38,22 @@ states = ["forge-clean", "pending-approval", "local-ready", "local-missing", "hi
 cases = re.findall(r'^\s*case\s+([A-Za-z][A-Za-z0-9_]*)\s*$', theme, re.MULTILINE)
 if cases[:5] != [raw for raw, _ in canonical] or len(set(cases[:5])) != 5:
     raise SystemExit(f"AgentTheme canonical five-world contract drifted: {cases[:5]}")
+
+if 'argument.hasPrefix("--theme-world=")' not in theme:
+    raise SystemExit('AgentTheme no longer accepts the --theme-world= screenshot fixture')
+
+# The tour needs an active-process launch override, but deliberately does not
+# own whether that override is persisted. The theme durability lane (#230 and
+# its Swift implementation) owns that semantic. Accept both the current direct
+# resolver and the non-persisting resolvedForLaunch shape so this evidence lane
+# cannot freeze an obsolete persistence contract.
+if (
+    'AgentTheme.launchOverride(from: arguments)' not in app
+    and 'AgentTheme.resolvedForLaunch(' not in app
+):
+    raise SystemExit('missing active launch-theme override resolution in app bootstrap')
+if 'AgentPalette.refreshThemeCache(' not in app or 'AgentThemeUIKit.apply(' not in app:
+    raise SystemExit('missing active launch-theme application to SwiftUI/UIKit appearance')
 
 for raw, prefix in canonical:
     if f'capture_theme {raw} {prefix}' not in tour:
@@ -90,5 +106,5 @@ if len(expected_frame_names) != 25 or len(set(name.strip() for name in expected_
 if '--open-terminal' in tour:
     raise SystemExit('Preview theme matrix should focus on normal-user release surfaces, not Terminal/Pro UI')
 
-print('V14 Preview theme-tour contract PASS: 5 themes x 5 release states, exact-SHA manifest, duplicate/image/semantic guards')
+print('V14 Preview theme-tour contract PASS: 5 themes x 5 release states, active launch override, exact-SHA manifest, duplicate/image/semantic guards')
 PY

@@ -31,7 +31,19 @@ States per theme:
 4. Local model missing weak state;
 5. History proof state.
 
-The tour builds once, reuses the installed app, uses the repaired `--reset-ui` + `--theme-world` fixture on every frame, records the exact source SHA and simulator/configuration in a manifest, and shuts the Simulator down after the matrix.
+The tour builds once, reuses the installed app, passes `--reset-ui` plus a launch-only `--theme-world=<theme>` override on every frame, records the exact source SHA and simulator/configuration in a manifest, and shuts the Simulator down after the matrix.
+
+## Theme durability boundary
+
+PR #230 independently owns the contract that launch-only screenshot/UI-test theme overrides must not replace the user's durable saved theme. The first version of this tooling guard chained the older reset-cache persistence guard, which would have frozen the stale persistence behavior and conflicted with that durability correction.
+
+The theme-tour contract now intentionally checks only what this evidence path needs:
+
+- the canonical `--theme-world=` launch fixture remains accepted;
+- app bootstrap resolves an active launch override through either the current `launchOverride(...)` shape or the non-persisting `resolvedForLaunch(...)` shape;
+- active theme presentation reaches SwiftUI/UIKit cache/application authority.
+
+It neither requires nor forbids a durable `UserDefaults` write. Theme preference durability remains owned by #230/the corresponding Swift lane. This keeps screenshot evidence tooling compatible with the corrected product semantics instead of becoming a second theme authority.
 
 ## Fail-closed verification
 
@@ -43,7 +55,7 @@ The tour builds once, reuses the installed app, uses the repaired `--reset-ui` +
 - unique hashes across the capture matrix so a stuck launch/state cannot quietly duplicate a previous frame;
 - lightweight semantic screen checks using the same macOS Vision pattern as the existing general tour verifier.
 
-`scripts/verify_v14_preview_theme_tour_contract.sh` is Linux-runnable and locks the canonical five AgentTheme cases, five matrix states, exact launch-argument forwarding, repaired reset fixture, exact 25-frame manifest contract, and explicit non-acceptance wording.
+`scripts/verify_v14_preview_theme_tour_contract.sh` is Linux-runnable and locks the canonical five AgentTheme cases, five matrix states, active launch-override presentation seam, exact launch-argument forwarding, exact 25-frame manifest contract, and explicit non-acceptance wording.
 
 ## What this proves
 

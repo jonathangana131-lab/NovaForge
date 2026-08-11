@@ -8,7 +8,6 @@ on:
       - 'scripts/codex-fast-screenshot.sh'
       - 'scripts/codex-preview-theme-tour.sh'
       - 'scripts/codex-preview-theme-tour-verify.sh'
-      - 'scripts/verify_v14_preview_theme_reset_cache.sh'
       - 'scripts/verify_v14_preview_theme_tour_contract.sh'
       - '.github/workflows/v14-preview-theme-tour-tooling.yml'
   push:
@@ -20,7 +19,6 @@ on:
       - 'scripts/codex-fast-screenshot.sh'
       - 'scripts/codex-preview-theme-tour.sh'
       - 'scripts/codex-preview-theme-tour-verify.sh'
-      - 'scripts/verify_v14_preview_theme_reset_cache.sh'
       - 'scripts/verify_v14_preview_theme_tour_contract.sh'
       - '.github/workflows/v14-preview-theme-tour-tooling.yml'
 
