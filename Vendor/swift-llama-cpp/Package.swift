@@ -21,9 +21,12 @@ let package = Package(
     dependencies: [
         // Pin the exact Aug 10, 2026 mlx-swift-lm head that includes Nanbeige4.2
         // support plus the new single-dispatch TurboFlash short-context path.
+        // NovaForge's app target still supports iOS 26, so keep the optional
+        // iOS-27-only FoundationModelsIntegration trait disabled here.
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm.git",
-            revision: mlxSwiftLMRevision
+            revision: mlxSwiftLMRevision,
+            traits: []
         ),
         // mlx-swift-lm declares compatibility from 0.31.4. Pin 0.31.4 here so
         // NovaForge's current Swift 6.2/Xcode 26-era toolchain does not resolve
