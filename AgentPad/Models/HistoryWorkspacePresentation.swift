@@ -39,13 +39,15 @@ enum HistoryWorkspacePresentation {
         terminalCommandID: String?,
         eventID: String?
     ) -> String {
+        let normalizedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
         let reference = provenanceReference(
             toolRunID: toolRunID,
             terminalCommandID: terminalCommandID,
             eventID: eventID
         )
-        guard reference != "Workspace indexed" else { return base }
-        return "\(base) · \(reference)"
+        guard reference != "Workspace indexed" else { return normalizedBase }
+        guard !normalizedBase.isEmpty else { return reference }
+        return "\(normalizedBase) · \(reference)"
     }
 
     static func workspaceScopeLine(projectName: String, workspaceName: String) -> String {

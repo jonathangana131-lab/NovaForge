@@ -70,6 +70,39 @@ final class HistoryWorkspacePresentationTests: XCTestCase {
         )
     }
 
+    func testWorkspaceProvenanceLabelNormalizesBaseWhitespace() {
+        XCTAssertEqual(
+            HistoryWorkspacePresentation.provenanceLabel(
+                base: "  Project artifact \n",
+                toolRunID: "12345678-aaaa-bbbb-cccc-dddddddddddd",
+                terminalCommandID: nil,
+                eventID: nil
+            ),
+            "Project artifact · Run 12345678"
+        )
+    }
+
+    func testWorkspaceProvenanceLabelDropsBlankBaseWithoutDanglingSeparator() {
+        XCTAssertEqual(
+            HistoryWorkspacePresentation.provenanceLabel(
+                base: " \n ",
+                toolRunID: "12345678-aaaa-bbbb-cccc-dddddddddddd",
+                terminalCommandID: nil,
+                eventID: nil
+            ),
+            "Run 12345678"
+        )
+        XCTAssertEqual(
+            HistoryWorkspacePresentation.provenanceLabel(
+                base: " \n ",
+                toolRunID: nil,
+                terminalCommandID: nil,
+                eventID: nil
+            ),
+            ""
+        )
+    }
+
     func testWorkspaceScopeLineNormalizesWhitespace() {
         XCTAssertEqual(
             HistoryWorkspacePresentation.workspaceScopeLine(
