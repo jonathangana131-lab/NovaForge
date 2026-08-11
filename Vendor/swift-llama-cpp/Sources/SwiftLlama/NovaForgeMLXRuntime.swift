@@ -93,6 +93,55 @@ public struct NovaForgeMLXRuntimeSnapshot: Equatable, Sendable {
 public enum NovaForgeMLXRuntimeError: Error, Equatable, Sendable {
     case generationAlreadyInProgress
     case invalidMaximumTokens
+    case invalidRepositoryID(String)
+    case modelNotCached(String)
+}
+
+/// A cache-only MLX downloader used during inference.
+///
+/// The normal Hugging Face bridge is intentionally *not* used here because its
+/// `download` implementation may contact the Hub when a snapshot is missing.
+/// NovaForge Local Only must fail closed instead of turning an inference request
+/// into implicit network traffic after relaunch. Model installation/warming is a
+/// separate, explicit action and is allowed to use the network.
+private struct NovaForgeCachedHubDownloader: Downloader {
+    func download(
+        id: String,
+        revision: String?,
+        matching patterns: [String],
+        useLatest: Bool,
+        progressHandler: @Sendable @escaping (Progress) -> Void
+    ) async throws -> URL {
+        guard let repo = Repo.ID(rawValue: id) else {
+            throw NovaForgeMLXRuntimeError.invalidRepositoryID(id)
+        }
+
+        let cache = HubCache.default
+        let requestedRevision = revision ?? "main"
+        let commit = cache.resolveRevision(
+            repo: repo,
+            kind: .model,
+            ref: requestedRevision
+        ) ?? requestedRevision
+        let snapshot = try cache.snapshotPath(
+            repo: repo,
+            kind: .model,
+            commitHash: commit
+        )
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: snapshot.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue else {
+            throw NovaForgeMLXRuntimeError.modelNotCached(id)
+        }
+
+        let progress = Progress(totalUnitCount: 1)
+        progress.completedUnitCount = 1
+        progressHandler(progress)
+        return snapshot
+    }
 }
 
 /// Serializes MLX access for the local NovaForge agent lane.
@@ -116,10 +165,17 @@ public actor NovaForgeMLXRuntime {
         )
     }
 
-    /// Downloads/loads the selected MLX checkpoint and keeps its weights warm.
-    /// The Hugging Face integration reuses its on-device cache on later launches.
+    /// Returns whether Hugging Face's local cache currently resolves a snapshot for
+    /// the profile. This is intentionally local filesystem/cache inspection only.
+    public func isCached(profile: NovaForgeMLXProfile) -> Bool {
+        Self.cachedSnapshotURL(profile: profile) != nil
+    }
+
+    /// Explicit install/warm path. This is the only path in this adapter that is
+    /// allowed to use Hugging Face networking. Once warm succeeds, normal
+    /// generation can be reconstructed from the local snapshot with zero Hub I/O.
     public func warm(profile: NovaForgeMLXProfile) async throws {
-        _ = try await container(for: profile)
+        _ = try await container(for: profile, networkPolicy: .installationAllowed)
     }
 
     /// Releases NovaForge's strong references. MLX may reclaim backing resources
@@ -134,6 +190,9 @@ public actor NovaForgeMLXRuntime {
     /// The app supplies the native tool/result transcript in `prompt`; tool
     /// authorization remains in NovaForge's AgentTools boundary. This adapter does
     /// not execute filesystem or shell actions itself.
+    ///
+    /// If the model is not already resident, this path loads *only* from the local
+    /// Hugging Face snapshot. Missing bytes fail closed with `modelNotCached`.
     public func generate(
         profile: NovaForgeMLXProfile = .nanbeige42Coder3Bit,
         instructions: String = NovaForgeMLXRuntime.defaultCoderInstructions,
@@ -151,7 +210,7 @@ public actor NovaForgeMLXRuntime {
         isGenerating = true
         defer { isGenerating = false }
 
-        let container = try await container(for: profile)
+        let container = try await container(for: profile, networkPolicy: .cacheOnly)
         let parameters = GenerateParameters(
             maxTokens: min(options.maximumTokens, profile.maximumNewTokens),
             maxKVSize: profile.maximumKVSize,
@@ -183,7 +242,15 @@ public actor NovaForgeMLXRuntime {
     Prefer targeted patches over rewriting unrelated files.
     """
 
-    private func container(for profile: NovaForgeMLXProfile) async throws -> ModelContainer {
+    private enum NetworkPolicy {
+        case installationAllowed
+        case cacheOnly
+    }
+
+    private func container(
+        for profile: NovaForgeMLXProfile,
+        networkPolicy: NetworkPolicy
+    ) async throws -> ModelContainer {
         if loadedProfile == profile, let modelContainer {
             return modelContainer
         }
@@ -194,13 +261,52 @@ public actor NovaForgeMLXRuntime {
         loadedProfile = nil
 
         let configuration = ModelConfiguration(id: profile.repositoryID)
+        let downloader: any Downloader
+        switch networkPolicy {
+        case .installationAllowed:
+            downloader = #hubDownloader()
+        case .cacheOnly:
+            guard Self.cachedSnapshotURL(profile: profile) != nil else {
+                throw NovaForgeMLXRuntimeError.modelNotCached(profile.repositoryID)
+            }
+            downloader = NovaForgeCachedHubDownloader()
+        }
+
         let loaded = try await LLMModelFactory.shared.loadContainer(
-            from: #hubDownloader(),
+            from: downloader,
             using: #huggingFaceTokenizerLoader(),
             configuration: configuration
         )
         modelContainer = loaded
         loadedProfile = profile
         return loaded
+    }
+
+    private static func cachedSnapshotURL(profile: NovaForgeMLXProfile) -> URL? {
+        guard let repo = Repo.ID(rawValue: profile.repositoryID) else {
+            return nil
+        }
+
+        let cache = HubCache.default
+        guard let commit = cache.resolveRevision(
+            repo: repo,
+            kind: .model,
+            ref: "main"
+        ), let snapshot = try? cache.snapshotPath(
+            repo: repo,
+            kind: .model,
+            commitHash: commit
+        ) else {
+            return nil
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: snapshot.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue else {
+            return nil
+        }
+        return snapshot
     }
 }
