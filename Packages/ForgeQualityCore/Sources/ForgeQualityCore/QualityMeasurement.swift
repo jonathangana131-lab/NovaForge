@@ -4,6 +4,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
     public let measurementID: ForgeQualityID
     public let producerReceiptID: ForgeQualityID
     public let binding: ForgeQualityRunBinding
+    public let measurementProtocol: ForgeQualityMeasurementProtocolIdentity
     public let metric: ForgeQualityMetric
     public let scope: ForgeQualityScope
     public let evidenceKind: ForgeQualityEvidenceKind
@@ -14,6 +15,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
         measurementID: ForgeQualityID,
         producerReceiptID: ForgeQualityID,
         binding: ForgeQualityRunBinding,
+        measurementProtocol: ForgeQualityMeasurementProtocolIdentity,
         metric: ForgeQualityMetric,
         scope: ForgeQualityScope = .run,
         evidenceKind: ForgeQualityEvidenceKind,
@@ -36,6 +38,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
         self.measurementID = measurementID
         self.producerReceiptID = producerReceiptID
         self.binding = binding
+        self.measurementProtocol = measurementProtocol
         self.metric = metric
         self.scope = scope
         self.evidenceKind = evidenceKind
@@ -51,6 +54,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
         case measurementID
         case producerReceiptID
         case binding
+        case measurementProtocol
         case metric
         case scope
         case evidenceKind
@@ -64,6 +68,7 @@ public struct ForgeQualityMeasurement: Codable, Hashable, Sendable {
             measurementID: container.decode(ForgeQualityID.self, forKey: .measurementID),
             producerReceiptID: container.decode(ForgeQualityID.self, forKey: .producerReceiptID),
             binding: container.decode(ForgeQualityRunBinding.self, forKey: .binding),
+            measurementProtocol: container.decode(ForgeQualityMeasurementProtocolIdentity.self, forKey: .measurementProtocol),
             metric: container.decode(ForgeQualityMetric.self, forKey: .metric),
             scope: container.decode(ForgeQualityScope.self, forKey: .scope),
             evidenceKind: container.decode(ForgeQualityEvidenceKind.self, forKey: .evidenceKind),
@@ -81,6 +86,7 @@ public struct ForgeQualityTrustedMeasurement: Equatable, Sendable {
     public var measurementID: ForgeQualityID { authenticatedMeasurement.measurementID }
     public var producerReceiptID: ForgeQualityID { authenticatedMeasurement.producerReceiptID }
     public var binding: ForgeQualityRunBinding { authenticatedMeasurement.binding }
+    public var measurementProtocol: ForgeQualityMeasurementProtocolIdentity { authenticatedMeasurement.measurementProtocol }
     public var metric: ForgeQualityMetric { authenticatedMeasurement.metric }
     public var scope: ForgeQualityScope { authenticatedMeasurement.scope }
     public var evidenceKind: ForgeQualityEvidenceKind { authenticatedMeasurement.evidenceKind }
