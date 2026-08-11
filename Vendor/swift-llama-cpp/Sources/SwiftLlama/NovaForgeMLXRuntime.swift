@@ -80,6 +80,27 @@ public struct NovaForgeMLXGenerationOptions: Sendable {
     }
 }
 
+/// Measured generation telemetry returned by MLX Swift LM for one completed
+/// generation. NovaForge uses this instead of estimating token counts from text.
+public struct NovaForgeMLXGenerationMetrics: Equatable, Sendable {
+    public let promptTokenCount: Int
+    public let generatedTokenCount: Int
+    public let promptTime: TimeInterval
+    public let generationTime: TimeInterval
+
+    public init(
+        promptTokenCount: Int,
+        generatedTokenCount: Int,
+        promptTime: TimeInterval,
+        generationTime: TimeInterval
+    ) {
+        self.promptTokenCount = promptTokenCount
+        self.generatedTokenCount = generatedTokenCount
+        self.promptTime = promptTime
+        self.generationTime = generationTime
+    }
+}
+
 public struct NovaForgeMLXRuntimeSnapshot: Equatable, Sendable {
     public let loadedProfile: NovaForgeMLXProfile?
     public let isGenerating: Bool
@@ -95,6 +116,7 @@ public enum NovaForgeMLXRuntimeError: Error, Equatable, Sendable {
     case invalidMaximumTokens
     case invalidRepositoryID(String)
     case modelNotCached(String)
+    case missingGenerationInfo
 }
 
 /// A cache-only MLX downloader used during inference.
@@ -171,11 +193,31 @@ public actor NovaForgeMLXRuntime {
         Self.cachedSnapshotURL(profile: profile) != nil
     }
 
+    /// Returns the locally cached snapshot directory without contacting the Hub.
+    public func cachedSnapshotURL(profile: NovaForgeMLXProfile) -> URL? {
+        Self.cachedSnapshotURL(profile: profile)
+    }
+
     /// Explicit install/warm path. This is the only path in this adapter that is
     /// allowed to use Hugging Face networking. Once warm succeeds, normal
     /// generation can be reconstructed from the local snapshot with zero Hub I/O.
     public func warm(profile: NovaForgeMLXProfile) async throws {
         _ = try await container(for: profile, networkPolicy: .installationAllowed)
+    }
+
+    /// Explicitly deletes only this MLX repository's Hugging Face cache directory.
+    /// The model is unloaded first so live MLX arrays cannot retain a deleted file.
+    public func removeCached(profile: NovaForgeMLXProfile) async throws {
+        if loadedProfile == profile {
+            unload()
+        }
+        guard let repo = Repo.ID(rawValue: profile.repositoryID) else {
+            throw NovaForgeMLXRuntimeError.invalidRepositoryID(profile.repositoryID)
+        }
+        let directory = HubCache.default.repoDirectory(repo: repo, kind: .model)
+        if FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.removeItem(at: directory)
+        }
     }
 
     /// Releases NovaForge's strong references. MLX may reclaim backing resources
@@ -193,13 +235,14 @@ public actor NovaForgeMLXRuntime {
     ///
     /// If the model is not already resident, this path loads *only* from the local
     /// Hugging Face snapshot. Missing bytes fail closed with `modelNotCached`.
+    @discardableResult
     public func generate(
         profile: NovaForgeMLXProfile = .nanbeige42Coder3Bit,
         instructions: String = NovaForgeMLXRuntime.defaultCoderInstructions,
         prompt: String,
         options: NovaForgeMLXGenerationOptions = .init(),
         onText: @escaping @Sendable (String) async throws -> Void
-    ) async throws {
+    ) async throws -> NovaForgeMLXGenerationMetrics {
         guard !isGenerating else {
             throw NovaForgeMLXRuntimeError.generationAlreadyInProgress
         }
@@ -228,10 +271,26 @@ public actor NovaForgeMLXRuntime {
             generateParameters: parameters
         )
 
-        for try await chunk in session.streamResponse(to: prompt) {
+        var completionInfo: GenerateCompletionInfo?
+        for try await item in session.streamDetails(to: prompt) {
             try Task.checkCancellation()
-            try await onText(chunk)
+            if let chunk = item.chunk, !chunk.isEmpty {
+                try await onText(chunk)
+            }
+            if let info = item.info {
+                completionInfo = info
+            }
         }
+
+        guard let completionInfo else {
+            throw NovaForgeMLXRuntimeError.missingGenerationInfo
+        }
+        return NovaForgeMLXGenerationMetrics(
+            promptTokenCount: completionInfo.promptTokenCount,
+            generatedTokenCount: completionInfo.generationTokenCount,
+            promptTime: completionInfo.promptTime,
+            generationTime: completionInfo.generationTime
+        )
     }
 
     public static let defaultCoderInstructions = """
