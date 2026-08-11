@@ -47,6 +47,7 @@ public struct ForgeQualityAssessment: Hashable, Sendable {
     public let policyAuthorityReceiptID: ForgeQualityID
     public let criterionID: ForgeQualityID
     public let completionTarget: ForgeQualityCompletionTarget
+    public let measurementProtocol: ForgeQualityMeasurementProtocolIdentity
     public let binding: ForgeQualityRunBinding
     public let status: ForgeQualityGateStatus
     public let findings: [ForgeQualityFinding]
@@ -66,6 +67,7 @@ public struct ForgeQualityAssessment: Hashable, Sendable {
         policyAuthorityReceiptID = trustedPolicy.policyAuthorityReceiptID
         criterionID = trustedPolicy.criterionID
         completionTarget = trustedPolicy.completionTarget
+        measurementProtocol = trustedPolicy.measurementProtocol
         self.binding = binding
         self.status = status
         self.findings = findings
