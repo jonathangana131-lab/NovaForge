@@ -32,16 +32,16 @@ extension ForgeQualityCoreTests {
             ),
         ]
         let trustedPolicy = ForgeQualityTrustedPolicy(authenticatedPolicy: try policy(targets: targets))
-        let measurements = try [
-            trusted(measurement(metric: .sustainedFramesPerSecond, value: 59, samples: 180, receipt: "fps")),
-            trusted(measurement(metric: .p95FrameTimeMilliseconds, value: 18, samples: 180, receipt: "frame")),
-            trusted(measurement(metric: .accessibilityCriticalViolationCount, value: 0, receipt: "a11y")),
+        let batches = try [
+            trustedBatch(measurement(metric: .sustainedFramesPerSecond, value: 59, samples: 180, receipt: "fps")),
+            trustedBatch(measurement(metric: .p95FrameTimeMilliseconds, value: 18, samples: 180, receipt: "frame")),
+            trustedBatch(measurement(metric: .accessibilityCriticalViolationCount, value: 0, receipt: "a11y")),
         ]
 
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy,
             binding: trustedRunBinding(binding),
-            measurements: measurements
+            batches: batches
         )
 
         XCTAssertEqual(result.status, .passed)
@@ -60,7 +60,7 @@ extension ForgeQualityCoreTests {
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
             binding: trustedRunBinding(),
-            measurements: []
+            batches: []
         )
         XCTAssertEqual(result.status, .blocked)
         XCTAssertEqual(result.findings.map(\.reason), [.missingEvidence])
@@ -80,7 +80,7 @@ extension ForgeQualityCoreTests {
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [frame, a11y]),
             binding: trustedRunBinding(),
-            measurements: [trusted(try measurement(metric: .p95FrameTimeMilliseconds, value: 30, receipt: "slow"))]
+            batches: [trustedBatch(try measurement(metric: .p95FrameTimeMilliseconds, value: 30, receipt: "slow"))]
         )
         XCTAssertEqual(result.status, .failed)
         XCTAssertEqual(Set(result.findings.map(\.reason)), Set([.missingEvidence, .thresholdViolated]))
@@ -96,7 +96,7 @@ extension ForgeQualityCoreTests {
         let result = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
             binding: trustedRunBinding(),
-            measurements: [trusted(try measurement(metric: .p95FrameTimeMilliseconds, value: 15, samples: 10, receipt: "few"))]
+            batches: [trustedBatch(try measurement(metric: .p95FrameTimeMilliseconds, value: 15, samples: 10, receipt: "few"))]
         )
         XCTAssertEqual(result.status, .blocked)
         XCTAssertEqual(result.findings.map(\.reason), [.insufficientSamples])
@@ -119,7 +119,7 @@ extension ForgeQualityCoreTests {
         let simResult = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
             binding: trustedRunBinding(simulator),
-            measurements: [trusted(simMeasurement)]
+            batches: [trustedBatch(simMeasurement)]
         )
         XCTAssertEqual(simResult.status, .blocked)
         XCTAssertEqual(simResult.findings.map(\.reason), [.environmentMismatch])
@@ -129,7 +129,7 @@ extension ForgeQualityCoreTests {
         let otherResult = try ForgeQualityEvaluator.evaluate(
             policy: trustedPolicy(targets: [target]),
             binding: trustedRunBinding(otherOS),
-            measurements: [trusted(otherMeasurement)]
+            batches: [trustedBatch(otherMeasurement)]
         )
         XCTAssertEqual(otherResult.status, .blocked)
         XCTAssertEqual(otherResult.findings.map(\.reason), [.environmentMismatch])
@@ -152,7 +152,7 @@ extension ForgeQualityCoreTests {
             try ForgeQualityEvaluator.evaluate(
                 policy: acceptedPolicy,
                 binding: trustedRunBinding(wrongProject),
-                measurements: []
+                batches: []
             )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .completionBindingMismatch)
@@ -167,7 +167,7 @@ extension ForgeQualityCoreTests {
             try ForgeQualityEvaluator.evaluate(
                 policy: acceptedPolicy,
                 binding: trustedRunBinding(wrongCheckpoint),
-                measurements: []
+                batches: []
             )
         ) { error in
             XCTAssertEqual(error as? ForgeQualityError, .completionBindingMismatch)
