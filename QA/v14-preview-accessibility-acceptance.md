@@ -10,6 +10,8 @@ The pre-2.0 Preview Acceptance Constitution requires the normal agent harness to
 
 This lane adds a dedicated exact-head acceptance producer without modifying production presentation code or the shared `AgentPadUITests.swift` owner path.
 
+The job is intentionally **not** another every-PR 45-minute Simulator tax. It auto-runs while this acceptance contract itself changes, then remains available through `workflow_dispatch` with an optional exact `source_sha` for release-candidate qualification. A dispatch that supplies anything other than a full 40-character commit SHA fails closed.
+
 ## Exact journeys
 
 The workflow runs these existing tests against one exact built source revision:
@@ -32,13 +34,14 @@ The workflow captures XCTest output and test screenshots under `artifacts/v14-pr
 
 Before XCTest is allowed to count as evidence, the workflow requires:
 
-- checkout SHA exactly equals the PR head (or dispatched SHA);
+- a full 40-character source commit SHA;
+- checkout SHA exactly equals the PR head, dispatched `source_sha`, or dispatched workflow SHA;
 - the configured Simulator UDID exists and identifies an available **iPhone 12**;
 - that Simulator belongs to an **iOS 27** runtime;
 - the built `NovaForge.app` contains `NovaForgeSourceCommit` exactly matching the tested source SHA;
 - all three focused XCTest journeys succeed.
 
-A stale app, wrong simulator class/runtime, missing source marker, missing test bundle, or XCTest failure makes the workflow red.
+A mutable branch name, stale app, wrong simulator class/runtime, missing source marker, missing test bundle, or XCTest failure makes the workflow red.
 
 ## Truth boundary
 
@@ -50,6 +53,8 @@ A green run is **Simulator accessibility/layout/readability evidence for these t
 - every one of the five themes or every weak/loading/error/offline state;
 - Local AI model qualification, hosted provider health, network isolation, RAM/thermal/energy behavior, or long-session performance;
 - final Preview release readiness.
+
+Source inspection confirms current Composer motion uses `accessibilityReduceMotion`, and shared glass/background rendering has `accessibilityReduceTransparency` fallbacks, but those code paths are **not** promoted to runtime acceptance by this workflow because the selected journeys do not deliberately toggle those system settings.
 
 Those remain separate acceptance gates. In particular, the existing short performance trace still must not be promoted to long-session proof.
 
