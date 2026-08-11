@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - worker/GPT56-SOL-NF-V14-PREVIEW-SESSION-0810/relaunch/e1
+      - agent/v14-preview-session-relaunch-bound-target
   workflow_dispatch:
 
 permissions:
@@ -21,41 +22,136 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Select newest Xcode and iPhone Simulator
+      - name: Bind Xcode 27 and iPhone 12 on iOS 27
         shell: bash
         run: |
           set -euo pipefail
-          NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
-          if [ -z "$NEWEST_XCODE" ]; then
-            echo "No Xcode installation found under /Applications" >&2
+          rm -rf artifacts/preview-session-relaunch
+          mkdir -p artifacts/preview-session-relaunch
+
+          SELECTED_XCODE=""
+          while IFS= read -r candidate; do
+            [ -d "$candidate/Contents/Developer" ] || continue
+            candidate_version=$(DEVELOPER_DIR="$candidate/Contents/Developer" xcodebuild -version 2>/dev/null | sed -n '1p' || true)
+            if printf '%s\n' "$candidate_version" | grep -Eq '^Xcode 27([. ]|$)'; then
+              SELECTED_XCODE="$candidate"
+              break
+            fi
+          done < <(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -r)
+
+          if [ -z "$SELECTED_XCODE" ]; then
+            echo "Preview relaunch acceptance requires an installed Xcode 27 toolchain" >&2
             exit 69
           fi
-          sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
-          xcodebuild -version
 
-          UDID=$(xcrun simctl list -j devices available | jq -r '
-            [.devices
-              | to_entries[]
-              | select(.key | contains("iOS"))
-              | .value[]
-              | select(.isAvailable == true and (.name | startswith("iPhone")))]
+          sudo xcode-select -s "$SELECTED_XCODE/Contents/Developer"
+          XCODE_VERSION_LINE=$(xcodebuild -version | sed -n '1p')
+          XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ { print $3; exit }')
+          printf '%s\n' "$XCODE_VERSION_LINE"
+          printf 'Build version %s\n' "$XCODE_BUILD"
+
+          RUNTIMES_JSON=$(xcrun simctl list -j runtimes)
+          RUNTIME_ID=$(printf '%s' "$RUNTIMES_JSON" | jq -r '
+            [.runtimes[]
+              | select(.isAvailable == true)
+              | select((.version | split(".")[0]) == "27")]
+            | sort_by(.version | split(".") | map(tonumber))
             | last
-            | .udid // empty
+            | .identifier // empty
           ')
-          if [ -z "$UDID" ]; then
-            DEVICE_TYPE=$(xcrun simctl list -j devicetypes | jq -r \
-              '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
-            [ -n "$DEVICE_TYPE" ] || { echo "No compatible iPhone simulator type" >&2; exit 69; }
-            UDID=$(xcrun simctl create "NovaForge Preview Relaunch" "$DEVICE_TYPE")
+          if [ -z "$RUNTIME_ID" ]; then
+            echo "Preview relaunch acceptance requires an available iOS 27 Simulator runtime" >&2
+            exit 69
           fi
+          RUNTIME_NAME=$(printf '%s' "$RUNTIMES_JSON" | jq -r --arg id "$RUNTIME_ID" \
+            '.runtimes[] | select(.identifier == $id) | .name')
+          RUNTIME_VERSION=$(printf '%s' "$RUNTIMES_JSON" | jq -r --arg id "$RUNTIME_ID" \
+            '.runtimes[] | select(.identifier == $id) | .version')
+          RUNTIME_BUILD=$(printf '%s' "$RUNTIMES_JSON" | jq -r --arg id "$RUNTIME_ID" \
+            '.runtimes[] | select(.identifier == $id) | .buildversion')
+
+          DEVICE_TYPE_ID=$(xcrun simctl list -j devicetypes | jq -r '
+            first(.devicetypes[] | select(.name == "iPhone 12") | .identifier) // empty
+          ')
+          if [ -z "$DEVICE_TYPE_ID" ]; then
+            echo "Preview relaunch acceptance requires the iPhone 12 Simulator device type" >&2
+            exit 69
+          fi
+
+          DEVICES_JSON=$(xcrun simctl list -j devices available)
+          UDID=$(printf '%s' "$DEVICES_JSON" | jq -r \
+            --arg runtime "$RUNTIME_ID" \
+            --arg type "$DEVICE_TYPE_ID" '
+              first(
+                .devices[$runtime][]?
+                | select(.isAvailable == true)
+                | select(.name == "iPhone 12")
+                | select(.deviceTypeIdentifier == $type)
+                | .udid
+              ) // empty
+            ')
+          CREATED_SIMULATOR=false
+          if [ -z "$UDID" ]; then
+            UDID=$(xcrun simctl create "iPhone 12" "$DEVICE_TYPE_ID" "$RUNTIME_ID")
+            CREATED_SIMULATOR=true
+          fi
+
+          DEVICES_JSON=$(xcrun simctl list -j devices available)
+          if ! printf '%s' "$DEVICES_JSON" | jq -e \
+            --arg runtime "$RUNTIME_ID" \
+            --arg udid "$UDID" \
+            --arg type "$DEVICE_TYPE_ID" '
+              any(
+                .devices[$runtime][]?;
+                .udid == $udid
+                and .isAvailable == true
+                and .name == "iPhone 12"
+                and .deviceTypeIdentifier == $type
+              )
+            ' >/dev/null; then
+            echo "Resolved Simulator does not match exact iPhone 12 + iOS 27 binding" >&2
+            exit 69
+          fi
+
+          {
+            echo "source_sha=$GITHUB_SHA"
+            echo "xcode_app=$SELECTED_XCODE"
+            echo "xcode_version=$XCODE_VERSION_LINE"
+            echo "xcode_build=$XCODE_BUILD"
+            echo "simulator_udid=$UDID"
+            echo "simulator_device_name=iPhone 12"
+            echo "simulator_device_type=$DEVICE_TYPE_ID"
+            echo "simulator_runtime_name=$RUNTIME_NAME"
+            echo "simulator_runtime_identifier=$RUNTIME_ID"
+            echo "simulator_runtime_version=$RUNTIME_VERSION"
+            echo "simulator_runtime_build=$RUNTIME_BUILD"
+            echo "simulator_created_for_run=$CREATED_SIMULATOR"
+            echo "runner_os=$RUNNER_OS"
+            sw_vers
+          } | tee artifacts/preview-session-relaunch/environment.txt
+
           echo "SIMULATOR_ID=$UDID" >> "$GITHUB_ENV"
+          echo "SIMULATOR_RUNTIME_ID=$RUNTIME_ID" >> "$GITHUB_ENV"
+          echo "SIMULATOR_DEVICE_TYPE_ID=$DEVICE_TYPE_ID" >> "$GITHUB_ENV"
 
       - name: Build Preview test bundle once
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf DerivedData/PreviewSession artifacts/preview-session-relaunch
+          rm -rf DerivedData/PreviewSession
           mkdir -p artifacts/preview-session-relaunch
+          xcrun simctl list -j devices available | jq -e \
+            --arg runtime "$SIMULATOR_RUNTIME_ID" \
+            --arg udid "$SIMULATOR_ID" \
+            --arg type "$SIMULATOR_DEVICE_TYPE_ID" '
+              any(
+                .devices[$runtime][]?;
+                .udid == $udid
+                and .isAvailable == true
+                and .name == "iPhone 12"
+                and .deviceTypeIdentifier == $type
+              )
+            ' >/dev/null
           xcodebuild \
             -project AgentPad.xcodeproj \
             -scheme AgentPad \
@@ -76,6 +172,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          xcrun simctl list -j devices available | jq -e \
+            --arg runtime "$SIMULATOR_RUNTIME_ID" \
+            --arg udid "$SIMULATOR_ID" \
+            --arg type "$SIMULATOR_DEVICE_TYPE_ID" '
+              any(
+                .devices[$runtime][]?;
+                .udid == $udid
+                and .isAvailable == true
+                and .name == "iPhone 12"
+                and .deviceTypeIdentifier == $type
+              )
+            ' >/dev/null
           xcodebuild \
             -project AgentPad.xcodeproj \
             -scheme AgentPad \
