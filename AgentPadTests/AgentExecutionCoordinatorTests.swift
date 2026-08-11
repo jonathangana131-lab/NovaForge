@@ -191,6 +191,77 @@ final class AgentExecutionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testCancellationRaceNeverLetsNextOwnerOverlapReturnedLease() async throws {
+        let coordinator = AgentExecutionCoordinator()
+
+        for iteration in 0..<120 {
+            let first = try await coordinator.acquireMutation(
+                workspaceName: "Atlas",
+                runID: UUID(),
+                ownerDescription: "First \(iteration)"
+            )
+            let secondOwner = "Second \(iteration)"
+            let thirdOwner = "Third \(iteration)"
+            let second = Task {
+                try await coordinator.acquireMutation(
+                    workspaceName: "Atlas",
+                    runID: UUID(),
+                    ownerDescription: secondOwner
+                )
+            }
+            try await waitForQueuedMutationCount(1, workspace: "atlas", coordinator: coordinator)
+
+            let third = Task {
+                try await coordinator.acquireMutation(
+                    workspaceName: "Atlas",
+                    runID: UUID(),
+                    ownerDescription: thirdOwner
+                )
+            }
+            try await waitForQueuedMutationCount(2, workspace: "atlas", coordinator: coordinator)
+
+            let releasing = Task {
+                await coordinator.release(first)
+            }
+            let cancelling = Task {
+                second.cancel()
+            }
+            await releasing.value
+            await cancelling.value
+
+            do {
+                let secondLease = try await second.value
+                let whileSecondOwnsLease = await coordinator.snapshot()
+                XCTAssertEqual(
+                    whileSecondOwnsLease.activeMutationOwnersByWorkspace["atlas"],
+                    secondOwner,
+                    "Iteration \(iteration) granted Atlas to another owner while the second task still held its returned lease."
+                )
+                XCTAssertEqual(
+                    whileSecondOwnsLease.queuedMutationCountsByWorkspace["atlas"],
+                    1,
+                    "Iteration \(iteration) should keep the third owner queued until the returned second lease is released."
+                )
+                await coordinator.release(secondLease)
+            } catch is CancellationError {
+                // Cancellation won before lease ownership escaped acquire().
+            }
+
+            let thirdLease = try await third.value
+            let whileThirdOwnsLease = await coordinator.snapshot()
+            XCTAssertEqual(
+                whileThirdOwnsLease.activeMutationOwnersByWorkspace["atlas"],
+                thirdOwner
+            )
+            XCTAssertNil(whileThirdOwnsLease.queuedMutationCountsByWorkspace["atlas"])
+            await coordinator.release(thirdLease)
+
+            let settled = await coordinator.snapshot()
+            XCTAssertFalse(settled.hasActiveWork, "Iteration \(iteration) stranded an active lease.")
+            XCTAssertFalse(settled.hasQueuedWork, "Iteration \(iteration) stranded a queued waiter.")
+        }
+    }
+
     private func waitForQueuedMutationCount(
         _ expected: Int,
         workspace: String,
