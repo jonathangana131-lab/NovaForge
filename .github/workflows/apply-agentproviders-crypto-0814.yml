@@ -1,0 +1,51 @@
+name: Apply guarded AgentProviders Crypto portability patch
+
+on:
+  push:
+    branches:
+      - patch/GPT56-SOL-NF-V14-PROVIDER-CRYPTO-0814/e2
+
+permissions:
+  contents: write
+
+jobs:
+  patch-product-branch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: worker/GPT56-SOL-NF-V14-PROVIDER-CRYPTO-0814/e1
+          fetch-depth: 0
+
+      - name: Apply exact import-only patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="d25ef69a966955aba81e6edc082b77c4e859f2d0"
+          test "$(git rev-parse HEAD)" = "$expected"
+
+          mapfile -t matches < <(grep -R --line-number --include='*.swift' '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentProviders | sort)
+          printf '%s\n' "${matches[@]}"
+          test "${#matches[@]}" -eq 5
+
+          expected_files=(
+            Packages/AgentHarnessKit/Sources/AgentProviders/HostedSingleCallToolsCapability.swift
+            Packages/AgentHarnessKit/Sources/AgentProviders/HostedTextOnlyCapability.swift
+            Packages/AgentHarnessKit/Sources/AgentProviders/LocalModelSingleCallToolsCapability.swift
+            Packages/AgentHarnessKit/Sources/AgentProviders/ModelGateway.swift
+            Packages/AgentHarnessKit/Sources/AgentProviders/ProviderAdapters.swift
+          )
+          for file in "${expected_files[@]}"; do
+            test "$(grep -c '^import CryptoKit$' "$file")" -eq 1
+            sed -i 's/^import CryptoKit$/import Crypto/' "$file"
+          done
+
+          ! grep -R --line-number --include='*.swift' '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentProviders
+          test "$(git diff --name-only | sort)" = "$(printf '%s\n' "${expected_files[@]}" | sort)"
+          git diff --check
+
+          git config user.name "NovaForge Repair Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add "${expected_files[@]}"
+          git commit -m "AgentProviders: use cross-platform Crypto throughout"
+          git push origin HEAD:worker/GPT56-SOL-NF-V14-PROVIDER-CRYPTO-0814/e1
