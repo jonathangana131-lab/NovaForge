@@ -30,145 +30,144 @@ jobs:
           store = Path('Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift')
           source = store.read_text()
 
-          old_location = '''    struct Location: Sendable {
-              let directoryURL: URL
-              let fileName: String
-              let lockName: String
-              let directoryIdentity: FileIdentity
-              let lockIdentity: FileIdentity
-          }
-          '''
-          new_location = '''    final class DescriptorPins: @unchecked Sendable {
-              let directoryDescriptor: Int32
-              let lockDescriptor: Int32
+          location_start = source.index('    struct Location: Sendable {\n')
+          location_end = source.index('    struct Preparation: Sendable {\n', location_start)
+          old_location = source[location_start:location_end]
+          expected_location = (
+              '    struct Location: Sendable {\n'
+              '        let directoryURL: URL\n'
+              '        let fileName: String\n'
+              '        let lockName: String\n'
+              '        let directoryIdentity: FileIdentity\n'
+              '        let lockIdentity: FileIdentity\n'
+              '    }\n\n'
+          )
+          if old_location != expected_location:
+              raise SystemExit('Location block drifted from audited preimage')
+          new_location = (
+              '    final class DescriptorPins: @unchecked Sendable {\n'
+              '        let directoryDescriptor: Int32\n'
+              '        let lockDescriptor: Int32\n\n'
+              '        init(directoryDescriptor: Int32, lockDescriptor: Int32) {\n'
+              '            self.directoryDescriptor = directoryDescriptor\n'
+              '            self.lockDescriptor = lockDescriptor\n'
+              '        }\n\n'
+              '        deinit {\n'
+              '            close(lockDescriptor)\n'
+              '            close(directoryDescriptor)\n'
+              '        }\n'
+              '    }\n\n'
+              '    struct Location: Sendable {\n'
+              '        let directoryURL: URL\n'
+              '        let fileName: String\n'
+              '        let lockName: String\n'
+              '        let directoryIdentity: FileIdentity\n'
+              '        let lockIdentity: FileIdentity\n'
+              '        let descriptorPins: DescriptorPins\n'
+              '    }\n\n'
+          )
+          source = source[:location_start] + new_location + source[location_end:]
 
-              init(directoryDescriptor: Int32, lockDescriptor: Int32) {
-                  self.directoryDescriptor = directoryDescriptor
-                  self.lockDescriptor = lockDescriptor
-              }
+          prepare_start = source.index('    static func prepare(\n')
+          prepare_end = source.index('    static func withExclusiveLock<Result: Sendable>(\n', prepare_start)
+          prepare = source[prepare_start:prepare_end]
 
-              deinit {
-                  close(lockDescriptor)
-                  close(directoryDescriptor)
-              }
-          }
+          directory_open = (
+              '        let directoryDescriptor = try openDirectory(at: directoryURL)\n'
+              '        defer { close(directoryDescriptor) }\n'
+          )
+          directory_keepalive = (
+              '        let directoryDescriptor = try openDirectory(at: directoryURL)\n'
+              '        var shouldCloseDirectoryDescriptor = true\n'
+              '        defer {\n'
+              '            if shouldCloseDirectoryDescriptor { close(directoryDescriptor) }\n'
+              '        }\n'
+          )
+          if prepare.count(directory_open) != 1:
+              raise SystemExit(f'prepare directory preimage count={prepare.count(directory_open)}')
+          prepare = prepare.replace(directory_open, directory_keepalive, 1)
 
-          struct Location: Sendable {
-              let directoryURL: URL
-              let fileName: String
-              let lockName: String
-              let directoryIdentity: FileIdentity
-              let lockIdentity: FileIdentity
-              let descriptorPins: DescriptorPins
-          }
-          '''
-          if source.count(old_location) != 1:
-              raise SystemExit(f'Location preimage count={source.count(old_location)}')
-          source = source.replace(old_location, new_location, 1)
+          lock_open = (
+              '        let lockDescriptor = try openLock(\n'
+              '            directoryDescriptor: directoryDescriptor,\n'
+              '            name: lockName\n'
+              '        )\n'
+              '        defer { close(lockDescriptor) }\n'
+          )
+          lock_keepalive = (
+              '        let lockDescriptor = try openLock(\n'
+              '            directoryDescriptor: directoryDescriptor,\n'
+              '            name: lockName\n'
+              '        )\n'
+              '        var shouldCloseLockDescriptor = true\n'
+              '        defer {\n'
+              '            if shouldCloseLockDescriptor { close(lockDescriptor) }\n'
+              '        }\n'
+          )
+          if prepare.count(lock_open) != 1:
+              raise SystemExit(f'prepare lock preimage count={prepare.count(lock_open)}')
+          prepare = prepare.replace(lock_open, lock_keepalive, 1)
 
-          old_directory = '''        let directoryDescriptor = try openDirectory(at: directoryURL)
-                  defer { close(directoryDescriptor) }
-                  let directoryStatus = try validatedDirectory(
-          '''
-          new_directory = '''        let directoryDescriptor = try openDirectory(at: directoryURL)
-                  var shouldCloseDirectoryDescriptor = true
-                  defer {
-                      if shouldCloseDirectoryDescriptor { close(directoryDescriptor) }
-                  }
-                  let directoryStatus = try validatedDirectory(
-          '''
-          if source.count(old_directory) != 1:
-              raise SystemExit(f'directory preimage count={source.count(old_directory)}')
-          source = source.replace(old_directory, new_directory, 1)
-
-          old_lock = '''        let lockDescriptor = try openLock(
-                      directoryDescriptor: directoryDescriptor,
-                      name: lockName
-                  )
-                  defer { close(lockDescriptor) }
-                  try acquireFileLock(descriptor: lockDescriptor, until: deadline)
-          '''
-          new_lock = '''        let lockDescriptor = try openLock(
-                      directoryDescriptor: directoryDescriptor,
-                      name: lockName
-                  )
-                  var shouldCloseLockDescriptor = true
-                  defer {
-                      if shouldCloseLockDescriptor { close(lockDescriptor) }
-                  }
-                  try acquireFileLock(descriptor: lockDescriptor, until: deadline)
-          '''
-          if source.count(old_lock) != 1:
-              raise SystemExit(f'lock preimage count={source.count(old_lock)}')
-          source = source.replace(old_lock, new_lock, 1)
-
-          old_location_init = '''        let location = Location(
-                      directoryURL: directoryURL,
-                      fileName: fileName,
-                      lockName: lockName,
-                      directoryIdentity: FileIdentity(directoryStatus),
-                      lockIdentity: FileIdentity(lockStatus)
-                  )
-          '''
-          new_location_init = '''        let location = Location(
-                      directoryURL: directoryURL,
-                      fileName: fileName,
-                      lockName: lockName,
-                      directoryIdentity: FileIdentity(directoryStatus),
-                      lockIdentity: FileIdentity(lockStatus),
-                      descriptorPins: DescriptorPins(
-                          directoryDescriptor: directoryDescriptor,
-                          lockDescriptor: lockDescriptor
-                      )
-                  )
-                  shouldCloseDirectoryDescriptor = false
-                  shouldCloseLockDescriptor = false
-          '''
-          if source.count(old_location_init) != 1:
-              raise SystemExit(f'location init preimage count={source.count(old_location_init)}')
-          source = source.replace(old_location_init, new_location_init, 1)
+          location_init = (
+              '        let location = Location(\n'
+              '            directoryURL: directoryURL,\n'
+              '            fileName: fileName,\n'
+              '            lockName: lockName,\n'
+              '            directoryIdentity: FileIdentity(directoryStatus),\n'
+              '            lockIdentity: FileIdentity(lockStatus)\n'
+              '        )\n'
+          )
+          location_with_pins = (
+              '        let location = Location(\n'
+              '            directoryURL: directoryURL,\n'
+              '            fileName: fileName,\n'
+              '            lockName: lockName,\n'
+              '            directoryIdentity: FileIdentity(directoryStatus),\n'
+              '            lockIdentity: FileIdentity(lockStatus),\n'
+              '            descriptorPins: DescriptorPins(\n'
+              '                directoryDescriptor: directoryDescriptor,\n'
+              '                lockDescriptor: lockDescriptor\n'
+              '            )\n'
+              '        )\n'
+              '        shouldCloseDirectoryDescriptor = false\n'
+              '        shouldCloseLockDescriptor = false\n'
+          )
+          if prepare.count(location_init) != 1:
+              raise SystemExit(f'prepare Location init preimage count={prepare.count(location_init)}')
+          prepare = prepare.replace(location_init, location_with_pins, 1)
+          source = source[:prepare_start] + prepare + source[prepare_end:]
           store.write_text(source)
 
           tests = Path('Packages/AgentHarnessKit/Tests/AgentPolicyTests/MutationEffectStaticSecurityTests.swift')
-          source = tests.read_text()
-          old_process = '''        let process = Process()
-                  let output = Pipe()
-                  process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-                  process.arguments = [
-                      "swiftc",
-                      "-emit-sil",
-                      "-swift-version",
-                      "6",
-                      "-I",
-                      packageRoot.appendingPathComponent(".build/debug/Modules").path,
-                      "-o",
-                      "/dev/null",
-                      sourceURL.path,
-                  ]
-          '''
-          new_process = '''        let process = Process()
-                  let output = Pipe()
-                  let compilerArguments = [
-                      "swiftc",
-                      "-emit-sil",
-                      "-swift-version",
-                      "6",
-                      "-I",
-                      packageRoot.appendingPathComponent(".build/debug/Modules").path,
-                      "-o",
-                      "/dev/null",
-                      sourceURL.path,
-                  ]
-          #if os(macOS)
-                  process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-          #else
-                  process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-          #endif
-                  process.arguments = compilerArguments
-          '''
-          if source.count(old_process) != 1:
-              raise SystemExit(f'compile helper preimage count={source.count(old_process)}')
-          tests.write_text(source.replace(old_process, new_process, 1))
+          test_source = tests.read_text()
+          helper_start = test_source.index('    private func compileMisuse(\n')
+          helper = test_source[helper_start:]
+          executable = '        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")\n'
+          arguments_start = '        process.arguments = [\n'
+          if helper.count(executable) != 1 or helper.count(arguments_start) != 1:
+              raise SystemExit('compileMisuse executable/argument preimage drifted')
+          helper = helper.replace(executable, '', 1)
+          helper = helper.replace(arguments_start, '        let compilerArguments = [\n', 1)
+          arguments_end = (
+              '            sourceURL.path,\n'
+              '        ]\n'
+              '        process.standardOutput = output\n'
+          )
+          replacement_end = (
+              '            sourceURL.path,\n'
+              '        ]\n'
+              '#if os(macOS)\n'
+              '        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")\n'
+              '#else\n'
+              '        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")\n'
+              '#endif\n'
+              '        process.arguments = compilerArguments\n'
+              '        process.standardOutput = output\n'
+          )
+          if helper.count(arguments_end) != 1:
+              raise SystemExit(f'compileMisuse argument terminator count={helper.count(arguments_end)}')
+          helper = helper.replace(arguments_end, replacement_end, 1)
+          tests.write_text(test_source[:helper_start] + helper)
           PY
 
           expected_files=$(cat <<'EOF'
