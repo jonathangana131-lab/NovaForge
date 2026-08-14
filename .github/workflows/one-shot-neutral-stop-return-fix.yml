@@ -1,0 +1,62 @@
+name: One-shot neutral stop return fix
+
+on:
+  push:
+    branches:
+      - agent/v14-preview-neutral-stop-chat-state
+    paths:
+      - '.github/workflows/one-shot-neutral-stop-return-fix.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-neutral-stop-return-fix
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v14-preview-neutral-stop-chat-state
+          fetch-depth: 0
+
+      - name: Add explicit returns to Bool switch expressions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('AgentPad/Views/AgentCanonicalActivityPresentation.swift')
+          source = path.read_text()
+          marker = 'enum AgentCanonicalRunSurfacePolicy {'
+          start = source.find(marker)
+          if start < 0:
+              raise SystemExit('missing AgentCanonicalRunSurfacePolicy')
+          end = source.find('\n}\n\n/// Pure summary policy', start)
+          if end < 0:
+              raise SystemExit('policy end anchor drifted')
+          block = source[start:end]
+          needle = '        switch state {'
+          if block.count(needle) != 2:
+              raise SystemExit(f'expected exactly 2 switch anchors, found {block.count(needle)}')
+          block = block.replace(needle, '        return switch state {')
+          repaired = source[:start] + block + source[end:]
+          if repaired.count('return switch state {') < 2:
+              raise SystemExit('return-switch repair did not land twice')
+          path.write_text(repaired)
+          PY
+          git diff --check
+          grep -A24 -F 'enum AgentCanonicalRunSurfacePolicy {' AgentPad/Views/AgentCanonicalActivityPresentation.swift
+
+      - name: Commit repair and remove one-shot workflow
+        run: |
+          git config user.name "NovaForge Repair Bot"
+          git config user.email "actions@users.noreply.github.com"
+          rm .github/workflows/one-shot-neutral-stop-return-fix.yml
+          git add AgentPad/Views/AgentCanonicalActivityPresentation.swift .github/workflows/one-shot-neutral-stop-return-fix.yml
+          git diff --cached --check
+          git commit -m "Fix neutral stop policy returns"
+          git push origin HEAD:agent/v14-preview-neutral-stop-chat-state
