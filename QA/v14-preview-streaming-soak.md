@@ -14,14 +14,15 @@ This producer adds one narrow, non-conflicting evidence rung without modifying t
 
 For one exact NovaForge source SHA on the configured iPhone 12 / iOS 27 Simulator, the workflow:
 
-1. verifies the exact checked-out SHA and exact Simulator identity;
-2. builds `NovaForge.app` with its `NovaForgeSourceCommit` marker and rejects a mismatched app;
-3. installs and launches the existing deterministic `--stress-streaming` fixture as one process;
-4. keeps that process alive for a 180-second soak;
-5. samples host-observed process RSS and CPU every 15 seconds;
-6. discards the first 45 seconds from memory-growth evaluation as warmup;
-7. fails if the process exits or if conservative post-warmup RSS regression guardrails are exceeded;
-8. captures start, midpoint, and end screenshots plus stdout/stderr, launch, build, policy, and sample receipts.
+1. captures a durable runner preflight receipt before checkout or Simulator qualification, including macOS identity, selected Xcode, installed Xcode candidates, and the selected Simulator runtime/device inventory;
+2. verifies the exact checked-out SHA and exact Simulator identity;
+3. builds `NovaForge.app` with its `NovaForgeSourceCommit` marker and rejects a mismatched app;
+4. installs and launches the existing deterministic `--stress-streaming` fixture as one process;
+5. keeps that process alive for a 180-second soak;
+6. samples host-observed process RSS and CPU every 15 seconds;
+7. discards the first 45 seconds from memory-growth evaluation as warmup;
+8. fails if the process exits or if conservative post-warmup RSS regression guardrails are exceeded;
+9. captures start, midpoint, and end screenshots plus stdout/stderr, launch, build, policy, preflight, and sample receipts.
 
 Current Simulator guardrails are deliberately conservative regression tripwires:
 
@@ -30,6 +31,10 @@ Current Simulator guardrails are deliberately conservative regression tripwires:
 - post-warmup RSS span <= 192 MiB.
 
 These are engineering guardrails, **not** iPhone 12 memory budgets or device qualification thresholds.
+
+## Failed preflight is evidence, too
+
+A missing iOS 27 runtime, missing exact Simulator, incompatible Xcode selection, or other qualification failure must not vanish into an Actions log. The workflow writes `runner-preflight.txt` before those checks and treats an empty artifact set as an error. Therefore a red run can still leave a durable receipt explaining the hosted-runner boundary without being mislabeled as product failure or product success.
 
 ## What it does not prove
 
@@ -50,6 +55,6 @@ The remaining long-session closer should compose this soak signal with a represe
 
 ## Evidence integrity
 
-The workflow accepts only a full 40-character source commit SHA, checks out that exact revision, verifies the built app embeds the same source marker, and uploads the raw CSV/log/screenshot evidence even on failure.
+The workflow accepts only a full 40-character source commit SHA, checks out that exact revision, verifies the built app embeds the same source marker, and uploads the raw CSV/log/screenshot evidence even on failure. The preflight receipt exists before checkout/qualification so infrastructure blockers remain durable rather than chat-only or log-only findings.
 
 Automatic execution is path-bounded to this evidence contract. Later release-candidate qualification should use `workflow_dispatch` with an exact source SHA so an evidence receipt cannot silently follow a moving branch.
