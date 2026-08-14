@@ -3,6 +3,7 @@ name: V14 Preview chat delete draft contract
 on:
   pull_request:
     paths:
+      - 'AgentPad.xcodeproj/project.pbxproj'
       - 'AgentPad/Models/Models.swift'
       - 'AgentPad/Views/AppRootView.swift'
       - 'AgentPad/Views/ChatView.swift'
@@ -13,6 +14,7 @@ on:
     branches:
       - main
     paths:
+      - 'AgentPad.xcodeproj/project.pbxproj'
       - 'AgentPad/Models/Models.swift'
       - 'AgentPad/Views/AppRootView.swift'
       - 'AgentPad/Views/ChatView.swift'
