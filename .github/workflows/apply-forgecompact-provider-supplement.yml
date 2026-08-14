@@ -1,0 +1,31 @@
+name: Apply Forge Compact provider supplement
+
+on:
+  push:
+    branches:
+      - gpt56-sol-v14-preview-forgecompact-supplement-0814
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply deterministic integration patch
+        run: python3 scripts/apply-forgecompact-provider-supplement.py
+      - name: Verify patch shape
+        run: |
+          git diff --check
+          git diff --exit-code -- scripts/apply-forgecompact-provider-supplement.py .github/workflows/apply-forgecompact-provider-supplement.yml
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "AgentPad.xcodeproj/project.pbxproj AgentPad/Services/AgentCanonicalContextPreparer.swift AgentPadTests/AgentCanonicalContextPreparerTests.swift "
+      - name: Commit product integration
+        run: |
+          git config user.name "novaforge-swarm-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPad.xcodeproj/project.pbxproj AgentPad/Services/AgentCanonicalContextPreparer.swift AgentPadTests/AgentCanonicalContextPreparerTests.swift
+          git commit -m "Preview: integrate Forge Compact project-memory supplement"
+          git push origin HEAD:${GITHUB_REF_NAME}
