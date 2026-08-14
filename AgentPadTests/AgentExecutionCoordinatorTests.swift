@@ -84,6 +84,110 @@ final class AgentExecutionCoordinatorTests: XCTestCase {
         await coordinator.release(first)
     }
 
+    func testCancelledQueuedRunCannotBlockImmediateNextRun() async throws {
+        let coordinator = AgentExecutionCoordinator()
+        let activeRunID = UUID()
+        let cancelledRunID = UUID()
+        let nextRunID = UUID()
+
+        let activeMutation = try await coordinator.acquireMutation(
+            workspaceName: "Atlas",
+            runID: activeRunID,
+            ownerDescription: "Active mutation"
+        )
+        let activeInference = try await coordinator.acquireLocalInference(
+            runID: activeRunID,
+            ownerDescription: "Active inference"
+        )
+
+        let cancelledMutation = Task {
+            try await coordinator.acquireMutation(
+                workspaceName: "Atlas",
+                runID: cancelledRunID,
+                ownerDescription: "Cancelled mutation"
+            )
+        }
+        let cancelledInference = Task {
+            try await coordinator.acquireLocalInference(
+                runID: cancelledRunID,
+                ownerDescription: "Cancelled inference"
+            )
+        }
+
+        try await waitForQueuedMutationCount(
+            1,
+            workspace: "atlas",
+            coordinator: coordinator
+        )
+        try await waitForQueuedLocalInferenceCount(1, coordinator: coordinator)
+
+        cancelledMutation.cancel()
+        cancelledInference.cancel()
+        do {
+            _ = try await cancelledMutation.value
+            XCTFail("Expected the queued mutation acquisition to be cancelled")
+        } catch is CancellationError {
+            // Expected.
+        }
+        do {
+            _ = try await cancelledInference.value
+            XCTFail("Expected the queued inference acquisition to be cancelled")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        let afterCancellation = await coordinator.snapshot()
+        XCTAssertEqual(
+            afterCancellation.activeMutationOwnersByWorkspace["atlas"],
+            "Active mutation"
+        )
+        XCTAssertEqual(
+            afterCancellation.activeLocalInferenceOwner,
+            "Active inference"
+        )
+        XCTAssertNil(afterCancellation.queuedMutationCountsByWorkspace["atlas"])
+        XCTAssertEqual(afterCancellation.queuedLocalInferenceCount, 0)
+
+        let nextMutation = Task {
+            try await coordinator.acquireMutation(
+                workspaceName: "Atlas",
+                runID: nextRunID,
+                ownerDescription: "Next mutation"
+            )
+        }
+        let nextInference = Task {
+            try await coordinator.acquireLocalInference(
+                runID: nextRunID,
+                ownerDescription: "Next inference"
+            )
+        }
+        try await waitForQueuedMutationCount(
+            1,
+            workspace: "atlas",
+            coordinator: coordinator
+        )
+        try await waitForQueuedLocalInferenceCount(1, coordinator: coordinator)
+
+        await coordinator.release(activeMutation)
+        await coordinator.release(activeInference)
+
+        let handedOffMutation = try await nextMutation.value
+        let handedOffInference = try await nextInference.value
+        let afterReentry = await coordinator.snapshot()
+        XCTAssertEqual(
+            afterReentry.activeMutationOwnersByWorkspace["atlas"],
+            "Next mutation"
+        )
+        XCTAssertEqual(afterReentry.activeLocalInferenceOwner, "Next inference")
+        XCTAssertFalse(afterReentry.hasQueuedWork)
+
+        await coordinator.release(handedOffMutation)
+        await coordinator.release(handedOffInference)
+        let settled = await coordinator.snapshot()
+        XCTAssertFalse(settled.hasActiveWork)
+        XCTAssertFalse(settled.hasQueuedWork)
+    }
+
     func testSameWorkspaceWaitersResumeInFIFOOrder() async throws {
         let coordinator = AgentExecutionCoordinator()
         let order = LeaseOrderRecorder()
