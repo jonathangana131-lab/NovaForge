@@ -1,5 +1,5 @@
 import AgentDomain
-import CryptoKit
+import Crypto
 import Foundation
 
 public protocol ProviderAdapter: Sendable {

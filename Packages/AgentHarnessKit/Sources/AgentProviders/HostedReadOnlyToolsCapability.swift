@@ -1,4 +1,4 @@
-import CryptoKit
+import Crypto
 import Foundation
 
 /// Frozen, data-only evidence for one package-owned OpenAI route that may
