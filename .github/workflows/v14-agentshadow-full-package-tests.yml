@@ -1,0 +1,31 @@
+name: Validate AgentHarnessKit full tests after AgentShadow
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-AGENTSHADOW-CRYPTO-0814/e4-full-tests
+    paths:
+      - '.github/workflows/v14-agentshadow-full-package-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-full-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert exact AgentShadow product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          product=41076f62c5c1a3fda2b173b42a2b7c3a8e726009
+          test "$(git rev-parse HEAD^)" = "$product"
+          test -z "$(git diff --name-only "$product"..HEAD -- Packages/AgentHarnessKit)"
+          git diff --check 804b5a6c02b98ca3b588587f75e4a745bf2c866f.."$product"
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Run full AgentHarnessKit tests on Linux
+        run: swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
