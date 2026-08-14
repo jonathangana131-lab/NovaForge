@@ -1,0 +1,357 @@
+name: V14 Preview Streaming Soak
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/v14-preview-streaming-soak.yml
+      - QA/v14-preview-streaming-soak.md
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact NovaForge commit SHA to exercise (defaults to dispatched workflow SHA)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-preview-streaming-soak-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-streaming-soak:
+    name: iPhone 12 iOS 27 streaming soak signal
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      SIMULATOR_ID: 4B9AB34A-404C-485F-B0BC-964F24D0AE83
+      BUNDLE_ID: com.joey.NovaForge
+      DERIVED_DATA_PATH: QA/DerivedData/v14-preview-streaming-soak
+      ARTIFACT_DIR: artifacts/v14-preview-streaming-soak
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+      SOAK_SECONDS: "180"
+      WARMUP_SECONDS: "45"
+      SAMPLE_INTERVAL_SECONDS: "15"
+      RSS_GROWTH_LIMIT_KIB: "131072"
+      RSS_SLOPE_LIMIT_KIB_PER_SEC: "768"
+      RSS_SPAN_LIMIT_KIB: "196608"
+      MIN_SCREENSHOT_BYTES: "120000"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Bind exact source and Simulator identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Streaming-soak evidence requires an exact 40-character commit SHA, got: $SOURCE_SHA" >&2
+            exit 2
+          fi
+
+          actual_sha="$(git rev-parse HEAD | tr '[:upper:]' '[:lower:]')"
+          expected_sha="$(printf '%s' "$SOURCE_SHA" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            echo "Checked-out source $actual_sha does not match requested source $expected_sha" >&2
+            exit 1
+          fi
+          SOURCE_SHA="$actual_sha"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+          /usr/bin/python3 - "$SIMULATOR_ID" "$ARTIFACT_DIR/simulator-identity.txt" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          udid, receipt_path = sys.argv[1:]
+          payload = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "-j"]))
+          match = None
+          for runtime, devices in payload.get("devices", {}).items():
+              for device in devices:
+                  if device.get("udid") == udid:
+                      match = (runtime, device)
+                      break
+              if match:
+                  break
+
+          if match is None:
+              raise SystemExit(f"Required Simulator {udid} is not installed")
+
+          runtime, device = match
+          name = device.get("name", "")
+          available = bool(device.get("isAvailable", False))
+          if name != "iPhone 12":
+              raise SystemExit(f"Expected iPhone 12 for {udid}, found {name!r}")
+          if ".iOS-27-" not in runtime:
+              raise SystemExit(f"Expected an iOS 27 runtime, found {runtime!r}")
+          if not available:
+              raise SystemExit(f"Required Simulator {udid} is unavailable")
+
+          with open(receipt_path, "w", encoding="utf-8") as handle:
+              handle.write(f"simulatorUDID={udid}\n")
+              handle.write(f"simulatorName={name}\n")
+              handle.write(f"runtime={runtime}\n")
+              handle.write(f"state={device.get('state', '')}\n")
+          PY
+
+          {
+            echo "sourceSHA=$SOURCE_SHA"
+            echo "soakSeconds=$SOAK_SECONDS"
+            echo "warmupSeconds=$WARMUP_SECONDS"
+            echo "sampleIntervalSeconds=$SAMPLE_INTERVAL_SECONDS"
+            echo "rssGrowthLimitKiB=$RSS_GROWTH_LIMIT_KIB"
+            echo "rssSlopeLimitKiBPerSecond=$RSS_SLOPE_LIMIT_KIB_PER_SEC"
+            echo "rssSpanLimitKiB=$RSS_SPAN_LIMIT_KIB"
+            xcodebuild -version
+            xcrun swift --version
+          } > "$ARTIFACT_DIR/toolchain-and-policy.txt"
+
+      - name: Boot clean qualification Simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          xcrun simctl boot "$SIMULATOR_ID"
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+
+      - name: Build exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$DERIVED_DATA_PATH"
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            NOVAFORGE_SOURCE_COMMIT="$SOURCE_SHA" \
+            build \
+            2>&1 | tee "$ARTIFACT_DIR/build.log"
+
+          app="$(find "$DERIVED_DATA_PATH/Build/Products" -path '*Debug-iphonesimulator/NovaForge.app' -type d -print | sed -n '1p')"
+          if [[ -z "$app" ]]; then
+            echo "NovaForge.app was not produced" >&2
+            exit 1
+          fi
+
+          embedded_sha="$(/usr/libexec/PlistBuddy -c 'Print :NovaForgeSourceCommit' "$app/Info.plist" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$embedded_sha" != "$SOURCE_SHA" ]]; then
+            echo "Built app source marker $embedded_sha does not match $SOURCE_SHA" >&2
+            exit 1
+          fi
+          printf 'app=%s\nsourceMarker=%s\n' "$app" "$embedded_sha" > "$ARTIFACT_DIR/app-source-binding.txt"
+
+      - name: Run sustained streaming soak
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(sed -n 's/^app=//p' "$ARTIFACT_DIR/app-source-binding.txt")"
+          if [[ -z "$app" || ! -d "$app" ]]; then
+            echo "Exact-source NovaForge.app path is unavailable" >&2
+            exit 1
+          fi
+
+          xcrun simctl install "$SIMULATOR_ID" "$app"
+          launch_output="$(
+            xcrun simctl launch \
+              --terminate-running-process \
+              --stdout="$PWD/$ARTIFACT_DIR/app.stdout.log" \
+              --stderr="$PWD/$ARTIFACT_DIR/app.stderr.log" \
+              "$SIMULATOR_ID" \
+              "$BUNDLE_ID" \
+              --reset-ui \
+              --stress-streaming \
+              --open-chat \
+              --profile-frame-rate \
+              --profile-events \
+              --performance-mode
+          )"
+          printf '%s\n' "$launch_output" | tee "$ARTIFACT_DIR/launch.txt"
+
+          pid="$(printf '%s\n' "$launch_output" | sed -n 's/.*: \([0-9][0-9]*\)$/\1/p' | tail -n 1)"
+          if [[ -z "$pid" ]]; then
+            echo "Unable to parse NovaForge process ID from simctl launch output" >&2
+            exit 1
+          fi
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "NovaForge process $pid was not alive immediately after launch" >&2
+            exit 1
+          fi
+          echo "pid=$pid" > "$ARTIFACT_DIR/process.txt"
+
+          csv="$ARTIFACT_DIR/rss-samples.csv"
+          echo "elapsed_seconds,rss_kib,cpu_percent" > "$csv"
+
+          capture_ready_screenshot() {
+            local output="$1"
+            xcrun simctl io "$SIMULATOR_ID" screenshot "$output" >/dev/null
+            local bytes
+            bytes="$(wc -c < "$output" | tr -d '[:space:]')"
+            if [[ "$bytes" -lt "$MIN_SCREENSHOT_BYTES" ]]; then
+              echo "Screenshot $output is too small (${bytes}B < ${MIN_SCREENSHOT_BYTES}B)" >&2
+              return 1
+            fi
+          }
+
+          start_epoch="$(date +%s)"
+          next_capture="start"
+          end_epoch=$((start_epoch + SOAK_SECONDS))
+
+          while :; do
+            now="$(date +%s)"
+            elapsed=$((now - start_epoch))
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "NovaForge process $pid exited during soak at ${elapsed}s" >&2
+              exit 1
+            fi
+
+            rss="$(ps -o rss= -p "$pid" | tr -d '[:space:]')"
+            cpu="$(ps -o %cpu= -p "$pid" | tr -d '[:space:]')"
+            if [[ ! "$rss" =~ ^[0-9]+$ ]]; then
+              echo "Unable to sample RSS for NovaForge process $pid at ${elapsed}s: '$rss'" >&2
+              exit 1
+            fi
+            if [[ -z "$cpu" ]]; then
+              cpu="0"
+            fi
+            printf '%s,%s,%s\n' "$elapsed" "$rss" "$cpu" >> "$csv"
+
+            if [[ "$next_capture" == "start" && "$elapsed" -ge 8 ]]; then
+              capture_ready_screenshot "$ARTIFACT_DIR/soak-start.png"
+              next_capture="mid"
+            elif [[ "$next_capture" == "mid" && "$elapsed" -ge $((SOAK_SECONDS / 2)) ]]; then
+              capture_ready_screenshot "$ARTIFACT_DIR/soak-mid.png"
+              next_capture="end"
+            fi
+
+            if [[ "$now" -ge "$end_epoch" ]]; then
+              break
+            fi
+            sleep "$SAMPLE_INTERVAL_SECONDS"
+          done
+
+          capture_ready_screenshot "$ARTIFACT_DIR/soak-end.png"
+          kill -0 "$pid" 2>/dev/null
+
+          /usr/bin/python3 - \
+            "$csv" \
+            "$WARMUP_SECONDS" \
+            "$RSS_GROWTH_LIMIT_KIB" \
+            "$RSS_SLOPE_LIMIT_KIB_PER_SEC" \
+            "$RSS_SPAN_LIMIT_KIB" \
+            "$ARTIFACT_DIR/verdict.txt" <<'PY'
+          import csv
+          import sys
+
+          csv_path, warmup_s, growth_limit, slope_limit, span_limit, verdict_path = sys.argv[1:]
+          warmup_s = int(warmup_s)
+          growth_limit = int(growth_limit)
+          slope_limit = float(slope_limit)
+          span_limit = int(span_limit)
+
+          rows = []
+          with open(csv_path, newline="", encoding="utf-8") as handle:
+              for row in csv.DictReader(handle):
+                  rows.append((int(row["elapsed_seconds"]), int(row["rss_kib"])))
+
+          if len(rows) < 8:
+              raise SystemExit(f"Need at least 8 RSS samples, found {len(rows)}")
+
+          post = [(t, rss) for t, rss in rows if t >= warmup_s]
+          if len(post) < 6:
+              raise SystemExit(f"Need at least 6 post-warmup RSS samples, found {len(post)}")
+
+          first_t, first_rss = post[0]
+          last_t, last_rss = post[-1]
+          growth = max(0, last_rss - first_rss)
+          values = [rss for _, rss in post]
+          span = max(values) - min(values)
+
+          mean_t = sum(t for t, _ in post) / len(post)
+          mean_r = sum(r for _, r in post) / len(post)
+          denominator = sum((t - mean_t) ** 2 for t, _ in post)
+          slope = 0.0 if denominator == 0 else (
+              sum((t - mean_t) * (r - mean_r) for t, r in post) / denominator
+          )
+
+          failures = []
+          if growth > growth_limit:
+              failures.append(f"endGrowthKiB={growth} > {growth_limit}")
+          if slope > slope_limit:
+              failures.append(f"rssSlopeKiBPerSecond={slope:.2f} > {slope_limit:.2f}")
+          if span > span_limit:
+              failures.append(f"postWarmupSpanKiB={span} > {span_limit}")
+
+          with open(verdict_path, "w", encoding="utf-8") as handle:
+              handle.write("scope=simulatorStreamingSoakSignalOnly\n")
+              handle.write(f"sampleCount={len(rows)}\n")
+              handle.write(f"postWarmupSampleCount={len(post)}\n")
+              handle.write(f"firstPostWarmupSecond={first_t}\n")
+              handle.write(f"lastSampleSecond={last_t}\n")
+              handle.write(f"firstPostWarmupRSSKiB={first_rss}\n")
+              handle.write(f"finalRSSKiB={last_rss}\n")
+              handle.write(f"peakPostWarmupRSSKiB={max(values)}\n")
+              handle.write(f"endGrowthKiB={growth}\n")
+              handle.write(f"rssSlopeKiBPerSecond={slope:.2f}\n")
+              handle.write(f"postWarmupSpanKiB={span}\n")
+              handle.write(f"growthLimitKiB={growth_limit}\n")
+              handle.write(f"slopeLimitKiBPerSecond={slope_limit:.2f}\n")
+              handle.write(f"spanLimitKiB={span_limit}\n")
+              handle.write(f"verdict={'FAIL' if failures else 'PASS'}\n")
+              for failure in failures:
+                  handle.write(f"failure={failure}\n")
+
+          if failures:
+              raise SystemExit("Streaming soak guardrail failed: " + "; ".join(failures))
+          PY
+
+      - name: Publish bounded receipt summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## V14 Preview streaming-soak evidence'
+            echo
+            echo "- Source: \`$SOURCE_SHA\`"
+            if [[ -f "$ARTIFACT_DIR/simulator-identity.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/simulator-identity.txt"
+            fi
+            if [[ -f "$ARTIFACT_DIR/verdict.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/verdict.txt"
+            else
+              echo '- verdict=INCOMPLETE_OR_FAILED'
+            fi
+            echo '- PASS means one exact-source Simulator process survived the sustained existing stress-streaming fixture within conservative RSS regression guardrails.'
+            echo '- This is not full representative long-session acceptance and is not physical-iPhone RSS, thermal, energy, provider, Local AI, or completion evidence.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload soak evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: v14-preview-streaming-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Shut down qualification Simulator
+        if: always()
+        shell: bash
+        run: |
+          xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
