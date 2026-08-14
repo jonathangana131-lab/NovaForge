@@ -54,10 +54,11 @@ jobs:
           tests = open('AgentPadTests/AgentEngineRoutingTests.swift', encoding='utf-8').read()
           required_routing = [
               'enum AgentRunEffortBudgetPolicy',
-              'case (.max, .ultraCode):',
-              'maximumIterations: 128',
-              'maximumProviderAttempts: 192',
-              'maximumToolInvocations: 256',
+              'case .ultraCode:',
+              'guard reasoningEffort == .max else',
+              'iterations: 128',
+              'providerAttempts: 192',
+              'toolInvocations: 256',
           ]
           for needle in required_routing:
               if needle not in routing:
