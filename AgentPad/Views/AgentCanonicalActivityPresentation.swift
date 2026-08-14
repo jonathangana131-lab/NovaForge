@@ -190,7 +190,7 @@ struct AgentCanonicalActivityPresentation: Equatable {
 enum AgentCanonicalRunSurfacePolicy {
     static func presentsFailure(_ state: AgentActivityState?) -> Bool {
         guard let state else { return false }
-        switch state {
+        return switch state {
         case .failed, .rejected, .interrupted:
             true
         case .pending, .queued, .running, .awaitingApproval, .retrying,
@@ -201,7 +201,7 @@ enum AgentCanonicalRunSurfacePolicy {
 
     static func requiresRecoveryAction(_ state: AgentActivityState?) -> Bool {
         guard let state else { return false }
-        switch state {
+        return switch state {
         case .failed, .interrupted:
             true
         case .pending, .queued, .running, .awaitingApproval, .retrying,
