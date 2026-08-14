@@ -166,14 +166,24 @@ struct ProjectStatusWidgetView: View {
             }
 
             HStack(alignment: .lastTextBaseline, spacing: 5) {
-                Text("\(entry.snapshot.proofCount)")
-                    .font(.system(size: isSmall ? 15 : 17, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.green : NovaWidgetPalette.tertiary)
-                Text("PROOF")
-                    .font(.system(size: 7.5, weight: .heavy, design: .rounded))
-                    .tracking(1.2)
-                    .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.secondary : NovaWidgetPalette.tertiary)
+                if shouldShowJourney {
+                    Text("\(entry.snapshot.proofCount)")
+                        .font(.system(size: isSmall ? 15 : 17, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.green : NovaWidgetPalette.tertiary)
+                    Text("PROOF")
+                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.secondary : NovaWidgetPalette.tertiary)
+                } else {
+                    Text("—")
+                        .font(.system(size: isSmall ? 15 : 17, weight: .heavy, design: .rounded))
+                        .foregroundStyle(NovaWidgetPalette.tertiary)
+                    Text("PROOF")
+                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundStyle(NovaWidgetPalette.tertiary)
+                }
                 Spacer(minLength: 0)
                 if shouldShowJourney {
                     Text(entry.snapshot.updatedAt, style: .relative)
