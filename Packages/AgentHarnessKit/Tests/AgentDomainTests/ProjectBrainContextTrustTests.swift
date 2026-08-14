@@ -3,6 +3,10 @@ import XCTest
 @testable import AgentDomain
 
 final class ProjectBrainContextTrustTests: XCTestCase {
+    private static let testMissionID = MissionID(
+        rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000196")!
+    )
+
     func testTrustedSnapshotAndCurrentAuthorityBindExactSourceIntoSelectedContext() throws {
         let projectID = ProjectID()
         let identity = try sourceIdentity()
@@ -28,9 +32,12 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         let slice = try ProjectBrainContextSelector.select(
             from: snapshot,
             currentAuthority: currentAuthority,
-            request: .init(projectID: projectID)
+            request: .init(projectID: projectID, missionID: Self.testMissionID)
         )
 
+        XCTAssertEqual(snapshot.missionID, Self.testMissionID)
+        XCTAssertEqual(currentAuthority.missionID, Self.testMissionID)
+        XCTAssertEqual(slice.missionID, Self.testMissionID)
         XCTAssertEqual(slice.snapshotBrainRevision, 9)
         XCTAssertEqual(slice.sourceIdentity, identity)
         XCTAssertEqual(slice.snapshotAuthorityReceiptID, "brain-receipt-9")
@@ -75,7 +82,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
             try ProjectBrainContextSelector.select(
                 from: snapshot,
                 currentAuthority: currentAuthority,
-                request: .init(projectID: projectID)
+                request: .init(projectID: projectID, missionID: Self.testMissionID)
             )
         ) { error in
             XCTAssertEqual(
@@ -112,12 +119,107 @@ final class ProjectBrainContextTrustTests: XCTestCase {
             try ProjectBrainContextSelector.select(
                 from: snapshot,
                 currentAuthority: currentAuthority,
-                request: .init(projectID: projectID)
+                request: .init(projectID: projectID, missionID: Self.testMissionID)
             )
         ) { error in
             XCTAssertEqual(
                 error as? ProjectBrainContextSelectionError,
                 .trustedSnapshotSourceMismatch
+            )
+        }
+    }
+
+    func testTrustedSelectionRejectsSiblingMissionRetargetBeforeFactPromotion() throws {
+        let projectID = ProjectID()
+        let authorizedMissionID = MissionID()
+        let siblingMissionID = MissionID()
+        let identity = try sourceIdentity()
+        let siblingAcceptedDecision = makeFact(
+            projectID: projectID,
+            missionID: siblingMissionID,
+            kind: .acceptedDecision,
+            statement: "Sibling mission decision must not be promotable by another mission's checkpoint"
+        )
+        let snapshot = try trustedSnapshot(
+            projectID: projectID,
+            missionID: authorizedMissionID,
+            identity: identity,
+            facts: [siblingAcceptedDecision]
+        )
+        let authority = try trustedCurrentAuthority(
+            projectID: projectID,
+            missionID: authorizedMissionID,
+            identity: identity
+        )
+
+        XCTAssertThrowsError(
+            try ProjectBrainContextSelector.select(
+                from: snapshot,
+                currentAuthority: authority,
+                request: .init(projectID: projectID, missionID: siblingMissionID)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainContextSelectionError,
+                .trustedSnapshotMissionMismatch
+            )
+        }
+    }
+
+    func testTrustedSelectionRejectsMissionlessRequestForCheckpointAuthority() throws {
+        let projectID = ProjectID()
+        let identity = try sourceIdentity()
+        let snapshot = try trustedSnapshot(
+            projectID: projectID,
+            identity: identity,
+            facts: []
+        )
+        let authority = try trustedCurrentAuthority(
+            projectID: projectID,
+            identity: identity
+        )
+
+        XCTAssertThrowsError(
+            try ProjectBrainContextSelector.select(
+                from: snapshot,
+                currentAuthority: authority,
+                request: .init(projectID: projectID)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainContextSelectionError,
+                .trustedRequestMissionRequired
+            )
+        }
+    }
+
+    func testTrustedSelectionRejectsCurrentAuthorityFromSiblingMission() throws {
+        let projectID = ProjectID()
+        let acceptedMissionID = MissionID()
+        let siblingMissionID = MissionID()
+        let identity = try sourceIdentity()
+        let snapshot = try trustedSnapshot(
+            projectID: projectID,
+            missionID: acceptedMissionID,
+            identity: identity,
+            facts: []
+        )
+        let siblingAuthority = try trustedCurrentAuthority(
+            projectID: projectID,
+            missionID: siblingMissionID,
+            identity: identity
+        )
+
+        XCTAssertThrowsError(
+            try ProjectBrainContextSelector.select(
+                from: snapshot,
+                currentAuthority: siblingAuthority,
+                request: .init(projectID: projectID, missionID: acceptedMissionID)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProjectBrainContextSelectionError,
+                .trustedSelectionAuthorityMissionMismatch
             )
         }
     }
@@ -243,6 +345,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
+                authenticatedMissionID: Self.testMissionID,
                 brainRevision: 0,
                 sourceIdentity: identity,
                 authorityReceiptID: "brain-receipt",
@@ -256,6 +359,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
+                authenticatedMissionID: Self.testMissionID,
                 brainRevision: 1,
                 sourceIdentity: identity,
                 authorityReceiptID: " padded ",
@@ -269,6 +373,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertThrowsError(
             try ProjectBrainTrustedSnapshot(
                 authenticatedProjectID: projectID,
+                authenticatedMissionID: Self.testMissionID,
                 brainRevision: 1,
                 sourceIdentity: identity,
                 authorityReceiptID: "brain-receipt",
@@ -284,6 +389,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         XCTAssertThrowsError(
             try ProjectBrainTrustedSelectionAuthority(
                 authenticatedProjectID: ProjectID(),
+                authenticatedMissionID: Self.testMissionID,
                 sourceIdentity: sourceIdentity(),
                 authorityReceiptID: " padded "
             )
@@ -353,7 +459,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
             try ProjectBrainContextSelector.select(
                 from: snapshot,
                 currentAuthority: authority,
-                request: .init(projectID: ProjectID())
+                request: .init(projectID: ProjectID(), missionID: Self.testMissionID)
             )
         ) { error in
             XCTAssertEqual(
@@ -380,7 +486,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
             try ProjectBrainContextSelector.select(
                 from: snapshot,
                 currentAuthority: foreignAuthority,
-                request: .init(projectID: projectID)
+                request: .init(projectID: projectID, missionID: Self.testMissionID)
             )
         ) { error in
             XCTAssertEqual(
@@ -429,7 +535,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
         let slice = try ProjectBrainContextSelector.select(
             from: snapshot,
             currentAuthority: authority,
-            request: .init(projectID: projectID)
+            request: .init(projectID: projectID, missionID: Self.testMissionID)
         )
         XCTAssertEqual(slice.facts, [callerShapedAcceptedDecision])
         XCTAssertTrue(slice.isTrustedSnapshotBound)
@@ -441,7 +547,11 @@ final class ProjectBrainContextTrustTests: XCTestCase {
             source: """
             import AgentDomain
 
-            func attemptMint(projectID: ProjectID, fact: ProjectBrainFact) throws {
+            func attemptMint(
+                projectID: ProjectID,
+                missionID: MissionID,
+                fact: ProjectBrainFact
+            ) throws {
                 let identity = try ProjectBrainSourceIdentity(
                     acceptedProjectStateID: "state",
                     checkpointReferenceID: "checkpoint",
@@ -449,6 +559,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
                 )
                 _ = try ProjectBrainTrustedSnapshot(
                     authenticatedProjectID: projectID,
+                    authenticatedMissionID: missionID,
                     brainRevision: 1,
                     sourceIdentity: identity,
                     authorityReceiptID: "caller",
@@ -467,7 +578,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
             source: """
             import AgentDomain
 
-            func attemptMint(projectID: ProjectID) throws {
+            func attemptMint(projectID: ProjectID, missionID: MissionID) throws {
                 let identity = try ProjectBrainSourceIdentity(
                     acceptedProjectStateID: "state",
                     checkpointReferenceID: "checkpoint",
@@ -475,6 +586,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
                 )
                 _ = try ProjectBrainTrustedSelectionAuthority(
                     authenticatedProjectID: projectID,
+                    authenticatedMissionID: missionID,
                     sourceIdentity: identity,
                     authorityReceiptID: "caller"
                 )
@@ -614,6 +726,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
 
     private func trustedSnapshot(
         projectID: ProjectID,
+        missionID: MissionID? = nil,
         identity: ProjectBrainSourceIdentity,
         brainRevision: UInt64 = 1,
         receiptID: String = "brain-receipt",
@@ -622,6 +735,7 @@ final class ProjectBrainContextTrustTests: XCTestCase {
     ) throws -> ProjectBrainTrustedSnapshot {
         try ProjectBrainTrustedSnapshot(
             authenticatedProjectID: projectID,
+            authenticatedMissionID: missionID ?? Self.testMissionID,
             brainRevision: brainRevision,
             sourceIdentity: identity,
             authorityReceiptID: receiptID,
@@ -632,11 +746,13 @@ final class ProjectBrainContextTrustTests: XCTestCase {
 
     private func trustedCurrentAuthority(
         projectID: ProjectID,
+        missionID: MissionID? = nil,
         identity: ProjectBrainSourceIdentity,
         receiptID: String = "current-source-receipt"
     ) throws -> ProjectBrainTrustedSelectionAuthority {
         try ProjectBrainTrustedSelectionAuthority(
             authenticatedProjectID: projectID,
+            authenticatedMissionID: missionID ?? Self.testMissionID,
             sourceIdentity: identity,
             authorityReceiptID: receiptID
         )
@@ -644,12 +760,14 @@ final class ProjectBrainContextTrustTests: XCTestCase {
 
     private func makeFact(
         projectID: ProjectID,
+        missionID: MissionID? = nil,
         kind: ProjectBrainFactKind,
         statement: String
     ) -> ProjectBrainFact {
         ProjectBrainFact(
             factID: ProjectBrainFactID(),
             projectID: projectID,
+            missionID: missionID,
             kind: kind,
             statement: statement,
             scope: .init(kind: .project),
