@@ -5,6 +5,7 @@ on:
     branches:
       - worker/GPT56-SOL-NF-V14-PREVIEW-SESSION-0810/relaunch/e1
       - agent/v14-preview-session-relaunch-bound-target
+      - worker/gpt56-sol-v14-preview-session-runtime-0814
   workflow_dispatch:
 
 permissions:
@@ -50,15 +51,9 @@ jobs:
           printf '%s\n' "$XCODE_VERSION_LINE"
           printf 'Build version %s\n' "$XCODE_BUILD"
 
+          bash scripts/verify_v14_preview_session_runtime_selector_contract.sh
           RUNTIMES_JSON=$(xcrun simctl list -j runtimes)
-          RUNTIME_ID=$(printf '%s' "$RUNTIMES_JSON" | jq -r '
-            [.runtimes[]
-              | select(.isAvailable == true)
-              | select((.version | split(".")[0]) == "27")]
-            | sort_by(.version | split(".") | map(tonumber))
-            | last
-            | .identifier // empty
-          ')
+          RUNTIME_ID=$(printf '%s' "$RUNTIMES_JSON" | bash scripts/verify_v14_preview_session_runtime_selector_contract.sh --select)
           if [ -z "$RUNTIME_ID" ]; then
             echo "Preview relaunch acceptance requires an available iOS 27 Simulator runtime" >&2
             exit 69
