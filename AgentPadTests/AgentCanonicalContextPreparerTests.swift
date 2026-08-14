@@ -174,6 +174,42 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
         )
     }
 
+    func testProjectMemorySupplementFailureFallsBackByteForByteToCanonicalRawJSON() async throws {
+        let fixture = CanonicalContextFixture(seed: 82)
+        let itemID: ModelItemID = canonicalTagged(8_201)
+        let items = [fixture.userItem(id: itemID)]
+        let checkpoints: [ContextCheckpointReference] = (0..<2).map { index in
+            ContextCheckpointReference(
+                checkpointID: canonicalTagged(82_000 + UInt64(index)),
+                schemaVersion: .current,
+                summary: "checkpoint-\(index)-" + String(repeating: "y", count: 40_000),
+                sourceItemIDs: [itemID],
+                sourceDigest: canonicalDigest(character: "e")
+            )
+        }
+        let state = fixture.state(modelItems: items, checkpoints: checkpoints)
+        let preparer = try fixture.preparer()
+
+        let prepared = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let supplement = try text(from: prepared.request.messages[2])
+        let expected = try canonicalEncodableJSONString(
+            CanonicalContextSupplementMirror(
+                kind: "novaforge_context_supplement_v1",
+                artifacts: [],
+                checkpoints: checkpoints
+            )
+        )
+
+        XCTAssertEqual(supplement, expected)
+        XCTAssertGreaterThan(
+            supplement.utf8.count,
+            AgentCanonicalContextPreparer.projectMemorySupplementBudgetBytes
+        )
+        XCTAssertTrue(supplement.contains("novaforge_context_supplement_v1"))
+        XCTAssertFalse(supplement.contains("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
+        XCTAssertEqual(prepared.itemIDs, [itemID])
+    }
+
     func testSingleToolEnvelopeUsesExactProviderCallIDAndLosslessResult() async throws {
         let fixture = CanonicalContextFixture(seed: 2)
         let descriptor = try readFileDescriptor()
@@ -1078,6 +1114,18 @@ private func canonicalJSONString(_ value: JSONValue) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     return String(decoding: try encoder.encode(value), as: UTF8.self)
+}
+
+private func canonicalEncodableJSONString<T: Encodable>(_ value: T) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return String(decoding: try encoder.encode(value), as: UTF8.self)
+}
+
+private struct CanonicalContextSupplementMirror: Encodable {
+    let kind: String
+    let artifacts: [ArtifactReference]
+    let checkpoints: [ContextCheckpointReference]
 }
 
 private func assertCanonicalContextError<T: Sendable>(
