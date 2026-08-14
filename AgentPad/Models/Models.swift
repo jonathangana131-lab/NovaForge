@@ -18,6 +18,43 @@ struct AgentToast: Identifiable, Equatable {
     static func == (lhs: AgentToast, rhs: AgentToast) -> Bool { lhs.id == rhs.id }
 }
 
+final class ConversationDraftPersistence: @unchecked Sendable {
+    static let shared = ConversationDraftPersistence()
+    static let storageKey = "novaForgeChatDraftsByConversation"
+
+    private let lock = NSLock()
+    private var deletedConversationIDs: Set<UUID> = []
+
+    private init() {}
+
+    func markDeletedAndPurge(_ conversationID: UUID, defaults: UserDefaults = .standard) {
+        lock.lock()
+        deletedConversationIDs.insert(conversationID)
+        lock.unlock()
+        purge(conversationID, defaults: defaults)
+    }
+
+    func shouldPersist(_ conversationID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !deletedConversationIDs.contains(conversationID)
+    }
+
+    func purge(_ conversationID: UUID, defaults: UserDefaults = .standard) {
+        guard let storedValue = defaults.object(forKey: Self.storageKey) else { return }
+        guard let raw = storedValue as? String,
+              let data = raw.data(using: .utf8),
+              var drafts = try? JSONDecoder().decode([String: String].self, from: data) else {
+            defaults.removeObject(forKey: Self.storageKey)
+            return
+        }
+        guard drafts.removeValue(forKey: conversationID.uuidString) != nil,
+              let encoded = try? JSONEncoder().encode(drafts),
+              let updated = String(data: encoded, encoding: .utf8) else { return }
+        defaults.set(updated, forKey: Self.storageKey)
+    }
+}
+
 struct WorkspaceProgressStep: Identifiable, Equatable, Sendable {
     enum State: String, Equatable, Sendable {
         case pending

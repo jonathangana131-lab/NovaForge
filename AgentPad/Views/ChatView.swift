@@ -2094,6 +2094,10 @@ struct ChatView: View {
     }
 
     private func persistDraft(_ draft: String, for conversationID: UUID) {
+        guard ConversationDraftPersistence.shared.shouldPersist(conversationID) else {
+            ConversationDraftPersistence.shared.purge(conversationID)
+            return
+        }
         var drafts = persistedDrafts()
         let key = conversationID.uuidString
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
