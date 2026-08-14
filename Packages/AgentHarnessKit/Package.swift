@@ -121,7 +121,12 @@ let package = Package(
         ),
         .testTarget(
             name: "AgentPolicyTests",
-            dependencies: ["AgentDomain", "AgentPolicy", "AgentTools"]
+            dependencies: [
+                "AgentDomain",
+                "AgentPolicy",
+                "AgentTools",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ]
         ),
         .testTarget(
             name: "AgentTransportTests",
