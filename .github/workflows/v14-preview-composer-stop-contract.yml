@@ -1,0 +1,37 @@
+name: V14 Preview Composer Stop Contract
+
+on:
+  pull_request:
+    paths:
+      - AgentPad/Views/ChatComposer.swift
+      - AgentPad/Views/ChatView.swift
+      - AgentPad/Services/AgentRuntime.swift
+      - AgentPad/Services/RunActivityController.swift
+      - scripts/verify_v14_preview_composer_stop_contract.py
+      - .github/workflows/v14-preview-composer-stop-contract.yml
+      - QA/v14-preview-composer-stop-contract.md
+  push:
+    branches:
+      - main
+    paths:
+      - AgentPad/Views/ChatComposer.swift
+      - AgentPad/Views/ChatView.swift
+      - AgentPad/Services/AgentRuntime.swift
+      - AgentPad/Services/RunActivityController.swift
+      - scripts/verify_v14_preview_composer_stop_contract.py
+      - .github/workflows/v14-preview-composer-stop-contract.yml
+      - QA/v14-preview-composer-stop-contract.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  composer-stop-source-contract:
+    name: Composer Stop source contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify visible Stop to cancellation wiring
+        run: python3 scripts/verify_v14_preview_composer_stop_contract.py
