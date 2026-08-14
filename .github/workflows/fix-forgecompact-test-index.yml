@@ -1,0 +1,36 @@
+name: Fix Forge Compact test index type
+
+on:
+  push:
+    branches:
+      - gpt56-sol-v14-preview-forgecompact-supplement-0814
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fix UInt64 fixture seed
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('AgentPadTests/AgentCanonicalContextPreparerTests.swift')
+          text = path.read_text()
+          old = 'artifactID: canonicalTagged(81_000 + index),'
+          new = 'artifactID: canonicalTagged(81_000 + UInt64(index)),'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one anchor, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          test "$(git diff --name-only)" = "AgentPadTests/AgentCanonicalContextPreparerTests.swift"
+      - name: Commit correction
+        run: |
+          git config user.name "novaforge-swarm-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPadTests/AgentCanonicalContextPreparerTests.swift
+          git commit -m "Fix Forge Compact pressure-test seed type"
+          git push origin HEAD:${GITHUB_REF_NAME}
