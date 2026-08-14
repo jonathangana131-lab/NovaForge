@@ -39,6 +39,46 @@ jobs:
       MIN_SCREENSHOT_BYTES: "120000"
 
     steps:
+      - name: Capture runner preflight receipt
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$ARTIFACT_DIR"
+          receipt="$ARTIFACT_DIR/runner-preflight.txt"
+          {
+            echo "requestedSourceSHA=$SOURCE_SHA"
+            echo "runnerOS=${RUNNER_OS:-unknown}"
+            echo "runnerArch=${RUNNER_ARCH:-unknown}"
+            echo "githubRunID=${GITHUB_RUN_ID:-unknown}"
+            echo "githubRunAttempt=${GITHUB_RUN_ATTEMPT:-unknown}"
+            echo
+            echo '== uname =='
+            uname -a
+            echo
+            echo '== sw_vers =='
+            sw_vers
+            echo
+            echo '== selected developer dir =='
+            xcode-select -p
+            echo
+            echo '== selected Xcode =='
+            xcodebuild -version
+            echo
+            echo '== installed Xcode candidates =='
+            for app in /Applications/Xcode*.app; do
+              [[ -d "$app" ]] || continue
+              echo "-- $app"
+              DEVELOPER_DIR="$app/Contents/Developer" xcodebuild -version 2>&1
+            done
+            echo
+            echo '== selected Simulator runtimes =='
+            xcrun simctl list runtimes 2>&1
+            echo
+            echo '== selected available Simulator devices =='
+            xcrun simctl list devices available 2>&1
+          } > "$receipt" 2>&1
+          test -s "$receipt"
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.SOURCE_SHA }}
@@ -47,7 +87,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$ARTIFACT_DIR"
 
           if [[ ! "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "Streaming-soak evidence requires an exact 40-character commit SHA, got: $SOURCE_SHA" >&2
@@ -62,6 +101,18 @@ jobs:
           fi
           SOURCE_SHA="$actual_sha"
           echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+          {
+            echo "sourceSHA=$SOURCE_SHA"
+            echo "soakSeconds=$SOAK_SECONDS"
+            echo "warmupSeconds=$WARMUP_SECONDS"
+            echo "sampleIntervalSeconds=$SAMPLE_INTERVAL_SECONDS"
+            echo "rssGrowthLimitKiB=$RSS_GROWTH_LIMIT_KIB"
+            echo "rssSlopeLimitKiBPerSecond=$RSS_SLOPE_LIMIT_KIB_PER_SEC"
+            echo "rssSpanLimitKiB=$RSS_SPAN_LIMIT_KIB"
+            xcodebuild -version
+            xcrun swift --version
+          } > "$ARTIFACT_DIR/toolchain-and-policy.txt"
 
           /usr/bin/python3 - "$SIMULATOR_ID" "$ARTIFACT_DIR/simulator-identity.txt" <<'PY'
           import json
@@ -98,18 +149,6 @@ jobs:
               handle.write(f"runtime={runtime}\n")
               handle.write(f"state={device.get('state', '')}\n")
           PY
-
-          {
-            echo "sourceSHA=$SOURCE_SHA"
-            echo "soakSeconds=$SOAK_SECONDS"
-            echo "warmupSeconds=$WARMUP_SECONDS"
-            echo "sampleIntervalSeconds=$SAMPLE_INTERVAL_SECONDS"
-            echo "rssGrowthLimitKiB=$RSS_GROWTH_LIMIT_KIB"
-            echo "rssSlopeLimitKiBPerSecond=$RSS_SLOPE_LIMIT_KIB_PER_SEC"
-            echo "rssSpanLimitKiB=$RSS_SPAN_LIMIT_KIB"
-            xcodebuild -version
-            xcrun swift --version
-          } > "$ARTIFACT_DIR/toolchain-and-policy.txt"
 
       - name: Boot clean qualification Simulator
         shell: bash
@@ -346,7 +385,7 @@ jobs:
         with:
           name: v14-preview-streaming-soak-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.ARTIFACT_DIR }}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Shut down qualification Simulator
