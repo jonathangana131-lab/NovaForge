@@ -1,0 +1,78 @@
+name: Validate AgentProviders Crypto portability
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PROVIDER-CRYPTO-0814/e1
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-agentproviders:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "d25ef69a966955aba81e6edc082b77c4e859f2d0"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/validate-agentproviders-crypto-0814.yml"
+
+      - name: Compile and test exact AgentProviders slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD/Packages/AgentHarnessKit"
+          tmp="$(mktemp -d)"
+          mkdir -p "$tmp/Sources" "$tmp/Tests"
+          cp -R "$root/Sources/AgentDomain" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentTools" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentProviders" "$tmp/Sources/"
+          cp -R "$root/Tests/AgentProviderContractTests" "$tmp/Tests/"
+
+          cat > "$tmp/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+
+          let package = Package(
+              name: "AgentProvidersPortabilityValidation",
+              dependencies: [
+                  .package(
+                      url: "https://github.com/apple/swift-crypto.git",
+                      "1.0.0" ..< "5.0.0"
+                  ),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(
+                      name: "AgentTools",
+                      dependencies: ["AgentDomain"]
+                  ),
+                  .target(
+                      name: "AgentProviders",
+                      dependencies: [
+                          "AgentDomain",
+                          "AgentTools",
+                          .product(name: "Crypto", package: "swift-crypto"),
+                      ]
+                  ),
+                  .testTarget(
+                      name: "AgentProviderContractTests",
+                      dependencies: ["AgentDomain", "AgentProviders", "AgentTools"],
+                      resources: [.process("Fixtures")]
+                  ),
+              ]
+          )
+          SWIFT
+
+          if grep -R --line-number --fixed-strings "import CryptoKit" "$tmp/Sources/AgentProviders"; then
+            echo "AgentProviders still contains an Apple-only CryptoKit import" >&2
+            exit 1
+          fi
+
+          swift test --package-path "$tmp" -Xswiftc -warnings-as-errors
