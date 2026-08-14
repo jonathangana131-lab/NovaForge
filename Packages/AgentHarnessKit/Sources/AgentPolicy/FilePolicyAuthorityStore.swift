@@ -657,12 +657,28 @@ private enum PolicyAuthorityFileIO {
         }
     }
 
+    final class DescriptorPins: @unchecked Sendable {
+        let directoryDescriptor: Int32
+        let lockDescriptor: Int32
+
+        init(directoryDescriptor: Int32, lockDescriptor: Int32) {
+            self.directoryDescriptor = directoryDescriptor
+            self.lockDescriptor = lockDescriptor
+        }
+
+        deinit {
+            close(lockDescriptor)
+            close(directoryDescriptor)
+        }
+    }
+
     struct Location: Sendable {
         let directoryURL: URL
         let fileName: String
         let lockName: String
         let directoryIdentity: FileIdentity
         let lockIdentity: FileIdentity
+        let descriptorPins: DescriptorPins
     }
 
     struct Preparation: Sendable {
@@ -701,7 +717,10 @@ private enum PolicyAuthorityFileIO {
         defer { processSemaphore.signal() }
 
         let directoryDescriptor = try openDirectory(at: directoryURL)
-        defer { close(directoryDescriptor) }
+        var shouldCloseDirectoryDescriptor = true
+        defer {
+            if shouldCloseDirectoryDescriptor { close(directoryDescriptor) }
+        }
         let directoryStatus = try validatedDirectory(
             descriptor: directoryDescriptor
         )
@@ -709,7 +728,10 @@ private enum PolicyAuthorityFileIO {
             directoryDescriptor: directoryDescriptor,
             name: lockName
         )
-        defer { close(lockDescriptor) }
+        var shouldCloseLockDescriptor = true
+        defer {
+            if shouldCloseLockDescriptor { close(lockDescriptor) }
+        }
         try acquireFileLock(descriptor: lockDescriptor, until: deadline)
         defer { releaseFileLock(descriptor: lockDescriptor) }
         let lockStatus = try validatedRegularFile(
@@ -727,8 +749,14 @@ private enum PolicyAuthorityFileIO {
             fileName: fileName,
             lockName: lockName,
             directoryIdentity: FileIdentity(directoryStatus),
-            lockIdentity: FileIdentity(lockStatus)
+            lockIdentity: FileIdentity(lockStatus),
+            descriptorPins: DescriptorPins(
+                directoryDescriptor: directoryDescriptor,
+                lockDescriptor: lockDescriptor
+            )
         )
+        shouldCloseDirectoryDescriptor = false
+        shouldCloseLockDescriptor = false
         let ledgerExists = entryExists(
             directoryDescriptor: directoryDescriptor,
             name: fileName
