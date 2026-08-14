@@ -154,7 +154,7 @@ enum LocalModelCatalog {
             estimatedPeakMemoryBytes: 1_600_000_000,
             minimumAvailableMemoryBeforeLoadBytes: 1_850_000_000,
             sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
-            details: "A smaller fallback for devices under memory pressure. It keeps the same constrained NovaForge agent boundary at a modest quality tradeoff."
+            details: "A smaller configured fallback for devices under memory pressure. It uses lighter quantization while keeping the same constrained NovaForge agent boundary; quality must be evaluated separately."
         ),
         .init(
             id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q2_K",
@@ -180,13 +180,13 @@ enum LocalModelCatalog {
             releaseDateLabel: "Sep 18, 2024",
             parameterLabel: "1.5B",
             licenseLabel: "Apache 2.0",
-            benchmarkSummary: "Same Qwen coder checkpoint · smallest stable footprint",
+            benchmarkSummary: "Same Qwen coder checkpoint · smallest configured footprint",
             capabilitySummary: "Code generation · editing · explanations",
             deviceFit: .memorySaver,
             estimatedPeakMemoryBytes: 1_400_000_000,
             minimumAvailableMemoryBeforeLoadBytes: 1_650_000_000,
             sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
-            details: "The smallest emergency fallback. Tool selection stays grammar constrained when first-prompt stability matters more than model quality."
+            details: "The smallest configured fallback. Tool selection stays grammar constrained; lower-bit quantization is a resource tradeoff, not a qualified quality or stability result."
         ),
         .init(
             id: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M",
@@ -218,7 +218,7 @@ enum LocalModelCatalog {
             estimatedPeakMemoryBytes: 850_000_000,
             minimumAvailableMemoryBeforeLoadBytes: 1_150_000_000,
             sourceURL: URL(string: "https://huggingface.co/Siddh07ETH/Atlas-Coder-2-0.5B-GGUF")!,
-            details: "Released this week and built for low-memory coding. NovaForge pins the exact GGUF revision and checksum, then caps context and output for iPhone 12."
+            details: "NovaForge pins an exact GGUF revision and checksum, then caps context and output for its iPhone-targeted profile."
         )
     ]
 

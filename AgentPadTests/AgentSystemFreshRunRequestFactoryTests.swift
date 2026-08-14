@@ -32,7 +32,7 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testChatGPTReasoningEffortIsBoundAndUltraCodeUsesMaximumSupportedEffort() throws {
+    func testChatGPTReasoningEffortIsBoundAndUltraUsesMaximumSupportedEffort() throws {
         let preferences = AgentRunPreferenceStore.shared
         let previousEffort = preferences.reasoningEffort
         let previousMode = preferences.orchestrationMode
@@ -72,7 +72,7 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
         )
 
         preferences.orchestrationMode = .ultraCode
-        let ultraCode = try AgentSystemFreshRunRequestFactory.make(
+        let boundedUltra = try AgentSystemFreshRunRequestFactory.make(
             prompt: "Escalate this run.",
             conversation: conversation,
             project: nil,
@@ -80,18 +80,41 @@ final class AgentSystemFreshRunRequestFactoryTests: XCTestCase {
             settings: settings
         )
         XCTAssertEqual(
-            ultraCode.plan.providerOptions.reasoningEffort,
+            boundedUltra.plan.providerOptions.reasoningEffort,
             .xhigh,
-            "UltraCode should use the live model's deepest supported effort instead of sending an invalid max value."
+            "Ultra should use the live model's deepest supported effort instead of sending an invalid max value."
         )
-        guard case let .send(ultraSend) = ultraCode.command.payload else {
+        guard case let .send(boundedUltraSend) = boundedUltra.command.payload else {
             return XCTFail("Expected send")
         }
         XCTAssertTrue(
-            ultraSend.context.features.contains("v2UltraCodeOrchestration")
+            boundedUltraSend.context.features.contains("v2UltraCodeOrchestration")
         )
         XCTAssertTrue(
-            ultraSend.context.features.contains("v2IsolatedAgentWorkspaces")
+            boundedUltraSend.context.features.contains("v2IsolatedAgentWorkspaces")
+        )
+
+        settings.modelID = AIProvider.exactGPT56SolModelID
+        let maxUltra = try AgentSystemFreshRunRequestFactory.make(
+            prompt: "Use the strongest supported effort.",
+            conversation: conversation,
+            project: nil,
+            workspace: workspace,
+            settings: settings
+        )
+        XCTAssertEqual(
+            maxUltra.plan.providerOptions.reasoningEffort,
+            .max,
+            "Ultra should use max only when the exact selected model advertises max reasoning."
+        )
+        guard case let .send(maxUltraSend) = maxUltra.command.payload else {
+            return XCTFail("Expected send")
+        }
+        XCTAssertTrue(
+            maxUltraSend.context.features.contains("v2UltraCodeOrchestration")
+        )
+        XCTAssertTrue(
+            maxUltraSend.context.features.contains("v2IsolatedAgentWorkspaces")
         )
     }
 
