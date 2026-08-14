@@ -1,0 +1,47 @@
+name: Validate AgentShadow crypto portability Ubuntu
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-AGENTSHADOW-CRYPTO-0814/e2-linux
+    paths:
+      - '.github/workflows/v14-agentshadow-crypto-portability-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-agentshadow:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert exact product head and scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          parent=804b5a6c02b98ca3b588587f75e4a745bf2c866f
+          product=41076f62c5c1a3fda2b173b42a2b7c3a8e726009
+          test "$(git rev-parse HEAD^)" = "$product"
+          mapfile -t files < <(git diff --name-only "$parent".."$product" | sort)
+          expected=(
+            Packages/AgentHarnessKit/Package.swift
+            Packages/AgentHarnessKit/Sources/AgentShadow/CanonicalShadowDigest.swift
+          )
+          test "$(printf '%s\n' "${files[@]}")" = "$(printf '%s\n' "${expected[@]}" | sort)"
+          git diff --check "$parent".."$product"
+          ! grep -R -n '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentShadow
+          ! grep -R -n '^import CryptoKit$' Packages/AgentHarnessKit/Tests/AgentShadowTests
+          grep -F '.product(name: "Crypto", package: "swift-crypto")' Packages/AgentHarnessKit/Package.swift >/dev/null
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Build AgentShadow debug on Linux
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentShadow -Xswiftc -warnings-as-errors
+      - name: Build AgentShadow release on Linux
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target AgentShadow -Xswiftc -warnings-as-errors
+      - name: Run AgentShadow tests on Linux
+        run: swift test --package-path Packages/AgentHarnessKit --filter AgentShadowTests -Xswiftc -warnings-as-errors
+      - name: Probe full AgentHarnessKit downstream blocker
+        continue-on-error: true
+        run: swift build --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
