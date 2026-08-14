@@ -76,21 +76,28 @@ public enum ProjectBrainTrustedSelectionAuthorityError: Error, Equatable, Sendab
     case invalidAuthorityReceiptID
 }
 
-/// Capability proving which accepted source/checkpoint identity the host considers current for this
-/// selection. Construction is package-owned and the value is non-Codable, so a public request or
-/// stale snapshot cannot self-declare itself current by copying identity strings.
+/// Capability proving which accepted mission + source/checkpoint identity the host considers current
+/// for this selection. Construction is package-owned and the value is non-Codable, so a public
+/// request or stale snapshot cannot self-declare itself current by copying identity strings or
+/// retarget a legitimate checkpoint capability to a sibling mission.
 ///
 /// A canonical adapter in this Swift package (for example ForgeMission checkpoint integration) must
-/// mint a fresh/current capability only after authenticating the accepted project state + checkpoint
-/// + project-root revision. This type does not implement host revocation by itself; the adapter owns
-/// capability lifetime and must not reuse superseded authority.
+/// mint a fresh/current capability only after authenticating the exact mission + accepted project
+/// state + checkpoint + project-root revision. This type does not implement host revocation by itself;
+/// the adapter owns capability lifetime and must not reuse superseded authority.
+///
+/// This checkpoint-scoped capability intentionally cannot authorize project-global retrieval. A
+/// future project-global retrieval path needs its own explicit package-owned authority instead of
+/// weakening this mission binding.
 public struct ProjectBrainTrustedSelectionAuthority: Equatable, Sendable {
     public let projectID: ProjectID
+    public let missionID: MissionID
     public let sourceIdentity: ProjectBrainSourceIdentity
     public let authorityReceiptID: String
 
     package init(
         authenticatedProjectID projectID: ProjectID,
+        authenticatedMissionID missionID: MissionID,
         sourceIdentity: ProjectBrainSourceIdentity,
         authorityReceiptID: String
     ) throws {
@@ -98,6 +105,7 @@ public struct ProjectBrainTrustedSelectionAuthority: Equatable, Sendable {
             throw ProjectBrainTrustedSelectionAuthorityError.invalidAuthorityReceiptID
         }
         self.projectID = projectID
+        self.missionID = missionID
         self.sourceIdentity = sourceIdentity
         self.authorityReceiptID = authorityReceiptID
     }
@@ -207,18 +215,19 @@ public enum ProjectBrainTrustedSnapshotError: Error, Equatable, Sendable {
 /// Public/Codable `ProjectBrainFact` values are candidate transport. Their provenance labels are
 /// structurally validated, but they do not authenticate that a user, source file, runtime, test,
 /// or checkpoint actually produced the fact. Construction is package-owned. A canonical adapter in
-/// this Swift package must authenticate the complete fact set *and* exact accepted project-state /
-/// checkpoint / project-root identity before minting this non-Codable binding. External packages and
-/// app code using ordinary `import AgentDomain` cannot call the mint.
+/// this Swift package must authenticate the complete fact set, exact mission, and accepted project-
+/// state / checkpoint / project-root identity before minting this non-Codable binding. External
+/// packages and app code using ordinary `import AgentDomain` cannot call the mint.
 ///
 /// `brainRevision` is only a positive revision asserted by that authenticated producer. This type
 /// does not prove monotonicity; the canonical store/adapter owns revision ordering. `snapshotDigest`
-/// must identify the authenticated whole snapshot (source identity + exact fact set) so downstream
-/// cache/receipt keys do not collapse two different snapshots that happen to share a receipt/revision.
+/// must identify the authenticated whole snapshot (mission binding + source identity + exact fact set)
+/// so downstream cache/receipt keys do not collapse distinct accepted subjects.
 public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
     public static let maximumFacts = 16_384
 
     public let projectID: ProjectID
+    public let missionID: MissionID
     public let brainRevision: UInt64
     public let sourceIdentity: ProjectBrainSourceIdentity
     public let authorityReceiptID: String
@@ -227,6 +236,7 @@ public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
 
     package init(
         authenticatedProjectID projectID: ProjectID,
+        authenticatedMissionID missionID: MissionID,
         brainRevision: UInt64,
         sourceIdentity: ProjectBrainSourceIdentity,
         authorityReceiptID: String,
@@ -263,6 +273,7 @@ public struct ProjectBrainTrustedSnapshot: Equatable, Sendable {
         }
 
         self.projectID = projectID
+        self.missionID = missionID
         self.brainRevision = brainRevision
         self.sourceIdentity = sourceIdentity
         self.authorityReceiptID = authorityReceiptID
@@ -275,6 +286,9 @@ public enum ProjectBrainContextSelectionError: Error, Equatable, Sendable {
     case invalidRequest(ProjectBrainContextRequestValidationError)
     case trustedSnapshotProjectMismatch
     case trustedSelectionAuthorityProjectMismatch
+    case trustedRequestMissionRequired
+    case trustedSnapshotMissionMismatch
+    case trustedSelectionAuthorityMissionMismatch
     case trustedSnapshotSourceMismatch
     case invalidFact(ProjectBrainFactID, ProjectBrainValidationError)
     case duplicateFactID(ProjectBrainFactID)
@@ -341,8 +355,12 @@ public enum ProjectBrainContextSelector {
     public static let maximumCandidateFacts = 4_096
 
     /// Authoritative selection requires two independently package-minted inputs: the authenticated
-    /// whole Brain snapshot and the host's authenticated *current* accepted source/checkpoint state.
-    /// A stale snapshot cannot self-validate by copying its own public identity into a request.
+    /// whole Brain snapshot and the host's authenticated *current* mission + accepted
+    /// source/checkpoint state. A stale snapshot cannot self-validate by copying its own public
+    /// identity into a request, and a legitimate capability cannot be retargeted to a sibling mission.
+    ///
+    /// The trusted path requires an explicit mission in the request. Project-global retrieval must use
+    /// a future separately authenticated authority instead of reusing checkpoint-scoped capability.
     public static func select(
         from snapshot: ProjectBrainTrustedSnapshot,
         currentAuthority: ProjectBrainTrustedSelectionAuthority,
@@ -356,6 +374,15 @@ public enum ProjectBrainContextSelector {
         }
         guard currentAuthority.projectID == request.projectID else {
             throw ProjectBrainContextSelectionError.trustedSelectionAuthorityProjectMismatch
+        }
+        guard let requestedMissionID = request.missionID else {
+            throw ProjectBrainContextSelectionError.trustedRequestMissionRequired
+        }
+        guard snapshot.missionID == requestedMissionID else {
+            throw ProjectBrainContextSelectionError.trustedSnapshotMissionMismatch
+        }
+        guard currentAuthority.missionID == requestedMissionID else {
+            throw ProjectBrainContextSelectionError.trustedSelectionAuthorityMissionMismatch
         }
         guard snapshot.sourceIdentity == currentAuthority.sourceIdentity else {
             throw ProjectBrainContextSelectionError.trustedSnapshotSourceMismatch
