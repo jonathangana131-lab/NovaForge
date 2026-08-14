@@ -34,6 +34,19 @@ jobs:
           rm -rf artifacts/preview-session-relaunch
           mkdir -p artifacts/preview-session-relaunch
 
+          {
+            echo "source_sha=$GITHUB_SHA"
+            echo "runner_os=$RUNNER_OS"
+            sw_vers
+            echo "available_xcode_candidates_begin"
+            while IFS= read -r candidate; do
+              [ -d "$candidate/Contents/Developer" ] || continue
+              candidate_version=$(DEVELOPER_DIR="$candidate/Contents/Developer" xcodebuild -version 2>/dev/null | sed -n '1p' || true)
+              printf '%s|%s\n' "$candidate" "$candidate_version"
+            done < <(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -r)
+            echo "available_xcode_candidates_end"
+          } | tee artifacts/preview-session-relaunch/preflight.txt
+
           SELECTED_XCODE=""
           while IFS= read -r candidate; do
             [ -d "$candidate/Contents/Developer" ] || continue
