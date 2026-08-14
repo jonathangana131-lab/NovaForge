@@ -1,0 +1,72 @@
+name: Validate AgentPolicy portability Ubuntu
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e2-linux
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-agentpolicy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "c294273767aa9ad461e764a6017db5b98fc0e0f8"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/validate-agentpolicy-posix-0814-linux.yml"
+
+      - name: Compile and test exact AgentPolicy slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD/Packages/AgentHarnessKit"
+          tmp="$(mktemp -d)"
+          mkdir -p "$tmp/Sources" "$tmp/Tests"
+          cp -R "$root/Sources/AgentDomain" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentTools" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentPolicy" "$tmp/Sources/"
+          cp -R "$root/Tests/AgentPolicyTests" "$tmp/Tests/"
+
+          cat > "$tmp/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+
+          let package = Package(
+              name: "AgentPolicyPortabilityValidation",
+              dependencies: [
+                  .package(
+                      url: "https://github.com/apple/swift-crypto.git",
+                      "1.0.0" ..< "5.0.0"
+                  ),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "AgentTools", dependencies: ["AgentDomain"]),
+                  .target(
+                      name: "AgentPolicy",
+                      dependencies: [
+                          "AgentDomain",
+                          "AgentTools",
+                          .product(name: "Crypto", package: "swift-crypto"),
+                      ]
+                  ),
+                  .testTarget(
+                      name: "AgentPolicyTests",
+                      dependencies: ["AgentDomain", "AgentPolicy", "AgentTools"]
+                  ),
+              ]
+          )
+          SWIFT
+
+          ! grep -R -n --include='*.swift' '^import CryptoKit$' "$tmp/Sources/AgentPolicy"
+          ! grep -R -n --include='*.swift' 'Darwin\.' "$tmp/Sources/AgentPolicy" | grep -v 'PolicyPOSIX.swift' || true
+          test "$(grep -R -l --include='*.swift' '^#if canImport(Darwin)$' "$tmp/Sources/AgentPolicy" | wc -l)" -eq 4
+          swift test --package-path "$tmp" -Xswiftc -warnings-as-errors
