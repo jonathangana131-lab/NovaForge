@@ -1,0 +1,95 @@
+name: Fix Forge Compact fallback regression
+
+on:
+  push:
+    branches:
+      - gpt56-sol-v14-preview-forgecompact-supplement-0814
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add byte-exact raw fallback regression
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('AgentPadTests/AgentCanonicalContextPreparerTests.swift')
+          text = path.read_text()
+
+          test_anchor = '    func testSingleToolEnvelopeUsesExactProviderCallIDAndLosslessResult() async throws {\n'
+          test = r'''    func testProjectMemorySupplementFailureFallsBackByteForByteToCanonicalRawJSON() async throws {
+        let fixture = CanonicalContextFixture(seed: 82)
+        let itemID: ModelItemID = canonicalTagged(8_201)
+        let items = [fixture.userItem(id: itemID)]
+        let checkpoints: [ContextCheckpointReference] = (0..<2).map { index in
+            ContextCheckpointReference(
+                checkpointID: canonicalTagged(82_000 + UInt64(index)),
+                schemaVersion: .current,
+                summary: "checkpoint-\(index)-" + String(repeating: "y", count: 40_000),
+                sourceItemIDs: [itemID],
+                sourceDigest: canonicalDigest(character: "e")
+            )
+        }
+        let state = fixture.state(modelItems: items, checkpoints: checkpoints)
+        let preparer = try fixture.preparer()
+
+        let prepared = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let supplement = try text(from: prepared.request.messages[2])
+        let expected = try canonicalEncodableJSONString(
+            CanonicalContextSupplementMirror(
+                kind: "novaforge_context_supplement_v1",
+                artifacts: [],
+                checkpoints: checkpoints
+            )
+        )
+
+        XCTAssertEqual(supplement, expected)
+        XCTAssertGreaterThan(
+            supplement.utf8.count,
+            AgentCanonicalContextPreparer.projectMemorySupplementBudgetBytes
+        )
+        XCTAssertTrue(supplement.contains("novaforge_context_supplement_v1"))
+        XCTAssertFalse(supplement.contains("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
+        XCTAssertEqual(prepared.itemIDs, [itemID])
+    }
+
+'''
+          if text.count(test_anchor) != 1:
+              raise SystemExit(f'expected one test anchor, found {text.count(test_anchor)}')
+          text = text.replace(test_anchor, test + test_anchor, 1)
+
+          helper_anchor = '''private func assertCanonicalContextError<T: Sendable>(\n'''
+          helper = r'''private func canonicalEncodableJSONString<T: Encodable>(_ value: T) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return String(decoding: try encoder.encode(value), as: UTF8.self)
+}
+
+private struct CanonicalContextSupplementMirror: Encodable {
+    let kind: String
+    let artifacts: [ArtifactReference]
+    let checkpoints: [ContextCheckpointReference]
+}
+
+'''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit(f'expected one helper anchor, found {text.count(helper_anchor)}')
+          text = text.replace(helper_anchor, helper + helper_anchor, 1)
+          path.write_text(text)
+          PY
+          git diff --check
+          test "$(git diff --name-only)" = "AgentPadTests/AgentCanonicalContextPreparerTests.swift"
+          grep -F 'testProjectMemorySupplementFailureFallsBackByteForByteToCanonicalRawJSON' AgentPadTests/AgentCanonicalContextPreparerTests.swift
+          grep -F 'CanonicalContextSupplementMirror' AgentPadTests/AgentCanonicalContextPreparerTests.swift
+      - name: Commit product regression and remove applicator
+        run: |
+          rm .github/workflows/fix-forgecompact-fallback-regression.yml
+          git config user.name "novaforge-swarm-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPadTests/AgentCanonicalContextPreparerTests.swift .github/workflows/fix-forgecompact-fallback-regression.yml
+          git commit -m "Preview: prove Forge Compact raw fallback is byte-exact"
+          git push origin HEAD:${GITHUB_REF_NAME}
