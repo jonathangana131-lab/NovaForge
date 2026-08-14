@@ -14,70 +14,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Add byte-exact raw fallback regression
+        env:
+          TEST_B64: "ICAgIGZ1bmMgdGVzdFByb2plY3RNZW1vcnlTdXBwbGVtZW50RmFpbHVyZUZhbGxzQmFja0J5dGVGb3JCeXRlVG9DYW5vbmljYWxSYXdKU09OKCkgYXN5bmMgdGhyb3dzIHsKICAgICAgICBsZXQgZml4dHVyZSA9IENhbm9uaWNhbENvbnRleHRGaXh0dXJlKHNlZWQ6IDgyKQogICAgICAgIGxldCBpdGVtSUQ6IE1vZGVsSXRlbUlEID0gY2Fub25pY2FsVGFnZ2VkKDhfMjAxKQogICAgICAgIGxldCBpdGVtcyA9IFtmaXh0dXJlLnVzZXJJdGVtKGlkOiBpdGVtSUQpXQogICAgICAgIGxldCBjaGVja3BvaW50czogW0NvbnRleHRDaGVja3BvaW50UmVmZXJlbmNlXSA9ICgwLi48MikubWFwIHsgaW5kZXggaW4KICAgICAgICAgICAgQ29udGV4dENoZWNrcG9pbnRSZWZlcmVuY2UoCiAgICAgICAgICAgICAgICBjaGVja3BvaW50SUQ6IGNhbm9uaWNhbFRhZ2dlZCg4Ml8wMDAgKyBVSW50NjQoaW5kZXgpKSwKICAgICAgICAgICAgICAgIHNjaGVtYVZlcnNpb246IC5jdXJyZW50LAogICAgICAgICAgICAgICAgc3VtbWFyeTogImNoZWNrcG9pbnQtXChpbmRleCktIiArIFN0cmluZyhyZXBlYXRpbmc6ICJ5IiwgY291bnQ6IDQwXzAwMCksCiAgICAgICAgICAgICAgICBzb3VyY2VJdGVtSURzOiBbaXRlbUlEXSwKICAgICAgICAgICAgICAgIHNvdXJjZURpZ2VzdDogY2Fub25pY2FsRGlnZXN0KGNoYXJhY3RlcjogImUiKQogICAgICAgICAgICApCiAgICAgICAgfQogICAgICAgIGxldCBzdGF0ZSA9IGZpeHR1cmUuc3RhdGUobW9kZWxJdGVtczogaXRlbXMsIGNoZWNrcG9pbnRzOiBjaGVja3BvaW50cykKICAgICAgICBsZXQgcHJlcGFyZXIgPSB0cnkgZml4dHVyZS5wcmVwYXJlcigpCgogICAgICAgIGxldCBwcmVwYXJlZCA9IHRyeSBhd2FpdCBwcmVwYXJlci5wcmVwYXJlUHJvdmlkZXJUdXJuKHN0YXRlOiBzdGF0ZSwgdG9vbHM6IFtdKQogICAgICAgIGxldCBzdXBwbGVtZW50ID0gdHJ5IHRleHQoZnJvbTogcHJlcGFyZWQucmVxdWVzdC5tZXNzYWdlc1syXSkKICAgICAgICBsZXQgZXhwZWN0ZWQgPSB0cnkgY2Fub25pY2FsRW5jb2RhYmxlSlNPTlN0cmluZygKICAgICAgICAgICAgQ2Fub25pY2FsQ29udGV4dFN1cHBsZW1lbnRNaXJyb3IoCiAgICAgICAgICAgICAgICBraW5kOiAibm92YWZvcmdlX2NvbnRleHRfc3VwcGxlbWVudF92MSIsCiAgICAgICAgICAgICAgICBhcnRpZmFjdHM6IFtdLAogICAgICAgICAgICAgICAgY2hlY2twb2ludHM6IGNoZWNrcG9pbnRzCiAgICAgICAgICAgICkKICAgICAgICApCgogICAgICAgIFhDVEFzc2VydEVxdWFsKHN1cHBsZW1lbnQsIGV4cGVjdGVkKQogICAgICAgIFhDVEFzc2VydEdyZWF0ZXJUaGFuKAogICAgICAgICAgICBzdXBwbGVtZW50LnV0ZjguY291bnQsCiAgICAgICAgICAgIEFnZW50Q2Fub25pY2FsQ29udGV4dFByZXBhcmVyLnByb2plY3RNZW1vcnlTdXBwbGVtZW50QnVkZ2V0Qnl0ZXMKICAgICAgICApCiAgICAgICAgWENUQXNzZXJ0VHJ1ZShzdXBwbGVtZW50LmNvbnRhaW5zKCJub3ZhZm9yZ2VfY29udGV4dF9zdXBwbGVtZW50X3YxIikpCiAgICAgICAgWENUQXNzZXJ0RmFsc2Uoc3VwcGxlbWVudC5jb250YWlucygiW05PVkFGT1JHRV9QUk9KRUNUX01FTU9SWV9DQVBTVUxFX1YxXSIpKQogICAgICAgIFhDVEFzc2VydEVxdWFsKHByZXBhcmVkLml0ZW1JRHMsIFtpdGVtSURdKQogICAgfQoK"
+          HELPER_B64: "cHJpdmF0ZSBmdW5jIGNhbm9uaWNhbEVuY29kYWJsZUpTT05TdHJpbmc8VDogRW5jb2RhYmxlPihfIHZhbHVlOiBUKSB0aHJvd3MgLT4gU3RyaW5nIHsKICAgIGxldCBlbmNvZGVyID0gSlNPTkVuY29kZXIoKQogICAgZW5jb2Rlci5vdXRwdXRGb3JtYXR0aW5nID0gWy5zb3J0ZWRLZXlzLCAud2l0aG91dEVzY2FwaW5nU2xhc2hlc10KICAgIHJldHVybiBTdHJpbmcoZGVjb2Rpbmc6IHRyeSBlbmNvZGVyLmVuY29kZSh2YWx1ZSksIGFzOiBVVEY4LnNlbGYpCn0KCnByaXZhdGUgc3RydWN0IENhbm9uaWNhbENvbnRleHRTdXBwbGVtZW50TWlycm9yOiBFbmNvZGFibGUgewogICAgbGV0IGtpbmQ6IFN0cmluZwogICAgbGV0IGFydGlmYWN0czogW0FydGlmYWN0UmVmZXJlbmNlXQogICAgbGV0IGNoZWNrcG9pbnRzOiBbQ29udGV4dENoZWNrcG9pbnRSZWZlcmVuY2VdCn0KCg=="
         run: |
           python3 - <<'PY'
+          import base64, os
           from pathlib import Path
           path = Path('AgentPadTests/AgentCanonicalContextPreparerTests.swift')
           text = path.read_text()
-
           test_anchor = '    func testSingleToolEnvelopeUsesExactProviderCallIDAndLosslessResult() async throws {\n'
-          test = r'''    func testProjectMemorySupplementFailureFallsBackByteForByteToCanonicalRawJSON() async throws {
-        let fixture = CanonicalContextFixture(seed: 82)
-        let itemID: ModelItemID = canonicalTagged(8_201)
-        let items = [fixture.userItem(id: itemID)]
-        let checkpoints: [ContextCheckpointReference] = (0..<2).map { index in
-            ContextCheckpointReference(
-                checkpointID: canonicalTagged(82_000 + UInt64(index)),
-                schemaVersion: .current,
-                summary: "checkpoint-\(index)-" + String(repeating: "y", count: 40_000),
-                sourceItemIDs: [itemID],
-                sourceDigest: canonicalDigest(character: "e")
-            )
-        }
-        let state = fixture.state(modelItems: items, checkpoints: checkpoints)
-        let preparer = try fixture.preparer()
-
-        let prepared = try await preparer.prepareProviderTurn(state: state, tools: [])
-        let supplement = try text(from: prepared.request.messages[2])
-        let expected = try canonicalEncodableJSONString(
-            CanonicalContextSupplementMirror(
-                kind: "novaforge_context_supplement_v1",
-                artifacts: [],
-                checkpoints: checkpoints
-            )
-        )
-
-        XCTAssertEqual(supplement, expected)
-        XCTAssertGreaterThan(
-            supplement.utf8.count,
-            AgentCanonicalContextPreparer.projectMemorySupplementBudgetBytes
-        )
-        XCTAssertTrue(supplement.contains("novaforge_context_supplement_v1"))
-        XCTAssertFalse(supplement.contains("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
-        XCTAssertEqual(prepared.itemIDs, [itemID])
-    }
-
-'''
+          helper_anchor = 'private func assertCanonicalContextError<T: Sendable>(\n'
           if text.count(test_anchor) != 1:
               raise SystemExit(f'expected one test anchor, found {text.count(test_anchor)}')
-          text = text.replace(test_anchor, test + test_anchor, 1)
-
-          helper_anchor = '''private func assertCanonicalContextError<T: Sendable>(\n'''
-          helper = r'''private func canonicalEncodableJSONString<T: Encodable>(_ value: T) throws -> String {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    return String(decoding: try encoder.encode(value), as: UTF8.self)
-}
-
-private struct CanonicalContextSupplementMirror: Encodable {
-    let kind: String
-    let artifacts: [ArtifactReference]
-    let checkpoints: [ContextCheckpointReference]
-}
-
-'''
           if text.count(helper_anchor) != 1:
               raise SystemExit(f'expected one helper anchor, found {text.count(helper_anchor)}')
+          test = base64.b64decode(os.environ['TEST_B64']).decode()
+          helper = base64.b64decode(os.environ['HELPER_B64']).decode()
+          text = text.replace(test_anchor, test + test_anchor, 1)
           text = text.replace(helper_anchor, helper + helper_anchor, 1)
           path.write_text(text)
           PY
