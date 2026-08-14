@@ -5,6 +5,7 @@ on:
     branches:
       - worker/GPT56-SOL-NF-V14-PREVIEW-SESSION-0810/relaunch/e1
       - agent/v14-preview-session-relaunch-bound-target
+      - worker/GPT56-SOL-NF-V14-SESSION-IOS27-SELECTOR-0814/e1
   workflow_dispatch:
 
 permissions:
@@ -21,6 +22,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+
+      - name: Prove iOS 27 runtime selector contract
+        shell: bash
+        run: bash scripts/select_v14_preview_ios27_runtime.sh --self-test
 
       - name: Bind Xcode 27 and iPhone 12 on iOS 27
         shell: bash
@@ -51,14 +56,7 @@ jobs:
           printf 'Build version %s\n' "$XCODE_BUILD"
 
           RUNTIMES_JSON=$(xcrun simctl list -j runtimes)
-          RUNTIME_ID=$(printf '%s' "$RUNTIMES_JSON" | jq -r '
-            [.runtimes[]
-              | select(.isAvailable == true)
-              | select((.version | split(".")[0]) == "27")]
-            | sort_by(.version | split(".") | map(tonumber))
-            | last
-            | .identifier // empty
-          ')
+          RUNTIME_ID=$(printf '%s' "$RUNTIMES_JSON" | bash scripts/select_v14_preview_ios27_runtime.sh)
           if [ -z "$RUNTIME_ID" ]; then
             echo "Preview relaunch acceptance requires an available iOS 27 Simulator runtime" >&2
             exit 69
