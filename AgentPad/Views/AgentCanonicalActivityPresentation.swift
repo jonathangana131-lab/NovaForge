@@ -181,6 +181,36 @@ struct AgentCanonicalActivityPresentation: Equatable {
     }
 }
 
+/// Cross-surface terminal-state policy for the normal Chat shell.
+///
+/// User cancellation is a neutral, intentional terminal state. It must not
+/// inherit failure chrome or recovery clearance merely because it stopped a
+/// run. Rejections remain failure-presented, while only states with a useful
+/// retry/continue recovery path stay actionable after the run settles.
+enum AgentCanonicalRunSurfacePolicy {
+    static func presentsFailure(_ state: AgentActivityState?) -> Bool {
+        guard let state else { return false }
+        switch state {
+        case .failed, .rejected, .interrupted:
+            true
+        case .pending, .queued, .running, .awaitingApproval, .retrying,
+             .succeeded, .cancelling, .cancelled:
+            false
+        }
+    }
+
+    static func requiresRecoveryAction(_ state: AgentActivityState?) -> Bool {
+        guard let state else { return false }
+        switch state {
+        case .failed, .interrupted:
+            true
+        case .pending, .queued, .running, .awaitingApproval, .retrying,
+             .succeeded, .rejected, .cancelling, .cancelled:
+            false
+        }
+    }
+}
+
 /// Pure summary policy for provider-backed V1 messages that predate the
 /// canonical journal. It is deliberately count/state based so the fallback
 /// never determines lifecycle state by searching output text.
