@@ -1,0 +1,56 @@
+name: Fix Forge Compact checkpoint authority
+
+on:
+  push:
+    branches:
+      - gpt56-sol-v14-preview-forgecompact-supplement-0814
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make checkpoint summaries advisory and add adversarial proof
+        env:
+          TEST_B64: "ICAgIGZ1bmMgdGVzdENvbXBhY3RlZENoZWNrcG9pbnRTdW1tYXJ5UmVtYWluc0Fkdmlzb3J5V2l0aG91dFByb3ZlbmFuY2VQcm9vZigpIGFzeW5jIHRocm93cyB7CiAgICAgICAgbGV0IGZpeHR1cmUgPSBDYW5vbmljYWxDb250ZXh0Rml4dHVyZShzZWVkOiA4MykKICAgICAgICBsZXQgaXRlbUlEOiBNb2RlbEl0ZW1JRCA9IGNhbm9uaWNhbFRhZ2dlZCg4XzMwMSkKICAgICAgICBsZXQgaXRlbXMgPSBbZml4dHVyZS51c2VySXRlbShpZDogaXRlbUlEKV0KICAgICAgICBsZXQgY2hlY2twb2ludHM6IFtDb250ZXh0Q2hlY2twb2ludFJlZmVyZW5jZV0gPSAoMC4uPDIyMCkubWFwIHsgaW5kZXggaW4KICAgICAgICAgICAgQ29udGV4dENoZWNrcG9pbnRSZWZlcmVuY2UoCiAgICAgICAgICAgICAgICBjaGVja3BvaW50SUQ6IGNhbm9uaWNhbFRhZ2dlZCg4M18wMDAgKyBVSW50NjQoaW5kZXgpKSwKICAgICAgICAgICAgICAgIHNjaGVtYVZlcnNpb246IC5jdXJyZW50LAogICAgICAgICAgICAgICAgc3VtbWFyeTogInVudmVyaWZpZWQtc3VtbWFyeS1cKGluZGV4KS0iCiAgICAgICAgICAgICAgICAgICAgKyBTdHJpbmcocmVwZWF0aW5nOiAieiIsIGNvdW50OiAyNjApLAogICAgICAgICAgICAgICAgc291cmNlSXRlbUlEczogW2l0ZW1JRF0sCiAgICAgICAgICAgICAgICBzb3VyY2VEaWdlc3Q6IGNhbm9uaWNhbERpZ2VzdChjaGFyYWN0ZXI6ICJkIikKICAgICAgICAgICAgKQogICAgICAgIH0KICAgICAgICBsZXQgc3RhdGUgPSBmaXh0dXJlLnN0YXRlKG1vZGVsSXRlbXM6IGl0ZW1zLCBjaGVja3BvaW50czogY2hlY2twb2ludHMpCiAgICAgICAgbGV0IHByZXBhcmVyID0gdHJ5IGZpeHR1cmUucHJlcGFyZXIoKQoKICAgICAgICBsZXQgcHJlcGFyZWQgPSB0cnkgYXdhaXQgcHJlcGFyZXIucHJlcGFyZVByb3ZpZGVyVHVybihzdGF0ZTogc3RhdGUsIHRvb2xzOiBbXSkKICAgICAgICBsZXQgc3VwcGxlbWVudCA9IHRyeSB0ZXh0KGZyb206IHByZXBhcmVkLnJlcXVlc3QubWVzc2FnZXNbMl0pCgogICAgICAgIFhDVEFzc2VydFRydWUoc3VwcGxlbWVudC5oYXNQcmVmaXgoIltOT1ZBRk9SR0VfUFJPSkVDVF9NRU1PUllfQ0FQU1VMRV9WMV0iKSkKICAgICAgICBYQ1RBc3NlcnRUcnVlKHN1cHBsZW1lbnQuY29udGFpbnMoIltzb3VyY2VfaXRlbXM9MjIwXSIpKQogICAgICAgIFhDVEFzc2VydFRydWUoc3VwcGxlbWVudC5jb250YWlucygiW0wyXVt3b3JraW5nTm90ZV1bYWR2aXNvcnldW2N1cnJlbnRdIikpCiAgICAgICAgWENUQXNzZXJ0RmFsc2Uoc3VwcGxlbWVudC5jb250YWlucygiW0wyXVt3b3JraW5nTm90ZV1bdHJ1dGhdW2N1cnJlbnRdIikpCiAgICAgICAgWENUQXNzZXJ0RXF1YWwocHJlcGFyZWQuaXRlbUlEcywgW2l0ZW1JRF0pCiAgICB9Cgo="
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+
+          preparer = Path('AgentPad/Services/AgentCanonicalContextPreparer.swift')
+          text = preparer.read_text()
+          old = '''                    provenance: ForgeCompactProvenance(
+                        kind: .checkpoint,
+                        reference: "checkpoint:" + checkpoint.checkpointID.description
+                    ),
+                    isAuthoritative: true
+'''
+          new = old.replace('isAuthoritative: true', 'isAuthoritative: false')
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one checkpoint-authority anchor, found {text.count(old)}')
+          preparer.write_text(text.replace(old, new, 1))
+
+          tests = Path('AgentPadTests/AgentCanonicalContextPreparerTests.swift')
+          test_text = tests.read_text()
+          anchor = '    func testProjectMemorySupplementFailureFallsBackByteForByteToCanonicalRawJSON() async throws {\n'
+          if test_text.count(anchor) != 1:
+              raise SystemExit(f'expected one fallback-test anchor, found {test_text.count(anchor)}')
+          addition = base64.b64decode(os.environ['TEST_B64']).decode()
+          tests.write_text(test_text.replace(anchor, addition + anchor, 1))
+          PY
+          git diff --check
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "AgentPad/Services/AgentCanonicalContextPreparer.swift AgentPadTests/AgentCanonicalContextPreparerTests.swift "
+          grep -F 'isAuthoritative: false' AgentPad/Services/AgentCanonicalContextPreparer.swift
+          grep -F 'testCompactedCheckpointSummaryRemainsAdvisoryWithoutProvenanceProof' AgentPadTests/AgentCanonicalContextPreparerTests.swift
+      - name: Commit repair and remove applicator
+        run: |
+          rm .github/workflows/fix-forgecompact-checkpoint-authority.yml
+          git config user.name "novaforge-swarm-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add AgentPad/Services/AgentCanonicalContextPreparer.swift AgentPadTests/AgentCanonicalContextPreparerTests.swift .github/workflows/fix-forgecompact-checkpoint-authority.yml
+          git commit -m "Preview: keep unverified checkpoint summaries advisory"
+          git push origin HEAD:${GITHUB_REF_NAME}
