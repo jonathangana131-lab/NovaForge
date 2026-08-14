@@ -132,6 +132,48 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
         XCTAssertEqual(first.toolLocalities, [:])
     }
 
+    func testLargeProjectMemorySupplementCompactsWithoutTouchingCanonicalTranscript() async throws {
+        let fixture = CanonicalContextFixture(seed: 81)
+        let itemID: ModelItemID = canonicalTagged(8_101)
+        let items = [fixture.userItem(id: itemID)]
+        let artifacts: [ArtifactReference] = (0..<400).map { index in
+            ArtifactReference(
+                artifactID: canonicalTagged(81_000 + index),
+                mediaType: "text/plain",
+                contentDigest: canonicalDigest(character: "f"),
+                displayName: "memory-\(index)-" + String(repeating: "x", count: 220)
+            )
+        }
+        let state = fixture.state(modelItems: items, artifacts: artifacts)
+        let baselineState = fixture.state(modelItems: items)
+        let preparer = try fixture.preparer()
+
+        let first = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let second = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let baseline = try await preparer.prepareProviderTurn(state: baselineState, tools: [])
+
+        XCTAssertEqual(first.request, second.request)
+        XCTAssertEqual(first.contextDigest, second.contextDigest)
+        XCTAssertEqual(first.itemIDs, baseline.itemIDs)
+        XCTAssertEqual(first.itemIDs, [itemID])
+        XCTAssertEqual(
+            Array(first.request.messages.dropFirst(3)),
+            Array(baseline.request.messages.dropFirst(2)),
+            "Forge Compact may replace only the project-memory supplement; canonical transcript messages must remain byte-for-byte equivalent"
+        )
+
+        let supplement = try text(from: first.request.messages[2])
+        XCTAssertTrue(supplement.hasPrefix("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
+        XCTAssertTrue(supplement.contains("[source_items=400]"))
+        XCTAssertFalse(supplement.contains("[omitted=0]"))
+        XCTAssertTrue(supplement.contains("[L2][sourceLocation][truth][current]"))
+        XCTAssertFalse(supplement.contains("novaforge_context_supplement_v1"))
+        XCTAssertLessThanOrEqual(
+            supplement.utf8.count,
+            AgentCanonicalContextPreparer.projectMemorySupplementBudgetBytes
+        )
+    }
+
     func testSingleToolEnvelopeUsesExactProviderCallIDAndLosslessResult() async throws {
         let fixture = CanonicalContextFixture(seed: 2)
         let descriptor = try readFileDescriptor()
