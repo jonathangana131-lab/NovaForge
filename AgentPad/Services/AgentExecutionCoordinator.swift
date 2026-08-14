@@ -169,9 +169,14 @@ actor AgentExecutionCoordinator {
     }
 
     private func cancelWaiter(id: UUID, for resource: Lease.Resource) {
+        // Once grantNextWaiter has installed a lease it has also resumed the
+        // acquisition continuation. From that point the acquiring task owns
+        // cancellation cleanup through the post-resume Task.checkCancellation
+        // path above. Revoking that active lease here can race *after* the task
+        // has passed its final cancellation check, allowing it to return the
+        // lease while this handler grants the same resource to another waiter.
+        // Only queued waiters are cancellation-handler owned.
         if activeLeases[resource]?.id == id {
-            activeLeases[resource] = nil
-            grantNextWaiter(for: resource)
             return
         }
 
