@@ -5,6 +5,7 @@ on:
     paths:
       - 'Vendor/swift-llama-cpp/Sources/SwiftLlama/NovaForgeMLXRuntime.swift'
       - 'scripts/validate_v14_local_model_snapshot_pins.py'
+      - 'scripts/validate_v14_local_model_cache_revision_binding.py'
       - '.github/workflows/v14-local-model-snapshot-pins.yml'
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'Vendor/swift-llama-cpp/Sources/SwiftLlama/NovaForgeMLXRuntime.swift'
       - 'scripts/validate_v14_local_model_snapshot_pins.py'
+      - 'scripts/validate_v14_local_model_cache_revision_binding.py'
       - '.github/workflows/v14-local-model-snapshot-pins.yml'
 
 permissions:
@@ -22,13 +24,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile validator
-        run: python3 -m py_compile scripts/validate_v14_local_model_snapshot_pins.py
-      - name: Run adversarial self-test
+      - name: Compile validators
+        run: >-
+          python3 -m py_compile
+          scripts/validate_v14_local_model_snapshot_pins.py
+          scripts/validate_v14_local_model_cache_revision_binding.py
+      - name: Run snapshot-pin adversarial self-test
         run: python3 scripts/validate_v14_local_model_snapshot_pins.py --self-test --repo-root .
+      - name: Run cache-revision adversarial self-test
+        run: python3 scripts/validate_v14_local_model_cache_revision_binding.py --self-test --repo-root .
       - name: Validate repository MLX snapshot pins
         run: python3 scripts/validate_v14_local_model_snapshot_pins.py --repo-root .
-      - name: Reject mutable MLX cache revision fallback
+      - name: Validate repository MLX cache revision binding
+        run: python3 scripts/validate_v14_local_model_cache_revision_binding.py --repo-root .
+      - name: Reject obvious mutable MLX cache revision fallback
         shell: bash
         run: |
           runtime='Vendor/swift-llama-cpp/Sources/SwiftLlama/NovaForgeMLXRuntime.swift'
