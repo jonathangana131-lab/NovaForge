@@ -138,7 +138,7 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
         let items = [fixture.userItem(id: itemID)]
         let artifacts: [ArtifactReference] = (0..<400).map { index in
             ArtifactReference(
-                artifactID: canonicalTagged(81_000 + index),
+                artifactID: canonicalTagged(81_000 + UInt64(index)),
                 mediaType: "text/plain",
                 contentDigest: canonicalDigest(character: "f"),
                 displayName: "memory-\(index)-" + String(repeating: "x", count: 220)
