@@ -1,0 +1,40 @@
+name: Diagnose AgentHarnessKit Linux test target after AgentShadow
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-AGENTSHADOW-CRYPTO-0814/e5-split-tests
+    paths:
+      - '.github/workflows/v14-agentshadow-split-package-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  split-tests:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - AgentDomainTests
+          - AgentEngineTests
+          - AgentToolContractTests
+          - AgentProviderContractTests
+          - AgentStoreTests
+          - AgentShadowTests
+          - AgentPolicyTests
+          - AgentTransportTests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert exact AgentShadow product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          product=41076f62c5c1a3fda2b173b42a2b7c3a8e726009
+          test "$(git rev-parse HEAD^)" = "$product"
+          test -z "$(git diff --name-only "$product"..HEAD -- Packages/AgentHarnessKit)"
+      - name: Run ${{ matrix.suite }} on Linux
+        run: swift test --package-path Packages/AgentHarnessKit --filter '${{ matrix.suite }}' -Xswiftc -warnings-as-errors
