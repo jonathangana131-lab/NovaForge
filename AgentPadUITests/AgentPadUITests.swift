@@ -3020,6 +3020,62 @@ final class AgentPadUITests: XCTestCase {
         capture("goal-theme-switched-midnight-chat", app: app)
     }
 
+    func testThemeLaunchOverrideDoesNotReplacePersistedSelection() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui", "--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        app.tabBars.buttons["Control"].tap()
+        let ember = identifiedElement("settingsThemeStudioCard-emberCore", in: app)
+        scrollUntilHittable(ember, in: app)
+        XCTAssertTrue(ember.isHittable)
+        ember.tap()
+        let emberSelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"),
+            object: ember
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [emberSelected], timeout: 5), .completed)
+        app.terminate()
+
+        app.launchArguments = ["--theme-world=whiteGold", "--open-chat"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        app.tabBars.buttons["Control"].tap()
+        let whiteGold = identifiedElement("settingsThemeStudioCard-whiteGold", in: app)
+        scrollUntilHittable(whiteGold, in: app)
+        let whiteGoldSelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"),
+            object: whiteGold
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [whiteGoldSelected], timeout: 5),
+            .completed,
+            "The explicit launch override should own only this running process."
+        )
+        app.terminate()
+
+        app.launchArguments = ["--open-chat"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["currentChatTitle"].waitForExistence(timeout: 8))
+        app.tabBars.buttons["Control"].tap()
+        let restoredEmber = identifiedElement("settingsThemeStudioCard-emberCore", in: app)
+        scrollUntilHittable(restoredEmber, in: app)
+        let restoredEmberSelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"),
+            object: restoredEmber
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [restoredEmberSelected], timeout: 5),
+            .completed,
+            "A normal relaunch must restore the user's persisted theme after a temporary screenshot/test override."
+        )
+        XCTAssertFalse(
+            identifiedElement("settingsThemeStudioCard-whiteGold", in: app).isSelected,
+            "The temporary override must not replace the persisted user selection."
+        )
+    }
+
     func testGoalProjectControlCenterCreateEditDeleteAndRunFeedbackScreenshots() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--open-project", "--open-mission-dossier-demo"]

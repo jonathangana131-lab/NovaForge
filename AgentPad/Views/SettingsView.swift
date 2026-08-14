@@ -1067,7 +1067,10 @@ struct SettingsView: View {
     }
 
     private var selectedTheme: AgentTheme {
-        AgentTheme.resolved(from: selectedThemeRawValue)
+        AgentTheme.resolvedForLaunch(
+            storedRawValue: selectedThemeRawValue,
+            arguments: ProcessInfo.processInfo.arguments
+        )
     }
 
     private var modelReadinessStats: [SettingsMiniStat] {

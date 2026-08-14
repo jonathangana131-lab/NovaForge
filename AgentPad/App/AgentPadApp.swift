@@ -1424,13 +1424,16 @@ struct NovaForgeMainApp: App {
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
-        if let launchTheme = AgentTheme.launchOverride(from: arguments) {
-            UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)
-            AgentPalette.refreshThemeCache(launchTheme)
-        } else {
-            AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())
+        let storedThemeRawValue = UserDefaults.standard.string(forKey: AgentTheme.storageKey)
+        let launchTheme = AgentTheme.resolvedForLaunch(
+            storedRawValue: storedThemeRawValue,
+            arguments: arguments
+        )
+        if AgentTheme.launchOverride(from: arguments) == nil {
+            _ = AgentTheme.normalizeStoredTheme()
         }
-        AgentThemeUIKit.apply(AgentTheme.current)
+        AgentPalette.refreshThemeCache(launchTheme)
+        AgentThemeUIKit.apply(launchTheme)
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         if let supportURL {
             try? FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
@@ -1453,11 +1456,12 @@ struct NovaForgeMainApp: App {
                 )
             }
             UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)
-            if let launchTheme = AgentTheme.launchOverride(from: arguments) {
-                UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)
-            }
-            AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())
-            AgentThemeUIKit.apply(AgentTheme.current)
+            let resetLaunchTheme = AgentTheme.resolvedForLaunch(
+                storedRawValue: AgentTheme.defaultTheme.rawValue,
+                arguments: arguments
+            )
+            AgentPalette.refreshThemeCache(resetLaunchTheme)
+            AgentThemeUIKit.apply(resetLaunchTheme)
             UserDefaults.standard.removeObject(forKey: LaunchConversationSelection.persistedSelectionKey)
             UserDefaults.standard.removeObject(forKey: AgentRunPreferenceStore.effortKey)
             UserDefaults.standard.removeObject(forKey: AgentRunPreferenceStore.orchestrationKey)
@@ -1570,7 +1574,10 @@ struct NovaForgeMainApp: App {
     }
 
     private var selectedTheme: AgentTheme {
-        AgentTheme.resolved(from: selectedThemeRawValue)
+        AgentTheme.resolvedForLaunch(
+            storedRawValue: selectedThemeRawValue,
+            arguments: ProcessInfo.processInfo.arguments
+        )
     }
 
     // MARK: - Static Helpers

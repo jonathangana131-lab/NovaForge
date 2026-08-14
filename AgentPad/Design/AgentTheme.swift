@@ -96,6 +96,13 @@ enum AgentTheme: String, CaseIterable, Identifiable {
         return nil
     }
 
+    static func resolvedForLaunch(
+        storedRawValue: String?,
+        arguments: [String]
+    ) -> AgentTheme {
+        launchOverride(from: arguments) ?? resolved(from: storedRawValue)
+    }
+
     var title: String {
         switch self {
         case .matrixRain: "Matrix Rain"

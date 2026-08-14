@@ -26,23 +26,24 @@ reset = app[start:end]
 
 required = [
     'UserDefaults.standard.set(AgentTheme.defaultTheme.rawValue, forKey: AgentTheme.storageKey)',
-    'if let launchTheme = AgentTheme.launchOverride(from: arguments)',
-    'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)',
-    'AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())',
-    'AgentThemeUIKit.apply(AgentTheme.current)',
+    'let resetLaunchTheme = AgentTheme.resolvedForLaunch(',
+    'storedRawValue: AgentTheme.defaultTheme.rawValue',
+    'arguments: arguments',
+    'AgentPalette.refreshThemeCache(resetLaunchTheme)',
+    'AgentThemeUIKit.apply(resetLaunchTheme)',
 ]
 for needle in required:
     if needle not in reset:
         raise SystemExit(f'missing reset-theme determinism contract: {needle}')
 
-stale = 'AgentPalette.refreshThemeCache(AgentTheme.current)'
-if stale in reset:
-    raise SystemExit('reset fixture may not refresh AgentPalette from cached AgentTheme.current')
+if 'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)' in reset:
+    raise SystemExit('reset launch override must remain ephemeral')
+if 'AgentPalette.refreshThemeCache(AgentTheme.current)' in reset:
+    raise SystemExit('reset fixture may not refresh AgentPalette from stale cached current theme')
+if 'static func resolvedForLaunch(' not in theme:
+    raise SystemExit('missing active launch-theme resolver')
+if 'launchOverride(from: arguments) ?? resolved(from: storedRawValue)' not in theme:
+    raise SystemExit('launch resolver must give explicit override precedence without persistence')
 
-if 'static func normalizeStoredTheme() -> AgentTheme' not in theme:
-    raise SystemExit('missing canonical stored-theme normalizer')
-if 'static func refreshCurrentCache(_ theme: AgentTheme?)' not in theme:
-    raise SystemExit('missing current-theme cache refresh authority')
-
-print('Preview theme reset cache contract: stored default/override -> normalize -> palette cache -> UIKit')
+print('Preview theme reset cache contract: stored default + ephemeral override -> resolved launch theme -> palette/UIKit')
 PY
