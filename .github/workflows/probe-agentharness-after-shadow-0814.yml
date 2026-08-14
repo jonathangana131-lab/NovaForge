@@ -1,0 +1,28 @@
+name: Probe AgentHarnessKit after AgentShadow portability
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-SHADOW-CRYPTO-0814/e1-full
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-full-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "480b070701a87951fc804f4257265096fab38053"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/probe-agentharness-after-shadow-0814.yml"
+      - name: Run full package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
