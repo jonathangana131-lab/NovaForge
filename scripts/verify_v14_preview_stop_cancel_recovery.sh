@@ -93,12 +93,13 @@ pending_stop = test_slice(
 for token in (
     "runtime.stopGenerating(context: context)",
     "XCTAssertNil(runtime.pendingTool)",
-    "XCTAssertEqual(runtime.runState, .cancelled)",
+    "XCTAssertFalse(runtime.isWorking)",
     "XCTAssertEqual(run.status, ToolRunStatus.rejected)",
     'XCTAssertEqual(run.output, "Cancelled while waiting for approval.")',
+    "XCTAssertNotNil(run.completedAt)",
 ):
     if token not in pending_stop:
-        raise SystemExit(f"pending-approval Stop regression lost required assertion: {token}")
+        raise SystemExit(f"pending-approval Stop regression lost required durable assertion: {token}")
 
 stale_task = test_slice(
     runtime_tests,
