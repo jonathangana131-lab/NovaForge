@@ -14,12 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
-      - name: Assert exact product parent
+          fetch-depth: 3
+      - name: Assert exact product ancestor
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "787b39e6bbe6bd9f353699b8f0062e1f786f1476"
+          test "$(git rev-parse HEAD~2)" = "787b39e6bbe6bd9f353699b8f0062e1f786f1476"
+          test "$(git diff --name-only HEAD~2 HEAD | sort -u)" = ".github/workflows/probe-agentpolicy-direct-posix-0814.yml"
       - name: Apply disposable direct-import transform
         shell: bash
         run: |
@@ -27,53 +28,38 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           root = Path('Packages/AgentHarnessKit')
-          manifest = root/'Package.swift'
+          manifest = root / 'Package.swift'
           text = manifest.read_text()
-          old = '''        .target(
-              name: "AgentPolicy",
-              dependencies: ["AgentDomain", "AgentTools"]
-          ),'''
-          new = '''        .target(
-              name: "AgentPolicy",
-              dependencies: [
-                  "AgentDomain",
-                  "AgentTools",
-                  .product(name: "Crypto", package: "swift-crypto"),
-              ]
-          ),'''
-          if old not in text:
-              raise SystemExit('AgentPolicy manifest preimage not found')
-          manifest.write_text(text.replace(old, new, 1))
+          needle = '        .target(\n            name: "AgentPolicy",\n            dependencies: ["AgentDomain", "AgentTools"]\n        ),'
+          replacement = '        .target(\n            name: "AgentPolicy",\n            dependencies: [\n                "AgentDomain",\n                "AgentTools",\n                .product(name: "Crypto", package: "swift-crypto"),\n            ]\n        ),'
+          if text.count(needle) != 1:
+              raise SystemExit(f'AgentPolicy manifest preimage count={text.count(needle)}')
+          manifest.write_text(text.replace(needle, replacement, 1))
 
-          policy = root/'Sources/AgentPolicy'
-          crypto = [policy/'DurableApproval.swift', policy/'PolicyCanonicalDigest.swift']
+          policy = root / 'Sources/AgentPolicy'
+          crypto = [policy / 'DurableApproval.swift', policy / 'PolicyCanonicalDigest.swift']
           darwin = [
-              policy/'FileMutationEffectLifecycleStore.swift',
-              policy/'FilePolicyAuthorityStore.swift',
-              policy/'WorkspaceMutationProcessArbiter.swift',
+              policy / 'FileMutationEffectLifecycleStore.swift',
+              policy / 'FilePolicyAuthorityStore.swift',
+              policy / 'WorkspaceMutationProcessArbiter.swift',
           ]
-          for p in crypto:
-              s = p.read_text()
-              if s.count('import CryptoKit') != 1:
-                  raise SystemExit(f'unexpected CryptoKit count in {p}')
-              p.write_text(s.replace('import CryptoKit', 'import Crypto', 1))
-          platform_import = '''#if canImport(Darwin)
-          import Darwin
-          #elseif canImport(Glibc)
-          import Glibc
-          #else
-          #error("AgentPolicy requires a POSIX libc")
-          #endif'''
-          for p in darwin:
-              s = p.read_text()
-              if s.count('import Darwin') != 1:
-                  raise SystemExit(f'unexpected Darwin import count in {p}')
-              s = s.replace('import Darwin', platform_import, 1)
-              s = s.replace('Darwin.', '')
-              p.write_text(s)
+          for path in crypto:
+              source = path.read_text()
+              if source.count('import CryptoKit') != 1:
+                  raise SystemExit(f'unexpected CryptoKit count in {path}')
+              path.write_text(source.replace('import CryptoKit', 'import Crypto', 1))
+
+          platform_import = '#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#else\n#error("AgentPolicy requires a POSIX libc")\n#endif'
+          for path in darwin:
+              source = path.read_text()
+              if source.count('import Darwin') != 1:
+                  raise SystemExit(f'unexpected Darwin import count in {path}')
+              source = source.replace('import Darwin', platform_import, 1)
+              source = source.replace('Darwin.', '')
+              path.write_text(source)
           PY
           git diff --check
-          ! grep -R -n -E '^import (CryptoKit|Darwin)$|Darwin\.' Packages/AgentHarnessKit/Sources/AgentPolicy
+          ! grep -R -n -E '^import CryptoKit$|Darwin\.' Packages/AgentHarnessKit/Sources/AgentPolicy
       - name: Compile transformed full package
         shell: bash
         run: |
