@@ -68,7 +68,11 @@ let package = Package(
         ),
         .target(
             name: "AgentPolicy",
-            dependencies: ["AgentDomain", "AgentTools"]
+            dependencies: [
+                "AgentDomain",
+                "AgentTools",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ]
         ),
         .target(
             name: "AgentTransport",

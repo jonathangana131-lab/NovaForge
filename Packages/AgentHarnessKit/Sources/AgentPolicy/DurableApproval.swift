@@ -1,6 +1,6 @@
 import AgentDomain
 import AgentTools
-import CryptoKit
+import Crypto
 import Foundation
 
 public enum ApprovalNonceValidationError: Error, Equatable, Sendable {
