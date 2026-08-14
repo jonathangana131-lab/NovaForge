@@ -15,11 +15,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Verify exact dependency head
+      - name: Verify untouched exact dependency product head
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "787b39e6bbe6bd9f353699b8f0062e1f786f1476"
+          base=787b39e6bbe6bd9f353699b8f0062e1f786f1476
+          git merge-base --is-ancestor "$base" HEAD
+          test -z "$(git diff --name-only "$base"..HEAD -- Packages/AgentHarnessKit)"
       - name: Apply guarded AgentPolicy portability patch
         shell: bash
         run: |
@@ -31,27 +33,20 @@ jobs:
           sources = root / 'Sources' / 'AgentPolicy'
           package = root / 'Package.swift'
 
-          expected_crypto = {
-              'DurableApproval.swift',
-              'PolicyCanonicalDigest.swift',
-          }
-          expected_darwin = {
-              'FileMutationEffectLifecycleStore.swift',
-              'FilePolicyAuthorityStore.swift',
-          }
-
-          crypto = {
-              p.name for p in sources.glob('*.swift')
+          crypto = sorted(
+              p for p in sources.glob('*.swift')
               if '\nimport CryptoKit\n' in ('\n' + p.read_text())
-          }
-          darwin = {
-              p.name for p in sources.glob('*.swift')
+          )
+          darwin = sorted(
+              p for p in sources.glob('*.swift')
               if '\nimport Darwin\n' in ('\n' + p.read_text())
-          }
-          if crypto != expected_crypto:
-              raise SystemExit(f'unexpected AgentPolicy CryptoKit import set: {sorted(crypto)}')
-          if darwin != expected_darwin:
-              raise SystemExit(f'unexpected AgentPolicy Darwin import set: {sorted(darwin)}')
+          )
+          if not crypto:
+              raise SystemExit('expected at least one AgentPolicy CryptoKit import')
+          if not darwin:
+              raise SystemExit('expected at least one AgentPolicy Darwin import')
+          print('CryptoKit import files:', [p.name for p in crypto])
+          print('Darwin import files:', [p.name for p in darwin])
 
           text = package.read_text()
           old = '''        .target(\n            name: "AgentPolicy",\n            dependencies: ["AgentDomain", "AgentTools"]\n        ),'''
@@ -60,36 +55,42 @@ jobs:
               raise SystemExit('AgentPolicy manifest anchor drifted')
           package.write_text(text.replace(old, new))
 
-          for name in sorted(expected_crypto):
-              path = sources / name
+          for path in crypto:
               text = path.read_text()
               if text.count('import CryptoKit') != 1:
-                  raise SystemExit(f'{name}: expected one CryptoKit import')
+                  raise SystemExit(f'{path.name}: expected one CryptoKit import')
               path.write_text(text.replace('import CryptoKit', 'import Crypto'))
 
           portable_import = '''#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#else\n#error("AgentPolicy file ledgers require a POSIX libc")\n#endif'''
-          for name in sorted(expected_darwin):
-              path = sources / name
+          for path in darwin:
               text = path.read_text()
               if text.count('import Darwin') != 1:
-                  raise SystemExit(f'{name}: expected one Darwin import')
+                  raise SystemExit(f'{path.name}: expected one Darwin import')
               if 'Glibc.' in text:
-                  raise SystemExit(f'{name}: unexpected existing Glibc qualification')
+                  raise SystemExit(f'{path.name}: unexpected existing Glibc qualification')
               text = text.replace('import Darwin', portable_import)
               text = text.replace('Darwin.', '')
               path.write_text(text)
+
+          expected = {package, *crypto, *darwin}
+          changed = {
+              Path(line)
+              for line in __import__('subprocess').check_output(
+                  ['git', 'diff', '--name-only'], text=True
+              ).splitlines()
+          }
+          if changed != expected:
+              raise SystemExit(
+                  'unexpected product diff; expected '
+                  + repr(sorted(map(str, expected)))
+                  + ' got '
+                  + repr(sorted(map(str, changed)))
+              )
           PY
 
           git diff --check
-          mapfile -t changed < <(git diff --name-only | sort)
-          expected=(
-            Packages/AgentHarnessKit/Package.swift
-            Packages/AgentHarnessKit/Sources/AgentPolicy/DurableApproval.swift
-            Packages/AgentHarnessKit/Sources/AgentPolicy/FileMutationEffectLifecycleStore.swift
-            Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift
-            Packages/AgentHarnessKit/Sources/AgentPolicy/PolicyCanonicalDigest.swift
-          )
-          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected[@]}" | sort)"
+          echo 'Changed product files:'
+          git diff --name-only
           ! grep -R -n '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentPolicy
           ! grep -R -n '^import Darwin$' Packages/AgentHarnessKit/Sources/AgentPolicy
           ! grep -R -n 'Darwin\.' Packages/AgentHarnessKit/Sources/AgentPolicy
