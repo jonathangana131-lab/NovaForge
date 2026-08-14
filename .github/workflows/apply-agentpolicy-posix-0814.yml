@@ -1,0 +1,124 @@
+name: Apply guarded AgentPolicy portability patch
+
+on:
+  push:
+    branches:
+      - patch/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e1
+
+permissions:
+  contents: write
+
+jobs:
+  patch-product-branch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: worker/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e1
+          fetch-depth: 0
+
+      - name: Apply exact guarded portability patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="787b39e6bbe6bd9f353699b8f0062e1f786f1476"
+          test "$(git rev-parse HEAD)" = "$expected"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('Packages/AgentHarnessKit')
+          policy = root / 'Sources/AgentPolicy'
+
+          manifest = root / 'Package.swift'
+          text = manifest.read_text()
+          needle = '        .target(\n            name: "AgentPolicy",\n            dependencies: ["AgentDomain", "AgentTools"]\n        ),'
+          replacement = '        .target(\n            name: "AgentPolicy",\n            dependencies: [\n                "AgentDomain",\n                "AgentTools",\n                .product(name: "Crypto", package: "swift-crypto"),\n            ]\n        ),'
+          if text.count(needle) != 1:
+              raise SystemExit(f'AgentPolicy manifest preimage count={text.count(needle)}')
+          manifest.write_text(text.replace(needle, replacement, 1))
+
+          crypto_files = [
+              policy / 'DurableApproval.swift',
+              policy / 'PolicyCanonicalDigest.swift',
+          ]
+          for path in crypto_files:
+              source = path.read_text()
+              if source.count('import CryptoKit') != 1:
+                  raise SystemExit(f'unexpected CryptoKit count in {path}')
+              path.write_text(source.replace('import CryptoKit', 'import Crypto', 1))
+
+          posix_files = [
+              policy / 'FileMutationEffectLifecycleStore.swift',
+              policy / 'FilePolicyAuthorityStore.swift',
+              policy / 'WorkspaceMutationProcessArbiter.swift',
+          ]
+          platform_import = '#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#else\n#error("AgentPolicy requires a POSIX libc")\n#endif'
+          for path in posix_files:
+              source = path.read_text()
+              if source.count('import Darwin') != 1:
+                  raise SystemExit(f'unexpected Darwin import count in {path}')
+              source = source.replace('import Darwin', platform_import, 1)
+              source = source.replace('Darwin.', '')
+              path.write_text(source)
+
+          workspace = policy / 'WorkspaceMutationProcessArbiter.swift'
+          source = workspace.read_text()
+          old_read = 'read(descriptor, $0.baseAddress, $0.count)'
+          if source.count(old_read) != 1:
+              raise SystemExit(f'workspace libc read preimage count={source.count(old_read)}')
+          workspace.write_text(source.replace(
+              old_read,
+              'policyPOSIXRead(descriptor, $0.baseAddress, $0.count)',
+              1,
+          ))
+
+          shim = policy / 'PolicyPOSIX.swift'
+          if shim.exists():
+              raise SystemExit('PolicyPOSIX.swift unexpectedly already exists')
+          shim.write_text('''#if canImport(Darwin)
+          import Darwin
+          #elseif canImport(Glibc)
+          import Glibc
+          #else
+          #error("AgentPolicy requires a POSIX libc")
+          #endif
+
+          @inline(__always)
+          func policyPOSIXRead(
+              _ descriptor: Int32,
+              _ buffer: UnsafeMutableRawPointer?,
+              _ count: Int
+          ) -> Int {
+          #if canImport(Darwin)
+              Darwin.read(descriptor, buffer, count)
+          #elseif canImport(Glibc)
+              Glibc.read(descriptor, buffer, count)
+          #endif
+          }
+          ''')
+          PY
+
+          test "$(grep -R --include='*.swift' -c '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentPolicy || true)" != ""
+          ! grep -R -n --include='*.swift' '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentPolicy
+          ! grep -R -n --include='*.swift' 'Darwin\.' Packages/AgentHarnessKit/Sources/AgentPolicy | grep -v 'PolicyPOSIX.swift' || true
+          test "$(grep -c 'policyPOSIXRead(descriptor, \$0.baseAddress, \$0.count)' Packages/AgentHarnessKit/Sources/AgentPolicy/WorkspaceMutationProcessArbiter.swift)" -eq 1
+
+          expected_files=$(cat <<'EOF'
+          Packages/AgentHarnessKit/Package.swift
+          Packages/AgentHarnessKit/Sources/AgentPolicy/DurableApproval.swift
+          Packages/AgentHarnessKit/Sources/AgentPolicy/FileMutationEffectLifecycleStore.swift
+          Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift
+          Packages/AgentHarnessKit/Sources/AgentPolicy/PolicyCanonicalDigest.swift
+          Packages/AgentHarnessKit/Sources/AgentPolicy/PolicyPOSIX.swift
+          Packages/AgentHarnessKit/Sources/AgentPolicy/WorkspaceMutationProcessArbiter.swift
+          EOF
+          )
+          test "$(git status --short | awk '{print $2}' | sort)" = "$(printf '%s\n' "$expected_files" | sort)"
+          git diff --check
+
+          git config user.name "NovaForge Repair Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add Packages/AgentHarnessKit/Package.swift Packages/AgentHarnessKit/Sources/AgentPolicy
+          git commit -m "AgentPolicy: preserve secure POSIX ledgers cross-platform"
+          git push origin HEAD:worker/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e1
