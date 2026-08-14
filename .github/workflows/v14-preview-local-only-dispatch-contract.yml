@@ -1,0 +1,33 @@
+name: V14 Preview Local Only dispatch contract
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/Services/AgentSystemProductionComposition.swift'
+      - 'AgentPad/Services/AgentProductionProviderGateway.swift'
+      - 'AgentPad/Services/AgentProviderTransportRouter.swift'
+      - 'AgentPad/Services/AgentLocalModelProviderTransport.swift'
+      - 'scripts/verify_v14_preview_local_only_dispatch_contract.py'
+      - '.github/workflows/v14-preview-local-only-dispatch-contract.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/Services/AgentSystemProductionComposition.swift'
+      - 'AgentPad/Services/AgentProductionProviderGateway.swift'
+      - 'AgentPad/Services/AgentProviderTransportRouter.swift'
+      - 'AgentPad/Services/AgentLocalModelProviderTransport.swift'
+      - 'scripts/verify_v14_preview_local_only_dispatch_contract.py'
+      - '.github/workflows/v14-preview-local-only-dispatch-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview-local-only-dispatch-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Local Only dispatch stays on the local transport seam
+        run: python3 scripts/verify_v14_preview_local_only_dispatch_contract.py
