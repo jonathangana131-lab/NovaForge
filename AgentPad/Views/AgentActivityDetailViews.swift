@@ -426,22 +426,29 @@ struct AgentActivityRunErrorView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(AgentPalette.rose)
-                .frame(width: 18, height: 24)
-                .accessibilityHidden(true)
+        let contentLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 7))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 7))
 
-            Text(message)
-                .font(NovaType.caption)
-                .foregroundStyle(AgentPalette.secondaryText)
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
-                .fixedSize(
-                    horizontal: false,
-                    vertical: dynamicTypeSize.isAccessibilitySize
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+        contentLayout {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(AgentPalette.rose)
+                    .frame(width: 18, height: 24)
+                    .accessibilityHidden(true)
+
+                Text(message)
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                    .fixedSize(
+                        horizontal: false,
+                        vertical: dynamicTypeSize.isAccessibilitySize
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: openFullDetail) {
                 Image(systemName: "doc.text.magnifyingglass")
@@ -458,6 +465,7 @@ struct AgentActivityRunErrorView: View {
             .accessibilityHint("Opens uncapped diagnostics in History")
         }
         .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agentActivityRunError")
     }
 }
 
