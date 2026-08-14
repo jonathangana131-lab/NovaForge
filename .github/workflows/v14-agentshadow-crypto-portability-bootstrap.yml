@@ -1,0 +1,117 @@
+name: V14 AgentShadow crypto portability bootstrap
+
+on:
+  push:
+    branches:
+      - agent/v14-preview-agentshadow-crypto-portability
+    paths:
+      - '.github/workflows/v14-agentshadow-crypto-portability-bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-prove:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact untouched dependency product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=c294273767aa9ad461e764a6017db5b98fc0e0f8
+          git merge-base --is-ancestor "$base" HEAD
+          test -z "$(git diff --name-only "$base"..HEAD -- Packages/AgentHarnessKit)"
+      - name: Discover and apply exact AgentShadow crypto portability patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          root = Path('Packages/AgentHarnessKit')
+          sources = root / 'Sources' / 'AgentShadow'
+          tests = root / 'Tests' / 'AgentShadowTests'
+          package = root / 'Package.swift'
+
+          source_crypto = sorted(
+              p for p in sources.rglob('*.swift')
+              if '\nimport CryptoKit\n' in ('\n' + p.read_text())
+          )
+          test_crypto = sorted(
+              p for p in tests.rglob('*.swift')
+              if '\nimport CryptoKit\n' in ('\n' + p.read_text())
+          )
+          if not source_crypto:
+              raise SystemExit('expected an AgentShadow source CryptoKit blocker')
+          print('AgentShadow source CryptoKit imports:', [p.name for p in source_crypto])
+          print('AgentShadow test CryptoKit imports:', [p.name for p in test_crypto])
+
+          text = package.read_text()
+          old_target = '''        .target(\n            name: "AgentShadow",\n            dependencies: [\n                "AgentDomain",\n                "AgentProviders",\n                "AgentStore",\n                "AgentTools",\n            ]\n        ),'''
+          new_target = '''        .target(\n            name: "AgentShadow",\n            dependencies: [\n                "AgentDomain",\n                "AgentProviders",\n                "AgentStore",\n                "AgentTools",\n                .product(name: "Crypto", package: "swift-crypto"),\n            ]\n        ),'''
+          if text.count(old_target) != 1:
+              raise SystemExit('AgentShadow target manifest anchor drifted')
+          text = text.replace(old_target, new_target)
+
+          if test_crypto:
+              old_tests = '''        .testTarget(\n            name: "AgentShadowTests",\n            dependencies: [\n                "AgentDomain",\n                "AgentProviders",\n                "AgentShadow",\n                "AgentStore",\n                "AgentTools",\n            ]\n        ),'''
+              new_tests = '''        .testTarget(\n            name: "AgentShadowTests",\n            dependencies: [\n                "AgentDomain",\n                "AgentProviders",\n                "AgentShadow",\n                "AgentStore",\n                "AgentTools",\n                .product(name: "Crypto", package: "swift-crypto"),\n            ]\n        ),'''
+              if text.count(old_tests) != 1:
+                  raise SystemExit('AgentShadowTests manifest anchor drifted')
+              text = text.replace(old_tests, new_tests)
+
+          package.write_text(text)
+          for path in source_crypto + test_crypto:
+              file_text = path.read_text()
+              if file_text.count('import CryptoKit') != 1:
+                  raise SystemExit(f'{path}: expected exactly one CryptoKit import')
+              path.write_text(file_text.replace('import CryptoKit', 'import Crypto'))
+
+          expected = {package, *source_crypto, *test_crypto}
+          changed = {
+              Path(line) for line in subprocess.check_output(
+                  ['git', 'diff', '--name-only'], text=True
+              ).splitlines()
+          }
+          if changed != expected:
+              raise SystemExit(
+                  'unexpected AgentShadow product scope: expected '
+                  + repr(sorted(map(str, expected)))
+                  + ' got '
+                  + repr(sorted(map(str, changed)))
+              )
+          PY
+          git diff --check
+          echo 'Changed product files:'
+          git diff --name-only
+          ! grep -R -n '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentShadow
+          ! grep -R -n '^import CryptoKit$' Packages/AgentHarnessKit/Tests/AgentShadowTests
+      - name: Commit exact product patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Packages/AgentHarnessKit/Package.swift Packages/AgentHarnessKit/Sources/AgentShadow Packages/AgentHarnessKit/Tests/AgentShadowTests
+          git commit -m 'Preview: make AgentShadow crypto portable'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "PRODUCT_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Build AgentShadow debug on Linux
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentShadow -Xswiftc -warnings-as-errors
+      - name: Build AgentShadow release on Linux
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target AgentShadow -Xswiftc -warnings-as-errors
+      - name: Run AgentShadow tests on Linux
+        run: swift test --package-path Packages/AgentHarnessKit --filter AgentShadowTests -Xswiftc -warnings-as-errors
+      - name: Verify exact product head diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=c294273767aa9ad461e764a6017db5b98fc0e0f8
+          echo "validated product head: $PRODUCT_HEAD"
+          git diff --check "$base".."$PRODUCT_HEAD"
