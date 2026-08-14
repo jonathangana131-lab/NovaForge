@@ -1,0 +1,78 @@
+name: Temporary V14 Preview accepted effort budget recovery
+
+on:
+  push:
+    branches:
+      - gpt56-sol-preview-effort-budget-current-main-0814
+
+permissions:
+  contents: write
+
+jobs:
+  recover-effort-budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply reviewed five-stop budget plus malformed-pair repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=37b5305c459907917d1f27ddc7f08168a68c4bbe
+          donor=7a2da3eea747a9340a180ff1d962bf4a7752a7e2
+          git fetch --no-tags origin "$base" "$donor"
+          git diff --binary "$base" "$donor" -- \
+            AgentPad/Services/AgentEngineRouting.swift \
+            AgentPad/Services/AgentSystemFreshRunRequestFactory.swift \
+            AgentPadTests/AgentEngineRoutingTests.swift \
+            > /tmp/accepted-effort-budget.patch
+          test -s /tmp/accepted-effort-budget.patch
+          git apply --3way /tmp/accepted-effort-budget.patch
+          rm .github/workflows/_temp_v14_preview_effort_budget_recover.yml
+
+      - name: Validate reconciled effort budget tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/verify_v14_preview_effort_contract.sh
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+          expected = {
+              'AgentPad/Services/AgentEngineRouting.swift',
+              'AgentPad/Services/AgentSystemFreshRunRequestFactory.swift',
+              'AgentPadTests/AgentEngineRoutingTests.swift',
+              '.github/workflows/_temp_v14_preview_effort_budget_recover.yml',
+          }
+          actual = set(subprocess.check_output(['git', 'diff', '--name-only', 'HEAD'], text=True).splitlines())
+          if actual != expected:
+              raise SystemExit(f'unexpected accepted-budget recovery scope: expected={sorted(expected)} actual={sorted(actual)}')
+
+          routing = open('AgentPad/Services/AgentEngineRouting.swift', encoding='utf-8').read()
+          tests = open('AgentPadTests/AgentEngineRoutingTests.swift', encoding='utf-8').read()
+          required_routing = [
+              'enum AgentRunEffortBudgetPolicy',
+              'case (.max, .ultraCode):',
+              'maximumIterations: 128',
+              'maximumProviderAttempts: 192',
+              'maximumToolInvocations: 256',
+          ]
+          for needle in required_routing:
+              if needle not in routing:
+                  raise SystemExit(f'missing reviewed budget invariant: {needle}')
+          if 'testPreviewUltraCodeRequiresExactMaxPairAndMalformedPairsFailClosed' not in tests:
+              raise SystemExit('missing malformed Ultra-pair adversarial regression')
+          print('V14 Preview accepted effort budget recovery scope/invariants: PASS')
+          PY
+
+      - name: Publish product head and remove applicator
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "NovaForge Recovery Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Preview: bind five-stop effort to fail-closed accepted budgets"
+          git push origin HEAD:gpt56-sol-preview-effort-budget-current-main-0814
