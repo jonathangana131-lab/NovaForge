@@ -71,15 +71,20 @@ require(chat, "stop: stopActiveRun", "ChatView Composer live-run rail")
 
 stop_handler = swift_block(chat, "private func stopActiveRun()", "ChatView.stopActiveRun")
 for fragment in (
+    # Ultra/orchestrated canonical work owns an orchestration-level cancel.
     "agentSystemPresentation.cancelOrchestration(",
+    # Normal canonical AgentSystem work owns the accepted group cancel command.
+    "group.accepts(group.cancelCommand)",
+    "handleActivityCommand(group.cancelCommand)",
+    # DEBUG hosted-canary and legacy runtime fallbacks remain separately wired.
     "hostedTextCanarySession.stop()",
     "runtime.stopGenerating(context: modelContext)",
 ):
     require(stop_handler, fragment, "ChatView.stopActiveRun")
 
 # The legacy/runtime-owned branch remains a real cancellation, not a failure
-# presentation. This is intentionally source-level evidence around the current
-# bridge while the canonical AgentSystem migration continues.
+# presentation. This is intentionally source-level evidence around that branch;
+# it does NOT redefine the canonical AgentSystem group's terminal presentation.
 stop_runtime = swift_block(
     runtime,
     "func stopGenerating(context: ModelContext? = nil)",
@@ -119,6 +124,7 @@ for fragment in (
     require(cancel_activity, fragment, "RunActivityController.runCancelled")
 
 print(
-    "PASS: Preview Composer Stop remains wired through canonical/orchestration, "
-    "hosted-canary, and runtime cancellation branches with neutral Paused lifecycle semantics."
+    "PASS: Preview Composer Stop remains wired to canonical orchestration, "
+    "canonical group cancellation, hosted-canary, and legacy runtime branches; "
+    "the legacy runtime cancellation path remains neutral Paused rather than failed."
 )
