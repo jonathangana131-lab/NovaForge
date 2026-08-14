@@ -1271,7 +1271,7 @@ private struct ComposerModelChooserSheet: View {
     private func providerStatus(_ provider: AIProvider) -> String {
         switch provider {
         case .local:
-            return "iPhone 12 safe · \(localModels.status.title)"
+            return "On-device profile · \(localModels.status.title)"
         case .openCodeZen:
             return "Free models work without a key · paid models use Zen key"
         case .openAICodex:
@@ -1298,7 +1298,7 @@ private struct ComposerModelChooserSheet: View {
     private func modelDetail(_ model: String) -> String? {
         if let variant = LocalModelCatalog.variant(for: model) {
             return variant.isIPhone12SafeDefault
-                ? "Recommended for iPhone 12"
+                ? "Default local profile · qualification pending"
                 : variant.quantization + " · low-memory fallback"
         }
         if let detail = selectedProvider.modelDetail(model) { return detail }
