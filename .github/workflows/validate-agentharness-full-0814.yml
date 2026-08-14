@@ -1,0 +1,30 @@
+name: Probe full AgentHarnessKit portability after provider fix
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-PROVIDER-CRYPTO-0814/e5-full-linux
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-full-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "787b39e6bbe6bd9f353699b8f0062e1f786f1476"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/validate-agentharness-full-0814.yml"
+
+      - name: Run full package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
