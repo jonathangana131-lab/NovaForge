@@ -18,13 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
-      - name: Verify validation is stacked on exact product head
+          fetch-depth: 0
+      - name: Verify exact product head and diff
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "0e7d4953904987b23b5f7aa373d98e9a847032b3"
-          git diff --check 228eeb286bc48ee13ead3c084290062052532738..HEAD^
+          git merge-base --is-ancestor 0e7d4953904987b23b5f7aa373d98e9a847032b3 HEAD
+          test -z "$(git diff --name-only 0e7d4953904987b23b5f7aa373d98e9a847032b3..HEAD -- Packages/AgentHarnessKit)"
+          git diff --check 228eeb286bc48ee13ead3c084290062052532738..0e7d4953904987b23b5f7aa373d98e9a847032b3
       - name: Verify provider target owns portable crypto dependency
         shell: bash
         run: |
