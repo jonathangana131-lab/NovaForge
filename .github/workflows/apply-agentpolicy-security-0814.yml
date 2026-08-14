@@ -1,0 +1,190 @@
+name: Apply pinned-descriptor AgentPolicy security repair
+
+on:
+  push:
+    branches:
+      - patch/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e6-security
+
+permissions:
+  contents: write
+
+jobs:
+  patch-product-branch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: worker/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e1
+          fetch-depth: 0
+
+      - name: Apply exact guarded security repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="804b5a6c02b98ca3b588587f75e4a745bf2c866f"
+          test "$(git rev-parse HEAD)" = "$expected"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          store = Path('Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift')
+          source = store.read_text()
+
+          old_location = '''    struct Location: Sendable {
+              let directoryURL: URL
+              let fileName: String
+              let lockName: String
+              let directoryIdentity: FileIdentity
+              let lockIdentity: FileIdentity
+          }
+          '''
+          new_location = '''    final class DescriptorPins: @unchecked Sendable {
+              let directoryDescriptor: Int32
+              let lockDescriptor: Int32
+
+              init(directoryDescriptor: Int32, lockDescriptor: Int32) {
+                  self.directoryDescriptor = directoryDescriptor
+                  self.lockDescriptor = lockDescriptor
+              }
+
+              deinit {
+                  close(lockDescriptor)
+                  close(directoryDescriptor)
+              }
+          }
+
+          struct Location: Sendable {
+              let directoryURL: URL
+              let fileName: String
+              let lockName: String
+              let directoryIdentity: FileIdentity
+              let lockIdentity: FileIdentity
+              let descriptorPins: DescriptorPins
+          }
+          '''
+          if source.count(old_location) != 1:
+              raise SystemExit(f'Location preimage count={source.count(old_location)}')
+          source = source.replace(old_location, new_location, 1)
+
+          old_directory = '''        let directoryDescriptor = try openDirectory(at: directoryURL)
+                  defer { close(directoryDescriptor) }
+                  let directoryStatus = try validatedDirectory(
+          '''
+          new_directory = '''        let directoryDescriptor = try openDirectory(at: directoryURL)
+                  var shouldCloseDirectoryDescriptor = true
+                  defer {
+                      if shouldCloseDirectoryDescriptor { close(directoryDescriptor) }
+                  }
+                  let directoryStatus = try validatedDirectory(
+          '''
+          if source.count(old_directory) != 1:
+              raise SystemExit(f'directory preimage count={source.count(old_directory)}')
+          source = source.replace(old_directory, new_directory, 1)
+
+          old_lock = '''        let lockDescriptor = try openLock(
+                      directoryDescriptor: directoryDescriptor,
+                      name: lockName
+                  )
+                  defer { close(lockDescriptor) }
+                  try acquireFileLock(descriptor: lockDescriptor, until: deadline)
+          '''
+          new_lock = '''        let lockDescriptor = try openLock(
+                      directoryDescriptor: directoryDescriptor,
+                      name: lockName
+                  )
+                  var shouldCloseLockDescriptor = true
+                  defer {
+                      if shouldCloseLockDescriptor { close(lockDescriptor) }
+                  }
+                  try acquireFileLock(descriptor: lockDescriptor, until: deadline)
+          '''
+          if source.count(old_lock) != 1:
+              raise SystemExit(f'lock preimage count={source.count(old_lock)}')
+          source = source.replace(old_lock, new_lock, 1)
+
+          old_location_init = '''        let location = Location(
+                      directoryURL: directoryURL,
+                      fileName: fileName,
+                      lockName: lockName,
+                      directoryIdentity: FileIdentity(directoryStatus),
+                      lockIdentity: FileIdentity(lockStatus)
+                  )
+          '''
+          new_location_init = '''        let location = Location(
+                      directoryURL: directoryURL,
+                      fileName: fileName,
+                      lockName: lockName,
+                      directoryIdentity: FileIdentity(directoryStatus),
+                      lockIdentity: FileIdentity(lockStatus),
+                      descriptorPins: DescriptorPins(
+                          directoryDescriptor: directoryDescriptor,
+                          lockDescriptor: lockDescriptor
+                      )
+                  )
+                  shouldCloseDirectoryDescriptor = false
+                  shouldCloseLockDescriptor = false
+          '''
+          if source.count(old_location_init) != 1:
+              raise SystemExit(f'location init preimage count={source.count(old_location_init)}')
+          source = source.replace(old_location_init, new_location_init, 1)
+          store.write_text(source)
+
+          tests = Path('Packages/AgentHarnessKit/Tests/AgentPolicyTests/MutationEffectStaticSecurityTests.swift')
+          source = tests.read_text()
+          old_process = '''        let process = Process()
+                  let output = Pipe()
+                  process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+                  process.arguments = [
+                      "swiftc",
+                      "-emit-sil",
+                      "-swift-version",
+                      "6",
+                      "-I",
+                      packageRoot.appendingPathComponent(".build/debug/Modules").path,
+                      "-o",
+                      "/dev/null",
+                      sourceURL.path,
+                  ]
+          '''
+          new_process = '''        let process = Process()
+                  let output = Pipe()
+                  let compilerArguments = [
+                      "swiftc",
+                      "-emit-sil",
+                      "-swift-version",
+                      "6",
+                      "-I",
+                      packageRoot.appendingPathComponent(".build/debug/Modules").path,
+                      "-o",
+                      "/dev/null",
+                      sourceURL.path,
+                  ]
+          #if os(macOS)
+                  process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+          #else
+                  process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+          #endif
+                  process.arguments = compilerArguments
+          '''
+          if source.count(old_process) != 1:
+              raise SystemExit(f'compile helper preimage count={source.count(old_process)}')
+          tests.write_text(source.replace(old_process, new_process, 1))
+          PY
+
+          expected_files=$(cat <<'EOF'
+          Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift
+          Packages/AgentHarnessKit/Tests/AgentPolicyTests/MutationEffectStaticSecurityTests.swift
+          EOF
+          )
+          test "$(git status --short | awk '{print $2}' | sort)" = "$(printf '%s\n' "$expected_files" | sort)"
+          git diff --check
+          grep -q 'final class DescriptorPins' Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift
+          grep -q 'shouldCloseDirectoryDescriptor = false' Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift
+          grep -q 'shouldCloseLockDescriptor = false' Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift
+          grep -q 'URL(fileURLWithPath: "/usr/bin/env")' Packages/AgentHarnessKit/Tests/AgentPolicyTests/MutationEffectStaticSecurityTests.swift
+
+          git config user.name "NovaForge Repair Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add $expected_files
+          git commit -m "AgentPolicy: pin authority descriptors for identity stability"
+          git push origin HEAD:worker/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e1
