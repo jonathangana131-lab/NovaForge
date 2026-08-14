@@ -1,5 +1,11 @@
 import AgentDomain
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#else
+#error("AgentPolicy requires a POSIX libc")
+#endif
 import Dispatch
 import Foundation
 
@@ -26,13 +32,13 @@ final class WorkspaceMutationProcessLease: @unchecked Sendable {
         self.descriptor = nil
         stateLock.unlock()
         guard let descriptor else { return }
-        var lock = Darwin.flock()
+        var lock = flock()
         lock.l_type = Int16(F_UNLCK)
         lock.l_whence = Int16(SEEK_SET)
         lock.l_start = 0
         lock.l_len = 0
-        _ = Darwin.fcntl(descriptor, F_SETLK, &lock)
-        Darwin.close(descriptor)
+        _ = fcntl(descriptor, F_SETLK, &lock)
+        close(descriptor)
     }
 
     deinit { release() }
@@ -77,7 +83,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         let canonical = directoryURL
             .resolvingSymlinksInPath()
             .standardizedFileURL
-        let descriptor = Darwin.open(
+        let descriptor = open(
             canonical.path,
             O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW
         )
@@ -85,7 +91,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
             throw WorkspaceMutationProcessArbiterError
                 .invalidDirectoryIdentity
         }
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
         let status = try Self.validatedDirectory(descriptor)
         self.directoryURL = canonical
         self.timeoutMilliseconds = timeoutMilliseconds
@@ -96,7 +102,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         workspaceID: WorkspaceID
     ) async throws -> WorkspaceMutationProcessLease {
         try Task.checkCancellation()
-        let directoryDescriptor = Darwin.open(
+        let directoryDescriptor = open(
             directoryURL.path,
             O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW
         )
@@ -104,7 +110,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
             throw WorkspaceMutationProcessArbiterError
                 .invalidDirectoryIdentity
         }
-        defer { Darwin.close(directoryDescriptor) }
+        defer { close(directoryDescriptor) }
         let directoryStatus = try Self.validatedDirectory(
             directoryDescriptor
         )
@@ -115,7 +121,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
 
         let lockName = "workspace-\(workspaceID.description).lock"
         let descriptor = lockName.withCString {
-            Darwin.openat(
+            openat(
                 directoryDescriptor,
                 $0,
                 O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
@@ -127,7 +133,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         }
         var keepDescriptor = false
         defer {
-            if !keepDescriptor { Darwin.close(descriptor) }
+            if !keepDescriptor { close(descriptor) }
         }
         let openedStatus = try Self.validatedLock(
             descriptor: descriptor,
@@ -144,12 +150,12 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
             + .milliseconds(Int(timeoutMilliseconds))
         while true {
             try Task.checkCancellation()
-            var lock = Darwin.flock()
+            var lock = flock()
             lock.l_type = Int16(F_WRLCK)
             lock.l_whence = Int16(SEEK_SET)
             lock.l_start = 0
             lock.l_len = 0
-            if Darwin.fcntl(descriptor, F_SETLK, &lock) == 0 { break }
+            if fcntl(descriptor, F_SETLK, &lock) == 0 { break }
             let code = errno
             guard code == EACCES || code == EAGAIN,
                   DispatchTime.now() < deadline
@@ -198,12 +204,12 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
             keepDescriptor = true
             return WorkspaceMutationProcessLease(descriptor: descriptor)
         } catch {
-            var unlock = Darwin.flock()
+            var unlock = flock()
             unlock.l_type = Int16(F_UNLCK)
             unlock.l_whence = Int16(SEEK_SET)
             unlock.l_start = 0
             unlock.l_len = 0
-            _ = Darwin.fcntl(descriptor, F_SETLK, &unlock)
+            _ = fcntl(descriptor, F_SETLK, &unlock)
             throw error
         }
     }
@@ -218,9 +224,9 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         _ descriptor: Int32
     ) throws -> stat {
         var status = stat()
-        guard Darwin.fstat(descriptor, &status) == 0,
+        guard fstat(descriptor, &status) == 0,
               status.st_mode & S_IFMT == S_IFDIR,
-              status.st_uid == Darwin.geteuid(),
+              status.st_uid == geteuid(),
               status.st_mode & 0o022 == 0
         else {
             throw WorkspaceMutationProcessArbiterError
@@ -237,21 +243,21 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         var descriptorStatus = stat()
         var pathStatus = stat()
         let pathResult = name.withCString {
-            Darwin.fstatat(
+            fstatat(
                 directoryDescriptor,
                 $0,
                 &pathStatus,
                 AT_SYMLINK_NOFOLLOW
             )
         }
-        guard Darwin.fstat(descriptor, &descriptorStatus) == 0,
+        guard fstat(descriptor, &descriptorStatus) == 0,
               pathResult == 0,
               descriptorStatus.st_mode & S_IFMT == S_IFREG,
               pathStatus.st_mode & S_IFMT == S_IFREG,
               descriptorStatus.st_nlink == 1,
               pathStatus.st_nlink == 1,
-              descriptorStatus.st_uid == Darwin.geteuid(),
-              pathStatus.st_uid == Darwin.geteuid(),
+              descriptorStatus.st_uid == geteuid(),
+              pathStatus.st_uid == geteuid(),
               descriptorStatus.st_mode & 0o077 == 0,
               pathStatus.st_mode & 0o077 == 0,
               descriptorStatus.st_dev == pathStatus.st_dev,
@@ -270,7 +276,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         maximumBytes: Int
     ) throws -> Data {
         guard expectedSize >= 0, expectedSize <= maximumBytes,
-              Darwin.lseek(descriptor, 0, SEEK_SET) >= 0
+              lseek(descriptor, 0, SEEK_SET) >= 0
         else {
             throw WorkspaceMutationProcessArbiterError.invalidLockIdentity
         }
@@ -278,7 +284,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         var result = Data()
         while true {
             let count = bytes.withUnsafeMutableBytes {
-                Darwin.read(descriptor, $0.baseAddress, $0.count)
+                policyPOSIXRead(descriptor, $0.baseAddress, $0.count)
             }
             if count == 0 { break }
             if count < 0 {
@@ -300,8 +306,8 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
         descriptor: Int32,
         data: Data
     ) throws {
-        guard Darwin.ftruncate(descriptor, 0) == 0,
-              Darwin.lseek(descriptor, 0, SEEK_SET) >= 0
+        guard ftruncate(descriptor, 0) == 0,
+              lseek(descriptor, 0, SEEK_SET) >= 0
         else {
             throw WorkspaceMutationProcessArbiterError.persistenceFailed
         }
@@ -309,7 +315,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
             guard let base = buffer.baseAddress else { return }
             var offset = 0
             while offset < buffer.count {
-                let count = Darwin.write(
+                let count = write(
                     descriptor,
                     base.advanced(by: offset),
                     buffer.count - offset
@@ -330,7 +336,7 @@ final class WorkspaceMutationProcessArbiter: @unchecked Sendable {
     }
 
     private static func synchronize(_ descriptor: Int32) throws {
-        while Darwin.fsync(descriptor) != 0 {
+        while fsync(descriptor) != 0 {
             if errno == EINTR { continue }
             throw WorkspaceMutationProcessArbiterError.persistenceFailed
         }

@@ -1,5 +1,11 @@
 import AgentDomain
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#else
+#error("AgentPolicy requires a POSIX libc")
+#endif
 import Dispatch
 import Foundation
 
@@ -488,7 +494,7 @@ private enum MutationEffectFileIO {
         defer { processSemaphore.signal() }
 
         let directoryDescriptor = try openDirectory(at: directoryURL)
-        defer { Darwin.close(directoryDescriptor) }
+        defer { close(directoryDescriptor) }
         let directoryStatus = try validatedDirectory(
             descriptor: directoryDescriptor
         )
@@ -496,7 +502,7 @@ private enum MutationEffectFileIO {
             directoryDescriptor: directoryDescriptor,
             name: lockName
         )
-        defer { Darwin.close(lockDescriptor) }
+        defer { close(lockDescriptor) }
         try acquireFileLock(descriptor: lockDescriptor, until: deadline)
         defer { releaseFileLock(descriptor: lockDescriptor) }
         let lockStatus = try validatedRegularFile(
@@ -577,7 +583,7 @@ private enum MutationEffectFileIO {
         try acquireProcessLock(until: deadline)
         defer { processSemaphore.signal() }
         let directoryDescriptor = try openDirectory(at: location.directoryURL)
-        defer { Darwin.close(directoryDescriptor) }
+        defer { close(directoryDescriptor) }
         let directoryStatus = try validatedDirectory(
             descriptor: directoryDescriptor
         )
@@ -588,7 +594,7 @@ private enum MutationEffectFileIO {
             directoryDescriptor: directoryDescriptor,
             name: location.lockName
         )
-        defer { Darwin.close(lockDescriptor) }
+        defer { close(lockDescriptor) }
         let openedLockStatus = try validatedRegularFile(
             descriptor: lockDescriptor,
             directoryDescriptor: directoryDescriptor,
@@ -634,7 +640,7 @@ private enum MutationEffectFileIO {
             }
             throw FileMutationEffectLifecycleStoreError.persistenceFailed
         }
-        defer { Darwin.close(descriptor) }
+        defer { close(descriptor) }
         let status = try validatedRegularFile(
             descriptor: descriptor,
             directoryDescriptor: directoryDescriptor,
@@ -682,10 +688,10 @@ private enum MutationEffectFileIO {
         }
         var shouldUnlink = true
         defer {
-            Darwin.close(descriptor)
+            close(descriptor)
             if shouldUnlink {
                 _ = temporaryName.withCString {
-                    Darwin.unlinkat(directoryDescriptor, $0, 0)
+                    unlinkat(directoryDescriptor, $0, 0)
                 }
             }
         }
@@ -699,7 +705,7 @@ private enum MutationEffectFileIO {
         try faultInjector?(.afterFileSyncBeforeRename)
         let renamed = temporaryName.withCString { temporary in
             location.fileName.withCString { destination in
-                Darwin.renameat(
+                renameat(
                     directoryDescriptor,
                     temporary,
                     directoryDescriptor,
@@ -730,12 +736,12 @@ private enum MutationEffectFileIO {
         until deadline: DispatchTime
     ) throws {
         while true {
-            var lock = Darwin.flock()
+            var lock = flock()
             lock.l_type = Int16(F_WRLCK)
             lock.l_whence = Int16(SEEK_SET)
             lock.l_start = 0
             lock.l_len = 0
-            if Darwin.fcntl(descriptor, F_SETLK, &lock) == 0 { return }
+            if fcntl(descriptor, F_SETLK, &lock) == 0 { return }
             let code = errno
             guard code == EACCES || code == EAGAIN else {
                 throw FileMutationEffectLifecycleStoreError.lockUnavailable
@@ -743,21 +749,21 @@ private enum MutationEffectFileIO {
             guard DispatchTime.now() < deadline else {
                 throw FileMutationEffectLifecycleStoreError.lockUnavailable
             }
-            Darwin.usleep(2_000)
+            usleep(2_000)
         }
     }
 
     private static func releaseFileLock(descriptor: Int32) {
-        var lock = Darwin.flock()
+        var lock = flock()
         lock.l_type = Int16(F_UNLCK)
         lock.l_whence = Int16(SEEK_SET)
         lock.l_start = 0
         lock.l_len = 0
-        _ = Darwin.fcntl(descriptor, F_SETLK, &lock)
+        _ = fcntl(descriptor, F_SETLK, &lock)
     }
 
     private static func openDirectory(at url: URL) throws -> Int32 {
-        let descriptor = Darwin.open(
+        let descriptor = open(
             url.path,
             O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW
         )
@@ -790,7 +796,7 @@ private enum MutationEffectFileIO {
         mode: mode_t
     ) -> Int32 {
         name.withCString {
-            Darwin.openat(directoryDescriptor, $0, flags, mode)
+            openat(directoryDescriptor, $0, flags, mode)
         }
     }
 
@@ -798,9 +804,9 @@ private enum MutationEffectFileIO {
         descriptor: Int32
     ) throws -> stat {
         var status = stat()
-        guard Darwin.fstat(descriptor, &status) == 0,
+        guard fstat(descriptor, &status) == 0,
               status.st_mode & S_IFMT == S_IFDIR,
-              status.st_uid == Darwin.geteuid(),
+              status.st_uid == geteuid(),
               status.st_mode & 0o022 == 0
         else {
             throw FileMutationEffectLifecycleStoreError.invalidFileIdentity
@@ -816,21 +822,21 @@ private enum MutationEffectFileIO {
         var descriptorStatus = stat()
         var pathStatus = stat()
         let pathResult = name.withCString {
-            Darwin.fstatat(
+            fstatat(
                 directoryDescriptor,
                 $0,
                 &pathStatus,
                 AT_SYMLINK_NOFOLLOW
             )
         }
-        guard Darwin.fstat(descriptor, &descriptorStatus) == 0,
+        guard fstat(descriptor, &descriptorStatus) == 0,
               pathResult == 0,
               descriptorStatus.st_mode & S_IFMT == S_IFREG,
               pathStatus.st_mode & S_IFMT == S_IFREG,
               descriptorStatus.st_nlink == 1,
               pathStatus.st_nlink == 1,
-              descriptorStatus.st_uid == Darwin.geteuid(),
-              pathStatus.st_uid == Darwin.geteuid(),
+              descriptorStatus.st_uid == geteuid(),
+              pathStatus.st_uid == geteuid(),
               descriptorStatus.st_mode & 0o077 == 0,
               pathStatus.st_mode & 0o077 == 0,
               descriptorStatus.st_dev == pathStatus.st_dev,
@@ -847,7 +853,7 @@ private enum MutationEffectFileIO {
     ) -> Bool {
         var status = stat()
         return name.withCString {
-            Darwin.fstatat(
+            fstatat(
                 directoryDescriptor,
                 $0,
                 &status,
@@ -864,7 +870,7 @@ private enum MutationEffectFileIO {
         guard expectedSize >= 0, expectedSize <= maximumBytes else {
             throw FileMutationEffectLifecycleStoreError.corruptEnvelope
         }
-        guard Darwin.lseek(descriptor, 0, SEEK_SET) >= 0 else {
+        guard lseek(descriptor, 0, SEEK_SET) >= 0 else {
             throw FileMutationEffectLifecycleStoreError.persistenceFailed
         }
         var result = Data()
@@ -872,7 +878,7 @@ private enum MutationEffectFileIO {
         var buffer = [UInt8](repeating: 0, count: min(64 * 1_024, max(1, maximumBytes)))
         while true {
             let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+                read(descriptor, bytes.baseAddress, bytes.count)
             }
             if count == 0 { break }
             if count < 0 {
@@ -895,7 +901,7 @@ private enum MutationEffectFileIO {
             guard let base = bytes.baseAddress else { return }
             var offset = 0
             while offset < bytes.count {
-                let written = Darwin.write(
+                let written = write(
                     descriptor,
                     base.advanced(by: offset),
                     bytes.count - offset
@@ -916,8 +922,8 @@ private enum MutationEffectFileIO {
         descriptor: Int32,
         data: Data
     ) throws {
-        guard Darwin.ftruncate(descriptor, 0) == 0,
-              Darwin.lseek(descriptor, 0, SEEK_SET) >= 0
+        guard ftruncate(descriptor, 0) == 0,
+              lseek(descriptor, 0, SEEK_SET) >= 0
         else {
             throw FileMutationEffectLifecycleStoreError.persistenceFailed
         }
@@ -926,7 +932,7 @@ private enum MutationEffectFileIO {
     }
 
     private static func synchronize(descriptor: Int32) throws {
-        while Darwin.fsync(descriptor) != 0 {
+        while fsync(descriptor) != 0 {
             if errno == EINTR { continue }
             throw FileMutationEffectLifecycleStoreError.persistenceFailed
         }

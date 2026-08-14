@@ -1,4 +1,4 @@
-import CryptoKit
+import Crypto
 import Foundation
 
 public enum SHA256DigestValidationError: Error, Equatable, Sendable {

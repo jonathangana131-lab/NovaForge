@@ -290,8 +290,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
         )
         let process = Process()
         let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = [
+        let compilerArguments = [
             "swiftc",
             "-emit-sil",
             "-swift-version",
@@ -302,6 +301,12 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             "/dev/null",
             sourceURL.path,
         ]
+#if os(macOS)
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+#else
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+#endif
+        process.arguments = compilerArguments
         process.standardOutput = output
         process.standardError = output
         try process.run()
