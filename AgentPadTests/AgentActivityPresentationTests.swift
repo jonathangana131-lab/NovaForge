@@ -73,6 +73,61 @@ final class AgentActivityPresentationTests: XCTestCase {
             "Writing answer…"
         )
     }
+
+    func testToolTargetsUseTargetSpecificSanitization() {
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "  Sources/App.swift  "]
+            ).target,
+            "Sources/App.swift"
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "Sources/Word Tree/Node.swift"]
+            ).target,
+            "Sources/Word Tree/Node.swift"
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "{draft}.swift"]
+            ).target,
+            "{draft}.swift"
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "[draft].swift"]
+            ).target,
+            "[draft].swift"
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "  {\"internal\":true}  "]
+            ).target,
+            "Details saved in History."
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: ["path": "[\"internal\", true]"]
+            ).target,
+            "Details saved in History."
+        )
+        XCTAssertEqual(
+            AgentActivityPresentation.presentation(
+                forToolName: "read_file",
+                arguments: [
+                    "path": "   ",
+                    "file": "Sources/Fallback.swift",
+                ]
+            ).target,
+            "Sources/Fallback.swift"
+        )
+    }
 }
 
 @MainActor
