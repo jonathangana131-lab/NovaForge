@@ -1,0 +1,43 @@
+name: V14 AgentProviders crypto portability validation
+
+on:
+  push:
+    branches:
+      - agent/v14-preview-agentproviders-crypto-portability
+    paths:
+      - 'Packages/AgentHarnessKit/Package.swift'
+      - 'Packages/AgentHarnessKit/Sources/AgentProviders/HostedReadOnlyToolsCapability.swift'
+      - '.github/workflows/v14-agentproviders-crypto-portability-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  agentproviders-linux-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify validation is stacked on exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "0e7d4953904987b23b5f7aa373d98e9a847032b3"
+          git diff --check 228eeb286bc48ee13ead3c084290062052532738..HEAD^
+      - name: Verify provider target owns portable crypto dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -n '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentProviders; then
+            echo 'AgentProviders still imports CryptoKit' >&2
+            exit 1
+          fi
+          grep -F '.product(name: "Crypto", package: "swift-crypto")' Packages/AgentHarnessKit/Package.swift >/dev/null
+          grep -F 'import Crypto' Packages/AgentHarnessKit/Sources/AgentProviders/HostedReadOnlyToolsCapability.swift >/dev/null
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Build AgentProviders debug on Linux
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentProviders -Xswiftc -warnings-as-errors
+      - name: Build AgentProviders release on Linux
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target AgentProviders -Xswiftc -warnings-as-errors
