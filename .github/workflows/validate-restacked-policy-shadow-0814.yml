@@ -1,0 +1,38 @@
+name: Validate repaired Policy plus retained Shadow stack
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-POLICY-SHADOW-STACK-0814/e1
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-full-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 4
+      - name: Assert validation-only restack scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="8a00659674d81872345c22dd7082777cb92c2702"
+          test "$(git rev-parse HEAD~3)" = "$base"
+          expected=$(cat <<'EOF'
+          .github/workflows/validate-restacked-policy-shadow-0814.yml
+          Packages/AgentHarnessKit/Package.swift
+          Packages/AgentHarnessKit/Sources/AgentShadow/CanonicalShadowDigest.swift
+          EOF
+          )
+          test "$(git diff --name-only "$base" HEAD | sort)" = "$(printf '%s\n' "$expected" | sort)"
+          test "$(grep -c '^import Crypto$' Packages/AgentHarnessKit/Sources/AgentShadow/CanonicalShadowDigest.swift)" -eq 1
+          ! grep -R -n --include='*.swift' '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentShadow
+          git diff --check "$base" HEAD
+      - name: Run full AgentHarnessKit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
