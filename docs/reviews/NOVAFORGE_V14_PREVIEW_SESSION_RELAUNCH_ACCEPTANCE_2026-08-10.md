@@ -43,6 +43,8 @@ The original additive lane accumulated three reviewed follow-ons before integrat
 
 Current-main convergence worker `GPT56-SOL-NF-V14-PREVIEW-RELAUNCH-CONVERGENCE-0814` reconstructed that cumulative reviewed state directly on current main, because main still contained none of the relaunch acceptance files. The old worker-branch-only push triggers were not carried forward; the integrated workflow instead runs automatically only when its own acceptance contract files change in a pull request and remains manually dispatchable for release-candidate qualification.
 
+Because GitHub's default `pull_request` checkout can use a synthetic merge ref, the converged workflow explicitly resolves `${{ github.event.pull_request.head.sha || github.sha }}`, checks out that exact candidate commit, asserts `git rev-parse HEAD` matches it before qualification, and writes the checked-out SHA into both preflight and environment receipts. This preserves the original exact-source truth boundary after changing the trigger shape.
+
 This convergence does not reinterpret the hosted missing-Xcode-27 run as Simulator acceptance. It proves only selector execution and failure-evidence durability on that hosted environment.
 
 ## Remaining gap — do not call this full closure yet
