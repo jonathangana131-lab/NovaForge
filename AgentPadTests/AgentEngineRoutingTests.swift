@@ -1,3 +1,5 @@
+import AgentDomain
+import AgentProviders
 import XCTest
 
 final class AgentEngineRoutingTests: XCTestCase {
@@ -117,5 +119,151 @@ final class AgentEngineRoutingTests: XCTestCase {
     func testEveryV1RunInfersV1RoutingWithoutChangingSchemaShape() {
         let run = AgentRunRecord(status: .running)
         XCTAssertEqual(run.acceptedRoutingMetadata, .v1)
+    }
+
+    func testPreviewEffortBudgetsAreExactIncreasingAndBounded() {
+        let low = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .low,
+            orchestrationMode: .standard
+        )
+        let medium = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .medium,
+            orchestrationMode: .standard
+        )
+        let high = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .high,
+            orchestrationMode: .standard
+        )
+        let extraHigh = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .xhigh,
+            orchestrationMode: .standard
+        )
+        let ultra = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .ultraCode
+        )
+
+        XCTAssertEqual(
+            [
+                low.limits.iterations,
+                medium.limits.iterations,
+                high.limits.iterations,
+                extraHigh.limits.iterations,
+                ultra.limits.iterations,
+            ],
+            [8, 32, 48, 64, 128]
+        )
+        XCTAssertEqual(
+            [
+                low.limits.providerAttempts,
+                medium.limits.providerAttempts,
+                high.limits.providerAttempts,
+                extraHigh.limits.providerAttempts,
+                ultra.limits.providerAttempts,
+            ],
+            [12, 48, 72, 96, 192]
+        )
+        XCTAssertEqual(
+            [
+                low.limits.toolInvocations,
+                medium.limits.toolInvocations,
+                high.limits.toolInvocations,
+                extraHigh.limits.toolInvocations,
+                ultra.limits.toolInvocations,
+            ],
+            [24, 64, 96, 128, 256]
+        )
+    }
+
+    func testPreviewMediumPreservesLegacyStandardBudget() {
+        XCTAssertEqual(
+            AgentRunEffortBudgetPolicy.budget(
+                reasoningEffort: .medium,
+                orchestrationMode: .standard
+            ),
+            AgentBudget(limits: .standard)
+        )
+    }
+
+    func testPreviewUltraKeepsGlobalSafetyLimitsConservative() {
+        let ultra = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .ultraCode
+        )
+        let standard = AgentBudgetLimits.standard
+
+        XCTAssertEqual(ultra.limits.iterations, 128)
+        XCTAssertEqual(ultra.limits.providerAttempts, 192)
+        XCTAssertEqual(ultra.limits.toolInvocations, 256)
+        XCTAssertEqual(ultra.limits.inputTokens, standard.inputTokens)
+        XCTAssertEqual(ultra.limits.outputTokens, standard.outputTokens)
+        XCTAssertEqual(ultra.limits.elapsedMilliseconds, standard.elapsedMilliseconds)
+        XCTAssertEqual(ultra.limits.costMicrounits, standard.costMicrounits)
+        XCTAssertEqual(ultra.limits.childRuns, standard.childRuns)
+        XCTAssertEqual(ultra.limits.childDepth, standard.childDepth)
+    }
+
+    func testPreviewLegacyAndStaleEffortStateDoesNotSelfPromoteToUltra() {
+        let legacyUltra = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .ultra
+        )
+        let extraHigh = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .xhigh,
+            orchestrationMode: .standard
+        )
+        let staleStandardMax = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .standard
+        )
+        let ultra = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .ultraCode
+        )
+
+        XCTAssertEqual(legacyUltra, extraHigh)
+        XCTAssertEqual(staleStandardMax, extraHigh)
+        XCTAssertNotEqual(staleStandardMax, ultra)
+    }
+
+    func testPreviewUltraCodeRequiresExactMaxPairAndMalformedPairsFailClosed() {
+        let malformedReasoningEfforts: [ProviderReasoningEffort] = [
+            .none,
+            .low,
+            .medium,
+            .high,
+            .xhigh,
+        ]
+
+        for reasoningEffort in malformedReasoningEfforts {
+            let malformedPairBudget = AgentRunEffortBudgetPolicy.budget(
+                reasoningEffort: reasoningEffort,
+                orchestrationMode: .ultraCode
+            )
+            let matchingStandardBudget = AgentRunEffortBudgetPolicy.budget(
+                reasoningEffort: reasoningEffort,
+                orchestrationMode: .standard
+            )
+
+            XCTAssertEqual(
+                malformedPairBudget,
+                matchingStandardBudget,
+                "A malformed \(reasoningEffort) + ultraCode pair must not self-promote."
+            )
+        }
+
+        let canonicalUltra = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .ultraCode
+        )
+        let staleStandardMax = AgentRunEffortBudgetPolicy.budget(
+            reasoningEffort: .max,
+            orchestrationMode: .standard
+        )
+
+        XCTAssertEqual(canonicalUltra.limits.iterations, 128)
+        XCTAssertEqual(canonicalUltra.limits.providerAttempts, 192)
+        XCTAssertEqual(canonicalUltra.limits.toolInvocations, 256)
+        XCTAssertNotEqual(canonicalUltra, staleStandardMax)
     }
 }
