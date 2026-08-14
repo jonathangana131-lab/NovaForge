@@ -1,0 +1,28 @@
+name: Probe AgentHarnessKit after AgentPolicy portability
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e3-full-linux
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-full-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "c294273767aa9ad461e764a6017db5b98fc0e0f8"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/probe-agentharness-after-policy-0814.yml"
+      - name: Run full package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors
