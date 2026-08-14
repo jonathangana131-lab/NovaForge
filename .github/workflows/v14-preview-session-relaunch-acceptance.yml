@@ -6,6 +6,7 @@ on:
       - worker/GPT56-SOL-NF-V14-PREVIEW-SESSION-0810/relaunch/e1
       - agent/v14-preview-session-relaunch-bound-target
       - agent/v14-preview-session-relaunch-ios-runtime-selector
+      - worker/GPT56-SOL-NF-V14-RELAUNCH-PREFLIGHT-0814/e1
   workflow_dispatch:
 
 permissions:
@@ -23,6 +24,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Capture relaunch host preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf artifacts/preview-session-relaunch
+          mkdir -p artifacts/preview-session-relaunch
+          {
+            echo "source_sha=$GITHUB_SHA"
+            echo "runner_os=$RUNNER_OS"
+            sw_vers
+            echo "available_xcode_candidates_begin"
+            while IFS= read -r candidate; do
+              [ -d "$candidate/Contents/Developer" ] || continue
+              candidate_version=$(DEVELOPER_DIR="$candidate/Contents/Developer" xcodebuild -version 2>/dev/null | sed -n '1p' || true)
+              printf '%s|%s\n' "$candidate" "$candidate_version"
+            done < <(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -r)
+            echo "available_xcode_candidates_end"
+          } | tee artifacts/preview-session-relaunch/preflight.txt
+
       - name: Verify iOS 27 runtime selection contract
         shell: bash
         run: bash scripts/verify_v14_preview_ios27_runtime_selector.sh
@@ -31,7 +51,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf artifacts/preview-session-relaunch
           mkdir -p artifacts/preview-session-relaunch
 
           SELECTED_XCODE=""
