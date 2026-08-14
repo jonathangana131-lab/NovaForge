@@ -101,3 +101,7 @@ A future representative long-session acceptance rung must use a workload whose s
 Producer: `.github/workflows/v14-preview-residency-signal.yml`
 
 Historical draft #263 called the producer a sustained streaming soak. That label was rejected during adversarial review because the finite fixture could complete before the first accepted RSS sample. This recovery intentionally narrows the evidence class rather than pretending a workflow-only change can make a finite app fixture semantically continuous.
+
+## Validation trigger
+
+Both the producer path and this QA contract are `push`/`pull_request` path filters for the focused workflow, so a producer or contract change can register a focused run before promotion.
