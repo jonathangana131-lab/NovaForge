@@ -21,8 +21,12 @@ jobs:
     name: Session + relaunch acceptance
     runs-on: macos-26
     timeout-minutes: 45
+    env:
+      NOVAFORGE_ACCEPTANCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Capture relaunch host preflight
         shell: bash
@@ -30,8 +34,13 @@ jobs:
           set -euo pipefail
           rm -rf artifacts/preview-session-relaunch
           mkdir -p artifacts/preview-session-relaunch
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          if [ "$ACTUAL_SHA" != "$NOVAFORGE_ACCEPTANCE_SHA" ]; then
+            echo "Preview relaunch acceptance checked out $ACTUAL_SHA instead of exact candidate $NOVAFORGE_ACCEPTANCE_SHA" >&2
+            exit 69
+          fi
           {
-            echo "source_sha=$GITHUB_SHA"
+            echo "source_sha=$ACTUAL_SHA"
             echo "runner_os=$RUNNER_OS"
             sw_vers
             echo "available_xcode_candidates_begin"
@@ -131,7 +140,7 @@ jobs:
           fi
 
           {
-            echo "source_sha=$GITHUB_SHA"
+            echo "source_sha=$(git rev-parse HEAD)"
             echo "xcode_app=$SELECTED_XCODE"
             echo "xcode_version=$XCODE_VERSION_LINE"
             echo "xcode_build=$XCODE_BUILD"
