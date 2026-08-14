@@ -2,6 +2,8 @@
 
 Status: Preview evidence rung only. This document deliberately does **not** claim sustained streaming, representative long-session acceptance, or physical iPhone qualification.
 
+> Filename note: this legacy `streaming-soak` path is retained for review continuity with superseded draft #263. The evidence class defined here is residency, not sustained streaming.
+
 ## Why this exists
 
 NovaForge Preview needs durable evidence about process survival and gross memory-regression behavior beyond the short existing UI performance traces. The existing `--stress-streaming` launch fixture is finite: current source completes its programmed producer delay in roughly tens of seconds, not the full 180-second observation window.
@@ -73,7 +75,7 @@ Each must exceed a minimum byte-size sanity check. These images prove only that 
 
 ## Durable failure evidence
 
-Runner preflight is written under `$RUNNER_TEMP`, outside the checkout tree, **before** checkout. This matters because checkout may clean workspace files. Later build/runtime receipts use the same external artifact directory. The final upload runs under `if: always()` with `if-no-files-found: error`.
+Runner preflight is written under `$RUNNER_TEMP`, outside the checkout tree, **before** checkout. Later build/runtime receipts use the same external artifact directory. The final upload runs under `if: always()` with `if-no-files-found: error`.
 
 A hosted-runner failure, missing Simulator, source mismatch, build failure, process death, screenshot failure, or RSS guardrail failure can therefore leave auditable evidence rather than disappearing behind a failed step.
 
@@ -96,6 +98,6 @@ A future representative long-session acceptance rung must use a workload whose s
 
 ## Workflow
 
-Producer: `.github/workflows/v14-preview-streaming-soak.yml`
+Producer: `.github/workflows/v14-preview-residency-signal.yml`
 
-The historical draft PR #263 called the producer a sustained streaming soak. That label was rejected during adversarial review because the finite fixture could complete before the first accepted RSS sample. This recovery intentionally narrows the evidence class rather than pretending a workflow-only change can make a finite app fixture semantically continuous.
+Historical draft #263 called the producer a sustained streaming soak. That label was rejected during adversarial review because the finite fixture could complete before the first accepted RSS sample. This recovery intentionally narrows the evidence class rather than pretending a workflow-only change can make a finite app fixture semantically continuous.
