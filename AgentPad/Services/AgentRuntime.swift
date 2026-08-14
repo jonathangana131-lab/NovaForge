@@ -339,6 +339,7 @@ private final class LocalBenchmarkProbe {
 struct AgentRuntimeLifecycleEffects {
     var runStarted: (_ projectName: String, _ statusLine: String) -> Void
     var runEnded: (_ statusLine: String, _ succeeded: Bool) -> Void
+    var runCancelled: (_ statusLine: String) -> Void = { _ in }
 
     static let live = AgentRuntimeLifecycleEffects(
         runStarted: { projectName, statusLine in
@@ -358,6 +359,9 @@ struct AgentRuntimeLifecycleEffects {
                 statusLine: statusLine,
                 success: succeeded
             )
+        },
+        runCancelled: { statusLine in
+            RunActivityController.shared.runCancelled(statusLine: statusLine)
         }
     )
 }
@@ -603,10 +607,13 @@ final class AgentRuntime {
             return
         }
         hasActiveWorkSession = false
-        lifecycleEffects.runEnded(
-            lastError ?? activityTitle,
-            conclusion.succeeded
-        )
+        let terminalStatus = lastError ?? activityTitle
+        switch conclusion {
+        case .cancelled:
+            lifecycleEffects.runCancelled(terminalStatus)
+        case .succeeded, .failed:
+            lifecycleEffects.runEnded(terminalStatus, conclusion.succeeded)
+        }
         releaseRunWorkspaceIfSettled()
     }
 

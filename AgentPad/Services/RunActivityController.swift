@@ -76,6 +76,26 @@ final class RunActivityController {
         }
     }
 
+    func runCancelled(statusLine: String) {
+        guard let activity else { return }
+        self.activity = nil
+        lastStatusLine = ""
+        let previous = activity.content.state
+        let state = NovaRunActivityAttributes.ContentState(
+            phase: "Paused",
+            statusLine: statusLine,
+            isWorking: false,
+            startedAt: previous.startedAt
+        )
+        nonisolated(unsafe) let live = activity
+        Task {
+            await live.end(
+                ActivityContent(state: state, staleDate: nil),
+                dismissalPolicy: .after(Date().addingTimeInterval(6))
+            )
+        }
+    }
+
     // MARK: - Widget snapshot
 
     /// Throttled: at most one write + timeline reload per 20s unless the
