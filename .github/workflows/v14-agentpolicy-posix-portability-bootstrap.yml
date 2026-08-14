@@ -1,0 +1,119 @@
+name: V14 AgentPolicy POSIX portability bootstrap
+
+on:
+  push:
+    branches:
+      - agent/v14-preview-agentpolicy-posix-portability
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-prove:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact dependency head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "787b39e6bbe6bd9f353699b8f0062e1f786f1476"
+      - name: Apply guarded AgentPolicy portability patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('Packages/AgentHarnessKit')
+          sources = root / 'Sources' / 'AgentPolicy'
+          package = root / 'Package.swift'
+
+          expected_crypto = {
+              'DurableApproval.swift',
+              'PolicyCanonicalDigest.swift',
+          }
+          expected_darwin = {
+              'FileMutationEffectLifecycleStore.swift',
+              'FilePolicyAuthorityStore.swift',
+          }
+
+          crypto = {
+              p.name for p in sources.glob('*.swift')
+              if '\nimport CryptoKit\n' in ('\n' + p.read_text())
+          }
+          darwin = {
+              p.name for p in sources.glob('*.swift')
+              if '\nimport Darwin\n' in ('\n' + p.read_text())
+          }
+          if crypto != expected_crypto:
+              raise SystemExit(f'unexpected AgentPolicy CryptoKit import set: {sorted(crypto)}')
+          if darwin != expected_darwin:
+              raise SystemExit(f'unexpected AgentPolicy Darwin import set: {sorted(darwin)}')
+
+          text = package.read_text()
+          old = '''        .target(\n            name: "AgentPolicy",\n            dependencies: ["AgentDomain", "AgentTools"]\n        ),'''
+          new = '''        .target(\n            name: "AgentPolicy",\n            dependencies: [\n                "AgentDomain",\n                "AgentTools",\n                .product(name: "Crypto", package: "swift-crypto"),\n            ]\n        ),'''
+          if text.count(old) != 1:
+              raise SystemExit('AgentPolicy manifest anchor drifted')
+          package.write_text(text.replace(old, new))
+
+          for name in sorted(expected_crypto):
+              path = sources / name
+              text = path.read_text()
+              if text.count('import CryptoKit') != 1:
+                  raise SystemExit(f'{name}: expected one CryptoKit import')
+              path.write_text(text.replace('import CryptoKit', 'import Crypto'))
+
+          portable_import = '''#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#else\n#error("AgentPolicy file ledgers require a POSIX libc")\n#endif'''
+          for name in sorted(expected_darwin):
+              path = sources / name
+              text = path.read_text()
+              if text.count('import Darwin') != 1:
+                  raise SystemExit(f'{name}: expected one Darwin import')
+              if 'Glibc.' in text:
+                  raise SystemExit(f'{name}: unexpected existing Glibc qualification')
+              text = text.replace('import Darwin', portable_import)
+              text = text.replace('Darwin.', '')
+              path.write_text(text)
+          PY
+
+          git diff --check
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(
+            Packages/AgentHarnessKit/Package.swift
+            Packages/AgentHarnessKit/Sources/AgentPolicy/DurableApproval.swift
+            Packages/AgentHarnessKit/Sources/AgentPolicy/FileMutationEffectLifecycleStore.swift
+            Packages/AgentHarnessKit/Sources/AgentPolicy/FilePolicyAuthorityStore.swift
+            Packages/AgentHarnessKit/Sources/AgentPolicy/PolicyCanonicalDigest.swift
+          )
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected[@]}" | sort)"
+          ! grep -R -n '^import CryptoKit$' Packages/AgentHarnessKit/Sources/AgentPolicy
+          ! grep -R -n '^import Darwin$' Packages/AgentHarnessKit/Sources/AgentPolicy
+          ! grep -R -n 'Darwin\.' Packages/AgentHarnessKit/Sources/AgentPolicy
+      - name: Commit product patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Packages/AgentHarnessKit/Package.swift Packages/AgentHarnessKit/Sources/AgentPolicy
+          git commit -m 'Preview: make AgentPolicy POSIX portable'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "PRODUCT_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Show toolchain
+        run: swift --version
+      - name: Build AgentPolicy debug on Linux
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentPolicy -Xswiftc -warnings-as-errors
+      - name: Build AgentPolicy release on Linux
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target AgentPolicy -Xswiftc -warnings-as-errors
+      - name: Run AgentPolicy security suite on Linux
+        run: swift test --package-path Packages/AgentHarnessKit --filter AgentPolicyTests -Xswiftc -warnings-as-errors
+      - name: Persist proof summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "validated product head: $PRODUCT_HEAD"
+          git diff --check 787b39e6bbe6bd9f353699b8f0062e1f786f1476.."$PRODUCT_HEAD"
