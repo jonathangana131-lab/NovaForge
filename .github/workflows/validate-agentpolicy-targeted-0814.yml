@@ -1,0 +1,33 @@
+name: Validate AgentPolicy repaired regressions Ubuntu
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-POLICY-POSIX-0814/e9-targeted
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-targeted:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "8a00659674d81872345c22dd7082777cb92c2702"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/validate-agentpolicy-targeted-0814.yml"
+      - name: Run exact repaired security regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors \
+            --filter FilePolicyAuthorityStoreTests.testPostInitializationLockReplacementFailsClosed
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors \
+            --filter MutationEffectStaticSecurityTests.testMoveOnlyAuthoritiesRejectCopyEscapeAtCompileTime
+          swift test --package-path Packages/AgentHarnessKit -Xswiftc -warnings-as-errors \
+            --filter MutationEffectStaticSecurityTests.testOriginSpecificOperationTypesRejectCrossSurfaceCasesAtCompileTime
