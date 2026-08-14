@@ -1,0 +1,340 @@
+name: V14 Preview Finite Stream Residency
+
+on:
+  push:
+    paths:
+      - .github/workflows/v14-preview-residency-signal.yml
+      - QA/v14-preview-streaming-soak.md
+  pull_request:
+    paths:
+      - .github/workflows/v14-preview-residency-signal.yml
+      - QA/v14-preview-streaming-soak.md
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact NovaForge commit SHA to exercise
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-preview-residency-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-residency:
+    name: iPhone 12 iOS 27 finite-stream residency signal
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      SIMULATOR_ID: 4B9AB34A-404C-485F-B0BC-964F24D0AE83
+      EXPECTED_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-12
+      EXPECTED_RUNTIME_PREFIX: com.apple.CoreSimulator.SimRuntime.iOS-27-
+      BUNDLE_ID: com.joey.NovaForge
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+      SOAK_SECONDS: "180"
+      WARMUP_SECONDS: "45"
+      SAMPLE_INTERVAL_SECONDS: "15"
+      RSS_GROWTH_LIMIT_KIB: "131072"
+      RSS_SLOPE_LIMIT_KIB_PER_SEC: "768"
+      RSS_SPAN_LIMIT_KIB: "196608"
+      MIN_SCREENSHOT_BYTES: "120000"
+
+    steps:
+      - name: Capture durable runner preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARTIFACT_DIR="$RUNNER_TEMP/v14-preview-residency-soak"
+          DERIVED_DATA_PATH="$RUNNER_TEMP/v14-preview-residency-derived-data"
+          echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> "$GITHUB_ENV"
+          echo "DERIVED_DATA_PATH=$DERIVED_DATA_PATH" >> "$GITHUB_ENV"
+          mkdir -p "$ARTIFACT_DIR"
+          {
+            echo "requestedSourceSHA=$SOURCE_SHA"
+            echo "runnerOS=${RUNNER_OS:-unknown}"
+            echo "runnerArch=${RUNNER_ARCH:-unknown}"
+            echo "githubRunID=${GITHUB_RUN_ID:-unknown}"
+            echo "githubRunAttempt=${GITHUB_RUN_ATTEMPT:-unknown}"
+            echo "artifactDirectory=$ARTIFACT_DIR"
+            echo
+            uname -a
+            sw_vers
+            xcode-select -p
+            xcodebuild -version
+            echo '== Simulator runtimes =='
+            xcrun simctl list runtimes
+            echo '== available Simulator devices =='
+            xcrun simctl list devices available
+          } > "$ARTIFACT_DIR/runner-preflight.txt" 2>&1
+          test -s "$ARTIFACT_DIR/runner-preflight.txt"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Bind exact source and canonical Simulator identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Residency evidence requires an exact 40-character source SHA: $SOURCE_SHA" >&2
+            exit 2
+          fi
+          actual_sha="$(git rev-parse HEAD | tr '[:upper:]' '[:lower:]')"
+          expected_sha="$(printf '%s' "$SOURCE_SHA" | tr '[:upper:]' '[:lower:]')"
+          [[ "$actual_sha" == "$expected_sha" ]] || {
+            echo "Checkout mismatch: $actual_sha != $expected_sha" >&2
+            exit 1
+          }
+          SOURCE_SHA="$actual_sha"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+          /usr/bin/python3 - \
+            "$SIMULATOR_ID" "$EXPECTED_DEVICE_TYPE" "$EXPECTED_RUNTIME_PREFIX" \
+            "$ARTIFACT_DIR/simulator-identity.txt" <<'PY'
+          import json, subprocess, sys
+          udid, expected_type, expected_runtime, receipt = sys.argv[1:]
+          payload = json.loads(subprocess.check_output(
+              ["xcrun", "simctl", "list", "devices", "available", "-j"]
+          ))
+          match = None
+          for runtime, devices in payload.get("devices", {}).items():
+              for device in devices:
+                  if device.get("udid") == udid:
+                      match = (runtime, device)
+                      break
+              if match:
+                  break
+          if match is None:
+              raise SystemExit(f"Required Simulator {udid} is unavailable")
+          runtime, device = match
+          device_type = device.get("deviceTypeIdentifier", "")
+          if device_type != expected_type:
+              raise SystemExit(f"deviceTypeIdentifier={device_type!r}, expected {expected_type!r}")
+          if not runtime.startswith(expected_runtime):
+              raise SystemExit(f"runtime={runtime!r}, expected prefix {expected_runtime!r}")
+          if not bool(device.get("isAvailable", False)):
+              raise SystemExit(f"Simulator {udid} reports unavailable")
+          with open(receipt, "w", encoding="utf-8") as handle:
+              handle.write(f"simulatorUDID={udid}\n")
+              handle.write(f"simulatorName={device.get('name', '')}\n")
+              handle.write(f"deviceTypeIdentifier={device_type}\n")
+              handle.write(f"runtimeIdentifier={runtime}\n")
+              handle.write(f"stateBeforeQualification={device.get('state', '')}\n")
+              handle.write("canonicalDeviceTypeVerified=true\n")
+          PY
+
+          {
+            echo "sourceSHA=$SOURCE_SHA"
+            echo "scope=simulatorFiniteStreamTriggeredResidencySignalOnly"
+            echo "streamingLivenessVerified=false"
+            echo "representativeLongSessionVerified=false"
+            echo "physicalDeviceVerified=false"
+            echo "soakSeconds=$SOAK_SECONDS"
+            echo "warmupSeconds=$WARMUP_SECONDS"
+            echo "sampleIntervalSeconds=$SAMPLE_INTERVAL_SECONDS"
+            echo "rssGrowthLimitKiB=$RSS_GROWTH_LIMIT_KIB"
+            echo "rssSlopeLimitKiBPerSecond=$RSS_SLOPE_LIMIT_KIB_PER_SEC"
+            echo "rssSpanLimitKiB=$RSS_SPAN_LIMIT_KIB"
+            xcodebuild -version
+          } > "$ARTIFACT_DIR/toolchain-and-policy.txt"
+
+      - name: Establish fresh NovaForge app-container boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          xcrun simctl boot "$SIMULATOR_ID"
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+
+          if xcrun simctl get_app_container "$SIMULATOR_ID" "$BUNDLE_ID" data >/dev/null 2>&1; then
+            was_installed=true
+            xcrun simctl uninstall "$SIMULATOR_ID" "$BUNDLE_ID"
+          else
+            was_installed=false
+          fi
+          if xcrun simctl get_app_container "$SIMULATOR_ID" "$BUNDLE_ID" data >/dev/null 2>&1; then
+            echo "NovaForge app container survived uninstall boundary" >&2
+            exit 1
+          fi
+          {
+            echo "bundleID=$BUNDLE_ID"
+            echo "appWasInstalledBeforeBoundary=$was_installed"
+            echo "appPresentAfterBoundary=false"
+            echo "simulatorErased=false"
+            echo "boundary=freshNovaForgeAppContainerOnly"
+          } > "$ARTIFACT_DIR/app-container-boundary.txt"
+
+      - name: Build exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$DERIVED_DATA_PATH"
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            NOVAFORGE_SOURCE_COMMIT="$SOURCE_SHA" \
+            build 2>&1 | tee "$ARTIFACT_DIR/build.log"
+
+          app="$(find "$DERIVED_DATA_PATH/Build/Products" -path '*Debug-iphonesimulator/NovaForge.app' -type d -print | sed -n '1p')"
+          [[ -n "$app" ]] || { echo "NovaForge.app was not produced" >&2; exit 1; }
+          embedded_sha="$(/usr/libexec/PlistBuddy -c 'Print :NovaForgeSourceCommit' "$app/Info.plist" | tr '[:upper:]' '[:lower:]')"
+          [[ "$embedded_sha" == "$SOURCE_SHA" ]] || {
+            echo "Built marker $embedded_sha does not match $SOURCE_SHA" >&2
+            exit 1
+          }
+          printf 'app=%s\nsourceMarker=%s\n' "$app" "$embedded_sha" > "$ARTIFACT_DIR/app-source-binding.txt"
+
+      - name: Run finite-stream-triggered residency signal
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(sed -n 's/^app=//p' "$ARTIFACT_DIR/app-source-binding.txt")"
+          [[ -n "$app" && -d "$app" ]] || { echo "Built app path missing" >&2; exit 1; }
+
+          xcrun simctl install "$SIMULATOR_ID" "$app"
+          xcrun simctl get_app_container "$SIMULATOR_ID" "$BUNDLE_ID" app \
+            | sed 's/^/installedAppContainer=/' >> "$ARTIFACT_DIR/app-container-boundary.txt"
+
+          launch_output="$(xcrun simctl launch \
+            --terminate-running-process \
+            --stdout="$ARTIFACT_DIR/app.stdout.log" \
+            --stderr="$ARTIFACT_DIR/app.stderr.log" \
+            "$SIMULATOR_ID" "$BUNDLE_ID" \
+            --reset-ui --stress-streaming --open-chat \
+            --profile-frame-rate --profile-events --performance-mode)"
+          printf '%s\n' "$launch_output" | tee "$ARTIFACT_DIR/launch.txt"
+          pid="$(printf '%s\n' "$launch_output" | sed -n 's/.*: \([0-9][0-9]*\)$/\1/p' | tail -n 1)"
+          [[ -n "$pid" ]] || { echo "Could not parse Simulator app PID" >&2; exit 1; }
+          kill -0 "$pid" 2>/dev/null || { echo "NovaForge PID $pid is not alive" >&2; exit 1; }
+          printf 'pid=%s\nfiniteFixtureArg=--stress-streaming\nstreamingLivenessVerified=false\n' "$pid" > "$ARTIFACT_DIR/process.txt"
+
+          csv="$ARTIFACT_DIR/rss-samples.csv"
+          echo "elapsed_seconds,rss_kib,cpu_percent" > "$csv"
+          capture() {
+            local path="$1"
+            xcrun simctl io "$SIMULATOR_ID" screenshot "$path" >/dev/null
+            local bytes
+            bytes="$(wc -c < "$path" | tr -d '[:space:]')"
+            [[ "$bytes" -ge "$MIN_SCREENSHOT_BYTES" ]] || {
+              echo "Screenshot $path too small: ${bytes}B" >&2
+              return 1
+            }
+          }
+
+          start="$(date +%s)"
+          end=$((start + SOAK_SECONDS))
+          early=false
+          mid=false
+          while :; do
+            now="$(date +%s)"
+            elapsed=$((now - start))
+            kill -0 "$pid" 2>/dev/null || {
+              echo "NovaForge PID $pid exited at ${elapsed}s" >&2
+              exit 1
+            }
+            rss="$(ps -o rss= -p "$pid" | tr -d '[:space:]')"
+            cpu="$(ps -o %cpu= -p "$pid" | tr -d '[:space:]')"
+            [[ "$rss" =~ ^[0-9]+$ ]] || { echo "Invalid RSS '$rss'" >&2; exit 1; }
+            [[ -n "$cpu" ]] || cpu="0"
+            printf '%s,%s,%s\n' "$elapsed" "$rss" "$cpu" >> "$csv"
+
+            if [[ "$early" == false && "$elapsed" -ge 8 ]]; then
+              capture "$ARTIFACT_DIR/finite-fixture-early.png"
+              early=true
+            fi
+            if [[ "$mid" == false && "$elapsed" -ge $((SOAK_SECONDS / 2)) ]]; then
+              capture "$ARTIFACT_DIR/residency-mid.png"
+              mid=true
+            fi
+            [[ "$now" -ge "$end" ]] && break
+            sleep "$SAMPLE_INTERVAL_SECONDS"
+          done
+          capture "$ARTIFACT_DIR/residency-end.png"
+          kill -0 "$pid" 2>/dev/null
+
+          /usr/bin/python3 - "$csv" "$WARMUP_SECONDS" \
+            "$RSS_GROWTH_LIMIT_KIB" "$RSS_SLOPE_LIMIT_KIB_PER_SEC" "$RSS_SPAN_LIMIT_KIB" \
+            "$ARTIFACT_DIR/verdict.txt" <<'PY'
+          import csv, sys
+          csv_path, warmup, growth_limit, slope_limit, span_limit, verdict = sys.argv[1:]
+          warmup = int(warmup)
+          growth_limit = int(growth_limit)
+          slope_limit = float(slope_limit)
+          span_limit = int(span_limit)
+          with open(csv_path, newline="", encoding="utf-8") as handle:
+              rows = [(int(r["elapsed_seconds"]), int(r["rss_kib"])) for r in csv.DictReader(handle)]
+          if len(rows) < 8:
+              raise SystemExit(f"Need >=8 RSS samples, found {len(rows)}")
+          accepted = [(t, r) for t, r in rows if t >= warmup]
+          if len(accepted) < 6:
+              raise SystemExit(f"Need >=6 residency samples, found {len(accepted)}")
+          first_t, first_rss = accepted[0]
+          last_t, last_rss = accepted[-1]
+          values = [r for _, r in accepted]
+          growth = max(0, last_rss - first_rss)
+          span = max(values) - min(values)
+          mt = sum(t for t, _ in accepted) / len(accepted)
+          mr = sum(r for _, r in accepted) / len(accepted)
+          denom = sum((t - mt) ** 2 for t, _ in accepted)
+          slope = 0.0 if denom == 0 else sum((t-mt)*(r-mr) for t, r in accepted) / denom
+          failures = []
+          if growth > growth_limit: failures.append(f"endGrowthKiB={growth}>{growth_limit}")
+          if slope > slope_limit: failures.append(f"rssSlopeKiBPerSecond={slope:.2f}>{slope_limit:.2f}")
+          if span > span_limit: failures.append(f"postWarmupSpanKiB={span}>{span_limit}")
+          with open(verdict, "w", encoding="utf-8") as handle:
+              handle.write("scope=simulatorFiniteStreamTriggeredResidencySignalOnly\n")
+              handle.write("streamingLivenessVerified=false\n")
+              handle.write("representativeLongSessionVerified=false\n")
+              handle.write("physicalDeviceVerified=false\n")
+              handle.write(f"sampleCount={len(rows)}\n")
+              handle.write(f"postWarmupResidencySampleCount={len(accepted)}\n")
+              handle.write(f"firstAcceptedSecond={first_t}\nlastSampleSecond={last_t}\n")
+              handle.write(f"firstAcceptedRSSKiB={first_rss}\nfinalRSSKiB={last_rss}\n")
+              handle.write(f"peakAcceptedRSSKiB={max(values)}\nendGrowthKiB={growth}\n")
+              handle.write(f"rssSlopeKiBPerSecond={slope:.2f}\npostWarmupSpanKiB={span}\n")
+              handle.write(f"verdict={'FAIL' if failures else 'PASS'}\n")
+              for failure in failures: handle.write(f"failure={failure}\n")
+          if failures:
+              raise SystemExit("Residency guardrail failed: " + "; ".join(failures))
+          PY
+
+      - name: Publish truth-bounded receipt summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## V14 Preview finite-stream-triggered residency evidence'
+            echo
+            echo "- Source: \`$SOURCE_SHA\`"
+            echo '- Scope: one finite `--stress-streaming` invocation plus same-process Simulator residency.'
+            echo '- Streaming liveness during accepted RSS samples is **not verified**.'
+            echo '- This is **not** representative long-session streaming acceptance or physical-device evidence.'
+            [[ -f "$ARTIFACT_DIR/simulator-identity.txt" ]] && sed 's/^/- /' "$ARTIFACT_DIR/simulator-identity.txt"
+            [[ -f "$ARTIFACT_DIR/app-container-boundary.txt" ]] && sed 's/^/- /' "$ARTIFACT_DIR/app-container-boundary.txt"
+            [[ -f "$ARTIFACT_DIR/verdict.txt" ]] && sed 's/^/- /' "$ARTIFACT_DIR/verdict.txt" || echo '- verdict=NOT_PRODUCED'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload durable residency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-preview-residency-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: error
+          retention-days: 14
