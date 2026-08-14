@@ -64,6 +64,7 @@ let package = Package(
                 "AgentProviders",
                 "AgentStore",
                 "AgentTools",
+                .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
         .target(
