@@ -1,7 +1,7 @@
 import AgentDomain
 @testable import AgentPolicy
 import AgentTools
-import CryptoKit
+import Crypto
 import Foundation
 
 enum AgentPolicyTestFixture {
