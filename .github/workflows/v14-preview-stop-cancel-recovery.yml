@@ -1,0 +1,32 @@
+name: V14 Preview stop cancel recovery
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/Views/ChatView.swift'
+      - 'AgentPadTests/AgentRuntimeLifecycleTests.swift'
+      - 'AgentPadTests/AgentSystemPresentationStoreTests.swift'
+      - 'AgentPadTests/AgentExecutionCoordinatorTests.swift'
+      - 'scripts/verify_v14_preview_stop_cancel_recovery.sh'
+      - '.github/workflows/v14-preview-stop-cancel-recovery.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/Views/ChatView.swift'
+      - 'AgentPadTests/AgentRuntimeLifecycleTests.swift'
+      - 'AgentPadTests/AgentSystemPresentationStoreTests.swift'
+      - 'AgentPadTests/AgentExecutionCoordinatorTests.swift'
+      - 'scripts/verify_v14_preview_stop_cancel_recovery.sh'
+      - '.github/workflows/v14-preview-stop-cancel-recovery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stop-cancel-recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Preview Stop and cancellation recovery contract
+        run: bash scripts/verify_v14_preview_stop_cancel_recovery.sh
