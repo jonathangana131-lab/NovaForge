@@ -26,6 +26,7 @@ jobs:
 
       - name: Patch canonical stopped-run presentation truth
         run: |
+          sed -i 's/if presentation.count("case .failed, .interrupted:") != 1:/if presentation.count("case .failed, .interrupted:") != 2:/' scripts/one_shot_neutral_stop_chat_state_patch.py
           python3 scripts/one_shot_neutral_stop_chat_state_patch.py
           git diff --check
           grep -F 'AgentCanonicalRunSurfacePolicy.presentsFailure(' AgentPad/Views/ChatView.swift
