@@ -1,0 +1,79 @@
+name: Validate AgentShadow Crypto portability
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-SHADOW-CRYPTO-0814/e1-tests
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-agentshadow:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "480b070701a87951fc804f4257265096fab38053"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/validate-agentshadow-crypto-0814.yml"
+      - name: Compile and test exact AgentShadow slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD/Packages/AgentHarnessKit"
+          tmp="$(mktemp -d)"
+          mkdir -p "$tmp/Sources" "$tmp/Tests"
+          cp -R "$root/Sources/AgentDomain" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentReducerCore" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentStore" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentTools" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentProviders" "$tmp/Sources/"
+          cp -R "$root/Sources/AgentShadow" "$tmp/Sources/"
+          cp -R "$root/Tests/AgentShadowTests" "$tmp/Tests/"
+          cat > "$tmp/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+          let package = Package(
+              name: "AgentShadowPortabilityValidation",
+              dependencies: [
+                  .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0"),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .target(name: "AgentReducerCore", dependencies: ["AgentDomain"]),
+                  .target(name: "AgentStore", dependencies: ["AgentDomain", "AgentReducerCore"]),
+                  .target(name: "AgentTools", dependencies: ["AgentDomain"]),
+                  .target(
+                      name: "AgentProviders",
+                      dependencies: [
+                          "AgentDomain",
+                          "AgentTools",
+                          .product(name: "Crypto", package: "swift-crypto"),
+                      ]
+                  ),
+                  .target(
+                      name: "AgentShadow",
+                      dependencies: [
+                          "AgentDomain",
+                          "AgentProviders",
+                          "AgentStore",
+                          "AgentTools",
+                          .product(name: "Crypto", package: "swift-crypto"),
+                      ]
+                  ),
+                  .testTarget(
+                      name: "AgentShadowTests",
+                      dependencies: [
+                          "AgentDomain", "AgentProviders", "AgentShadow", "AgentStore", "AgentTools"
+                      ]
+                  ),
+              ]
+          )
+          SWIFT
+          ! grep -R -n --include='*.swift' '^import CryptoKit$' "$tmp/Sources/AgentShadow"
+          swift test --package-path "$tmp" -Xswiftc -warnings-as-errors
