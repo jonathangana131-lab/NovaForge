@@ -1,0 +1,26 @@
+name: V14 Preview session runtime selector contract
+
+on:
+  push:
+    branches:
+      - worker/gpt56-sol-v14-preview-session-runtime-0814
+  pull_request:
+    paths:
+      - scripts/verify_v14_preview_session_runtime_selector_contract.sh
+      - .github/workflows/v14-preview-session-relaunch-acceptance.yml
+      - .github/workflows/v14-preview-session-runtime-selector-contract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selector-contract:
+    name: iOS 27 selector contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify mixed-platform CoreSimulator selection
+        shell: bash
+        run: bash scripts/verify_v14_preview_session_runtime_selector_contract.sh
