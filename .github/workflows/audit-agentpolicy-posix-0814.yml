@@ -1,0 +1,33 @@
+name: Audit AgentPolicy platform dependencies
+
+on:
+  push:
+    branches:
+      - validation/GPT56-SOL-NF-V14-POLICY-POSIX-0814/audit
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Assert exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "787b39e6bbe6bd9f353699b8f0062e1f786f1476"
+      - name: Enumerate platform and crypto seams
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=Packages/AgentHarnessKit/Sources/AgentPolicy
+          echo '=== imports ==='
+          grep -R -n -E '^import (Darwin|Glibc|CryptoKit|Crypto)$' "$root" || true
+          echo '=== Darwin-qualified calls/types ==='
+          grep -R -n -o -E 'Darwin\.[A-Za-z_][A-Za-z0-9_]*' "$root" | sort -u || true
+          echo '=== POSIX constants/functions of interest ==='
+          grep -R -n -E '\b(openat|fstatat|renameat|unlinkat|fcntl|flock|fstat|fsync|ftruncate|lseek|read|write|close|geteuid|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC|AT_SYMLINK_NOFOLLOW|F_SETLK|F_WRLCK|F_RDLCK|F_UNLCK)\b' "$root" || true
