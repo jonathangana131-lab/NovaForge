@@ -174,6 +174,33 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
         )
     }
 
+    func testCompactedCheckpointSummaryRemainsAdvisoryWithoutProvenanceProof() async throws {
+        let fixture = CanonicalContextFixture(seed: 83)
+        let itemID: ModelItemID = canonicalTagged(8_301)
+        let items = [fixture.userItem(id: itemID)]
+        let checkpoints: [ContextCheckpointReference] = (0..<220).map { index in
+            ContextCheckpointReference(
+                checkpointID: canonicalTagged(83_000 + UInt64(index)),
+                schemaVersion: .current,
+                summary: "unverified-summary-\(index)-"
+                    + String(repeating: "z", count: 260),
+                sourceItemIDs: [itemID],
+                sourceDigest: canonicalDigest(character: "d")
+            )
+        }
+        let state = fixture.state(modelItems: items, checkpoints: checkpoints)
+        let preparer = try fixture.preparer()
+
+        let prepared = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let supplement = try text(from: prepared.request.messages[2])
+
+        XCTAssertTrue(supplement.hasPrefix("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
+        XCTAssertTrue(supplement.contains("[source_items=220]"))
+        XCTAssertTrue(supplement.contains("[L2][workingNote][advisory][current]"))
+        XCTAssertFalse(supplement.contains("[L2][workingNote][truth][current]"))
+        XCTAssertEqual(prepared.itemIDs, [itemID])
+    }
+
     func testProjectMemorySupplementFailureFallsBackByteForByteToCanonicalRawJSON() async throws {
         let fixture = CanonicalContextFixture(seed: 82)
         let itemID: ModelItemID = canonicalTagged(8_201)

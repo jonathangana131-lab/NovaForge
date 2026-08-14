@@ -1976,7 +1976,7 @@ private extension AgentCanonicalContextPreparer {
                         kind: .checkpoint,
                         reference: "checkpoint:" + checkpoint.checkpointID.description
                     ),
-                    isAuthoritative: true
+                    isAuthoritative: false
                 ))
             }
 
