@@ -23,16 +23,19 @@ jobs:
 
           preparer = Path('AgentPad/Services/AgentCanonicalContextPreparer.swift')
           text = preparer.read_text()
-          old = '''                    provenance: ForgeCompactProvenance(
-                        kind: .checkpoint,
-                        reference: "checkpoint:" + checkpoint.checkpointID.description
-                    ),
-                    isAuthoritative: true
-'''
-          new = old.replace('isAuthoritative: true', 'isAuthoritative: false')
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one checkpoint-authority anchor, found {text.count(old)}')
-          preparer.write_text(text.replace(old, new, 1))
+          marker = 'kind: .checkpoint,'
+          marker_index = text.find(marker)
+          if marker_index < 0 or text.find(marker, marker_index + 1) >= 0:
+              raise SystemExit('expected exactly one checkpoint provenance marker')
+          authority = 'isAuthoritative: true'
+          authority_index = text.find(authority, marker_index)
+          if authority_index < 0:
+              raise SystemExit('checkpoint authority flag not found')
+          next_artifact = text.find('kind: .source,', marker_index)
+          if next_artifact >= 0 and authority_index > next_artifact:
+              raise SystemExit('checkpoint authority flag escaped checkpoint block')
+          text = text[:authority_index] + 'isAuthoritative: false' + text[authority_index + len(authority):]
+          preparer.write_text(text)
 
           tests = Path('AgentPadTests/AgentCanonicalContextPreparerTests.swift')
           test_text = tests.read_text()
