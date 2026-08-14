@@ -1,0 +1,62 @@
+name: V14 Project Brain Mission Binding Final Validation
+
+on:
+  push:
+    branches:
+      - validation/gpt56-sol-0814/project-brain-mission/e1
+
+jobs:
+  exact-agent-domain:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Assert exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "4f28eb8d7cb2ec6fdf141cf6dbb9903b0197f5ac"
+          git diff --check HEAD^
+
+      - name: Build real AgentDomain target Debug with warnings as errors
+        run: swift build --package-path Packages/AgentHarnessKit --target AgentDomain -Xswiftc -warnings-as-errors
+
+      - name: Build real AgentDomain target Release with warnings as errors
+        run: swift build --package-path Packages/AgentHarnessKit -c release --target AgentDomain -Xswiftc -warnings-as-errors
+
+      - name: Assemble exact-source AgentDomain test harness
+        shell: bash
+        run: |
+          rm -rf /tmp/ProjectBrainMissionExactHarness
+          mkdir -p /tmp/ProjectBrainMissionExactHarness/Sources/AgentDomain
+          mkdir -p /tmp/ProjectBrainMissionExactHarness/Tests/AgentDomainTests
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain/. /tmp/ProjectBrainMissionExactHarness/Sources/AgentDomain/
+          cp -R Packages/AgentHarnessKit/Tests/AgentDomainTests/. /tmp/ProjectBrainMissionExactHarness/Tests/AgentDomainTests/
+          cat > /tmp/ProjectBrainMissionExactHarness/Package.swift <<'EOF'
+          // swift-tools-version: 6.0
+          import PackageDescription
+
+          let package = Package(
+              name: "ProjectBrainMissionExactHarness",
+              products: [
+                  .library(name: "AgentDomain", targets: ["AgentDomain"]),
+              ],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .testTarget(name: "AgentDomainTests", dependencies: ["AgentDomain"]),
+              ]
+          )
+          EOF
+
+      - name: Run exact AgentDomain tests Debug with warnings as errors
+        run: swift test --package-path /tmp/ProjectBrainMissionExactHarness -Xswiftc -warnings-as-errors
+
+      - name: Run exact AgentDomain tests Release with warnings as errors
+        run: swift test --package-path /tmp/ProjectBrainMissionExactHarness -c release -Xswiftc -warnings-as-errors
