@@ -1,4 +1,4 @@
-import CryptoKit
+import Crypto
 import Foundation
 
 /// Frozen route evidence for a package-owned OpenAI adapter that may carry one
