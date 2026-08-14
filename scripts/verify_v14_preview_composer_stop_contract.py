@@ -64,16 +64,22 @@ for fragment in (
 ):
     require(rail, fragment, "ComposerLiveRunRail")
 
-# The visible Forge rail must route its Stop action through one centralized
-# product handler instead of calling a legacy runtime directly from chrome.
-require(chat, "ComposerLiveRunRail(", "ChatView")
-require(chat, "stop: stopActiveRun", "ChatView Composer live-run rail")
+# Bind the visible Forge rail to the actual Composer owner block, not merely to
+# matching literals elsewhere in ChatView.
+composer_body = swift_block(chat, "private var composer: some View", "ChatView.composer")
+for fragment in (
+    "ComposerLiveRunRail(",
+    "stop: stopActiveRun",
+):
+    require(composer_body, fragment, "ChatView.composer live-run rail")
 
 stop_handler = swift_block(chat, "private func stopActiveRun()", "ChatView.stopActiveRun")
 for fragment in (
     # Ultra/orchestrated canonical work owns an orchestration-level cancel.
     "agentSystemPresentation.cancelOrchestration(",
-    # Normal canonical AgentSystem work owns the accepted group cancel command.
+    # Normal canonical AgentSystem work must cancel the actual presented active
+    # group rather than an unrelated/synthetic group value.
+    "if let group = agentRunPresentation.activeGroup",
     "group.accepts(group.cancelCommand)",
     "handleActivityCommand(group.cancelCommand)",
     # DEBUG hosted-canary and legacy runtime fallbacks remain separately wired.
@@ -124,7 +130,8 @@ for fragment in (
     require(cancel_activity, fragment, "RunActivityController.runCancelled")
 
 print(
-    "PASS: Preview Composer Stop remains wired to canonical orchestration, "
-    "canonical group cancellation, hosted-canary, and legacy runtime branches; "
-    "the legacy runtime cancellation path remains neutral Paused rather than failed."
+    "PASS: Preview Composer Stop remains wired from the actual Composer rail "
+    "to canonical orchestration, the presented canonical group's cancel command, "
+    "hosted-canary, and legacy runtime branches; the legacy runtime cancellation "
+    "path remains neutral Paused rather than failed."
 )
