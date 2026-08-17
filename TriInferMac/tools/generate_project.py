@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import hashlib
+
+ROOT = Path(__file__).resolve().parents[1]
+APP = ROOT / "App"
+PROJECT = ROOT / "TriInferCode.xcodeproj"
+SCHEME_DIR = PROJECT / "xcshareddata" / "xcschemes"
+EXCLUDE = {"AppModel.swift", "AppModelV2.swift"}
+SOURCES = sorted(p for p in APP.glob("*.swift") if p.name not in EXCLUDE)
+
+def uid(key: str) -> str:
+    return hashlib.sha1(key.encode()).hexdigest()[:24].upper()
+
+def q(value: str) -> str:
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+project_id = uid("project")
+target_id = uid("target")
+product_id = uid("product")
+main_group = uid("main-group")
+app_group = uid("app-group")
+framework_group = uid("framework-group")
+products_group = uid("products-group")
+sources_phase = uid("sources-phase")
+frameworks_phase = uid("frameworks-phase")
+resources_phase = uid("resources-phase")
+embed_phase = uid("embed-phase")
+proj_debug = uid("proj-debug")
+proj_release = uid("proj-release")
+target_debug = uid("target-debug")
+target_release = uid("target-release")
+proj_config_list = uid("proj-config-list")
+target_config_list = uid("target-config-list")
+info_ref = uid("info-ref")
+llama_ref = uid("llama-ref")
+metal_ref = uid("metal-ref")
+accel_ref = uid("accelerate-ref")
+webkit_ref = uid("webkit-ref")
+llama_build = uid("llama-build")
+llama_embed = uid("llama-embed")
+metal_build = uid("metal-build")
+accel_build = uid("accelerate-build")
+webkit_build = uid("webkit-build")
+
+source_refs = {p: uid("ref:" + p.name) for p in SOURCES}
+source_builds = {p: uid("build:" + p.name) for p in SOURCES}
+
+lines = []
+a = lines.append
+a("// !$*UTF8*$!")
+a("{")
+a("\tarchiveVersion = 1;")
+a("\tclasses = {};")
+a("\tobjectVersion = 56;")
+a("\tobjects = {")
+a("\n/* Begin PBXBuildFile section */")
+for p in SOURCES:
+    a(f"\t\t{source_builds[p]} /* {p.name} in Sources */ = {{isa = PBXBuildFile; fileRef = {source_refs[p]} /* {p.name} */; }};")
+a(f"\t\t{llama_build} /* llama.xcframework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {llama_ref} /* llama.xcframework */; }};")
+a(f"\t\t{llama_embed} /* llama.xcframework in Embed Frameworks */ = {{isa = PBXBuildFile; fileRef = {llama_ref} /* llama.xcframework */; settings = {{ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }}; }};")
+a(f"\t\t{metal_build} /* Metal.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {metal_ref}; }};")
+a(f"\t\t{accel_build} /* Accelerate.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {accel_ref}; }};")
+a(f"\t\t{webkit_build} /* WebKit.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {webkit_ref}; }};")
+a("/* End PBXBuildFile section */")
+
+a("\n/* Begin PBXCopyFilesBuildPhase section */")
+a(f"\t\t{embed_phase} /* Embed Frameworks */ = {{isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = \"\"; dstSubfolderSpec = 10; files = ({llama_embed},); name = \"Embed Frameworks\"; runOnlyForDeploymentPostprocessing = 0; }};")
+a("/* End PBXCopyFilesBuildPhase section */")
+
+a("\n/* Begin PBXFileReference section */")
+for p in SOURCES:
+    a(f"\t\t{source_refs[p]} /* {p.name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {q(p.name)}; sourceTree = \"<group>\"; }};")
+a(f"\t\t{info_ref} /* Info.plist */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = \"<group>\"; }};")
+a(f"\t\t{product_id} /* TriInfer Code.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = \"TriInfer Code.app\"; sourceTree = BUILT_PRODUCTS_DIR; }};")
+a(f"\t\t{llama_ref} /* llama.xcframework */ = {{isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = llama.xcframework; sourceTree = \"<group>\"; }};")
+a(f"\t\t{metal_ref} /* Metal.framework */ = {{isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; }};")
+a(f"\t\t{accel_ref} /* Accelerate.framework */ = {{isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; }};")
+a(f"\t\t{webkit_ref} /* WebKit.framework */ = {{isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; }};")
+a("/* End PBXFileReference section */")
+
+a("\n/* Begin PBXFrameworksBuildPhase section */")
+a(f"\t\t{frameworks_phase} = {{isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ({llama_build}, {metal_build}, {accel_build}, {webkit_build},); runOnlyForDeploymentPostprocessing = 0; }};")
+a("/* End PBXFrameworksBuildPhase section */")
+
+a("\n/* Begin PBXGroup section */")
+app_children = ", ".join(source_refs[p] for p in SOURCES) + f", {info_ref}"
+a(f"\t\t{app_group} /* App */ = {{isa = PBXGroup; children = ({app_children},); path = App; sourceTree = \"<group>\"; }};")
+a(f"\t\t{framework_group} /* Frameworks */ = {{isa = PBXGroup; children = ({llama_ref}, {metal_ref}, {accel_ref}, {webkit_ref},); path = Vendor; sourceTree = \"<group>\"; }};")
+a(f"\t\t{products_group} /* Products */ = {{isa = PBXGroup; children = ({product_id},); name = Products; sourceTree = \"<group>\"; }};")
+a(f"\t\t{main_group} = {{isa = PBXGroup; children = ({app_group}, {framework_group}, {products_group},); sourceTree = \"<group>\"; }};")
+a("/* End PBXGroup section */")
+
+a("\n/* Begin PBXNativeTarget section */")
+a(f"\t\t{target_id} /* TriInferCode */ = {{isa = PBXNativeTarget; buildConfigurationList = {target_config_list}; buildPhases = ({sources_phase}, {frameworks_phase}, {resources_phase}, {embed_phase},); buildRules = (); dependencies = (); name = TriInferCode; productName = TriInferCode; productReference = {product_id}; productType = \"com.apple.product-type.application\"; }};")
+a("/* End PBXNativeTarget section */")
+
+a("\n/* Begin PBXProject section */")
+a(f"\t\t{project_id} /* Project object */ = {{isa = PBXProject; attributes = {{BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2610; LastUpgradeCheck = 2610; TargetAttributes = {{{target_id} = {{CreatedOnToolsVersion = 26.1;}};}}; }}; buildConfigurationList = {proj_config_list}; compatibilityVersion = \"Xcode 14.0\"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = {main_group}; productRefGroup = {products_group}; projectDirPath = \"\"; projectRoot = \"\"; targets = ({target_id},); }};")
+a("/* End PBXProject section */")
+
+a("\n/* Begin PBXResourcesBuildPhase section */")
+a(f"\t\t{resources_phase} = {{isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; }};")
+a("/* End PBXResourcesBuildPhase section */")
+
+a("\n/* Begin PBXSourcesBuildPhase section */")
+source_build_list = ", ".join(source_builds[p] for p in SOURCES)
+a(f"\t\t{sources_phase} = {{isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({source_build_list},); runOnlyForDeploymentPostprocessing = 0; }};")
+a("/* End PBXSourcesBuildPhase section */")
+
+a("\n/* Begin XCBuildConfiguration section */")
+proj_common = 'ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 26.0; SWIFT_VERSION = 6.0;'
+a(f"\t\t{proj_debug} = {{isa = XCBuildConfiguration; buildSettings = {{{proj_common} DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; SWIFT_OPTIMIZATION_LEVEL = \"-Onone\";}}; name = Debug; }};")
+a(f"\t\t{proj_release} = {{isa = XCBuildConfiguration; buildSettings = {{{proj_common} DEBUG_INFORMATION_FORMAT = \"dwarf-with-dsym\"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = \"-O\";}}; name = Release; }};")
+target_common = 'CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 300; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = App/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",); MARKETING_VERSION = 3.0; PRODUCT_BUNDLE_IDENTIFIER = ai.triinfer.code; PRODUCT_NAME = "TriInfer Code"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 1;'
+a(f"\t\t{target_debug} = {{isa = XCBuildConfiguration; buildSettings = {{{target_common} GCC_PREPROCESSOR_DEFINITIONS = (\"DEBUG=1\", \"$(inherited)\",);}}; name = Debug; }};")
+a(f"\t\t{target_release} = {{isa = XCBuildConfiguration; buildSettings = {{{target_common}}}; name = Release; }};")
+a("/* End XCBuildConfiguration section */")
+
+a("\n/* Begin XCConfigurationList section */")
+a(f"\t\t{proj_config_list} = {{isa = XCConfigurationList; buildConfigurations = ({proj_debug}, {proj_release},); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; }};")
+a(f"\t\t{target_config_list} = {{isa = XCConfigurationList; buildConfigurations = ({target_debug}, {target_release},); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; }};")
+a("/* End XCConfigurationList section */")
+a("\t};")
+a(f"\trootObject = {project_id};")
+a("}")
+
+PROJECT.mkdir(parents=True, exist_ok=True)
+(PROJECT / "project.pbxproj").write_text("\n".join(lines) + "\n")
+SCHEME_DIR.mkdir(parents=True, exist_ok=True)
+scheme = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion="2610" version="1.7">
+ <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target_id}" BuildableName="TriInfer Code.app" BlueprintName="TriInferCode" ReferencedContainer="container:TriInferCode.xcodeproj"/></BuildActionEntry></BuildActionEntries></BuildAction>
+ <TestAction buildConfiguration="Debug" shouldUseLaunchSchemeArgsEnv="YES"/>
+ <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES"><BuildableProductRunnable runnableDebuggingMode="0"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target_id}" BuildableName="TriInfer Code.app" BlueprintName="TriInferCode" ReferencedContainer="container:TriInferCode.xcodeproj"/></BuildableProductRunnable></LaunchAction>
+ <ProfileAction buildConfiguration="Release" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES"><BuildableProductRunnable runnableDebuggingMode="0"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target_id}" BuildableName="TriInfer Code.app" BlueprintName="TriInferCode" ReferencedContainer="container:TriInferCode.xcodeproj"/></BuildableProductRunnable></ProfileAction>
+ <AnalyzeAction buildConfiguration="Debug"/>
+ <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
+</Scheme>'''
+(SCHEME_DIR / "TriInferCode.xcscheme").write_text(scheme)
+print(f"Generated {PROJECT} with {len(SOURCES)} Swift sources")
