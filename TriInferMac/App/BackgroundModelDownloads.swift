@@ -3,7 +3,7 @@ import UIKit
 
 /// Durable, OS-managed model downloads. Background URLSession keeps large GGUF transfers alive
 /// through suspension and normal process termination; job metadata is persisted so the Models UI
-/// can reconnect after relaunch instead of starting an 8+ GB file from zero.
+/// can reconnect after relaunch instead of starting a multi-gigabyte file from zero.
 final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     static let shared = BackgroundModelDownloads()
     static let sessionIdentifier = "ai.triinfer.code.model-downloads.v1"
@@ -57,6 +57,14 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
         try? FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
         jobsURL = root.appendingPathComponent("jobs.json")
         super.init()
+
+        // A partially downloaded 7–10 GB model must never enter device backup accounting.
+        for directory in [root, stagingDirectory] {
+            var values = URLResourceValues(); values.isExcludedFromBackup = true
+            var mutable = directory
+            try? mutable.setResourceValues(values)
+        }
+
         loadJobs()
         _ = session
         reconnectTasks()
@@ -64,11 +72,9 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
 
     func start(candidate: ModelManager.Candidate) {
         lock.lock()
-        if var existing = jobs[candidate.id] {
+        if let existing = jobs[candidate.id] {
             lock.unlock()
-            if existing.state == .paused || existing.state == .failed {
-                resume(candidate.id)
-            }
+            if existing.state == .paused || existing.state == .failed { resume(candidate.id) }
             return
         }
         lock.unlock()
@@ -116,8 +122,6 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
                 self.update(id) { $0.state = .downloading; $0.error = nil; $0.updated = Date() }
                 return
             }
-            // If iOS no longer has the old task, restart from the remote URL. This should be rare;
-            // normal suspension/termination is handled by the background session itself.
             guard let job = self.snapshot(id) else { return }
             let task = self.session.downloadTask(with: job.url)
             task.taskDescription = id
@@ -182,7 +186,10 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         guard let id = downloadTask.taskDescription ?? jobID(for: downloadTask.taskIdentifier) else { return }
         let filename = snapshot(id)?.filename ?? "model.gguf"
-        let staging = stagingDirectory.appendingPathComponent(id.replacingOccurrences(of: "/", with: "_") + "-" + filename + ".part")
+        let safeStem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+            .replacingOccurrences(of: "/", with: "_")
+            .prefix(96)
+        let staging = stagingDirectory.appendingPathComponent("\(shortHash(id))-\(safeStem).gguf.part")
         do {
             try? FileManager.default.removeItem(at: staging)
             try FileManager.default.moveItem(at: location, to: staging)
@@ -254,6 +261,15 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
     private func persistLocked() {
         guard let data = try? JSONEncoder().encode(jobs) else { return }
         try? data.write(to: jobsURL, options: .atomic)
+    }
+
+    private func shortHash(_ text: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return String(hash, radix: 16)
     }
 }
 
