@@ -1,0 +1,62 @@
+name: Persistent Qwen prefix session Xcode 27
+
+on:
+  push:
+    branches: [experiment/qwen38-persistent-prefix]
+    paths:
+      - 'ci/apply_persistent_prefix.py'
+      - 'Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaPersistentSessionPolicyTests.swift'
+      - '.github/workflows/persistent-prefix-xcode27.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: persistent-qwen-prefix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: experiment/qwen38-persistent-prefix
+          fetch-depth: 1
+      - name: Apply fail-closed persistence transform
+        run: python3 ci/apply_persistent_prefix.py
+      - name: Validate diff
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -n 'restoreSessionIfPrefix' Vendor/swift-llama-cpp/Sources/SwiftLlama/Llama.swift
+          grep -n 'persistSessionIfUseful' Vendor/swift-llama-cpp/Sources/SwiftLlama/LlamaService.swift
+      - name: Resolve and compile complete SwiftLlama test graph
+        working-directory: Vendor/swift-llama-cpp
+        run: |
+          set -euo pipefail
+          swift package resolve
+          swift build --build-tests
+      - name: Execute model-independent persistence policy tests
+        working-directory: Vendor/swift-llama-cpp
+        run: |
+          set -euo pipefail
+          LLAMA_FRAMEWORK="$(find .build -type d -path '*/macos-*/llama.framework' -print | head -n 1)"
+          test -n "$LLAMA_FRAMEWORK"
+          export DYLD_FRAMEWORK_PATH="$(cd "$(dirname "$LLAMA_FRAMEWORK")" && pwd)${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+          swift test --skip-build --filter LlamaPersistentSessionPolicyTests
+          swift test --skip-build --filter LlamaRuntimeTunerTests
+          swift test --skip-build --filter LlamaPerformanceTests
+      - name: Commit verified runtime source
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Vendor/swift-llama-cpp/Sources/SwiftLlama/Llama.swift Vendor/swift-llama-cpp/Sources/SwiftLlama/LlamaService.swift; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Vendor/swift-llama-cpp/Sources/SwiftLlama/Llama.swift Vendor/swift-llama-cpp/Sources/SwiftLlama/LlamaService.swift
+          git commit -m 'Persist verified llama prefix sessions below the prompt'
+          git push origin HEAD:experiment/qwen38-persistent-prefix
