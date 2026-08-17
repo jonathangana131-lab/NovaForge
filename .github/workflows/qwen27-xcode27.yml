@@ -32,6 +32,7 @@ jobs:
         env:
           NOVAFORGE_TEST_LANE: critical
           XCODEBUILD_CAP_MINUTES: 65
+          UNIT_TEST_TIMEOUT: 540
         run: bash ci/verify.sh
       - name: Upload Xcode 27 diagnostics
         if: always()
