@@ -232,13 +232,23 @@ struct ModelBenchmarkPanel: View {
                     .foregroundStyle(AgentPalette.secondaryText)
             case .finished(let result):
                 HStack(spacing: 8) {
-                    benchmarkMetric(value: String(format: "%.0f", endToEndCharactersPerSecond(result)), unit: "e2e chars/s", tint: AgentPalette.green)
-                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "first output", tint: AgentPalette.cyan)
-                    benchmarkMetric(value: String(format: "%.1fs", result.totalDuration), unit: "total", tint: AgentPalette.lilac)
+                    benchmarkMetric(
+                        value: String(format: result.hasExactTokenTelemetry ? "%.2f" : "≈%.2f", result.tokensPerSecond),
+                        unit: result.hasExactTokenTelemetry ? "decode tok/s" : "estimated tok/s",
+                        tint: AgentPalette.green
+                    )
+                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "TTFT", tint: AgentPalette.cyan)
+                    benchmarkMetric(
+                        value: result.prefillDuration.map { String(format: "%.2fs", $0) } ?? String(format: "%.1fs", result.totalDuration),
+                        unit: result.prefillDuration == nil ? "total" : "prefill",
+                        tint: AgentPalette.lilac
+                    )
                 }
-                Text("\(result.modelName) · \(result.generatedCharacters) observed characters · not qualification evidence")
+                Text(benchmarkDetail(result))
                     .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.tertiaryText)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 10.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
@@ -268,9 +278,22 @@ struct ModelBenchmarkPanel: View {
         .agentControlSurface(radius: 11, tint: tint.opacity(0.08), selected: false)
     }
 
-    private func endToEndCharactersPerSecond(_ result: LocalModelBenchmarkResult) -> Double {
-        guard result.totalDuration > 0 else { return 0 }
-        return Double(result.generatedCharacters) / result.totalDuration
+    private func benchmarkDetail(_ result: LocalModelBenchmarkResult) -> String {
+        let tokenLabel = result.hasExactTokenTelemetry
+            ? "\(result.displayedTokenCount) exact tokens"
+            : "≈\(result.displayedTokenCount) tokens from \(result.generatedCharacters) characters"
+        let decodeLabel = result.decodeDuration.map { String(format: "decode %.2fs", $0) }
+        let profile = result.runtimeProfile?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [
+            result.modelName,
+            tokenLabel,
+            decodeLabel,
+            profile,
+            "session diagnostic · not qualification evidence",
+        ]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+        .joined(separator: " · ")
     }
 
     private func runBenchmark() {

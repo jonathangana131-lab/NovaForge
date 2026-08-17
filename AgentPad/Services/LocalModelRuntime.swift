@@ -397,19 +397,65 @@ private final class LocalModelLifecycleObserverBag: @unchecked Sendable {
 }
 #endif
 
+struct LocalModelPerformanceSnapshot: Equatable, Sendable {
+    let prefillDuration: TimeInterval
+    let timeToFirstToken: TimeInterval?
+    let decodeDuration: TimeInterval
+    let generatedTokens: Int
+    let decodeTokensPerSecond: Double
+    let runtimeProfile: String
+}
+
 struct LocalModelBenchmarkResult: Equatable, Sendable {
     let modelName: String
     let timeToFirstToken: TimeInterval
     let totalDuration: TimeInterval
     let generatedCharacters: Int
+    let prefillDuration: TimeInterval?
+    let decodeDuration: TimeInterval?
+    let generatedTokens: Int?
+    let exactTokensPerSecond: Double?
+    let runtimeProfile: String?
 
-    /// Rough token estimate — llama.cpp doesn't surface counts through this
-    /// path, and honest ≈ beats fabricated precision.
+    init(
+        modelName: String,
+        timeToFirstToken: TimeInterval,
+        totalDuration: TimeInterval,
+        generatedCharacters: Int,
+        prefillDuration: TimeInterval? = nil,
+        decodeDuration: TimeInterval? = nil,
+        generatedTokens: Int? = nil,
+        exactTokensPerSecond: Double? = nil,
+        runtimeProfile: String? = nil
+    ) {
+        self.modelName = modelName
+        self.timeToFirstToken = max(0, timeToFirstToken)
+        self.totalDuration = max(0, totalDuration)
+        self.generatedCharacters = max(0, generatedCharacters)
+        self.prefillDuration = prefillDuration.map { max(0, $0) }
+        self.decodeDuration = decodeDuration.map { max(0, $0) }
+        self.generatedTokens = generatedTokens.map { max(0, $0) }
+        self.exactTokensPerSecond = exactTokensPerSecond.map { max(0, $0) }
+        self.runtimeProfile = runtimeProfile
+    }
+
+    /// Retained only as an explicit fallback for inference backends that do not
+    /// yet expose exact token accounting. llama.cpp-backed runs use the exact
+    /// generated-token count and decode timing from LlamaService.
     var estimatedTokens: Int { max(1, Int(Double(generatedCharacters) / 3.8)) }
 
+    var hasExactTokenTelemetry: Bool {
+        generatedTokens != nil && exactTokensPerSecond != nil
+    }
+
     var tokensPerSecond: Double {
+        if let exactTokensPerSecond { return exactTokensPerSecond }
         let generation = max(totalDuration - timeToFirstToken, 0.05)
         return Double(estimatedTokens) / generation
+    }
+
+    var displayedTokenCount: Int {
+        generatedTokens ?? estimatedTokens
     }
 }
 
@@ -1331,6 +1377,27 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
            let service = loadedService?.service {
             await service.stopCompletion()
         }
+        #endif
+    }
+
+    /// Returns only content-free timing/counter telemetry for the currently
+    /// loaded model. Prompt text, generated text, token ids and file paths are
+    /// deliberately absent from this bridge.
+    func performanceSnapshot(modelID: String) async -> LocalModelPerformanceSnapshot? {
+        #if canImport(SwiftLlama)
+        guard let loadedService, loadedService.variantID == modelID,
+              let snapshot = await loadedService.service.performanceSnapshot()
+        else { return nil }
+        return LocalModelPerformanceSnapshot(
+            prefillDuration: snapshot.prefillSeconds,
+            timeToFirstToken: snapshot.timeToFirstTokenSeconds,
+            decodeDuration: snapshot.decodeSeconds,
+            generatedTokens: snapshot.generatedTokenCount,
+            decodeTokensPerSecond: snapshot.decodeTokensPerSecond,
+            runtimeProfile: snapshot.runtimeReason
+        )
+        #else
+        return nil
         #endif
     }
 
