@@ -98,9 +98,6 @@ actor AgentEngine {
         var signatures: [String: Int] = [:]
         var allEvents: [AppModel.AgentEvent] = []
 
-        // Build the expensive run context once. Everything in runCapsule stays byte-identical for
-        // the entire tool loop so llama.cpp can preserve a large KV common prefix instead of
-        // re-prefilling project structure after every read/patch/TODO update.
         async let retrievedTask = retrieval(for: userText)
         async let stableTask = context.stablePrefix(mode: mode, todos: [])
         let (retrieved, stableBase) = await (retrievedTask, stableTask)
@@ -257,9 +254,9 @@ actor AgentEngine {
     private var compactToolContract: String {
         """
         TOOLS — at most one per model turn:
-        read {path}; search {query}; recall {query}; memory_read {id}; write {path,content}; patch {path,old,replacement}; mkdir {path}; delete {path}; move {path,destination}; undo {}; todo {title,state}; remember {text,source}; finish {reason}.
+        read {path}; search {query}; recall {query}; memory_read {id}; write {path,content}; patch {path,old,replacement}; mkdir {path}; delete {path}; move {path,destination}; undo {}; validate_web {}; todo {title,state}; remember {text,source}; finish {reason}.
         Tool syntax: <tool_call>{\"name\":\"read\",\"path\":\"src/main.js\"}</tool_call>
-        When using a tool emit only the envelope, no prose. Read/search/recall before guessing. Use project-root-relative paths. Prefer exact patch for small changes. Keep files modular and testable.
+        When using a tool emit only the envelope, no prose. Read/search/recall before guessing. Use project-root-relative paths. Prefer exact patch for small changes. For browser artifacts call validate_web before finish. Keep files modular and testable.
         """
     }
 
@@ -312,6 +309,8 @@ actor AgentEngine {
             return "Moved \(path) → \(destination)."
         case "undo":
             return try await workspace.undo()
+        case "validate_web":
+            return try await workspace.validateBrowserProject()
         case "todo":
             let title = try require(call.title)
             let state = AppModel.Todo.State(rawValue: call.state ?? "pending") ?? .pending
