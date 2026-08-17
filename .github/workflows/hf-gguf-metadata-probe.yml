@@ -1,0 +1,52 @@
+name: Hugging Face GGUF Metadata Probe
+
+on:
+  push:
+    branches: [validation/hf-gguf-metadata]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Inspect known current GGUF metadata without downloading weights
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.parse, urllib.request
+          repo = 'unsloth/Qwen3.5-0.8B-GGUF'
+          url = 'https://huggingface.co/api/models/' + urllib.parse.quote(repo, safe='/') + '?blobs=true'
+          req = urllib.request.Request(url, headers={'User-Agent':'NovaForge-metadata-qualification/1'})
+          with urllib.request.urlopen(req, timeout=30) as response:
+              data = json.load(response)
+          target = 'Qwen3.5-0.8B-Q8_0.gguf'
+          sibling = next((x for x in data.get('siblings', []) if x.get('rfilename') == target), None)
+          if not sibling:
+              raise SystemExit('known GGUF sibling missing')
+          safe = {
+              'model_sha_present': bool(data.get('sha')),
+              'last_modified_present': bool(data.get('lastModified')),
+              'sibling_keys': sorted(sibling.keys()),
+              'size': sibling.get('size'),
+              'lfs_keys': sorted((sibling.get('lfs') or {}).keys()),
+              'lfs_size': (sibling.get('lfs') or {}).get('size'),
+              'lfs_sha256_length': len(((sibling.get('lfs') or {}).get('sha256') or '')),
+              'lfs_oid_prefix': str((sibling.get('lfs') or {}).get('oid') or '')[:7],
+              'blob_id_present': bool(sibling.get('blobId')),
+          }
+          print(json.dumps(safe, sort_keys=True))
+          if not safe['model_sha_present']:
+              raise SystemExit('model revision SHA absent')
+          if safe['size'] is None and safe['lfs_size'] is None:
+              raise SystemExit('remote byte size absent')
+          # Do not require LFS here; the probe is specifically determining
+          # whether current Xet-backed GGUF metadata still exposes SHA-256.
+          PY
