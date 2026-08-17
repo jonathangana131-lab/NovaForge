@@ -1,0 +1,41 @@
+name: Apply Local Canonical History Budget
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_local_canonical_history_budget.py
+      - .github/workflows/apply-local-canonical-history-budget.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply fail-closed canonical-history transform
+        run: python3 ci/apply_local_canonical_history_budget.py
+      - name: Validate transformed source
+        run: |
+          git diff --check
+          grep -F 'AgentCanonicalContextLimits.production.maximumProviderMessages' AgentPad/Services/AgentLocalModelProviderTransport.swift
+          grep -F 'encodedBody.count <= maximumRequestUTF8Bytes' AgentPad/Services/AgentLocalModelProviderTransport.swift
+          grep -F 'testProjectionHandlesHistoryBeyondFormerSixtyFourMessageCeiling' AgentPadTests/AgentLocalModelProviderTransportTests.swift
+      - name: Commit bounded history admission
+        run: |
+          if git diff --quiet; then
+            echo 'Canonical history budget already integrated.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Context Budget Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Services/AgentLocalModelProviderTransport.swift AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          git commit -m 'Align local history admission with canonical authority'
+          git push origin HEAD:feature/qwen38-forge-ios27
