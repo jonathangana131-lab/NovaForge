@@ -3,16 +3,33 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/Vendor"
 TARGET="$VENDOR/llama.xcframework"
-URL="https://github.com/ggml-org/llama.cpp/releases/download/b10453/llama-b10453-xcframework.zip"
-EXPECTED="c47fb6013e886307a7a0a993a1e6c02ce9a46ba0ef5be01f3eb086a13a61ea6a"
+URL="https://github.com/ggml-org/llama.cpp/releases/download/b10456/llama-b10456-xcframework.zip"
+EXPECTED="0223bedd0a01232399d943dcb72bc227882bc90df98e29d7a92343531a88cc02"
 mkdir -p "$VENDOR"
-if [[ -d "$TARGET" ]]; then echo "llama.xcframework already installed"; exit 0; fi
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-curl --fail --location --retry 3 --output "$TMP/llama.zip" "$URL"
+
+if [[ -d "$TARGET" ]]; then
+  MARKER="$VENDOR/.llama-release"
+  if [[ -f "$MARKER" ]] && [[ "$(cat "$MARKER")" == "b10456" ]]; then
+    echo "llama.xcframework b10456 already installed"
+    exit 0
+  fi
+  rm -rf "$TARGET"
+fi
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+curl --fail --location --retry 3 --retry-delay 2 --output "$TMP/llama.zip" "$URL"
 ACTUAL="$(shasum -a 256 "$TMP/llama.zip" | awk '{print $1}')"
-if [[ "$ACTUAL" != "$EXPECTED" ]]; then echo "llama.cpp checksum mismatch: $ACTUAL" >&2; exit 3; fi
+if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+  echo "llama.cpp checksum mismatch: $ACTUAL" >&2
+  exit 3
+fi
 unzip -q "$TMP/llama.zip" -d "$TMP/unpacked"
 SOURCE="$(find "$TMP/unpacked" -type d -name 'llama.xcframework' -print -quit)"
-if [[ -z "$SOURCE" ]]; then echo 'llama.xcframework missing from release archive' >&2; exit 4; fi
+if [[ -z "$SOURCE" ]]; then
+  echo 'llama.xcframework missing from release archive' >&2
+  exit 4
+fi
 cp -R "$SOURCE" "$TARGET"
-echo "Installed llama.xcframework ($(du -sh "$TARGET" | awk '{print $1}'))"
+echo 'b10456' > "$VENDOR/.llama-release"
+echo "Installed llama.cpp b10456 XCFramework ($(du -sh "$TARGET" | awk '{print $1}'))"
