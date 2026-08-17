@@ -1,0 +1,36 @@
+name: Core AI Qwen3.5 Linear Layer Qualification
+
+on:
+  push:
+    branches: [experiment/coreai-qwen35-draft]
+    paths:
+      - 'Research/CoreAIDraft/qwen35_linear_layer_equivalence.py'
+      - '.github/workflows/coreai-linear-layer-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coreai-linear-layer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  equivalence:
+    name: Full linear-attention layer equivalence
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install numerical reference stack
+        run: python -m pip install --disable-pip-version-check 'torch==2.9.0' 'transformers==5.5.0'
+      - name: Compare full Qwen3.5 linear-attention layer
+        env:
+          HF_HUB_DISABLE_TELEMETRY: '1'
+        run: python Research/CoreAIDraft/qwen35_linear_layer_equivalence.py
