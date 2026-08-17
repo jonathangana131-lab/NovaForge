@@ -23,37 +23,51 @@ final actor Llama {
     init(modelPath: String, config: LlamaConfig) throws {
         self.config = config
         llama_backend_init()
-        var model_params = llama_model_default_params()
+        var modelParams = llama_model_default_params()
 
-        model_params.n_gpu_layers = config.useGPU ? config.gpuLayerCount : 0
+        modelParams.n_gpu_layers = config.useGPU ? config.gpuLayerCount : 0
+        modelParams.load_mode = Self.loadMode(config.loadMode)
+        modelParams.use_extra_bufts = config.useExtraBufferTypes
+        // MTP is a separate speculative context with different recurrent-state
+        // requirements. Never silently load it into the ordinary target context.
+        modelParams.load_mtp = false
 
         #if targetEnvironment(simulator)
-                model_params.n_gpu_layers = 0
-                print("Running on simulator, force use n_gpu_layers = 0")
+        modelParams.n_gpu_layers = 0
+        print("Running on simulator, force use n_gpu_layers = 0")
         #endif
 
-        let model = LlamaModel(path: modelPath, parameters: model_params)
+        let model = LlamaModel(path: modelPath, parameters: modelParams)
         guard let model else {
             print("Could not load model at \(modelPath)")
             throw LlamaError.couldNotInitializeContext
         }
 
-        print("Using \(config.generationThreadCount) generation threads, \(config.batchThreadCount) batch threads, \(model_params.n_gpu_layers) GPU layers")
+        print(
+            "Using \(config.generationThreadCount) generation threads, " +
+            "\(config.batchThreadCount) batch threads, \(modelParams.n_gpu_layers) GPU layers, " +
+            "load=\(config.loadMode.rawValue), kv=\(config.keyCacheType.rawValue)/\(config.valueCacheType.rawValue)"
+        )
 
         var contextParam = llama_context_default_params()
         contextParam.n_ctx = config.maxTokenCount
         contextParam.n_threads = config.generationThreadCount
         contextParam.n_threads_batch = config.batchThreadCount
         contextParam.n_batch = config.batchSize
-        contextParam.n_ubatch = config.batchSize
-        contextParam.offload_kqv = true
+        contextParam.n_ubatch = config.microBatchSize
+        contextParam.n_rs_seq = config.recurrentStateSnapshots
+        contextParam.flash_attn_type = Self.flashAttention(config.flashAttention)
+        contextParam.type_k = Self.cacheType(config.keyCacheType)
+        contextParam.type_v = Self.cacheType(config.valueCacheType)
+        contextParam.offload_kqv = config.useGPU && config.offloadKQV
+        contextParam.op_offload = config.useGPU && config.operationOffload
+        contextParam.kv_unified = config.unifiedKV
 
         let context = LlamaContext(model: model, parameters: contextParam)
         guard let context else {
             print("Could not load context!")
             throw LlamaError.couldNotInitializeContext
         }
-
 
         self.maxTokenCount = min(UInt32(model.trainedContextSize()), config.maxTokenCount)
         self.model = context.model
@@ -63,6 +77,30 @@ final actor Llama {
 
     deinit {
         llama_backend_free()
+    }
+
+    private static func loadMode(_ mode: LlamaModelLoadMode) -> llama_load_mode {
+        switch mode {
+        case .automatic: LLAMA_LOAD_MODE_AUTO
+        case .mmap: LLAMA_LOAD_MODE_MMAP
+        case .directIO: LLAMA_LOAD_MODE_DIRECT_IO
+        }
+    }
+
+    private static func flashAttention(_ mode: LlamaFlashAttentionMode) -> llama_flash_attn_type {
+        switch mode {
+        case .automatic: LLAMA_FLASH_ATTN_TYPE_AUTO
+        case .disabled: LLAMA_FLASH_ATTN_TYPE_DISABLED
+        case .enabled: LLAMA_FLASH_ATTN_TYPE_ENABLED
+        }
+    }
+
+    private static func cacheType(_ type: LlamaKVCacheType) -> ggml_type {
+        switch type {
+        case .f16: GGML_TYPE_F16
+        case .q8_0: GGML_TYPE_Q8_0
+        case .q4_0: GGML_TYPE_Q4_0
+        }
     }
 
     // Expose some backend/system utilities for convenience
@@ -98,77 +136,90 @@ final actor Llama {
     }
 
     private func initializeCompletion(text: String) throws {
-        print("attempting to complete \"\(text)\"")
-
         let tokenList = model.tokenize(text: text, addBos: model.shouldAddBos(), special: true)
         guard tokenList.count < maxTokenCount - 4 else {
             throw LlamaError.contextSizeLimitExeeded
         }
 
         if tokenList.starts(with: processedTokens) {
-            print("### Using cached processing")
-            try processPrompt(tokens: Array(tokenList[processedTokens.count...]), startIndex: processedTokens.count)
-        } else {
-            // Check if we can optimize by only clearing from the divergence point
-            let divergenceIndex = findDivergenceIndex(newTokenList: tokenList, processedTokens: processedTokens)
-            
-            if divergenceIndex > 0 && shouldUsePartialOptimization(divergenceIndex: divergenceIndex, totalProcessed: processedTokens.count) {
-                print("### Using partial optimization from position \(divergenceIndex)")
-                do {
-                    try optimizedReprocessing(newTokenList: tokenList, divergenceIndex: divergenceIndex)
-                } catch {
-                    print("Partial optimization failed, falling back to full reprocessing")
-                    clear()
-                    try processPrompt(tokens: tokenList, startIndex: 0)
-                }
-            } else {
-                print("### Full reprocessing required")
-                clear()
-                try processPrompt(tokens: tokenList, startIndex: 0)
+            let suffix = Array(tokenList.dropFirst(processedTokens.count))
+            if !suffix.isEmpty {
+                try processPrompt(tokens: suffix, startIndex: processedTokens.count)
+            }
+            return
+        }
+
+        // Rewind only the divergent suffix. Long-running agents deliberately
+        // keep the system/developer prefix byte-stable, so this is the normal
+        // fast path after the first turn rather than an exceptional shortcut.
+        let divergenceIndex = findDivergenceIndex(
+            newTokenList: tokenList,
+            processedTokens: processedTokens
+        )
+        if shouldUsePartialOptimization(
+            divergenceIndex: divergenceIndex,
+            newTokenCount: tokenList.count,
+            totalProcessed: processedTokens.count
+        ) {
+            do {
+                try optimizedReprocessing(
+                    newTokenList: tokenList,
+                    divergenceIndex: divergenceIndex
+                )
+                return
+            } catch {
+                // Recurrent/hybrid models may reject some suffix rewinds. Fall
+                // back to a correctness-first full prefill instead of carrying
+                // a corrupted state forward.
+                print("Partial prompt reuse failed; rebuilding the prompt state: \(error)")
             }
         }
+
+        clear()
+        try processPrompt(tokens: tokenList, startIndex: 0)
     }
 
-    /// Find the index where the two token lists diverge
-    private func findDivergenceIndex(newTokenList: [llama_token], processedTokens: [llama_token]) -> Int {
+    /// Find the index where the two token lists diverge.
+    private func findDivergenceIndex(
+        newTokenList: [llama_token],
+        processedTokens: [llama_token]
+    ) -> Int {
         let minLength = min(newTokenList.count, processedTokens.count)
-        for i in 0..<minLength {
-            if newTokenList[i] != processedTokens[i] {
-                return i
-            }
+        for index in 0..<minLength where newTokenList[index] != processedTokens[index] {
+            return index
         }
         return minLength
     }
-    
-    /// Decide whether to use partial optimization based on the divergence point
-    private func shouldUsePartialOptimization(divergenceIndex: Int, totalProcessed: Int) -> Bool {
-        // Only use partial optimization if:
-        // 1. We have a significant amount of processed tokens (at least 10)
-        // 2. The divergence is not too early (at least 50% of tokens match)
-        // 3. The divergence is not at the very beginning
-        
-        guard divergenceIndex > 0 && totalProcessed >= 10 else { return false }
-        
-        let matchPercentage = Double(divergenceIndex) / Double(totalProcessed)
-        return matchPercentage >= 0.5 // At least 50% of tokens match
+
+    /// Prefix reuse is worthwhile once it saves a meaningful prefill. Using a
+    /// fixed minimum instead of a percentage lets a large immutable agent
+    /// prefix remain cached even when the volatile project tail grows huge.
+    private func shouldUsePartialOptimization(
+        divergenceIndex: Int,
+        newTokenCount: Int,
+        totalProcessed: Int
+    ) -> Bool {
+        guard divergenceIndex >= 32,
+              divergenceIndex < newTokenCount,
+              totalProcessed >= 32 else { return false }
+        return true
     }
-    
-    /// Optimized reprocessing that only clears cache from the divergence point
-    private func optimizedReprocessing(newTokenList: [llama_token], divergenceIndex: Int) throws {
-        // Clear KV cache from the divergence point onward
+
+    /// Optimized reprocessing that only clears cache/state from divergence.
+    private func optimizedReprocessing(
+        newTokenList: [llama_token],
+        divergenceIndex: Int
+    ) throws {
         context.clearKVCacheFromPosition(Int32(divergenceIndex))
-        
-        // Update our internal state
-        processedTokens = Array(processedTokens[0..<divergenceIndex])
+        processedTokens = Array(processedTokens.prefix(divergenceIndex))
         currentTokenPosition = Int32(divergenceIndex)
-        
-        // Process only the tokens from the divergence point onward
-        let tokensToProcess = Array(newTokenList[divergenceIndex...])
-        try processPrompt(tokens: tokensToProcess, startIndex: divergenceIndex)
+        try processPrompt(
+            tokens: Array(newTokenList.dropFirst(divergenceIndex)),
+            startIndex: divergenceIndex
+        )
     }
 
     func generateNextToken() throws -> NextToken {
-        // Stop before sampling if we've reached the context limit to avoid mutating sampler state
         if currentTokenPosition >= Int32(maxTokenCount) {
             return .endOfString
         }
@@ -195,6 +246,7 @@ final actor Llama {
     private func clear() {
         context.clearKVCache()
         processedTokens = []
+        currentTokenPosition = 0
         batch = .init(initialSize: Int32(config.batchSize))
     }
 
@@ -224,8 +276,6 @@ final actor Llama {
 
         batch.setLastTokenLogits(true)
         try processBatch()
-
         currentTokenPosition = Int32(processedTokens.count)
-
     }
 }
