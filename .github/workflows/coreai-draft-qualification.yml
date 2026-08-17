@@ -55,8 +55,8 @@ jobs:
           HF_HUB_DISABLE_TELEMETRY: '1'
         run: python Research/CoreAIDraft/qwen35_delta_equivalence.py
 
-  coreai-functional-state-compile:
-    name: Core AI functional-state compiler smoke
+  coreai-functional-state-export:
+    name: Core AI functional-state export smoke
     runs-on: xcode-27
     timeout-minutes: 35
     steps:
@@ -67,10 +67,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Show Core AI toolchain
+      - name: Show Core AI host toolchain
         run: |
           xcodebuild -version
-          xcrun coreai-build --help >/dev/null
           python --version
       - name: Install Apple-pinned Core AI exporter stack
         run: |
@@ -78,19 +77,42 @@ jobs:
             'torch==2.9.0' \
             'coreai-core==1.0.0b2' \
             'coreai-torch==0.4.1'
+          python - <<'PY'
+          import coreai_torch
+          print('coreai_torch=', coreai_torch.__file__)
+          PY
       - name: Export FP16 functional recurrent-state graph
         run: |
+          set -euo pipefail
           mkdir -p artifacts/coreai-draft-smoke
           python Research/CoreAIDraft/coreai_functional_state_smoke.py \
             --dtype float16 \
             --output artifacts/coreai-draft-smoke/qwen35-functional-state-smoke.aimodel
-      - name: Compile synthetic graph for iOS
+          test -e artifacts/coreai-draft-smoke/qwen35-functional-state-smoke.aimodel
+      - name: Discover AOT compiler capability
+        id: aot
+        run: |
+          set -euo pipefail
+          if xcrun --find coreai-build >/dev/null 2>&1; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+            xcrun coreai-build --help | head -40 || true
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'Hosted Xcode 27 beta image does not include coreai-build; export remains valid and AOT is delegated to a newer/self-hosted Xcode lane.'
+          fi
+      - name: Compile synthetic graph for iOS when AOT is installed
+        if: steps.aot.outputs.available == 'true'
         run: |
           set -euo pipefail
           xcrun coreai-build compile \
             artifacts/coreai-draft-smoke/qwen35-functional-state-smoke.aimodel \
             --platform iOS
-      - name: Upload compiler smoke artifact
+      - name: Record hosted compiler capability
+        run: |
+          printf 'aot_coreai_build=%s\n' '${{ steps.aot.outputs.available }}' \
+            > artifacts/coreai-draft-smoke/host-capability.txt
+          xcodebuild -version >> artifacts/coreai-draft-smoke/host-capability.txt
+      - name: Upload exported graph and capability receipt
         if: always()
         uses: actions/upload-artifact@v7
         with:
