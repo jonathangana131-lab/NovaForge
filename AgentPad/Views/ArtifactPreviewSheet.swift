@@ -2365,6 +2365,27 @@ private struct WebArtifactView: UIViewRepresentable {
             let sizeChanged = !viewportMatches(currentViewportSize, size)
             currentViewportSize = size
 
+            // Normal portrait previews do not need the expensive two-frame
+            // compositor proof used to guard fullscreen rotation. Requiring that
+            // handshake for every workspace HTML artifact can strand an otherwise
+            // loaded page behind the loading cover on newer WebKit builds. Keep
+            // normal previews responsive: resize them immediately and publish
+            // readiness once main-frame navigation has completed. Full-bleed game
+            // mode retains the strict viewport-keyed compositor handshake below.
+            if !fullBleedGameMode {
+                dispatchViewportResize(in: webView, explicitSize: size)
+                if navigationFinished,
+                   activeReloadToken != nil,
+                   onLoadStateChange != nil {
+                    renderAttempt = nil
+                    failedViewportSize = nil
+                    readyViewportSize = size
+                    loadingPublication = nil
+                    onLoadStateChange?(.ready)
+                }
+                return
+            }
+
             guard sizeChanged else {
                 if navigationFinished,
                    renderAttempt == nil,
@@ -2460,6 +2481,34 @@ private struct WebArtifactView: UIViewRepresentable {
                 dispatchViewportResize(in: webView, explicitSize: viewportSize)
                 return
             }
+
+            if !fullBleedGameMode {
+                // WKNavigation.didFinish is the correct readiness boundary for a
+                // normal embedded file preview. Apply NovaForge's authoritative
+                // viewport first, then reveal the page. The stricter two-frame
+                // render proof is reserved for fullscreen/rotation where backing-
+                // store dimensions are correctness-critical.
+                dispatchViewportResize(in: webView, explicitSize: viewportSize) { [weak self] error in
+                    guard let self,
+                          self.activeReloadToken == reloadToken,
+                          self.isActive(navigation),
+                          self.viewportMatches(self.currentViewportSize, viewportSize)
+                    else { return }
+                    self.renderAttempt = nil
+                    self.loadingPublication = nil
+                    if let error {
+                        self.readyViewportSize = nil
+                        self.failedViewportSize = viewportSize
+                        self.onLoadStateChange?(.failed("The preview could not apply its viewport. \(error.localizedDescription)"))
+                    } else {
+                        self.readyViewportSize = viewportSize
+                        self.failedViewportSize = nil
+                        self.onLoadStateChange?(.ready)
+                    }
+                }
+                return
+            }
+
             startRenderHandshake(
                 in: webView,
                 navigation: navigation,
