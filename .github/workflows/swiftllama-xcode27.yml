@@ -40,26 +40,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t LLAMA_FRAMEWORKS < <(find .build -type d -name llama.framework -print | sort -u)
-          if [ "${#LLAMA_FRAMEWORKS[@]}" -eq 0 ]; then
+          LLAMA_FRAMEWORK="$(find .build -type d -name llama.framework -print | head -n 1)"
+          if [ -z "$LLAMA_FRAMEWORK" ]; then
             echo 'Resolved llama.framework was not found under .build' >&2
-            find .build -maxdepth 6 -type d -name '*.framework' -print || true
+            find .build -maxdepth 8 -type d -name '*.framework' -print || true
             exit 69
           fi
 
-          echo 'Resolved llama frameworks:'
-          printf '  %s\n' "${LLAMA_FRAMEWORKS[@]}"
-
-          DYLD_PATHS=''
-          for framework in "${LLAMA_FRAMEWORKS[@]}"; do
-            parent="$(cd "$(dirname "$framework")" && pwd)"
-            if [ -z "$DYLD_PATHS" ]; then
-              DYLD_PATHS="$parent"
-            else
-              DYLD_PATHS="$DYLD_PATHS:$parent"
-            fi
-          done
-
-          export DYLD_FRAMEWORK_PATH="$DYLD_PATHS${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+          echo "Resolved llama framework: $LLAMA_FRAMEWORK"
+          LLAMA_FRAMEWORK_PARENT="$(cd "$(dirname "$LLAMA_FRAMEWORK")" && pwd)"
+          export DYLD_FRAMEWORK_PATH="$LLAMA_FRAMEWORK_PARENT${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
           echo "DYLD_FRAMEWORK_PATH=$DYLD_FRAMEWORK_PATH"
           swift test --skip-build --parallel
