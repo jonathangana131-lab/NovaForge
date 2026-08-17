@@ -47,6 +47,9 @@ llama_embed = uid("llama-embed")
 metal_build = uid("metal-build")
 accel_build = uid("accelerate-build")
 webkit_build = uid("webkit-build")
+coreml_pkg_ref = uid("coreml-llm-package")
+coreml_product = uid("coreml-llm-product")
+coreml_build = uid("coreml-llm-build")
 
 source_refs = {p: uid("ref:" + p.name) for p in SOURCES}
 source_builds = {p: uid("build:" + p.name) for p in SOURCES}
@@ -68,6 +71,7 @@ a(f"\t\t{llama_embed} /* llama.xcframework in Embed Frameworks */ = {{isa = PBXB
 a(f"\t\t{metal_build} /* Metal.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {metal_ref}; }};")
 a(f"\t\t{accel_build} /* Accelerate.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {accel_ref}; }};")
 a(f"\t\t{webkit_build} /* WebKit.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {webkit_ref}; }};")
+a(f"\t\t{coreml_build} /* CoreMLLLM in Frameworks */ = {{isa = PBXBuildFile; productRef = {coreml_product} /* CoreMLLLM */; }};")
 a("/* End PBXBuildFile section */")
 
 a("\n/* Begin PBXCopyFilesBuildPhase section */")
@@ -86,7 +90,7 @@ a(f"\t\t{webkit_ref} /* WebKit.framework */ = {{isa = PBXFileReference; lastKnow
 a("/* End PBXFileReference section */")
 
 a("\n/* Begin PBXFrameworksBuildPhase section */")
-a(f"\t\t{frameworks_phase} = {{isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ({llama_build}, {metal_build}, {accel_build}, {webkit_build},); runOnlyForDeploymentPostprocessing = 0; }};")
+a(f"\t\t{frameworks_phase} = {{isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ({llama_build}, {coreml_build}, {metal_build}, {accel_build}, {webkit_build},); runOnlyForDeploymentPostprocessing = 0; }};")
 a("/* End PBXFrameworksBuildPhase section */")
 
 a("\n/* Begin PBXGroup section */")
@@ -98,11 +102,11 @@ a(f"\t\t{main_group} = {{isa = PBXGroup; children = ({app_group}, {framework_gro
 a("/* End PBXGroup section */")
 
 a("\n/* Begin PBXNativeTarget section */")
-a(f"\t\t{target_id} /* TriInferCode */ = {{isa = PBXNativeTarget; buildConfigurationList = {target_config_list}; buildPhases = ({sources_phase}, {frameworks_phase}, {resources_phase}, {embed_phase},); buildRules = (); dependencies = (); name = TriInferCode; productName = TriInferCode; productReference = {product_id}; productType = \"com.apple.product-type.application\"; }};")
+a(f"\t\t{target_id} /* TriInferCode */ = {{isa = PBXNativeTarget; buildConfigurationList = {target_config_list}; buildPhases = ({sources_phase}, {frameworks_phase}, {resources_phase}, {embed_phase},); buildRules = (); dependencies = (); name = TriInferCode; packageProductDependencies = ({coreml_product},); productName = TriInferCode; productReference = {product_id}; productType = \"com.apple.product-type.application\"; }};")
 a("/* End PBXNativeTarget section */")
 
 a("\n/* Begin PBXProject section */")
-a(f"\t\t{project_id} /* Project object */ = {{isa = PBXProject; attributes = {{BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; TargetAttributes = {{{target_id} = {{CreatedOnToolsVersion = 26.1;}};}}; }}; buildConfigurationList = {proj_config_list}; compatibilityVersion = \"Xcode 14.0\"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = {main_group}; productRefGroup = {products_group}; projectDirPath = \"\"; projectRoot = \"\"; targets = ({target_id},); }};")
+a(f"\t\t{project_id} /* Project object */ = {{isa = PBXProject; attributes = {{BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; TargetAttributes = {{{target_id} = {{CreatedOnToolsVersion = 26.1;}};}}; }}; buildConfigurationList = {proj_config_list}; compatibilityVersion = \"Xcode 14.0\"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = {main_group}; packageReferences = ({coreml_pkg_ref},); productRefGroup = {products_group}; projectDirPath = \"\"; projectRoot = \"\"; targets = ({target_id},); }};")
 a("/* End PBXProject section */")
 
 a("\n/* Begin PBXResourcesBuildPhase section */")
@@ -127,6 +131,15 @@ a("\n/* Begin XCConfigurationList section */")
 a(f"\t\t{proj_config_list} = {{isa = XCConfigurationList; buildConfigurations = ({proj_debug}, {proj_release},); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; }};")
 a(f"\t\t{target_config_list} = {{isa = XCConfigurationList; buildConfigurations = ({target_debug}, {target_release},); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; }};")
 a("/* End XCConfigurationList section */")
+
+a("\n/* Begin XCRemoteSwiftPackageReference section */")
+a(f"\t\t{coreml_pkg_ref} /* CoreML-LLM */ = {{isa = XCRemoteSwiftPackageReference; repositoryURL = \"https://github.com/john-rocky/CoreML-LLM\"; requirement = {{kind = upToNextMajorVersion; minimumVersion = 1.9.0; }}; }};")
+a("/* End XCRemoteSwiftPackageReference section */")
+
+a("\n/* Begin XCSwiftPackageProductDependency section */")
+a(f"\t\t{coreml_product} /* CoreMLLLM */ = {{isa = XCSwiftPackageProductDependency; package = {coreml_pkg_ref} /* CoreML-LLM */; productName = CoreMLLLM; }};")
+a("/* End XCSwiftPackageProductDependency section */")
+
 a("\t};")
 a(f"\trootObject = {project_id};")
 a("}")
@@ -145,4 +158,4 @@ scheme = f'''<?xml version="1.0" encoding="UTF-8"?>
  <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
 </Scheme>'''
 (SCHEME_DIR / "TriInferCode.xcscheme").write_text(scheme)
-print(f"Generated Xcode 26.1 / iOS 26+ {PROJECT} with {len(SOURCES)} active Swift sources (runs on iOS 27)")
+print(f"Generated Xcode 26.1 / iOS 26+ {PROJECT} with {len(SOURCES)} active Swift sources, llama.cpp Metal + CoreML ANE acceleration")
