@@ -25,9 +25,17 @@ struct RootView: View {
         .sheet(isPresented: $model.showTasks) { TodoView(model: model) }
         .sheet(isPresented: $model.showContext) { ContextInspectorView(model: model) }
         .sheet(isPresented: $model.showPerformance) { PerformanceView(model: model) }
-        .sheet(isPresented: $model.showHistory) { HistoryView(model: model) }
-        .alert("TriInfer", isPresented: Binding(get: { model.alertMessage != nil }, set: { if !$0 { model.alertMessage = nil } })) {
+        .sheet(isPresented: $model.showHistory) { SessionHistoryView(model: model) }
+        .alert(
+            "TriInfer",
+            isPresented: Binding(
+                get: { model.alertMessage != nil },
+                set: { if !$0 { model.alertMessage = nil } }
+            )
+        ) {
             Button("OK", role: .cancel) { model.alertMessage = nil }
-        } message: { Text(model.alertMessage ?? "") }
+        } message: {
+            Text(model.alertMessage ?? "")
+        }
     }
 }
