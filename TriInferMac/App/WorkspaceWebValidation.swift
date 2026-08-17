@@ -1,6 +1,12 @@
 import Foundation
 
 extension WorkspaceManager {
+    private struct Reference: Hashable {
+        let source: String
+        let target: String
+        let kind: String
+    }
+
     /// Static integrity check for modular browser projects. It verifies index.html, local HTML
     /// scripts/styles/assets, JS module imports, and CSS url() references without executing
     /// untrusted workspace code inside the agent process.
@@ -9,12 +15,6 @@ extension WorkspaceManager {
         let files = Set(all.filter { !$0.isDirectory }.map(\.relativePath))
         guard files.contains("index.html") else {
             return "FAIL: index.html is missing. A browser artifact needs an entry document."
-        }
-
-        struct Reference: Hashable {
-            let source: String
-            let target: String
-            let kind: String
         }
 
         var refs: [Reference] = []
@@ -87,20 +87,14 @@ extension WorkspaceManager {
         return output
     }
 
-    private func references(pattern: String, text: String, source: String, kind: String) -> [ReferenceShim] {
+    private func references(pattern: String, text: String, source: String, kind: String) -> [Reference] {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
         let ns = text as NSString
         return regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
             guard match.numberOfRanges > 1, match.range(at: 1).location != NSNotFound else { return nil }
             let value = ns.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-            return ReferenceShim(source: source, target: value, kind: kind)
+            return Reference(source: source, target: value, kind: kind)
         }
-    }
-
-    private struct ReferenceShim: Hashable {
-        let source: String
-        let target: String
-        let kind: String
     }
 
     private func normalizedLocalReference(_ raw: String, relativeTo source: String) -> String? {
