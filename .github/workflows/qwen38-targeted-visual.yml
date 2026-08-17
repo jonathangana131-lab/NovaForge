@@ -1,0 +1,94 @@
+name: Qwen 3.8 Targeted Visual Proof
+
+on:
+  push:
+    branches: [validation/qwen38-targeted-visual]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen38-targeted-visual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual:
+    runs-on: xcode-27
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Resolve a real iOS 27 iPhone simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID="$(python3 - <<'PY'
+          import json, subprocess
+          data=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','-j']))
+          found=[]
+          for runtime,devices in data.get('devices',{}).items():
+              if 'SimRuntime.iOS-27-' not in runtime: continue
+              for d in devices:
+                  if d.get('name','').startswith('iPhone') and d.get('isAvailable',True):
+                      rank=0 if d.get('name')=='iPhone 17 Pro' else (1 if 'Pro' in d.get('name','') else 2)
+                      found.append((rank,d.get('name',''),d['udid']))
+          if not found: raise SystemExit('no available iOS 27 iPhone simulator')
+          found.sort()
+          print(found[0][2])
+          PY
+          )"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+          for i in $(seq 1 90); do
+            STATE="$(xcrun simctl list devices -j | python3 -c 'import json,sys; d=json.load(sys.stdin); u=sys.argv[1]; print(next((x.get("state","") for a in d.get("devices",{}).values() for x in a if x.get("udid")==u),""))' "$UDID")"
+            if [ "$STATE" = Booted ] && xcrun simctl spawn "$UDID" /usr/bin/true >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          xcrun simctl list devices
+          exit 1
+      - name: Build UI test bundle
+        run: |
+          set -euo pipefail
+          rm -rf QA/TargetedVisualDerived QA/TargetedVisual.xcresult captures/targeted
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath QA/TargetedVisualDerived \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing
+      - name: Run model + modular artifact visual journeys
+        env:
+          NOVAFORGE_CAPTURE_MODE: all
+          TEST_RUNNER_NOVAFORGE_CAPTURE_MODE: all
+          NOVAFORGE_SCREENSHOT_DIR: ${{ github.workspace }}/captures/targeted
+          TEST_RUNNER_NOVAFORGE_SCREENSHOT_DIR: ${{ github.workspace }}/captures/targeted
+        run: |
+          set -euo pipefail
+          XCTESTRUN="$(find QA/TargetedVisualDerived/Build/Products -name '*.xctestrun' -print | head -n 1)"
+          test -f "$XCTESTRUN"
+          xcodebuild \
+            -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -parallel-testing-enabled NO \
+            -resultBundlePath QA/TargetedVisual.xcresult \
+            -only-testing:AgentPadUITests/AgentPadUITests/testLocalModelSettingsScreenshot \
+            -only-testing:AgentPadUITests/AgentPadUITests/testLocalWebArtifactCreatesPreviewableLandingPage \
+            test-without-building
+      - name: Upload targeted screenshots and xcresult
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen38-targeted-visual-${{ github.run_id }}
+          path: |
+            captures/targeted
+            QA/TargetedVisual.xcresult
+          if-no-files-found: warn
+          retention-days: 14
