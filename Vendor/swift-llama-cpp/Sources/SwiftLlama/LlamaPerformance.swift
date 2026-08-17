@@ -45,6 +45,11 @@ public struct LlamaPerformanceSnapshot: Equatable, Sendable {
 /// must beat measured autoregressive throughput before NovaForge keeps the mode
 /// enabled. This intentionally does not know how a backend implements drafting.
 public struct LlamaAdaptiveInferenceGovernor: Equatable, Sendable {
+    public enum Selection: Equatable, Sendable {
+        case baseline
+        case candidate
+    }
+
     public struct Candidate: Equatable, Sendable {
         public let samples: Int
         public let averageTokensPerSecond: Double
@@ -74,9 +79,75 @@ public struct LlamaAdaptiveInferenceGovernor: Equatable, Sendable {
         minimumRelativeSpeedup: Double = 1.05,
         minimumAcceptanceRate: Double = 0.50
     ) -> Bool {
+        passes(
+            candidate: candidate,
+            baselineTokensPerSecond: baselineTokensPerSecond,
+            availableResidentBytes: availableResidentBytes,
+            minimumSamples: minimumSamples,
+            minimumRelativeSpeedup: minimumRelativeSpeedup,
+            minimumAcceptanceRate: minimumAcceptanceRate
+        )
+    }
+
+    /// A resident candidate uses a looser retention threshold than a cold
+    /// candidate uses for promotion. That hysteresis is intentional: repeatedly
+    /// evicting/reloading a draft working set can cost more than a tiny measured
+    /// throughput dip. Hard memory and acceptance gates still win immediately.
+    public static func shouldRetainResidentCandidate(
+        candidate: Candidate,
+        baselineTokensPerSecond: Double,
+        availableResidentBytes: UInt64,
+        minimumSamples: Int = 2,
+        minimumRelativeSpeedup: Double = 0.98,
+        minimumAcceptanceRate: Double = 0.45
+    ) -> Bool {
+        passes(
+            candidate: candidate,
+            baselineTokensPerSecond: baselineTokensPerSecond,
+            availableResidentBytes: availableResidentBytes,
+            minimumSamples: minimumSamples,
+            minimumRelativeSpeedup: minimumRelativeSpeedup,
+            minimumAcceptanceRate: minimumAcceptanceRate
+        )
+    }
+
+    /// One backend-neutral decision point for future speculative engines.
+    /// `candidateIsResident` is about actual working-set residency, not whether
+    /// the mode was merely selected in UI settings.
+    public static func select(
+        candidate: Candidate,
+        baselineTokensPerSecond: Double,
+        availableResidentBytes: UInt64,
+        candidateIsResident: Bool
+    ) -> Selection {
+        let accepted = candidateIsResident
+            ? shouldRetainResidentCandidate(
+                candidate: candidate,
+                baselineTokensPerSecond: baselineTokensPerSecond,
+                availableResidentBytes: availableResidentBytes
+            )
+            : shouldPromote(
+                candidate: candidate,
+                baselineTokensPerSecond: baselineTokensPerSecond,
+                availableResidentBytes: availableResidentBytes
+            )
+        return accepted ? .candidate : .baseline
+    }
+
+    private static func passes(
+        candidate: Candidate,
+        baselineTokensPerSecond: Double,
+        availableResidentBytes: UInt64,
+        minimumSamples: Int,
+        minimumRelativeSpeedup: Double,
+        minimumAcceptanceRate: Double
+    ) -> Bool {
         guard candidate.samples >= minimumSamples,
+              minimumSamples > 0,
               baselineTokensPerSecond.isFinite,
               baselineTokensPerSecond > 0,
+              minimumRelativeSpeedup.isFinite,
+              minimumRelativeSpeedup > 0,
               candidate.averageTokensPerSecond.isFinite,
               candidate.averageTokensPerSecond >= baselineTokensPerSecond * minimumRelativeSpeedup,
               candidate.residentBytes <= availableResidentBytes
@@ -84,7 +155,8 @@ public struct LlamaAdaptiveInferenceGovernor: Equatable, Sendable {
 
         if let acceptance = candidate.averageAcceptanceRate {
             guard acceptance.isFinite,
-                  acceptance >= minimumAcceptanceRate else { return false }
+                  acceptance >= minimumAcceptanceRate,
+                  acceptance <= 1 else { return false }
         }
         return true
     }
