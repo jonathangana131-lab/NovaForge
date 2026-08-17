@@ -1,0 +1,38 @@
+name: Apply iOS 27 artifact preview readiness repair
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_ios27_artifact_preview_ready.py'
+      - '.github/workflows/apply-ios27-artifact-preview-ready.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply readiness repair
+        run: python3 ci/apply_ios27_artifact_preview_ready.py
+      - name: Validate patch
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq 'main-frame navigation' AgentPad/Views/ArtifactPreviewSheet.swift
+          grep -Fq 'onLoadStateChange?(.ready)' AgentPad/Views/ArtifactPreviewSheet.swift
+      - name: Commit readiness repair
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- AgentPad/Views/ArtifactPreviewSheet.swift; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Views/ArtifactPreviewSheet.swift
+          git commit -m 'Make iOS 27 local artifact preview readiness deterministic'
+          git push origin HEAD:feature/qwen38-forge-ios27
