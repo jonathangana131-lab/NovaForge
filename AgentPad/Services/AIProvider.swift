@@ -75,7 +75,11 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 
     var defaultModel: String {
-        modelOptions.first ?? ""
+        if self == .local {
+            return LocalModelCatalog.exactQwen38Variant?.id
+                ?? Qwen38ReleaseDiscovery.unavailableModelID
+        }
+        return modelOptions.first ?? ""
     }
 
     var apiKeyAccount: String {
@@ -174,7 +178,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     var modelOptions: [String] {
         switch self {
         case .local:
-            LocalModelCatalog.all.map(\.id)
+            LocalModelCatalog.presentationOrder.map(\.id)
         case .openAI:
             [
                 Self.exactGPT56SolModelID,
@@ -240,7 +244,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     var subtitle: String {
         switch self {
         case .local:
-            "On-device Qwen Coder agent"
+            "Qwen 3.8 27B · on-device only"
         case .openAI:
             "Native OpenAI key"
         case .openAICodex:
