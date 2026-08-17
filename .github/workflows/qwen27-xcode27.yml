@@ -1,0 +1,72 @@
+name: Qwen 27B Xcode 27 Validation
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen27-xcode27-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-xcode27:
+    name: Xcode 27 runtime + app verification
+    runs-on: xcode-27
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Show Xcode and iOS runtimes
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Install source-search dependency
+        run: command -v rg >/dev/null 2>&1 || brew install ripgrep
+      - name: Build and run critical verification
+        env:
+          NOVAFORGE_TEST_LANE: critical
+          XCODEBUILD_CAP_MINUTES: 65
+        run: bash ci/verify.sh
+      - name: Upload Xcode 27 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen27-xcode27-verify-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/verify-critical
+          if-no-files-found: warn
+          retention-days: 14
+
+  visual-xcode27:
+    name: Xcode 27 synchronized visual proof
+    needs: verify-xcode27
+    runs-on: xcode-27
+    timeout-minutes: 95
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Show Xcode and iOS runtimes
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Install source-search dependency
+        run: command -v rg >/dev/null 2>&1 || brew install ripgrep
+      - name: Run synchronized NovaForge visual census
+        run: bash ci/pipeline.sh
+      - name: Upload rendered screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen27-xcode27-screens-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            captures
+            artifacts/visual
+          if-no-files-found: warn
+          retention-days: 14
