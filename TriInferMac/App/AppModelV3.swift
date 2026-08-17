@@ -83,21 +83,18 @@ final class AppModel {
     @ObservationIgnored let models: ModelManager
     @ObservationIgnored let context: ContextEngine
     @ObservationIgnored let sessions: SessionStore
-    @ObservationIgnored private let runtime: LlamaRuntime
-    @ObservationIgnored private let agent: AgentEngine
+
+    // llama_backend_init() is intentionally not part of AppModel construction. The runtime and
+    // agent are created only when a saved GGUF is restored, a model is explicitly loaded, or a run
+    // begins. This keeps Metal/llama initialization out of SwiftUI's first-frame critical path.
+    @ObservationIgnored private lazy var runtime = LlamaRuntime()
+    @ObservationIgnored private lazy var agent = AgentEngine(workspace: workspace, context: context, runtime: runtime)
 
     init() {
-        let workspace = WorkspaceManager()
-        let models = ModelManager()
-        let context = ContextEngine()
-        let sessions = SessionStore()
-        let runtime = LlamaRuntime()
-        self.workspace = workspace
-        self.models = models
-        self.context = context
-        self.sessions = sessions
-        self.runtime = runtime
-        self.agent = AgentEngine(workspace: workspace, context: context, runtime: runtime)
+        self.workspace = WorkspaceManager()
+        self.models = ModelManager()
+        self.context = ContextEngine()
+        self.sessions = SessionStore()
     }
 
     func bootstrap() async {
