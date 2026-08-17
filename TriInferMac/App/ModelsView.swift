@@ -8,7 +8,9 @@ private final class ModelsScreenState {
     var installed: [ModelManager.InstalledModel] = []
     var candidates: [ModelManager.Candidate] = []
     var jobs: [String: BackgroundModelDownloads.Job] = [:]
+    var aneStatus: ANESemanticAccelerator.Status?
     var discovering = false
+    var installingANE = false
     var importer = false
     var discoveryNote: String?
     var error: String?
@@ -29,12 +31,54 @@ struct ModelsView: View {
                         .glassEffect(.regular, in: .rect(cornerRadius: 14))
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Local Model Library").font(.headline)
-                        Text("GGUF • llama.cpp b10456 • Metal + CPU • stored on-device")
+                        Text("GGUF target • llama.cpp b10456 • Metal + CPU • on-device")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 .padding(.vertical, 4)
+            }
+
+            Section {
+                HStack(spacing: 12) {
+                    Image(systemName: "brain.head.profile.fill")
+                        .font(.title3)
+                        .foregroundStyle(.purple)
+                        .frame(width: 40, height: 40)
+                        .background(.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("ANE Semantic Memory")
+                            .font(.subheadline.weight(.semibold))
+                        Text(state.aneStatus?.label ?? "Checking Neural Engine accelerator…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if state.installingANE {
+                        ProgressView().controlSize(.small)
+                    } else if state.aneStatus?.loaded == true {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
+                }
+
+                if let status = state.aneStatus, status.loaded {
+                    LabeledContent("Vector cache", value: "\(status.cacheCount) items")
+                        .font(.caption)
+                    Text("128-d Matryoshka embeddings rerank only a small lexical shortlist on CPU + Neural Engine. The GPU stays free for the large target model.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button {
+                        Task { await installANE() }
+                    } label: {
+                        Label(state.aneStatus?.installed == true ? "Load ANE Accelerator" : "Install ANE Accelerator (~330 MB)", systemImage: "arrow.down.app.fill")
+                    }
+                    .disabled(state.installingANE)
+                }
+            } header: {
+                Text("Neural Engine accelerator")
+            } footer: {
+                Text("Optional. This is a small retrieval coprocessor, not a second chat model. It reduces irrelevant 27B prompt tokens and time-to-first-token without reserving gigabytes for another decoder.")
             }
 
             if !state.jobs.isEmpty {
@@ -45,7 +89,7 @@ struct ModelsView: View {
                 }
             }
 
-            Section("Installed") {
+            Section("Installed GGUF targets") {
                 if state.installed.isEmpty {
                     Text("No GGUF models installed yet.").foregroundStyle(.secondary)
                 }
@@ -92,9 +136,9 @@ struct ModelsView: View {
                         .foregroundStyle(.secondary)
                 }
             } header: {
-                Text("Add a model")
+                Text("Add a target model")
             } footer: {
-                Text("Live discovery prefers a compatible public Qwen3.8-27B the moment one is available, then falls back to the newest verified open 27B family. TriInfer ranks ultra-low-bit, complete single-file GGUFs and rejects partial shards. Large downloads use an OS-managed background session and reconnect after relaunch.")
+                Text("Live discovery prefers a compatible public Qwen3.8-27B the moment one is available, then falls back to the newest verified open 27B family. TriInfer ranks ultra-low-bit complete single-file GGUFs and rejects partial shards. Large downloads use an OS-managed background session and reconnect after relaunch.")
             }
 
             if !state.candidates.isEmpty {
@@ -222,8 +266,20 @@ struct ModelsView: View {
 
     private func reload() async {
         state.installed = (try? await model.models.installedModels()) ?? []
+        state.aneStatus = await model.context.semanticStatus()
         refreshJobs()
         await model.refreshModelState()
+    }
+
+    private func installANE() async {
+        state.installingANE = true
+        do {
+            try await model.context.installSemanticANE()
+            state.aneStatus = await model.context.semanticStatus()
+        } catch {
+            state.error = "ANE accelerator installation failed: \(error.localizedDescription)"
+        }
+        state.installingANE = false
     }
 
     private func discover() async {
@@ -291,6 +347,7 @@ struct ModelsView: View {
         let args = ProcessInfo.processInfo.arguments
         guard args.contains("--ui-showcase"), args.contains("models"), state.candidates.isEmpty else { return }
         state.discoveryNote = "Qwen3.8 weights are checked first; this preview is showing the current open 27B fallback."
+        state.aneStatus = .init(installed: false, loaded: false, label: "Optional • ~330 MB download", cacheCount: 0)
         state.candidates = [
             .init(
                 repository: "bartowski/Qwen_Qwen3.6-27B-GGUF",
