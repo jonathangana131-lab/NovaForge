@@ -13,14 +13,25 @@ public final actor LlamaService {
     private var llama: Llama?
     private var currentTask: Task<(), Error>?
     private let modelUrl: URL
-    private let config: LlamaConfig
+    private let requestedConfig: LlamaConfig
+    private let runtimeDecision: LlamaRuntimeTuner.Decision
     private let tokenBufferSize = 1
 
     // MARK: Lifecycle
 
     public init(modelUrl: URL, config: LlamaConfig) {
         self.modelUrl = modelUrl
-        self.config = config
+        self.requestedConfig = config
+        self.runtimeDecision = LlamaRuntimeTuner.decide(
+            modelURL: modelUrl,
+            requested: config
+        )
+    }
+
+    /// The exact pre-context runtime decision is exposed for diagnostics and
+    /// benchmark receipts. It never contains user prompt/model content.
+    public func runtimeProfile() -> LlamaRuntimeTuner.Decision {
+        runtimeDecision
     }
 
     // MARK: Methods
@@ -32,16 +43,10 @@ public final actor LlamaService {
     }
 
     /// Generate a typed response constrained by a JSON grammar inferred from `T` and decode it.
-    /// - Parameters:
-    ///   - messages: Chat messages forming the prompt.
-    ///   - type: The `Codable` type to generate and decode.
-    /// - Returns: A decoded instance of `T` produced by the model.
     public func respond<T: Codable>(to messages: [LlamaChatMessage], generating type: T.Type) async throws -> T {
         func extractLikelyJSON(from text: String) -> String? {
-            // Find first opening brace or bracket
             guard let startIndex = text.firstIndex(where: { $0 == "{" || $0 == "[" }) else { return nil }
             let candidate = text[startIndex...]
-            // Simple balance-based termination (ignores strings/escapes, good enough for LLM output)
             var depth: Int = 0
             var closingIndex: String.Index?
             for (i, ch) in candidate.enumerated() {
@@ -52,9 +57,7 @@ public final actor LlamaService {
                     if depth == 0 { closingIndex = idx; break }
                 }
             }
-            if let closingIndex {
-                return String(candidate[...closingIndex])
-            }
+            if let closingIndex { return String(candidate[...closingIndex]) }
             return nil
         }
 
@@ -73,13 +76,12 @@ public final actor LlamaService {
                 }
             }
         } catch {
-            // Fall through to final decode attempt below
+            // Fall through to final decode attempt below.
         }
         if let value = decodedValue {
             await stopCompletion()
             return value
         }
-        // Final attempt with trimmed JSON if available, otherwise full text
         let finalText = extractLikelyJSON(from: accumulated) ?? accumulated
         guard let finalData = finalText.data(using: .utf8) else {
             throw LlamaError.decodingError
@@ -87,22 +89,14 @@ public final actor LlamaService {
         return try decoder.decode(T.self, from: finalData)
     }
 
-    /// Generate a plain text response using the provided sampling configuration.
-    /// - Parameters:
-    ///   - messages: Chat messages forming the prompt.
-    ///   - samplingConfig: Sampling parameters controlling generation.
-    /// - Returns: The full generated text.
     public func respond(to messages: [LlamaChatMessage], samplingConfig: LlamaSamplingConfig) async throws -> String {
         let stream = try await streamCompletion(of: messages, samplingConfig: samplingConfig)
         var output = ""
-        for try await token in stream {
-            output += token
-        }
+        for try await token in stream { output += token }
         return output
     }
 
     public func streamCompletion<T: Codable>(of messages: [LlamaChatMessage], generating: T.Type) async throws -> AsyncThrowingStream<String, Error> {
-        // Default: constrain the output to valid JSON matching the provided type
         let grammarConfig = try LlamaTypedJSONGrammarBuilder.makeGrammarConfig(for: generating)
         let sampling = LlamaSamplingConfig(
             temperature: 0.1,
@@ -116,8 +110,9 @@ public final actor LlamaService {
         guard !messages.isEmpty else { throw LlamaError.emptyMessageArray }
         let llama = try initializeLlamaIfNecessary()
         await stopCompletion()
-        try await  llama.initializeCompletion(messages: messages)
+        try await llama.initializeCompletion(messages: messages)
         try await llama.updateSamplingConfig(samplingConfig)
+        let effectiveConfig = runtimeDecision.config
 
         return AsyncThrowingStream { continuation in
             currentTask = Task {
@@ -141,11 +136,11 @@ public final actor LlamaService {
                                 continuation.yield(tokenBuffer.joined())
                                 tokenBuffer = []
                             }
-                            if generatedTokenCount.isMultiple(of: config.yieldEveryTokenCount) {
+                            if generatedTokenCount.isMultiple(of: effectiveConfig.yieldEveryTokenCount) {
                                 await Task.yield()
                             }
                         case .endOfString:
-                            continuation.yield(tokenBuffer.joined())
+                            if !tokenBuffer.isEmpty { continuation.yield(tokenBuffer.joined()) }
                             break generationLoop
                         }
                     }
@@ -163,7 +158,11 @@ public final actor LlamaService {
 
     private func initializeLlamaIfNecessary() throws -> Llama {
         guard let llama else {
-            llama = try Llama(modelPath: modelUrl.path(percentEncoded: false), config: config)
+            print("SwiftLlama runtime profile: \(runtimeDecision.reason)")
+            llama = try Llama(
+                modelPath: modelUrl.path(percentEncoded: false),
+                config: runtimeDecision.config
+            )
             return llama!
         }
         return llama
