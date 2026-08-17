@@ -11,11 +11,17 @@ struct TriInferApp: App {
             "TriInfer.autoCompact": true,
             "TriInfer.performanceOverlay": true,
             "TriInfer.fastNoThink": true,
-            // Multi-token prompt lookup needs recurrent-state rollback snapshots on Qwen3.8's
-            // hybrid DeltaNet layers. Keep it off until the device auto-benchmark provisions the
-            // rollback budget; never trade correctness for a speculative speed badge.
             "TriInfer.ngramSpeculation": false,
+            "TriInfer.speculationVerified": false,
         ])
+
+        // Hybrid recurrent Qwen targets need exact recurrent-state rollback for rejected drafts.
+        // Never inherit an experimental `true` from an older build unless this exact device/model
+        // has passed a future correctness + throughput verification workflow.
+        if !UserDefaults.standard.bool(forKey: "TriInfer.speculationVerified") {
+            UserDefaults.standard.set(false, forKey: "TriInfer.ngramSpeculation")
+        }
+
         // Keep cold launch deterministic. ModelsView creates BackgroundModelDownloads on demand;
         // iOS background-session relaunches reconnect through TriInferAppDelegate below.
     }
