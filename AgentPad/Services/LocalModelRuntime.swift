@@ -533,7 +533,7 @@ enum LocalModelCatalog {
     /// older small catalog remains compiled only as an internal recovery/test
     /// resource and is never offered as a substitute for Qwen 3.8 27B.
     static var presentationOrder: [LocalModelVariant] {
-        exactQwen38Variant.map { [$0] } ?? []
+        [exactQwen38Variant ?? Qwen38ReleaseDiscovery.unavailableVariant]
     }
 
     static var defaultVariant: LocalModelVariant {
