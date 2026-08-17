@@ -1,0 +1,38 @@
+name: Apply Exact Local Benchmark Tests
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_exact_local_benchmark_tests.py
+      - .github/workflows/apply-exact-local-benchmark-tests.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - run: python3 ci/apply_exact_local_benchmark_tests.py
+      - run: |
+          git diff --check
+          grep -F 'testLocalModelBenchmarkPrefersExactTokenTelemetry' AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          grep -F 'testLocalModelBenchmarkLabelsEstimatedFallbackWithoutRuntimeTelemetry' AgentPadTests/AgentLocalModelProviderTransportTests.swift
+      - name: Commit benchmark telemetry tests
+        run: |
+          if git diff --quiet; then
+            echo 'Benchmark telemetry tests already integrated.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Runtime Test Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          git commit -m 'Test exact local benchmark telemetry'
+          git push origin HEAD:feature/qwen38-forge-ios27
