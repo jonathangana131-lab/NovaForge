@@ -3,8 +3,10 @@
 
 import PackageDescription
 
-let llamaVersion = "b6102"
-let llamaChecksum = "257b8ffbdda68b377e1b75cd23055b201b0e9a24e18d5a42f2960456776eab8a"
+// Keep the iOS binary pinned to an immutable llama.cpp release. The checksum is
+// the SHA-256 published for the exact XCFramework release asset.
+let llamaVersion = "b10456"
+let llamaChecksum = "0223bedd0a01232399d943dcb72bc227882bc90df98e29d7a92343531a88cc02"
 
 let package = Package(
     name: "swift-llama-cpp",
