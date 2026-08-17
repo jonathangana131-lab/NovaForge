@@ -1,0 +1,41 @@
+name: Apply Exact Local Benchmark Telemetry
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_exact_local_benchmark_telemetry.py
+      - .github/workflows/apply-exact-local-benchmark-telemetry.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply fail-closed telemetry transform
+        run: python3 ci/apply_exact_local_benchmark_telemetry.py
+      - name: Validate transformed source
+        run: |
+          git diff --check
+          grep -F 'func performanceSnapshot(modelID: String)' AgentPad/Services/LocalModelRuntime.swift
+          grep -F 'let exact = await localModelClient.performanceSnapshot(modelID: variant.id)' AgentPad/Services/AgentRuntime.swift
+          grep -F 'decode tok/s' AgentPad/Views/ModelManagerPanels.swift
+      - name: Commit exact benchmark telemetry
+        run: |
+          if git diff --quiet; then
+            echo 'Exact benchmark telemetry already integrated.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Runtime Telemetry Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift AgentPad/Services/AgentRuntime.swift AgentPad/Views/ModelManagerPanels.swift
+          git commit -m 'Surface exact local inference benchmark telemetry'
+          git push origin HEAD:feature/qwen38-forge-ios27
