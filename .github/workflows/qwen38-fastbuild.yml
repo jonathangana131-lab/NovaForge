@@ -1,0 +1,46 @@
+name: Qwen 3.8 Xcode 27 Fast Build
+
+on:
+  push:
+    branches: [validation/qwen38-fastbuild]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen38-fastbuild-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Show toolchain
+        run: xcodebuild -version
+      - name: Compile AgentPad for iOS Simulator
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee /tmp/qwen38-fastbuild.log
+      - name: Upload compile log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen38-fastbuild-${{ github.run_id }}
+          path: /tmp/qwen38-fastbuild.log
+          if-no-files-found: warn
+          retention-days: 7
