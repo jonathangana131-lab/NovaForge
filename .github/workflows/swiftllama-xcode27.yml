@@ -40,14 +40,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          LLAMA_FRAMEWORK="$(find .build -type d -name llama.framework -print | head -n 1)"
+          LLAMA_FRAMEWORK="$(find .build -type d -path '*/macos-*/llama.framework' -print | head -n 1)"
           if [ -z "$LLAMA_FRAMEWORK" ]; then
-            echo 'Resolved llama.framework was not found under .build' >&2
-            find .build -maxdepth 8 -type d -name '*.framework' -print || true
+            echo 'Resolved macOS llama.framework was not found under .build' >&2
+            find .build -maxdepth 9 -type d -name 'llama.framework' -print || true
             exit 69
           fi
 
-          echo "Resolved llama framework: $LLAMA_FRAMEWORK"
+          LLAMA_BINARY="$LLAMA_FRAMEWORK/Versions/Current/llama"
+          if [ ! -f "$LLAMA_BINARY" ]; then
+            echo "Resolved framework does not contain expected macOS binary: $LLAMA_BINARY" >&2
+            find "$LLAMA_FRAMEWORK" -maxdepth 4 -print || true
+            exit 70
+          fi
+
+          echo "Resolved macOS llama framework: $LLAMA_FRAMEWORK"
           LLAMA_FRAMEWORK_PARENT="$(cd "$(dirname "$LLAMA_FRAMEWORK")" && pwd)"
           export DYLD_FRAMEWORK_PATH="$LLAMA_FRAMEWORK_PARENT${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
           echo "DYLD_FRAMEWORK_PATH=$DYLD_FRAMEWORK_PATH"
