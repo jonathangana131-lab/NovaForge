@@ -5,6 +5,9 @@ Xcode 27 hosted runners can leave xcodebuild alive after XCTest has emitted the
 final selected-suite pass sentinel. We only recover from a nonzero/timeout when
 that exact sentinel exists and no XCTest failure sentinel exists. Diagnostics are
 captured so this remains visible instead of silently masking teardown debt.
+
+Revision note: the guarded scripts/codex-test.sh tree has been applied once; this
+file update intentionally triggers validation of that exact post-transform tree.
 """
 from pathlib import Path
 
