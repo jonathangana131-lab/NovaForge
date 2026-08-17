@@ -403,6 +403,29 @@ run_xctest_selection() {
     rm -rf -- "$RESULT_BUNDLE_PATH"
   fi
   xctestrun_xcodebuild "$timeout" "$log_path" "$@" || selection_status=$?
+
+  # Xcode 27 can strand the test host after XCTest has fully completed. Treat
+  # that as teardown debt, not a test failure, but only under a fail-closed
+  # proof: the final Selected-tests suite must have passed and no XCTest failure
+  # sentinel may exist in the captured log. The timeout runner has already
+  # drained the xcodebuild process tree before control reaches this point.
+  if (( selection_status != 0 )) \n      && [[ -f "$log_path" ]] \n      && grep -Fq "Test Suite 'Selected tests' passed" "$log_path" \n      && ! grep -Eq "Test (Case|Suite) '.*' failed|\*\* TEST FAILED \*\*|Testing failed:" "$log_path"; then
+    local teardown_diag="$LOG_DIR/xcode27-teardown-$(basename "$log_path").txt"
+    {
+      echo "XCTest completed successfully but xcodebuild did not terminate cleanly."
+      echo "selection_status=$selection_status"
+      echo "simulator=$SIMULATOR_ID"
+      echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
+      echo "pass_sentinel=$(grep -F "Test Suite 'Selected tests' passed" "$log_path" | tail -1)"
+      echo "---- host process snapshot ----"
+      ps -axo pid,ppid,state,etime,command | grep -E 'xcodebuild|xctest|testmanagerd|CoreSimulator|NovaForge' || true
+      echo "---- simulator child snapshot ----"
+      xcrun simctl spawn "$SIMULATOR_ID" ps -axo pid,ppid,state,etime,command 2>&1 | grep -E 'xctest|NovaForge|testmanagerd' || true
+    } > "$teardown_diag" 2>&1
+    echo "RECOVERED: XCTest suite passed; Xcode 27 teardown returned status $selection_status. Diagnostic: $teardown_diag"
+    selection_status=0
+  fi
+
   RESULT_BUNDLE_PATH="$previous_result_path"
   return "$selection_status"
 }
