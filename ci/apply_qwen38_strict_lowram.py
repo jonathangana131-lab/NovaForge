@@ -112,7 +112,11 @@ replacements.append((
 '''))
 
 replacements.append((
-'''    static var defaultVariant: LocalModelVariant {
+'''    static var presentationOrder: [LocalModelVariant] {
+        exactQwen38Variant.map { [$0] } ?? []
+    }
+
+    static var defaultVariant: LocalModelVariant {
         exactQwen38Variant ?? safestVariant()
     }
 
@@ -121,7 +125,11 @@ replacements.append((
         return all.first { $0.id == id }
     }
 ''',
-'''    static var defaultVariant: LocalModelVariant {
+'''    static var presentationOrder: [LocalModelVariant] {
+        [exactQwen38Variant ?? Qwen38ReleaseDiscovery.unavailableVariant]
+    }
+
+    static var defaultVariant: LocalModelVariant {
         exactQwen38Variant ?? Qwen38ReleaseDiscovery.unavailableVariant
     }
 
