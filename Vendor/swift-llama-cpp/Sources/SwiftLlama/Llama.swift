@@ -121,6 +121,53 @@ final actor Llama {
     func enableEmbeddingsOutput(_ enabled: Bool) { context.setEmbeddingsOutput(enabled) }
     func saveStateData() -> Data { context.saveState() }
     func loadStateData(_ data: Data) -> Bool { context.loadState(data) }
+    func persistentStateSizeBytes() -> Int { context.stateSize() }
+
+    /// Restore a llama.cpp session only when its saved token stream is a proven
+    /// prefix of the exact prompt about to run. A mismatched or stale session is
+    /// immediately cleared, so persistence can only improve TTFT—not alter the
+    /// model's logical context.
+    func restoreSessionIfPrefix(
+        from url: URL,
+        messages: [LlamaChatMessage],
+        addAssistant: Bool? = nil
+    ) throws -> Bool {
+        let formattedPrompt = model.applyChatTemplate(to: messages, addAssistant: addAssistant)
+        let tokenList = model.tokenize(text: formattedPrompt, addBos: model.shouldAddBos(), special: true)
+        guard tokenList.count < maxTokenCount - 4 else {
+            throw LlamaError.contextSizeLimitExeeded
+        }
+
+        clear()
+        guard let loaded = context.loadSession(
+            from: url.path(percentEncoded: false),
+            capacity: Int(maxTokenCount)
+        ), loaded.count > 0,
+           loaded.count == loaded.tokens.count,
+           tokenList.starts(with: loaded.tokens)
+        else {
+            clear()
+            return false
+        }
+
+        processedTokens = loaded.tokens
+        currentTokenPosition = Int32(loaded.count)
+        batch = .init(initialSize: Int32(config.batchSize))
+
+        let suffix = Array(tokenList.dropFirst(loaded.count))
+        if !suffix.isEmpty {
+            try processPrompt(tokens: suffix, startIndex: loaded.count)
+        }
+        return true
+    }
+
+    func saveSession(to url: URL) -> Bool {
+        guard !processedTokens.isEmpty else { return false }
+        return context.saveSession(
+            to: url.path(percentEncoded: false),
+            tokens: processedTokens
+        )
+    }
     func setThreads(nThreads: Int32, nThreadsBatch: Int32) { context.setThreads(nThreads: nThreads, nThreadsBatch: nThreadsBatch) }
     func getThreads() -> (Int32, Int32) { (context.nThreads(), context.nThreadsBatch()) }
     func kvMinPosition() -> Int32 { context.memory.minPosition(for: 0) }
