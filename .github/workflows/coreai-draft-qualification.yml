@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   static-qualification:
-    name: Token identity + state budget
+    name: Token identity + state layout
     runs-on: xcode-27
     timeout-minutes: 15
     steps:
@@ -31,8 +31,10 @@ jobs:
           python3 --version
       - name: Prove official tokenizer assets are identical
         run: python3 Research/CoreAIDraft/tokenizer_compatibility.py
-      - name: Validate Core AI recurrent-state contract
+      - name: Validate persistent-state memory budget
         run: python3 Research/CoreAIDraft/qwen35_state_contract.py
+      - name: Validate hybrid Core AI state shapes
+        run: python3 Research/CoreAIDraft/qwen35_coreai_state_contract.py
 
   delta-equivalence:
     name: DeltaNet recurrent math equivalence
