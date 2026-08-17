@@ -316,10 +316,18 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
     private func builtModulesDirectory(packageRoot: URL) throws -> URL {
         let fileManager = FileManager.default
         let buildRoot = packageRoot.appendingPathComponent(".build", isDirectory: true)
+        let requiredModules = ["AgentPolicy", "AgentDomain", "AgentTools"]
+
+        func containsRequiredModules(_ directory: URL) -> Bool {
+            requiredModules.allSatisfy { module in
+                fileManager.fileExists(
+                    atPath: directory.appendingPathComponent("\(module).swiftmodule").path
+                )
+            }
+        }
+
         let legacy = buildRoot.appendingPathComponent("debug/Modules", isDirectory: true)
-        if fileManager.fileExists(
-            atPath: legacy.appendingPathComponent("AgentPolicy.swiftmodule").path
-        ) {
+        if containsRequiredModules(legacy) {
             return legacy
         }
 
@@ -335,9 +343,14 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             )
         }
 
+        var inspectedParents = Set<String>()
         for case let candidate as URL in enumerator {
-            guard candidate.lastPathComponent == "AgentPolicy.swiftmodule" else { continue }
-            return candidate.deletingLastPathComponent()
+            guard candidate.pathExtension == "swiftmodule" else { continue }
+            let parent = candidate.deletingLastPathComponent()
+            guard inspectedParents.insert(parent.path).inserted else { continue }
+            if containsRequiredModules(parent) {
+                return parent
+            }
         }
 
         throw NSError(
@@ -345,7 +358,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             code: 2,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "Unable to locate AgentPolicy.swiftmodule beneath \(buildRoot.path)"
+                    "Unable to locate a SwiftPM Modules directory containing \(requiredModules.joined(separator: ", ")) beneath \(buildRoot.path)"
             ]
         )
     }
