@@ -1,13 +1,15 @@
 name: Qwen 3.8 27B Xcode 27 Validation
-# Exact-tree trigger after stable CoreSimulator Booted-state readiness landed.
+# Stable exact-tree Xcode 27 + iOS 27 qualification.
 
 on:
   push:
     branches: [feature/qwen38-forge-ios27]
+    paths-ignore:
+      - 'QA/**'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: qwen38-xcode27-${{ github.ref }}
@@ -23,6 +25,29 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+          persist-credentials: true
+      - name: Publish live Xcode 27 receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p QA
+          cat > QA/qwen38-xcode27-latest.json <<JSON
+          {
+            "status": "RUNNING",
+            "runId": "${GITHUB_RUN_ID}",
+            "runAttempt": "${GITHUB_RUN_ATTEMPT}",
+            "testedSha": "${GITHUB_SHA}",
+            "verifyArtifact": "qwen38-xcode27-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+            "screensArtifact": "qwen38-xcode27-screens-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          }
+          JSON
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add QA/qwen38-xcode27-latest.json
+          git commit -m "QA: publish live Qwen 3.8 Xcode 27 run ${GITHUB_RUN_ID}" || exit 0
+          git fetch origin feature/qwen38-forge-ios27
+          git rebase origin/feature/qwen38-forge-ios27
+          git push origin HEAD:feature/qwen38-forge-ios27
       - name: Show Xcode and iOS runtimes
         run: |
           xcodebuild -version
@@ -50,7 +75,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 95
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
