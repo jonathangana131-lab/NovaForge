@@ -1,5 +1,5 @@
-name: Qwen 27B Xcode 27 Validation
-# Exact-tree trigger after syntax-safe Xcode 27 XCTest teardown repair.
+name: Qwen 3.8 27B Xcode 27 Validation
+# Exact-tree trigger after normal HTML preview readiness repair.
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: qwen27-xcode27-${{ github.ref }}
+  group: qwen38-xcode27-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: qwen27-xcode27-verify-${{ github.run_id }}-${{ github.run_attempt }}
+          name: qwen38-xcode27-verify-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/verify-critical
           if-no-files-found: warn
           retention-days: 14
@@ -68,7 +68,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: qwen27-xcode27-screens-${{ github.run_id }}-${{ github.run_attempt }}
+          name: qwen38-xcode27-screens-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             captures
             artifacts/visual
