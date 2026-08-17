@@ -138,7 +138,7 @@ struct ModelsView: View {
             } header: {
                 Text("Add a target model")
             } footer: {
-                Text("Live discovery prefers a compatible public Qwen3.8-27B the moment one is available, then falls back to the newest verified open 27B family. TriInfer ranks ultra-low-bit complete single-file GGUFs and rejects partial shards. Large downloads use an OS-managed background session and reconnect after relaunch.")
+                Text("Live discovery prefers a compatible public Qwen3.8-27B the moment one is available, then falls back to the newest verified open 27B family. TriInfer ranks ultra-low-bit complete single-file GGUFs, rejects partial shards, checks real LFS sizes, and reserves storage before transfer. One giant model transfer runs at a time.")
             }
 
             if !state.candidates.isEmpty {
@@ -299,7 +299,7 @@ struct ModelsView: View {
     private func start(_ candidate: ModelManager.Candidate) async {
         do {
             _ = try await model.models.destination(for: candidate)
-            downloads.start(candidate: candidate)
+            try downloads.start(candidate: candidate)
             refreshJobs()
         } catch {
             state.error = error.localizedDescription
@@ -346,21 +346,21 @@ struct ModelsView: View {
     private func seedShowcase() {
         let args = ProcessInfo.processInfo.arguments
         guard args.contains("--ui-showcase"), args.contains("models"), state.candidates.isEmpty else { return }
-        state.discoveryNote = "Qwen3.8 weights are checked first; this preview is showing the current open 27B fallback."
+        state.discoveryNote = "Qwen3.8 weights are checked first; this preview shows current low-bit open 27B examples."
         state.aneStatus = .init(installed: false, loaded: false, label: "Optional • ~330 MB download", cacheCount: 0)
         state.candidates = [
             .init(
-                repository: "bartowski/Qwen_Qwen3.6-27B-GGUF",
-                filename: "Qwen3.6-27B-IQ2_XXS.gguf",
-                downloadURL: URL(string: "https://huggingface.co/bartowski/Qwen_Qwen3.6-27B-GGUF/resolve/main/Qwen_Qwen3.6-27B-IQ2_XXS.gguf")!,
-                size: 9_610_000_000,
-                quant: "IQ2_XXS"
+                repository: "mradermacher/Qwen3.6-27B-i1-GGUF",
+                filename: "Qwen3.6-27B.IQ1_S.gguf",
+                downloadURL: URL(string: "https://huggingface.co/mradermacher/Qwen3.6-27B-i1-GGUF/resolve/main/Qwen3.6-27B.IQ1_S.gguf")!,
+                size: 7_150_000_000,
+                quant: "IQ1_S"
             ),
             .init(
-                repository: "acgs/Qwen3.6-27B-GGUF",
-                filename: "Qwen3.6-27B-UD-IQ2_XXS.gguf",
-                downloadURL: URL(string: "https://huggingface.co/acgs/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-UD-IQ2_XXS.gguf")!,
-                size: 9_390_000_000,
+                repository: "mradermacher/Qwen3.6-27B-i1-GGUF",
+                filename: "Qwen3.6-27B.IQ2_XXS.gguf",
+                downloadURL: URL(string: "https://huggingface.co/mradermacher/Qwen3.6-27B-i1-GGUF/resolve/main/Qwen3.6-27B.IQ2_XXS.gguf")!,
+                size: 8_430_000_000,
                 quant: "IQ2_XXS"
             )
         ]
