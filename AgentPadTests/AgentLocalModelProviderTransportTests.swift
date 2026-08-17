@@ -1487,3 +1487,54 @@ extension AgentLocalModelProviderTransportTests {
         }
     }
 }
+
+
+extension AgentLocalModelProviderTransportTests {
+    func testLocalCanonicalAdmissionMatchesCanonicalAuthorityLimits() {
+        XCTAssertEqual(
+            AgentLocalModelProviderTransport.maximumMessages,
+            AgentCanonicalContextLimits.production.maximumProviderMessages
+        )
+        XCTAssertEqual(AgentLocalModelProviderTransport.maximumMessages, 512)
+        XCTAssertEqual(
+            AgentLocalModelProviderTransport.maximumRequestUTF8Bytes,
+            8 * 1_024 * 1_024
+        )
+        XCTAssertEqual(
+            AgentLocalModelProviderTransport.maximumTextPartUTF8Bytes,
+            1 * 1_024 * 1_024
+        )
+    }
+
+    func testProjectionHandlesHistoryBeyondFormerSixtyFourMessageCeiling() throws {
+        var messages: [AgentLocalModelInferenceMessage] = [
+            .init(role: .system, content: "stable-system"),
+            .init(role: .developer, content: "stable-developer"),
+        ]
+        for index in 0..<80 {
+            messages.append(.init(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "history-\(index)-" + String(repeating: "h", count: 32)
+            ))
+        }
+        messages.append(.init(role: .user, content: "LATEST USER"))
+
+        XCTAssertGreaterThan(messages.count, 64)
+        XCTAssertLessThan(messages.count, AgentLocalModelProviderTransport.maximumMessages)
+
+        let projected = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 64,
+            contextWindowTokens: 768
+        )
+        XCTAssertLessThan(projected.count, messages.count)
+        XCTAssertEqual(projected.first?.content, "stable-system")
+        XCTAssertEqual(projected.last?.content, "LATEST USER")
+        XCTAssertLessThanOrEqual(
+            try AgentLocalModelProviderTransport.conservativeInputTokenUpperBound(
+                for: projected
+            ) + 64,
+            768
+        )
+    }
+}

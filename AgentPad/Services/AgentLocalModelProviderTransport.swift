@@ -124,7 +124,12 @@ private struct AgentLocalModelUnboundToolResult: Sendable {
 /// by `LocalModelClient`; callers can neither provide nor redirect it.
 final class AgentLocalModelProviderTransport: ProviderTransport, Sendable {
     private static let requestPath = "/v1/local/chat/completions"
-    private static let maximumMessages = 64
+    // Canonical-history admission follows the same authority that prepares
+    // provider turns. The much smaller physical llama window is enforced only
+    // after full validation by projectedInferenceMessages(_:...).
+    static let maximumMessages = AgentCanonicalContextLimits.production.maximumProviderMessages
+    static let maximumRequestUTF8Bytes = AgentCanonicalContextLimits.production.maximumRequestUTF8Bytes
+    static let maximumTextPartUTF8Bytes = AgentCanonicalContextLimits.production.maximumTextPartUTF8Bytes
     private static let maximumBufferedFrames = 128
     static let maximumConsumedScopes = 16_384
 
@@ -704,6 +709,19 @@ final class AgentLocalModelProviderTransport: ProviderTransport, Sendable {
               case let .object(body) = request.body
         else { throw AgentLocalModelProviderTransportError.invalidRequestEnvelope }
 
+        // Re-bind the encoded request body to the canonical authority's total
+        // byte ceiling before parsing nested text/tool payloads. This prevents
+        // the higher history-count ceiling from becoming an allocation/DoS path.
+        let encodedBody: Data
+        do {
+            encodedBody = try JSONEncoder().encode(JSONValue.object(body))
+        } catch {
+            throw AgentLocalModelProviderTransportError.invalidRequestEnvelope
+        }
+        guard encodedBody.count <= maximumRequestUTF8Bytes else {
+            throw AgentLocalModelProviderTransportError.inputLimitExceeded
+        }
+
         let requiredKeys: Set<String> = [
             "messages", "metadata", "model", "stream", "stream_options",
         ]
@@ -1119,6 +1137,9 @@ final class AgentLocalModelProviderTransport: ProviderTransport, Sendable {
         }
         guard !content.isEmpty else {
             throw AgentLocalModelProviderTransportError.invalidRequestEnvelope
+        }
+        guard content.utf8.count <= maximumTextPartUTF8Bytes else {
+            throw AgentLocalModelProviderTransportError.inputLimitExceeded
         }
         return content
     }
