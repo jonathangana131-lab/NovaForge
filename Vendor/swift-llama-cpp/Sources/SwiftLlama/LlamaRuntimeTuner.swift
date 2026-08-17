@@ -34,9 +34,9 @@ public enum LlamaRuntimeTuner {
         }
 
         // Leave a large fraction of physical RAM to iOS, SwiftUI, the agent
-        // graph, recurrent/KV state, Metal scratch and file-cache pages. A model
-        // exceeding this budget must be treated as a mapped/storage-backed
-        // target rather than a conventional fully-resident model.
+        // graph, recurrent/KV state, scratch buffers and file-cache pages. A model
+        // exceeding this budget must be treated as a mapped/storage-backed target
+        // rather than a conventional fully-resident model.
         let residentWeightBudget = physicalMemoryBytes * 58 / 100
         let storageBacked = fileBytes > residentWeightBudget
         guard storageBacked else {
@@ -53,16 +53,15 @@ public enum LlamaRuntimeTuner {
         let microBatch = min(requested.microBatchSize, extremeOversubscription ? 8 : 16)
         let logicalBatch = min(requested.batchSize, extremeOversubscription ? 24 : 48)
 
-        // A small bounded Metal hot set is useful, but copying dozens of giant
-        // layers into Metal shared buffers defeats mmap on a 4 GB phone. Keep
-        // the target graph GPU-capable while bounding persistent layer
-        // residency. The exact winner is selected later by device benchmarking.
-        let boundedGPULayers: Int32
-        if requested.useGPU {
-            boundedGPULayers = min(max(requested.gpuLayerCount, 1), extremeOversubscription ? 1 : 2)
-        } else {
-            boundedGPULayers = 0
-        }
+        // Important Apple-unified-memory rule for giant mapped models: a tiny
+        // n_gpu_layers value does not prove a tiny GPU working set. Depending on
+        // tensor ordering/backend placement, Metal can wire a much larger address
+        // span than the nominal offloaded layers. The safe baseline therefore
+        // keeps cold target weights completely outside persistent Metal residency.
+        // A higher layer count is an *empirical override* that must be earned by
+        // an exact-device benchmark/available-memory receipt at the app layer.
+        let usePersistentMetalWeights = false
+        let boundedGPULayers: Int32 = 0
 
         // Q8 KV is the conservative compressed default: it materially reduces
         // long-context cache pressure without assuming Q4 quality is acceptable.
@@ -74,7 +73,7 @@ public enum LlamaRuntimeTuner {
             batchSize: logicalBatch,
             microBatchSize: microBatch,
             maxTokenCount: requested.maxTokenCount,
-            useGPU: requested.useGPU,
+            useGPU: usePersistentMetalWeights,
             gpuLayerCount: boundedGPULayers,
             generationThreadCount: min(requested.generationThreadCount, 2),
             batchThreadCount: min(max(requested.batchThreadCount, 2), 4),
@@ -83,8 +82,8 @@ public enum LlamaRuntimeTuner {
             flashAttention: requested.flashAttention == .disabled ? .disabled : .automatic,
             keyCacheType: keyCache,
             valueCacheType: valueCache,
-            offloadKQV: requested.offloadKQV,
-            operationOffload: requested.operationOffload,
+            offloadKQV: false,
+            operationOffload: false,
             unifiedKV: requested.unifiedKV,
             recurrentStateSnapshots: requested.recurrentStateSnapshots,
             // Repacking giant mapped tensors can create exactly the transient
@@ -98,8 +97,8 @@ public enum LlamaRuntimeTuner {
             physicalMemoryBytes: physicalMemoryBytes,
             storageBacked: true,
             reason: extremeOversubscription
-                ? "Extreme storage-backed profile: mmap + Q8 KV + 1 hot Metal layer + tiny micro-batches."
-                : "Storage-backed profile: mmap + Q8 KV + bounded Metal residency."
+                ? "Extreme storage-backed profile: mmap + Q8 KV + CPU/file-backed weights + tiny micro-batches; persistent Metal residency disabled until a device receipt proves it safe."
+                : "Storage-backed profile: mmap + Q8 KV + CPU/file-backed weights; persistent Metal residency disabled until measured safe."
         )
     }
 
