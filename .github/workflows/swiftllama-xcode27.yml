@@ -1,0 +1,36 @@
+name: SwiftLlama Xcode 27 Gate
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'Vendor/swift-llama-cpp/**'
+      - '.github/workflows/swiftllama-xcode27.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swiftllama-xcode27-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: SwiftLlama package tests
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Resolve and test runtime package
+        working-directory: Vendor/swift-llama-cpp
+        run: |
+          swift package resolve
+          swift test --parallel
