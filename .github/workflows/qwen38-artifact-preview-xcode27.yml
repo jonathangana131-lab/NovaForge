@@ -1,0 +1,121 @@
+name: Qwen 3.8 Artifact Preview Xcode 27 Gate
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'AgentPad/Views/ArtifactPreviewSheet.swift'
+      - 'AgentPadUITests/AgentPadUITests.swift'
+      - '.github/workflows/qwen38-artifact-preview-xcode27.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen38-artifact-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  artifact-preview:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Select Xcode and simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
+          xcodebuild -version
+          UDID=$(xcrun simctl list -j devices available | jq -r '[.devices | to_entries[] | select(.key | contains("iOS-27")) | .value[] | select(.isAvailable == true and (.name | startswith("iPhone")))] | last | .udid // empty')
+          test -n "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" >/dev/null 2>&1 || true
+          for i in $(seq 1 90); do
+            STATE=$(xcrun simctl list -j devices | jq -r --arg id "$UDID" '.devices[][] | select(.udid==$id) | .state' | head -1)
+            if [ "$STATE" = Booted ]; then break; fi
+            sleep 2
+          done
+          test "${STATE:-}" = Booted
+      - name: Build tests once
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf DerivedData/ArtifactPreview artifacts/artifact-preview
+          mkdir -p artifacts/artifact-preview/screenshots
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath DerivedData/ArtifactPreview \
+            -skipPackageUpdates -skipPackagePluginValidation -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            NOVAFORGE_SOURCE_COMMIT="${{ github.sha }}" \
+            build-for-testing | tee artifacts/artifact-preview/build.log
+          XCTESTRUN=$(find DerivedData/ArtifactPreview/Build/Products -maxdepth 1 -name 'AgentPad_*.xctestrun' -print | head -1)
+          test -f "$XCTESTRUN"
+          echo "$XCTESTRUN" > artifacts/artifact-preview/xctestrun.path
+      - name: Run only local web artifact preview journey
+        id: test
+        continue-on-error: true
+        shell: bash
+        env:
+          NOVAFORGE_CAPTURE_MODE: all
+          TEST_RUNNER_NOVAFORGE_CAPTURE_MODE: all
+          NOVAFORGE_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/artifact-preview/screenshots
+          TEST_RUNNER_NOVAFORGE_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/artifact-preview/screenshots
+        run: |
+          set -o pipefail
+          XCTESTRUN=$(cat artifacts/artifact-preview/xctestrun.path)
+          timeout 600 xcodebuild \
+            -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -parallel-testing-enabled NO \
+            -maximum-concurrent-test-simulator-destinations 1 \
+            -resultBundlePath artifacts/artifact-preview/preview.xcresult \
+            test-without-building \
+            '-only-testing:AgentPadUITests/AgentPadUITests/testLocalWebArtifactCreatesPreviewableLandingPage' \
+            2>&1 | tee artifacts/artifact-preview/test.log
+      - name: Capture rendered simulator
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/artifact-preview/screenshots
+          xcrun simctl io '${{ steps.sim.outputs.udid }}' screenshot artifacts/artifact-preview/screenshots/final-simulator.png || true
+      - name: Export xcresult attachments
+        if: always()
+        shell: bash
+        run: |
+          if [ -d artifacts/artifact-preview/preview.xcresult ]; then
+            mkdir -p artifacts/artifact-preview/xcresult-attachments
+            xcrun xcresulttool export attachments \
+              --path artifacts/artifact-preview/preview.xcresult \
+              --output-path artifacts/artifact-preview/xcresult-attachments 2>&1 \
+              | tee artifacts/artifact-preview/xcresult-export.log || true
+          fi
+      - name: Enforce targeted result
+        if: always()
+        shell: bash
+        run: |
+          if grep -Eq "Test Case '.*testLocalWebArtifactCreatesPreviewableLandingPage.*' (passed|passed on)" artifacts/artifact-preview/test.log || \
+             grep -Fq "Test Suite 'Selected tests' passed" artifacts/artifact-preview/test.log; then
+            exit 0
+          fi
+          echo 'Targeted artifact preview journey did not pass.' >&2
+          exit 1
+      - name: Upload targeted evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen38-artifact-preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/artifact-preview
+          if-no-files-found: error
+          retention-days: 14
