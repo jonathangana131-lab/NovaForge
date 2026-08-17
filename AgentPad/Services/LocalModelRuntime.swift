@@ -14,12 +14,14 @@ enum LocalModelDeviceFit: String, Sendable, Hashable {
     case deviceProven
     case ultraLight
     case memorySaver
+    case extreme
 
     var title: String {
         switch self {
         case .deviceProven: "Qualification pending"
         case .ultraLight: "Ultra light"
         case .memorySaver: "Memory saver"
+        case .extreme: "27B Extreme"
         }
     }
 
@@ -28,6 +30,7 @@ enum LocalModelDeviceFit: String, Sendable, Hashable {
         case .deviceProven: "iphone"
         case .ultraLight: "bolt.fill"
         case .memorySaver: "memorychip.fill"
+        case .extreme: "externaldrive.badge.timemachine"
         }
     }
 }
@@ -219,6 +222,38 @@ enum LocalModelCatalog {
             minimumAvailableMemoryBeforeLoadBytes: 1_150_000_000,
             sourceURL: URL(string: "https://huggingface.co/Siddh07ETH/Atlas-Coder-2-0.5B-GGUF")!,
             details: "NovaForge pins an exact GGUF revision and checksum, then caps context and output for its iPhone-targeted profile."
+        ),
+        .init(
+            id: "unsloth/Qwen3.6-27B-UD-IQ2_XXS",
+            displayName: "Qwen3.6 27B — Extreme",
+            shortName: "Qwen 27B Extreme",
+            quantization: "UD-IQ2_XXS",
+            filename: "Qwen3.6-27B-UD-IQ2_XXS.gguf",
+            downloadURL: URL(string: "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/0d948e3cb47ffa30812abe67cf4f42d38b0dceb2/Qwen3.6-27B-UD-IQ2_XXS.gguf?download=true")!,
+            expectedBytes: 9_388_779_744,
+            expectedSHA256: "968bfc712832031afebec339da3ae61c6822ab9a118e1d72b6be2a7781a96e30",
+            minimumPhysicalMemoryBytes: 3_800_000_000,
+            recommendedFreeDiskBytes: 12_500_000_000,
+            contextTokens: 4_096,
+            batchTokens: 24,
+            maxNewTokens: 384,
+            maxGenerationSeconds: 240,
+            useGPU: true,
+            gpuLayerCount: 1,
+            generationThreadCount: 2,
+            batchThreadCount: 4,
+            isIPhone12SafeDefault: false,
+            releaseDateISO8601: "2026-04-22",
+            releaseDateLabel: "Apr 22, 2026",
+            parameterLabel: "27B",
+            licenseLabel: "Apache 2.0",
+            benchmarkSummary: "Storage-backed research target · exact-device qualification pending",
+            capabilitySummary: "Agentic coding · repository reasoning · long-project planning",
+            deviceFit: .extreme,
+            estimatedPeakMemoryBytes: 2_050_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 1_250_000_000,
+            sourceURL: URL(string: "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/blob/0d948e3cb47ffa30812abe67cf4f42d38b0dceb2/Qwen3.6-27B-UD-IQ2_XXS.gguf")!,
+            details: "A verified 9.39 GB ultra-low-bit 27B target for storage-backed research mode. NovaForge keeps the GGUF on disk, uses mmap and bounded hot Metal residency, compresses KV to Q8 by default, and keeps the physical context deliberately small while Project Capsule retrieval carries long-project continuity. No iPhone 12 speed or reliability label is granted until exact-device receipts exist."
         )
     ]
 
@@ -241,7 +276,8 @@ enum LocalModelCatalog {
 
     static func safestVariant(forPhysicalMemory physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> LocalModelVariant {
         all.first { $0.isIPhone12SafeDefault && physicalMemory >= $0.minimumPhysicalMemoryBytes }
-            ?? all.first { physicalMemory >= $0.minimumPhysicalMemoryBytes }
+            ?? all.first { $0.deviceFit != .extreme && physicalMemory >= $0.minimumPhysicalMemoryBytes }
+            ?? all.first { $0.deviceFit != .extreme }
             ?? all.last!
     }
 
