@@ -1,0 +1,39 @@
+name: Apply strict Qwen 3.8 low-memory policy
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_strict_lowram.py'
+      - '.github/workflows/apply-qwen38-strict-lowram.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply strict target policy
+        run: python3 ci/apply_qwen38_strict_lowram.py
+      - name: Validate source transform
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq 'Q1_0_G128' AgentPad/Services/LocalModelRuntime.swift
+          grep -Fq 'Qwen38ReleaseDiscovery.unavailableVariant' AgentPad/Services/LocalModelRuntime.swift
+          if grep -Fq 'exactQwen38Variant ?? safestVariant()' AgentPad/Services/LocalModelRuntime.swift; then exit 1; fi
+      - name: Commit strict Qwen 3.8 policy
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- AgentPad/Services/LocalModelRuntime.swift; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift
+          git commit -m 'Lock local runtime to exact Qwen 3.8 27B and rank 1-bit quants'
+          git push origin HEAD:feature/qwen38-forge-ios27
