@@ -167,7 +167,7 @@ public final actor LlamaService {
                     }
 
                     let generationFinishedAt = Self.monotonicSeconds()
-                    await recordPerformance(
+                    recordPerformance(
                         runtimeReason: runtimeReason,
                         requestStartedAt: requestStartedAt,
                         prefillSeconds: prefillSeconds,
@@ -181,7 +181,7 @@ public final actor LlamaService {
                 } catch {
                     completion = Task.isCancelled ? .cancelled : .failed
                     let generationFinishedAt = Self.monotonicSeconds()
-                    await recordPerformance(
+                    recordPerformance(
                         runtimeReason: runtimeReason,
                         requestStartedAt: requestStartedAt,
                         prefillSeconds: prefillSeconds,
