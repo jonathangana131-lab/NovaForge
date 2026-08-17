@@ -20,10 +20,18 @@ jobs:
         with:
           ref: feature/qwen38-forge-ios27
           fetch-depth: 1
-      - run: python3 ci/apply_xcode27_teardown_guard.py
-      - run: |
+      - name: Apply syntax-safe teardown guard
+        run: python3 ci/apply_xcode27_teardown_guard.py
+      - name: Validate transformed runner
+        run: |
+          set -euo pipefail
           git diff --check
+          zsh -n scripts/codex-test.sh
           grep -F 'RECOVERED: XCTest suite passed; Xcode 27 teardown' scripts/codex-test.sh
+          if grep -Fq ')) \\n' scripts/codex-test.sh; then
+            echo 'Malformed literal backslash-n found in codex-test.sh' >&2
+            exit 65
+          fi
       - name: Commit teardown guard
         run: |
           if git diff --quiet; then
@@ -33,5 +41,5 @@ jobs:
           git config user.name 'NovaForge Xcode Teardown Bot'
           git config user.email 'actions@users.noreply.github.com'
           git add scripts/codex-test.sh
-          git commit -m 'Recover verified Xcode 27 XCTest teardown hangs'
+          git commit -m 'Repair verified Xcode 27 XCTest teardown recovery'
           git push origin HEAD:feature/qwen38-forge-ios27
