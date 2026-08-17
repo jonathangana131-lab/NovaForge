@@ -527,8 +527,11 @@ enum LocalModelCatalog {
     static func modelDirectory() throws -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let directory = base.appendingPathComponent("LocalModels", isDirectory: true)
+        var directory = base.appendingPathComponent("LocalModels", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try directory.setResourceValues(values)
         return directory
     }
 
