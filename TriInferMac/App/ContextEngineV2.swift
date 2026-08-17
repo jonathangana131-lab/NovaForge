@@ -1,7 +1,8 @@
 import Foundation
 
-/// Long-horizon context manager inspired by 2026 external-experience memory systems: the hot
-/// model prompt stays small while full-fidelity observations live in an indexed local store.
+/// Long-horizon context manager: the hot model prompt stays deliberately small while complete
+/// observations live in an indexed local store. Deterministic lexical filtering is always present;
+/// an optional low-memory ANE embedding model can semantically rerank only the shortlisted records.
 actor ContextEngine {
     struct Fact: Codable, Hashable, Sendable, Identifiable {
         var id = UUID()
@@ -47,8 +48,9 @@ actor ContextEngine {
     private let hotBudget = 1_520
     private let summaryBudget = 520
     private let maxExperiences = 520
+    private let semantic = ANESemanticAccelerator()
 
-    func bootstrap() throws {
+    func bootstrap() async throws {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -63,7 +65,12 @@ actor ContextEngine {
            let restored = try? JSONDecoder().decode(Persisted.self, from: data) {
             state = restored
         }
+        try await semantic.bootstrap()
     }
+
+    func semanticStatus() async -> ANESemanticAccelerator.Status { await semantic.status() }
+    func installSemanticANE() async throws { try await semantic.install() }
+    func unloadSemanticANE() async { await semantic.unload() }
 
     func remember(_ text: String, source: String) throws {
         let clean = normalized(text)
@@ -78,8 +85,8 @@ actor ContextEngine {
         try persist()
     }
 
-    /// Archives the complete observation and returns a stable short ID. The caller can put only the
-    /// ID + tiny preview in the model prompt and recall the full evidence later.
+    /// Archives the complete observation and returns a stable short ID. The model only needs the
+    /// ID + a tiny preview in hot context; exact old evidence remains available through memory_read.
     @discardableResult
     func archive(
         kind: String,
@@ -111,11 +118,12 @@ actor ContextEngine {
         return item.id
     }
 
-    /// Lightweight lexical retrieval is intentionally deterministic and local. It avoids another
-    /// expensive 27B inference just to decide what context the 27B model should see.
-    func recall(_ query: String, maxCharacters: Int = 5_200) -> String {
+    /// First-stage retrieval is deterministic and cheap. If the optional ANE semantic model is
+    /// installed, only the best lexical candidates are embedded/reranked, keeping ANE work bounded
+    /// and avoiding another chat-model inference just to choose the chat model's context.
+    func recall(_ query: String, maxCharacters: Int = 5_200) async -> String {
         let terms = keywords(in: query)
-        let ranked = state.experiences.map { item -> (Experience, Int) in
+        let lexical = state.experiences.map { item -> (Experience, Int) in
             let haystack = (item.title + " " + item.body + " " + item.paths.joined(separator: " ")).lowercased()
             var score = item.importance * 2
             for term in terms where haystack.contains(term) { score += 12 }
@@ -128,10 +136,25 @@ actor ContextEngine {
             if $0.1 != $1.1 { return $0.1 > $1.1 }
             return $0.0.timestamp > $1.0.timestamp
         }
-        .prefix(6)
+
+        var selected = Array(lexical.prefix(6).map(\.0))
+        let semanticCandidates = Array(lexical.prefix(10).map(\.0))
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           semanticCandidates.count > 1 {
+            let docs = semanticCandidates.map { item in
+                ANESemanticAccelerator.Document(
+                    id: item.id,
+                    text: item.title + "\n" + item.paths.joined(separator: " ") + "\n" + trim(item.body, chars: 2_200)
+                )
+            }
+            if let ranked = try? await semantic.rerank(query: query, documents: docs, limit: 6), !ranked.isEmpty {
+                let byID = Dictionary(uniqueKeysWithValues: semanticCandidates.map { ($0.id, $0) })
+                selected = ranked.compactMap { byID[$0.id] }
+            }
+        }
 
         var output = ""
-        for (item, _) in ranked {
+        for item in selected {
             let pathText = item.paths.isEmpty ? "" : " [" + item.paths.joined(separator: ", ") + "]"
             let block = "[\(item.id)] \(item.title)\(pathText)\n" + trim(item.body, chars: 1_700)
             if !output.isEmpty { output += "\n\n" }
@@ -151,7 +174,7 @@ actor ContextEngine {
         return "[\(item.id)] \(item.title)\(paths)\n\(item.body)"
     }
 
-    // This block is deliberately tiny and nearly immutable so llama.cpp can retain a long common KV prefix.
+    // Deliberately tiny and nearly immutable so llama.cpp can retain a long common KV prefix.
     func stablePrefix(mode: AppModel.AgentMode, todos: [AppModel.Todo]) -> String {
         let permission = mode == .build
             ? "BUILD: workspace mutation is allowed only through sandboxed tools."
@@ -205,7 +228,6 @@ actor ContextEngine {
         guard messages.count > 10 else { return }
         let older = Array(messages.dropLast(7))
 
-        // Preserve full-fidelity old turns outside the prompt before shrinking their representation.
         for message in older.suffix(16) {
             let role = message.role == .user ? "User request" : message.role == .assistant ? "Agent response" : "System observation"
             _ = try archiveWithoutPersist(kind: "conversation", title: role, body: message.text, paths: [], importance: message.role == .user ? 2 : 1)
@@ -279,7 +301,6 @@ actor ContextEngine {
 
     private func pruneExperiences() {
         guard state.experiences.count > maxExperiences else { return }
-        // Keep high-importance evidence plus recent evidence; remove oldest low-value records first.
         state.experiences.sort {
             if $0.importance != $1.importance { return $0.importance < $1.importance }
             return $0.timestamp < $1.timestamp
