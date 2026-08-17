@@ -114,6 +114,42 @@ enum Qwen38ReleaseDiscoveryError: LocalizedError {
 enum Qwen38ReleaseDiscovery {
     static let unavailableModelID = "qwen3.8-27b-awaiting-verified-open-weights"
 
+    /// A non-runnable sentinel used while exact Qwen 3.8 27B open weights do not
+    /// exist. Keeping the manager on this identity prevents any hidden fallback
+    /// model from being selected or downloaded in the Qwen-3.8-only build.
+    static let unavailableVariant = LocalModelVariant(
+        id: unavailableModelID,
+        displayName: "Qwen 3.8 27B — Awaiting Open Weights",
+        shortName: "Qwen 3.8 27B",
+        quantization: "Awaiting verified release",
+        filename: "qwen3.8-27b.awaiting-release",
+        downloadURL: URL(string: "https://huggingface.co/Qwen")!,
+        expectedBytes: 0,
+        expectedSHA256: String(repeating: "0", count: 64),
+        minimumPhysicalMemoryBytes: 3_800_000_000,
+        recommendedFreeDiskBytes: 0,
+        contextTokens: 4_096,
+        batchTokens: 16,
+        maxNewTokens: 512,
+        maxGenerationSeconds: 300,
+        useGPU: false,
+        gpuLayerCount: 0,
+        generationThreadCount: 1,
+        batchThreadCount: 1,
+        isIPhone12SafeDefault: false,
+        releaseDateISO8601: "",
+        releaseDateLabel: "Not released",
+        parameterLabel: "27B",
+        licenseLabel: "Awaiting model card",
+        benchmarkSummary: "Exact Qwen 3.8 27B weights have not been verified yet",
+        capabilitySummary: "Release watcher active · no substitute model allowed",
+        deviceFit: .extreme,
+        estimatedPeakMemoryBytes: 0,
+        minimumAvailableMemoryBeforeLoadBytes: 0,
+        sourceURL: URL(string: "https://huggingface.co/Qwen")!,
+        details: "NovaForge is locked to Qwen 3.8 27B. Refresh release discovery after verified open weights are published; no Qwen 3.6, 3.5, or small-model fallback will be loaded."
+    )
+
     private struct HubModel: Decodable {
         let id: String
         let sha: String?
@@ -155,8 +191,8 @@ enum Qwen38ReleaseDiscovery {
     static func refresh() async throws -> LocalModelVariant? {
         var components = URLComponents(string: "https://huggingface.co/api/models")!
         components.queryItems = [
-            URLQueryItem(name: "search", value: "Qwen3.8 27B GGUF"),
-            URLQueryItem(name: "limit", value: "50"),
+            URLQueryItem(name: "search", value: "Qwen3.8 27B"),
+            URLQueryItem(name: "limit", value: "100"),
             URLQueryItem(name: "full", value: "true"),
         ]
         guard let url = components.url else { throw Qwen38ReleaseDiscoveryError.invalidResponse }
@@ -250,7 +286,15 @@ enum Qwen38ReleaseDiscovery {
 
     private static func quantization(from filename: String) -> String {
         let upper = filename.uppercased()
-        for marker in ["UD-IQ2_XXS", "IQ2_XXS", "IQ2_XS", "Q2_K_XS", "Q2_K", "Q3_K_XS", "Q3_K_S", "Q3_K_M", "Q4_K_M"] where upper.contains(marker) {
+        // Prefer native ultra-low-bit formats first. Current ggml/llama.cpp
+        // has Q1_0 (1.125 bpw), IQ1, Q2_0 and ternary TQ families; keeping
+        // these explicit means a future exact Qwen 3.8 27B release can fit the
+        // iPhone-12 storage-backed path without an app update.
+        for marker in [
+            "Q1_0_G128", "Q1_0", "IQ1_S", "TQ1_0", "IQ1_M",
+            "TQ2_0", "Q2_0", "UD-IQ2_XXS", "IQ2_XXS", "IQ2_XS",
+            "Q2_K_XS", "Q2_K", "Q3_K_XS", "Q3_K_S", "Q3_K_M", "Q4_K_M"
+        ] where upper.contains(marker) {
             return marker
         }
         return "GGUF"
@@ -258,16 +302,23 @@ enum Qwen38ReleaseDiscovery {
 
     private static func quantRank(_ value: String) -> Int {
         switch value.uppercased() {
-        case "UD-IQ2_XXS": 0
-        case "IQ2_XXS": 1
-        case "IQ2_XS": 2
-        case "Q2_K_XS": 3
-        case "Q2_K": 4
-        case "Q3_K_XS": 5
-        case "Q3_K_S": 6
-        case "Q3_K_M": 7
-        case "Q4_K_M": 8
-        default: 20
+        case "Q1_0_G128": 0
+        case "Q1_0": 1
+        case "IQ1_S": 2
+        case "TQ1_0": 3
+        case "IQ1_M": 4
+        case "TQ2_0": 5
+        case "Q2_0": 6
+        case "UD-IQ2_XXS": 7
+        case "IQ2_XXS": 8
+        case "IQ2_XS": 9
+        case "Q2_K_XS": 10
+        case "Q2_K": 11
+        case "Q3_K_XS": 12
+        case "Q3_K_S": 13
+        case "Q3_K_M": 14
+        case "Q4_K_M": 15
+        default: 40
         }
     }
 
@@ -486,12 +537,15 @@ enum LocalModelCatalog {
     }
 
     static var defaultVariant: LocalModelVariant {
-        exactQwen38Variant ?? safestVariant()
+        exactQwen38Variant ?? Qwen38ReleaseDiscovery.unavailableVariant
     }
 
     static func variant(for id: String) -> LocalModelVariant? {
         if let target = exactQwen38Variant, target.id == id { return target }
-        return all.first { $0.id == id }
+        if id == Qwen38ReleaseDiscovery.unavailableModelID {
+            return Qwen38ReleaseDiscovery.unavailableVariant
+        }
+        return nil
     }
 
     static func isExactQwen38Target(_ variant: LocalModelVariant) -> Bool {
@@ -510,6 +564,10 @@ enum LocalModelCatalog {
         for variant: LocalModelVariant,
         physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory
     ) -> String? {
+        if variant.id == Qwen38ReleaseDiscovery.unavailableModelID {
+            return "Exact Qwen 3.8 27B open weights have not been verified yet. Tap Refresh Qwen 3.8 Release after the model is published; NovaForge will not substitute another model."
+        }
+
         if physicalMemory < variant.minimumPhysicalMemoryBytes {
             let needed = ByteCountFormatter.string(fromByteCount: Int64(variant.minimumPhysicalMemoryBytes), countStyle: .memory)
             let current = ByteCountFormatter.string(fromByteCount: Int64(physicalMemory), countStyle: .memory)
