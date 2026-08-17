@@ -5,6 +5,31 @@
 //  Created by Piotr Gorzelany on 05/11/2024.
 //
 
+/// Model-file loading policy. `automatic` keeps upstream llama.cpp defaults,
+/// while `mmap` explicitly requests file-backed model weights so very large
+/// GGUFs do not have to be copied wholesale into anonymous process memory.
+public enum LlamaModelLoadMode: String, Equatable, Sendable {
+    case automatic
+    case mmap
+}
+
+/// KV-cache storage precision. Keep F16 as the compatibility default; callers
+/// can opt into a quantized cache only after the exact model/runtime/device
+/// combination has been measured and qualified.
+public enum LlamaKVCacheType: String, Equatable, Sendable {
+    case f16
+    case q8_0
+    case q4_0
+}
+
+/// Flash Attention selection. `automatic` delegates capability selection to
+/// llama.cpp so unsupported backends can continue to use their normal path.
+public enum LlamaFlashAttentionMode: String, Equatable, Sendable {
+    case automatic
+    case disabled
+    case enabled
+}
+
 public struct LlamaConfig: Equatable, Sendable {
     public let batchSize: UInt32
     public let maxTokenCount: UInt32
@@ -13,6 +38,11 @@ public struct LlamaConfig: Equatable, Sendable {
     public let generationThreadCount: Int32
     public let batchThreadCount: Int32
     public let yieldEveryTokenCount: Int
+    public let modelLoadMode: LlamaModelLoadMode
+    public let keyCacheType: LlamaKVCacheType
+    public let valueCacheType: LlamaKVCacheType
+    public let flashAttentionMode: LlamaFlashAttentionMode
+    public let offloadKQV: Bool
 
     public init(
         batchSize: UInt32,
@@ -21,7 +51,12 @@ public struct LlamaConfig: Equatable, Sendable {
         gpuLayerCount: Int32 = 99,
         generationThreadCount: Int32 = 2,
         batchThreadCount: Int32 = 2,
-        yieldEveryTokenCount: Int = 1
+        yieldEveryTokenCount: Int = 1,
+        modelLoadMode: LlamaModelLoadMode = .automatic,
+        keyCacheType: LlamaKVCacheType = .f16,
+        valueCacheType: LlamaKVCacheType = .f16,
+        flashAttentionMode: LlamaFlashAttentionMode = .automatic,
+        offloadKQV: Bool = true
     ) {
         self.batchSize = batchSize
         self.maxTokenCount = maxTokenCount
@@ -30,5 +65,10 @@ public struct LlamaConfig: Equatable, Sendable {
         self.generationThreadCount = max(1, generationThreadCount)
         self.batchThreadCount = max(1, batchThreadCount)
         self.yieldEveryTokenCount = max(1, yieldEveryTokenCount)
+        self.modelLoadMode = modelLoadMode
+        self.keyCacheType = keyCacheType
+        self.valueCacheType = valueCacheType
+        self.flashAttentionMode = flashAttentionMode
+        self.offloadKQV = offloadKQV
     }
 }
