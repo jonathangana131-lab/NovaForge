@@ -3,7 +3,8 @@ import Metal
 import llama
 
 /// Production GGUF runtime. Dense 27B decode is memory-bandwidth bound, so this runtime prioritizes
-/// mmap, prefix reuse, bounded KV/context, dynamic Metal residency, and sustained thermal behavior.
+/// mmap, prefix reuse, bounded KV/context, dynamic Metal residency, adaptive prompt-lookup
+/// speculation, and sustained thermal behavior.
 actor LlamaRuntime {
     enum Profile: String, Sendable {
         case maximumMetal
@@ -114,6 +115,8 @@ actor LlamaRuntime {
         modelParams.use_extra_bufts = profile != .extreme27B
         modelParams.no_host = false
         modelParams.no_alloc = false
+        // NextN is detected and surfaced. Lossless MTP is enabled only after the target device
+        // benchmark proves that its second context beats the zero-RAM path on this memory budget.
         modelParams.load_mtp = false
 
         guard let loaded = llama_model_load_from_file(modelURL.path, modelParams) else {
@@ -133,8 +136,10 @@ actor LlamaRuntime {
         contextParams.n_batch = profile.batch
         contextParams.n_ubatch = profile.ubatch
         contextParams.n_seq_max = 1
-        contextParams.n_outputs_max = 1
-        contextParams.n_outputs_max_per_seq = 1
+        // Up to five speculative tokens are verified in one target decode. Keeping this tiny avoids
+        // wasting output-buffer RAM on the 27B profile.
+        contextParams.n_outputs_max = 5
+        contextParams.n_outputs_max_per_seq = 5
         contextParams.n_threads = Int32(baseDecodeThreads)
         contextParams.n_threads_batch = Int32(baseBatchThreads)
         contextParams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO
@@ -238,15 +243,15 @@ actor LlamaRuntime {
         var generated = 0
         var position = promptTokens.count
         var utf8Bytes = Data()
+        var specAttempts = 0
+        var specAccepted = 0
+        var speculationEnabled = UserDefaults.standard.object(forKey: "TriInfer.ngramSpeculation") == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: "TriInfer.ngramSpeculation")
+        var reachedEOG = false
 
-        while generated < allowedOutput && !cancelled {
-            if generated > 0 && generated.isMultiple(of: 16) { applyThermalThreadBudget() }
-
-            let token = llama_sampler_sample(sampler, context, -1)
-            if llama_vocab_is_eog(vocab, token) { break }
-            llama_sampler_accept(sampler, token)
+        func emit(_ token: llama_token) {
             utf8Bytes.append(contentsOf: tokenBytes(token))
-
             if let text = String(data: utf8Bytes, encoding: .utf8), !text.isEmpty {
                 if generated == 0 {
                     firstTokenMS = seconds(requestStart.duration(to: clock.now)) * 1_000
@@ -254,13 +259,84 @@ actor LlamaRuntime {
                 continuation.yield(.text(text))
                 utf8Bytes.removeAll(keepingCapacity: true)
             }
+        }
 
-            try decode(tokens: [token], startPosition: position)
-            cachedPrompt.append(token)
-            position += 1
-            generated += 1
+        while generated < allowedOutput && !cancelled && !reachedEOG {
+            if generated > 0 && generated.isMultiple(of: 16) { applyThermalThreadBudget() }
 
-            if generated.isMultiple(of: 12) {
+            let first = llama_sampler_sample(sampler, context, -1)
+            if llama_vocab_is_eog(vocab, first) { break }
+
+            // Preserve TTFT: speculation starts only after the first couple of visible tokens. It is
+            // useful for code because imports, braces, identifiers, JSON/tool envelopes and repeated
+            // project text often have exact continuations already present in the prompt/history.
+            let remaining = allowedOutput - generated
+            let additionalLimit = Swift.min(4, Swift.max(0, remaining - 1))
+            let draftTail = generated >= 2 && speculationEnabled && additionalLimit > 0
+                ? ngramContinuation(after: first, maxAdditional: additionalLimit)
+                : []
+
+            if !draftTail.isEmpty {
+                specAttempts += draftTail.count
+                llama_sampler_accept(sampler, first)
+
+                let block = [first] + draftTail
+                try decodeVerification(tokens: block, startPosition: position)
+
+                emit(first)
+                cachedPrompt.append(first)
+                generated += 1
+                position += 1
+
+                for (row, candidate) in draftTail.enumerated() {
+                    if generated >= allowedOutput || cancelled { break }
+                    let actual = llama_sampler_sample(sampler, context, Int32(row))
+
+                    if llama_vocab_is_eog(vocab, actual) {
+                        // Verification eagerly placed the rest of the draft in memory. Drop all
+                        // unaccepted positions so the persistent prefix remains exact.
+                        _ = llama_memory_seq_rm(llama_get_memory(context), 0, Int32(position), -1)
+                        reachedEOG = true
+                        break
+                    }
+
+                    if actual == candidate {
+                        llama_sampler_accept(sampler, actual)
+                        specAccepted += 1
+                        emit(actual)
+                        cachedPrompt.append(actual)
+                        generated += 1
+                        position += 1
+                        continue
+                    }
+
+                    // First disagreement: keep only the accepted prefix, then evaluate the target's
+                    // sampled token normally. This preserves the target model's exact sampling path.
+                    llama_sampler_accept(sampler, actual)
+                    _ = llama_memory_seq_rm(llama_get_memory(context), 0, Int32(position), -1)
+                    try decode(tokens: [actual], startPosition: position)
+                    emit(actual)
+                    cachedPrompt.append(actual)
+                    generated += 1
+                    position += 1
+                    break
+                }
+
+                // If prompt lookup is not paying for its wider verification batches, turn it off for
+                // the rest of this request. No second model or permanent RAM tax is involved.
+                if specAttempts >= 12 && Double(specAccepted) / Double(specAttempts) < 0.25 {
+                    speculationEnabled = false
+                }
+            } else {
+                llama_sampler_accept(sampler, first)
+                emit(first)
+                try decode(tokens: [first], startPosition: position)
+                cachedPrompt.append(first)
+                position += 1
+                generated += 1
+            }
+
+            if generated > 0 && generated.isMultiple(of: 12) {
                 continuation.yield(.metrics(makeMetrics(
                     clock: clock,
                     generationStart: generationStart,
@@ -268,7 +344,9 @@ actor LlamaRuntime {
                     output: generated,
                     prompt: promptTokens.count,
                     cached: lcp,
-                    capacity: capacity
+                    capacity: capacity,
+                    specAccepted: specAccepted,
+                    specAttempts: specAttempts
                 )))
             }
         }
@@ -284,7 +362,9 @@ actor LlamaRuntime {
             output: generated,
             prompt: promptTokens.count,
             cached: lcp,
-            capacity: capacity
+            capacity: capacity,
+            specAccepted: specAccepted,
+            specAttempts: specAttempts
         )))
     }
 
@@ -361,6 +441,14 @@ actor LlamaRuntime {
     }
 
     private func decode(tokens: [llama_token], startPosition: Int) throws {
+        try decode(tokens: tokens, startPosition: startPosition, allLogits: false)
+    }
+
+    private func decodeVerification(tokens: [llama_token], startPosition: Int) throws {
+        try decode(tokens: tokens, startPosition: startPosition, allLogits: true)
+    }
+
+    private func decode(tokens: [llama_token], startPosition: Int, allLogits: Bool) throws {
         guard let context else { throw RuntimeError.noModel }
         var batch = llama_batch_init(Int32(Swift.max(tokens.count, 1)), 0, 1)
         defer { llama_batch_free(batch) }
@@ -371,12 +459,38 @@ actor LlamaRuntime {
             batch.pos[i] = Int32(startPosition + index)
             batch.n_seq_id[i] = 1
             batch.seq_id[i]![0] = 0
-            batch.logits[i] = index == tokens.count - 1 ? 1 : 0
+            batch.logits[i] = allLogits || index == tokens.count - 1 ? 1 : 0
             batch.n_tokens += 1
         }
 
         let code = llama_decode(context, batch)
         guard code == 0 else { throw RuntimeError.decode(code) }
+    }
+
+    /// Prompt-lookup speculation: find a previous occurrence of the current suffix (including the
+    /// newly sampled first token), then borrow its following tokens as a zero-RAM draft.
+    private func ngramContinuation(after first: llama_token, maxAdditional: Int) -> [llama_token] {
+        guard maxAdditional > 0, cachedPrompt.count >= 8 else { return [] }
+        let combined = cachedPrompt + [first]
+
+        for keyLength in stride(from: 6, through: 3, by: -1) {
+            guard combined.count >= keyLength else { continue }
+            let key = Array(combined.suffix(keyLength))
+            guard cachedPrompt.count > keyLength else { continue }
+
+            var index = cachedPrompt.count - keyLength - 1
+            while index >= 0 {
+                let end = index + keyLength
+                if end < cachedPrompt.count && Array(cachedPrompt[index..<end]) == key {
+                    let continuationEnd = Swift.min(cachedPrompt.count, end + maxAdditional)
+                    if continuationEnd > end {
+                        return Array(cachedPrompt[end..<continuationEnd])
+                    }
+                }
+                index -= 1
+            }
+        }
+        return []
     }
 
     private func tokenize(_ text: String) throws -> [llama_token] {
@@ -430,7 +544,9 @@ actor LlamaRuntime {
         output: Int,
         prompt: Int,
         cached: Int,
-        capacity: Int
+        capacity: Int,
+        specAccepted: Int,
+        specAttempts: Int
     ) -> Metrics {
         let elapsed = Swift.max(0.001, seconds(generationStart.duration(to: clock.now)))
         let metalMiB: Double
@@ -440,6 +556,9 @@ actor LlamaRuntime {
             metalMiB = 0
         }
         let mtp = nextNLayers > 0 ? " • NextN-capable" : ""
+        let spec = specAttempts > 0
+            ? String(format: " • prompt-spec %.0f%%", 100.0 * Double(specAccepted) / Double(specAttempts))
+            : " • prompt-spec auto"
         return .init(
             tokensPerSecond: Double(output) / elapsed,
             timeToFirstTokenMS: firstMS,
@@ -448,7 +567,7 @@ actor LlamaRuntime {
             cachedPrefixTokens: cached,
             contextCapacity: capacity,
             residentMemoryMB: metalMiB,
-            backend: "llama.cpp b10456 • mmap • Metal \(activeGPULayers)L + CPU • \(profile.rawValue)\(mtp) • \(modelName)"
+            backend: "llama.cpp b10456 • mmap • Metal \(activeGPULayers)L + CPU • \(profile.rawValue)\(mtp)\(spec) • \(modelName)"
         )
     }
 }
