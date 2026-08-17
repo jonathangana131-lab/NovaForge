@@ -297,7 +297,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             "-swift-version",
             "6",
             "-I",
-            packageRoot.appendingPathComponent(".build/debug/Modules").path,
+            try builtModulesDirectory(packageRoot: packageRoot).path,
             "-o",
             "/dev/null",
             sourceURL.path,
@@ -310,6 +310,43 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
         return (
             process.terminationStatus,
             String(decoding: data, as: UTF8.self)
+        )
+    }
+
+    private func builtModulesDirectory(packageRoot: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let buildRoot = packageRoot.appendingPathComponent(".build", isDirectory: true)
+        let legacy = buildRoot.appendingPathComponent("debug/Modules", isDirectory: true)
+        if fileManager.fileExists(
+            atPath: legacy.appendingPathComponent("AgentPolicy.swiftmodule").path
+        ) {
+            return legacy
+        }
+
+        guard let enumerator = fileManager.enumerator(
+            at: buildRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw NSError(
+                domain: "MutationEffectStaticSecurityTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to enumerate SwiftPM build directory"]
+            )
+        }
+
+        for case let candidate as URL in enumerator {
+            guard candidate.lastPathComponent == "AgentPolicy.swiftmodule" else { continue }
+            return candidate.deletingLastPathComponent()
+        }
+
+        throw NSError(
+            domain: "MutationEffectStaticSecurityTests",
+            code: 2,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Unable to locate AgentPolicy.swiftmodule beneath \(buildRoot.path)"
+            ]
         )
     }
 }
