@@ -98,8 +98,6 @@ actor AgentEngine {
         var signatures: [String: Int] = [:]
         var allEvents: [AppModel.AgentEvent] = []
 
-        // One workspace retrieval pass gives the first model call useful code without pre-filling the
-        // entire project. Later exact observations are kept in indexed experience memory.
         let retrieved = await retrieval(for: userText)
         let stable = await context.stablePrefix(mode: mode, todos: []) + "\n\n" + compactToolContract
 
@@ -287,10 +285,12 @@ actor AgentEngine {
                 "\($0.path):\($0.line) \($0.text)"
             }.joined(separator: "\n")
         case "recall":
-            let result = await context.recall(require(call.query), maxCharacters: 7_000)
+            let query = try require(call.query)
+            let result = await context.recall(query, maxCharacters: 7_000)
             return result.isEmpty ? "No matching external memory." : result
         case "memory_read":
-            return await context.readExperience(require(call.id)) ?? "Memory ID not found."
+            let id = try require(call.id)
+            return await context.readExperience(id) ?? "Memory ID not found."
         case "write":
             let path = try require(call.path)
             try await workspace.write(path, content: require(call.content))
@@ -331,8 +331,6 @@ actor AgentEngine {
         }
     }
 
-    /// Qwen variants occasionally emit a tool envelope without a closing tag late in long runs.
-    /// Accept the strict form first, then a narrow whole-response JSON repair instead of killing the run.
     private func parseTool(_ text: String) throws -> ToolCall? {
         if let start = text.range(of: "<tool_call>") {
             let payload: String
