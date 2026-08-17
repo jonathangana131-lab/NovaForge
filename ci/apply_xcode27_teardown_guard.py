@@ -66,18 +66,25 @@ replacement = r'''run_xctest_selection() {
 '''
 
 source = source[:start] + replacement + source[end:]
+selection = source[start:source.find(end_marker, start)]
 
 for needle in (
     "RECOVERED: XCTest suite passed; Xcode 27 teardown",
     "pass_sentinel=\"$(grep -F",
     "selection_status=0",
 ):
-    if source.count(needle) != 1:
-        raise SystemExit(f"post-transform validation failed for {needle!r}: {source.count(needle)}")
+    if needle not in selection:
+        raise SystemExit(f"post-transform selection validation missing {needle!r}")
+
+# One initial zero plus one verified-recovery zero are expected inside this
+# function. Anything else means the wrapper changed unexpectedly.
+if selection.count("selection_status=0") != 2:
+    raise SystemExit(
+        f"unexpected selection_status=0 count: {selection.count('selection_status=0')}"
+    )
 
 # The malformed transform wrote literal backslash-n tokens into the shell
 # condition. Do not permit those to survive this repair.
-selection = source[start:source.find(end_marker, start)]
 if ")) \\n" in selection:
     raise SystemExit("literal backslash-n survived teardown-guard repair")
 
