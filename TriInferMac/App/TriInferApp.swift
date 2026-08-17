@@ -16,7 +16,8 @@ struct TriInferApp: App {
             // rollback budget; never trade correctness for a speculative speed badge.
             "TriInfer.ngramSpeculation": false,
         ])
-        _ = BackgroundModelDownloads.shared
+        // Keep cold launch deterministic. ModelsView creates BackgroundModelDownloads on demand;
+        // iOS background-session relaunches reconnect through TriInferAppDelegate below.
     }
 
     var body: some Scene {
