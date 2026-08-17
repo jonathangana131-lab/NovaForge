@@ -12,6 +12,7 @@ public final actor LlamaService {
     // MARK: Properties
     private var llama: Llama?
     private var currentTask: Task<(), Error>?
+    private var lastPerformanceSnapshot: LlamaPerformanceSnapshot?
     private let modelUrl: URL
     private let requestedConfig: LlamaConfig
     private let runtimeDecision: LlamaRuntimeTuner.Decision
@@ -32,6 +33,13 @@ public final actor LlamaService {
     /// benchmark receipts. It never contains user prompt/model content.
     public func runtimeProfile() -> LlamaRuntimeTuner.Decision {
         runtimeDecision
+    }
+
+    /// Content-free measurements from the most recently completed local stream.
+    /// This is intentionally opt-in diagnostics state; it never captures text,
+    /// token ids, prompts, generated output, or model paths.
+    public func performanceSnapshot() -> LlamaPerformanceSnapshot? {
+        lastPerformanceSnapshot
     }
 
     // MARK: Methods
@@ -108,19 +116,29 @@ public final actor LlamaService {
 
     public func streamCompletion(of messages: [LlamaChatMessage], samplingConfig: LlamaSamplingConfig) async throws -> AsyncThrowingStream<String, Error> {
         guard !messages.isEmpty else { throw LlamaError.emptyMessageArray }
+        let requestStartedAt = Self.monotonicSeconds()
         let llama = try initializeLlamaIfNecessary()
         await stopCompletion()
+        let prefillStartedAt = Self.monotonicSeconds()
         try await llama.initializeCompletion(messages: messages)
         try await llama.updateSamplingConfig(samplingConfig)
+        let prefillFinishedAt = Self.monotonicSeconds()
+        let prefillSeconds = max(0, prefillFinishedAt - prefillStartedAt)
         let effectiveConfig = runtimeDecision.config
+        let runtimeReason = runtimeDecision.reason
 
         return AsyncThrowingStream { continuation in
             currentTask = Task {
+                let generationStartedAt = Self.monotonicSeconds()
+                var firstTokenAt: Double?
+                var generatedTokenCount = 0
+                var completion: LlamaPerformanceSnapshot.Completion = .completed
+
                 do {
                     var tokenBuffer: [String] = []
-                    var generatedTokenCount = 0
                     generationLoop: while await (llama.currentTokenPosition < llama.maxTokenCount) {
                         guard !Task.isCancelled else {
+                            completion = .cancelled
                             if !tokenBuffer.isEmpty {
                                 continuation.yield(tokenBuffer.joined())
                                 tokenBuffer = []
@@ -131,6 +149,9 @@ public final actor LlamaService {
                         switch result {
                         case .token(let token):
                             generatedTokenCount += 1
+                            if firstTokenAt == nil {
+                                firstTokenAt = Self.monotonicSeconds()
+                            }
                             tokenBuffer.append(token)
                             if tokenBuffer.count == tokenBufferSize {
                                 continuation.yield(tokenBuffer.joined())
@@ -144,8 +165,32 @@ public final actor LlamaService {
                             break generationLoop
                         }
                     }
+
+                    let generationFinishedAt = Self.monotonicSeconds()
+                    await recordPerformance(
+                        runtimeReason: runtimeReason,
+                        requestStartedAt: requestStartedAt,
+                        prefillSeconds: prefillSeconds,
+                        generationStartedAt: generationStartedAt,
+                        firstTokenAt: firstTokenAt,
+                        generationFinishedAt: generationFinishedAt,
+                        generatedTokenCount: generatedTokenCount,
+                        completion: completion
+                    )
                     continuation.finish()
                 } catch {
+                    completion = Task.isCancelled ? .cancelled : .failed
+                    let generationFinishedAt = Self.monotonicSeconds()
+                    await recordPerformance(
+                        runtimeReason: runtimeReason,
+                        requestStartedAt: requestStartedAt,
+                        prefillSeconds: prefillSeconds,
+                        generationStartedAt: generationStartedAt,
+                        firstTokenAt: firstTokenAt,
+                        generationFinishedAt: generationFinishedAt,
+                        generatedTokenCount: generatedTokenCount,
+                        completion: completion
+                    )
                     continuation.finish(throwing: error)
                 }
             }
@@ -154,6 +199,40 @@ public final actor LlamaService {
 
     public func stopCompletion() async {
         await currentTask?.cancelAndWait()
+    }
+
+    private func recordPerformance(
+        runtimeReason: String,
+        requestStartedAt: Double,
+        prefillSeconds: Double,
+        generationStartedAt: Double,
+        firstTokenAt: Double?,
+        generationFinishedAt: Double,
+        generatedTokenCount: Int,
+        completion: LlamaPerformanceSnapshot.Completion
+    ) {
+        let decodeSeconds = max(0, generationFinishedAt - generationStartedAt)
+        let tokensPerSecond = decodeSeconds > 0
+            ? Double(generatedTokenCount) / decodeSeconds
+            : 0
+        lastPerformanceSnapshot = LlamaPerformanceSnapshot(
+            runtimeReason: runtimeReason,
+            prefillSeconds: prefillSeconds,
+            timeToFirstTokenSeconds: firstTokenAt.map {
+                max(0, $0 - requestStartedAt)
+            },
+            decodeSeconds: decodeSeconds,
+            generatedTokenCount: generatedTokenCount,
+            decodeTokensPerSecond: tokensPerSecond,
+            completion: completion
+        )
+    }
+
+    /// Foundation's reference-date clock is monotonic enough for short local
+    /// inference intervals and keeps the telemetry implementation portable
+    /// across every platform supported by this package.
+    private nonisolated static func monotonicSeconds() -> Double {
+        ProcessInfo.processInfo.systemUptime
     }
 
     private func initializeLlamaIfNecessary() throws -> Llama {
