@@ -98,8 +98,26 @@ actor AgentEngine {
         var signatures: [String: Int] = [:]
         var allEvents: [AppModel.AgentEvent] = []
 
-        let retrieved = await retrieval(for: userText)
-        let stable = await context.stablePrefix(mode: mode, todos: []) + "\n\n" + compactToolContract
+        // Build the expensive run context once. Everything in runCapsule stays byte-identical for
+        // the entire tool loop so llama.cpp can preserve a large KV common prefix instead of
+        // re-prefilling project structure after every read/patch/TODO update.
+        async let retrievedTask = retrieval(for: userText)
+        async let stableTask = context.stablePrefix(mode: mode, todos: [])
+        let (retrieved, stableBase) = await (retrievedTask, stableTask)
+        let runCapsule = """
+        \(stableBase)
+
+        \(compactToolContract)
+
+        RUN GOAL
+        \(userText)
+
+        INITIAL STRUCTURAL PROJECT CONTEXT
+        \(retrieved.isEmpty ? "No project slices were retrieved. Use search/read before editing." : retrieved)
+
+        CACHE NOTE
+        The initial slices above are immutable run-start evidence and may become stale after edits. Latest tool results and explicit reads are authoritative for changed files.
+        """
 
         for step in 1...maxSteps {
             if cancelled { throw AgentError.cancelled }
@@ -109,11 +127,11 @@ actor AgentEngine {
             let recalled = await context.recall(recallQuery, maxCharacters: 4_600)
             let hot = await context.prepareConversation(
                 messages: conversation,
-                retrieved: step == 1 ? retrieved : "",
+                retrieved: "",
                 recalled: recalled,
                 toolTail: toolTail
             )
-            let prompt = stable + "\n\n" + state + "\n\n" + hot + "\n\nContinue the task. If complete, call finish."
+            let prompt = runCapsule + "\n\n" + state + "\n\n" + hot + "\n\nContinue the task. If complete, call finish."
 
             let modelStream = try await runtime.stream(prompt: prompt, maxTokens: mode == .plan ? 650 : 850)
             var response = ""
@@ -246,9 +264,6 @@ actor AgentEngine {
     }
 
     private func retrieval(for userText: String) async -> String {
-        // Code-structure-aware retrieval keeps hot KV small without paying for a second model call.
-        // The pack contains project topology plus scored declarations/imports/call sites/branches
-        // with path:line provenance; the agent can `read` exact files only when it needs full text.
         (try? await workspace.contextPack(for: userText, maxCharacters: 7_200)) ?? ""
     }
 
@@ -401,12 +416,5 @@ actor AgentEngine {
         case .critical: "Critical"
         @unknown default: "Unknown"
         }
-    }
-}
-
-private extension Sequence where Element == String {
-    func uniqued() -> [String] {
-        var seen = Set<String>()
-        return filter { seen.insert($0).inserted }
     }
 }
