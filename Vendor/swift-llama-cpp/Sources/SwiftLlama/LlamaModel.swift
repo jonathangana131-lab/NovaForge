@@ -108,7 +108,7 @@ public final class LlamaModel {
 
     /// End-of-sentence token id.
     public func eosToken() -> llama_token {
-        llama_vocab_eos(modelPointer)
+        llama_vocab_eos(vocabPointer)
     }
 
     /// Whether the token is an end-of-generation token (e.g. EOS/EOT).
@@ -244,7 +244,6 @@ public final class LlamaModel {
 
     // MARK: - Model & Vocab Introspection
 
-    /// Model and vocab introspection helpers.
     public func ropeType() -> llama_rope_type { llama_model_rope_type(modelPointer) }
     public func nEmbed() -> Int32 { llama_model_n_embd(modelPointer) }
     public func nLayer() -> Int32 { llama_model_n_layer(modelPointer) }
@@ -258,110 +257,10 @@ public final class LlamaModel {
         return String(cString: cstr)
     }
     public func modelSizeBytes() -> UInt64 { llama_model_size(modelPointer) }
-    public func hasEncoder() -> Bool { llama_model_has_encoder(modelPointer) }
-    public func hasDecoder() -> Bool { llama_model_has_decoder(modelPointer) }
-    public func decoderStartToken() -> llama_token { llama_model_decoder_start_token(modelPointer) }
-    public func isRecurrent() -> Bool { llama_model_is_recurrent(modelPointer) }
-    public func isDiffusion() -> Bool { llama_model_is_diffusion(modelPointer) }
 
-    // Vocab helpers
-    public func vocabType() -> llama_vocab_type { llama_vocab_type(vocabPointer) }
-    public func vocabScore(for token: llama_token) -> Float { llama_vocab_get_score(vocabPointer, token) }
-    public func vocabAttr(for token: llama_token) -> llama_token_attr { llama_vocab_get_attr(vocabPointer, token) }
-    public func isControl(token: llama_token) -> Bool { llama_vocab_is_control(vocabPointer, token) }
-    public func sepToken() -> llama_token { llama_vocab_sep(vocabPointer) }
-    public func nlToken() -> llama_token { llama_vocab_nl(vocabPointer) }
-    public func padToken() -> llama_token { llama_vocab_pad(vocabPointer) }
-    public func maskToken() -> llama_token { llama_vocab_mask(vocabPointer) }
-    public func addEos() -> Bool { llama_vocab_get_add_eos(vocabPointer) }
-    public func addSep() -> Bool { llama_vocab_get_add_sep(vocabPointer) }
-    public func fimPre() -> llama_token { llama_vocab_fim_pre(vocabPointer) }
-    public func fimSuf() -> llama_token { llama_vocab_fim_suf(vocabPointer) }
-    public func fimMid() -> llama_token { llama_vocab_fim_mid(vocabPointer) }
-    public func fimPad() -> llama_token { llama_vocab_fim_pad(vocabPointer) }
-    public func fimRep() -> llama_token { llama_vocab_fim_rep(vocabPointer) }
-    public func fimSep() -> llama_token { llama_vocab_fim_sep(vocabPointer) }
+    // MARK: - Adapter Factories
 
-    // Metadata
-    /// Read model GGUF metadata value by key as string.
-    public func metaValue(forKey key: String) -> String? {
-        let bufSize = 512
-        var buffer = [CChar](repeating: 0, count: bufSize)
-        let res = llama_model_meta_val_str(modelPointer, key, &buffer, bufSize)
-        guard res >= 0 else { return nil }
-        return Self.stringFromNullTerminated(buffer)
-    }
-    /// Number of model GGUF metadata key/value pairs.
-    public func metaCount() -> Int32 { llama_model_meta_count(modelPointer) }
-    /// Read metadata key name by index.
-    public func metaKey(at index: Int32) -> String? {
-        let bufSize = 512
-        var buffer = [CChar](repeating: 0, count: bufSize)
-        let res = llama_model_meta_key_by_index(modelPointer, index, &buffer, bufSize)
-        guard res >= 0 else { return nil }
-        return Self.stringFromNullTerminated(buffer)
-    }
-    /// Read metadata value as a string by index.
-    public func metaValue(at index: Int32) -> String? {
-        let bufSize = 512
-        var buffer = [CChar](repeating: 0, count: bufSize)
-        let res = llama_model_meta_val_str_by_index(modelPointer, index, &buffer, bufSize)
-        guard res >= 0 else { return nil }
-        return Self.stringFromNullTerminated(buffer)
-    }
-
-    // Save model
-    /// Save the model to a file.
-    public func save(to path: String) {
-        llama_model_save_to_file(modelPointer, path)
-    }
-
-    // Built-in chat templates
-    /// Get list of built-in chat templates.
-    public func builtinChatTemplates(maxCount: Int = 64) -> [String] {
-        var result: [String] = []
-        var ptrs = Array<UnsafePointer<CChar>?>(repeating: nil, count: maxCount)
-        let n = ptrs.withUnsafeMutableBufferPointer { buf in
-            llama_chat_builtin_templates(buf.baseAddress, size_t(maxCount))
-        }
-        if n > 0 {
-            for i in 0..<min(Int(n), maxCount) {
-                if let p = ptrs[i] { result.append(String(cString: p)) }
-            }
-        }
-        return result
-    }
-
-    // Quantize helper (wraps the C quantize function)
-    @discardableResult
-    /// Quantize a model file.
-    public static func quantizeModel(inputPath: String, outputPath: String, params: inout llama_model_quantize_params) -> UInt32 {
-        llama_model_quantize(inputPath, outputPath, &params)
-    }
-
-    /// Default quantization parameters.
-    public static func defaultQuantizeParams() -> llama_model_quantize_params {
-        llama_model_quantize_default_params()
-    }
-
-    // MARK: - Split utilities
-
-    /// Build a split GGUF final path for this chunk.
-    public static func splitPath(pathPrefix: String, splitNo: Int32, splitCount: Int32) -> String {
-        var buf = [CChar](repeating: 0, count: 1024)
-        _ = pathPrefix.withCString { c in
-            llama_split_path(&buf, buf.count, c, splitNo, splitCount)
-        }
-        return Self.stringFromNullTerminated(buf)
-    }
-
-    /// Extract the path prefix from a split path if and only if the split_no and split_count match.
-    public static func splitPrefix(splitPath: String, splitNo: Int32, splitCount: Int32) -> String? {
-        var buf = [CChar](repeating: 0, count: 1024)
-        let n = splitPath.withCString { c in
-            llama_split_prefix(&buf, buf.count, c, splitNo, splitCount)
-        }
-        if n <= 0 { return nil }
-        return Self.stringFromNullTerminated(buf)
+    public func loadLoraAdapter(path: String) -> LlamaLoraAdapter? {
+        LlamaLoraAdapter(model: self, path: path)
     }
 }
