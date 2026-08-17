@@ -1,5 +1,5 @@
 name: Qwen 3.8 27B Xcode 27 Validation
-# Exact-tree trigger for the strict Qwen 3.8-only product path + HTML preview repair.
+# Exact-tree trigger after stable CoreSimulator Booted-state readiness landed.
 
 on:
   push:
