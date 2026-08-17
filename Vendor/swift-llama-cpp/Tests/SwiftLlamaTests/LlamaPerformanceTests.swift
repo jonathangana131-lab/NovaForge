@@ -15,6 +15,12 @@ struct LlamaPerformanceTests {
             baselineTokensPerSecond: 10,
             availableResidentBytes: 512 * 1_024 * 1_024
         ))
+        #expect(LlamaAdaptiveInferenceGovernor.select(
+            candidate: candidate,
+            baselineTokensPerSecond: 10,
+            availableResidentBytes: 512 * 1_024 * 1_024,
+            candidateIsResident: false
+        ) == .candidate)
     }
 
     @Test("Speculation does not promote from one noisy sample")
@@ -30,6 +36,48 @@ struct LlamaPerformanceTests {
             baselineTokensPerSecond: 10,
             availableResidentBytes: 512 * 1_024 * 1_024
         ))
+    }
+
+    @Test("Resident draft hysteresis avoids pointless reload flapping")
+    func residentCandidateGetsRetentionHysteresis() {
+        let candidate = LlamaAdaptiveInferenceGovernor.Candidate(
+            samples: 3,
+            averageTokensPerSecond: 9.9,
+            averageAcceptanceRate: 0.68,
+            residentBytes: 192 * 1_024 * 1_024
+        )
+        #expect(!LlamaAdaptiveInferenceGovernor.shouldPromote(
+            candidate: candidate,
+            baselineTokensPerSecond: 10,
+            availableResidentBytes: 512 * 1_024 * 1_024
+        ))
+        #expect(LlamaAdaptiveInferenceGovernor.shouldRetainResidentCandidate(
+            candidate: candidate,
+            baselineTokensPerSecond: 10,
+            availableResidentBytes: 512 * 1_024 * 1_024
+        ))
+        #expect(LlamaAdaptiveInferenceGovernor.select(
+            candidate: candidate,
+            baselineTokensPerSecond: 10,
+            availableResidentBytes: 512 * 1_024 * 1_024,
+            candidateIsResident: true
+        ) == .candidate)
+    }
+
+    @Test("Resident candidate still drops on real regression")
+    func residentCandidateDropsWhenMeaningfullyWorse() {
+        let candidate = LlamaAdaptiveInferenceGovernor.Candidate(
+            samples: 4,
+            averageTokensPerSecond: 9.1,
+            averageAcceptanceRate: 0.62,
+            residentBytes: 128 * 1_024 * 1_024
+        )
+        #expect(LlamaAdaptiveInferenceGovernor.select(
+            candidate: candidate,
+            baselineTokensPerSecond: 10,
+            availableResidentBytes: 512 * 1_024 * 1_024,
+            candidateIsResident: true
+        ) == .baseline)
     }
 
     @Test("Low acceptance or memory pressure rejects speculative mode")
@@ -57,6 +105,23 @@ struct LlamaPerformanceTests {
             baselineTokensPerSecond: 10,
             availableResidentBytes: 512 * 1_024 * 1_024
         ))
+    }
+
+    @Test("Invalid acceptance rates cannot promote")
+    func invalidAcceptanceCannotPromote() {
+        for acceptance in [Double.nan, -0.1, 1.1] {
+            let candidate = LlamaAdaptiveInferenceGovernor.Candidate(
+                samples: 5,
+                averageTokensPerSecond: 20,
+                averageAcceptanceRate: acceptance,
+                residentBytes: 64 * 1_024 * 1_024
+            )
+            #expect(!LlamaAdaptiveInferenceGovernor.shouldPromote(
+                candidate: candidate,
+                baselineTokensPerSecond: 10,
+                availableResidentBytes: 512 * 1_024 * 1_024
+            ))
+        }
     }
 
     @Test("Performance snapshot clamps invalid negative durations")
