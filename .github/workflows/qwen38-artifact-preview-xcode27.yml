@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: qwen38-artifact-preview-${{ github.ref }}
@@ -25,6 +25,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+          persist-credentials: true
       - name: Select Xcode and simulator
         id: sim
         shell: bash
@@ -37,6 +38,7 @@ jobs:
           test -n "$UDID"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$UDID" >/dev/null 2>&1 || true
+          STATE=""
           for i in $(seq 1 90); do
             STATE=$(xcrun simctl list -j devices | jq -r --arg id "$UDID" '.devices[][] | select(.udid==$id) | .state' | head -1)
             if [ "$STATE" = Booted ]; then break; fi
@@ -101,6 +103,44 @@ jobs:
               --output-path artifacts/artifact-preview/xcresult-attachments 2>&1 \
               | tee artifacts/artifact-preview/xcresult-export.log || true
           fi
+      - name: Record exact targeted receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS=FAIL
+          if [ -f artifacts/artifact-preview/test.log ] && { \
+               grep -Eq "Test Case '.*testLocalWebArtifactCreatesPreviewableLandingPage.*' (passed|passed on)" artifacts/artifact-preview/test.log || \
+               grep -Fq "Test Suite 'Selected tests' passed" artifacts/artifact-preview/test.log; \
+             }; then
+            STATUS=PASS
+          fi
+          mkdir -p QA
+          cat > QA/qwen38-artifact-preview-latest.json <<JSON
+          {
+            "status": "$STATUS",
+            "runId": "${GITHUB_RUN_ID}",
+            "runAttempt": "${GITHUB_RUN_ATTEMPT}",
+            "testedSha": "${GITHUB_SHA}",
+            "artifactName": "qwen38-artifact-preview-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+            "test": "testLocalWebArtifactCreatesPreviewableLandingPage"
+          }
+          JSON
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add QA/qwen38-artifact-preview-latest.json
+          git commit -m "QA: record Qwen 3.8 artifact preview Xcode 27 receipt" || exit 0
+          git fetch origin feature/qwen38-forge-ios27
+          git rebase origin/feature/qwen38-forge-ios27
+          git push origin HEAD:feature/qwen38-forge-ios27
+      - name: Upload targeted evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen38-artifact-preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/artifact-preview
+          if-no-files-found: error
+          retention-days: 14
       - name: Enforce targeted result
         if: always()
         shell: bash
@@ -111,11 +151,3 @@ jobs:
           fi
           echo 'Targeted artifact preview journey did not pass.' >&2
           exit 1
-      - name: Upload targeted evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qwen38-artifact-preview-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/artifact-preview
-          if-no-files-found: error
-          retention-days: 14
