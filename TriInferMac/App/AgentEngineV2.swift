@@ -246,27 +246,10 @@ actor AgentEngine {
     }
 
     private func retrieval(for userText: String) async -> String {
-        var sections: [String] = []
-        if let entries = try? await workspace.entries() {
-            let paths = entries.prefix(80).map { ($0.isDirectory ? "[dir] " : "") + $0.relativePath }
-            sections.append("PROJECT TREE\n" + paths.joined(separator: "\n"))
-        }
-
-        let words = userText.lowercased()
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
-            .filter { $0.count >= 4 }
-            .uniqued()
-            .prefix(6)
-
-        for word in words {
-            if let hits = try? await workspace.search(word, maxHits: 7), !hits.isEmpty {
-                sections.append("MATCHES ‘\(word)’\n" + hits.map {
-                    "\($0.path):\($0.line) \($0.text)"
-                }.joined(separator: "\n"))
-            }
-        }
-        return sections.joined(separator: "\n\n")
+        // Code-structure-aware retrieval keeps hot KV small without paying for a second model call.
+        // The pack contains project topology plus scored declarations/imports/call sites/branches
+        // with path:line provenance; the agent can `read` exact files only when it needs full text.
+        (try? await workspace.contextPack(for: userText, maxCharacters: 7_200)) ?? ""
     }
 
     private func execute(
