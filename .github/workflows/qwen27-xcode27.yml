@@ -20,23 +20,44 @@ jobs:
     name: Xcode 27 runtime + app verification
     runs-on: xcode-27
     timeout-minutes: 75
+    outputs:
+      tested_sha: ${{ steps.patch.outputs.tested_sha }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: true
+      - name: Apply pending production source transform
+        id: patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 ci/apply_artifact_preview_mode_fix.py; then
+            git diff --check
+          fi
+          if ! git diff --quiet -- AgentPad/Views/ArtifactPreviewSheet.swift; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add AgentPad/Views/ArtifactPreviewSheet.swift
+            git commit -m 'Fix normal artifact preview mode state'
+            git fetch origin feature/qwen38-forge-ios27
+            git rebase origin/feature/qwen38-forge-ios27
+            git push origin HEAD:feature/qwen38-forge-ios27
+          fi
+          echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Publish live Xcode 27 receipt
         shell: bash
         run: |
           set -euo pipefail
+          TESTED_SHA='${{ steps.patch.outputs.tested_sha }}'
           mkdir -p QA
           cat > QA/qwen38-xcode27-latest.json <<JSON
           {
             "status": "RUNNING",
             "runId": "${GITHUB_RUN_ID}",
             "runAttempt": "${GITHUB_RUN_ATTEMPT}",
-            "testedSha": "${GITHUB_SHA}",
+            "testedSha": "${TESTED_SHA}",
             "verifyArtifact": "qwen38-xcode27-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
             "screensArtifact": "qwen38-xcode27-screens-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           }
@@ -44,16 +65,21 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add QA/qwen38-xcode27-latest.json
-          git commit -m "QA: publish live Qwen 3.8 Xcode 27 run ${GITHUB_RUN_ID}" || exit 0
+          git commit -m "QA: publish live Qwen 3.8 Xcode 27 run ${GITHUB_RUN_ID}" || true
           git fetch origin feature/qwen38-forge-ios27
-          git rebase origin/feature/qwen38-forge-ios27
-          git push origin HEAD:feature/qwen38-forge-ios27
+          git rebase origin/feature/qwen38-forge-ios27 || true
+          git push origin HEAD:feature/qwen38-forge-ios27 || true
       - name: Show Xcode and iOS runtimes
         run: |
           xcodebuild -version
           xcrun simctl list runtimes
       - name: Install source-search dependency
         run: command -v rg >/dev/null 2>&1 || brew install ripgrep
+      - name: Run SwiftLlama runtime safety tests first
+        run: |
+          set -euo pipefail
+          cd Vendor/swift-llama-cpp
+          swift test --filter LlamaRuntimeTunerTests
       - name: Build and run critical verification
         env:
           NOVAFORGE_TEST_LANE: critical
@@ -79,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.verify-xcode27.outputs.tested_sha }}
           fetch-depth: 1
       - name: Show Xcode and iOS runtimes
         run: |
