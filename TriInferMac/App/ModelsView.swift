@@ -10,6 +10,7 @@ private final class ModelsScreenState {
     var jobs: [String: BackgroundModelDownloads.Job] = [:]
     var discovering = false
     var importer = false
+    var discoveryNote: String?
     var error: String?
 }
 
@@ -74,7 +75,7 @@ struct ModelsView: View {
             Section {
                 Button { Task { await discover() } } label: {
                     HStack {
-                        Label("Find fastest Qwen3.8-27B GGUF", systemImage: "sparkle.magnifyingglass")
+                        Label("Find fastest available 27B", systemImage: "sparkle.magnifyingglass")
                         Spacer()
                         if state.discovering { ProgressView().controlSize(.small) }
                     }
@@ -84,14 +85,20 @@ struct ModelsView: View {
                 Button { state.importer = true } label: {
                     Label("Import GGUF from Files", systemImage: "square.and.arrow.down")
                 }
+
+                if let note = state.discoveryNote {
+                    Label(note, systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } header: {
                 Text("Add a model")
             } footer: {
-                Text("Discovery is live. TriInfer ranks ultra-low-bit single-file Qwen3.8-27B GGUFs instead of freezing the app to an old URL. Large downloads use an OS-managed background session and reconnect after relaunch.")
+                Text("Live discovery prefers a compatible public Qwen3.8-27B the moment one is available, then falls back to the newest verified open 27B family. TriInfer ranks ultra-low-bit, complete single-file GGUFs and rejects partial shards. Large downloads use an OS-managed background session and reconnect after relaunch.")
             }
 
             if !state.candidates.isEmpty {
-                Section("Qwen3.8-27B candidates") {
+                Section("Recommended 27B candidates") {
                     ForEach(state.candidates.prefix(10)) { candidate in
                         candidateRow(candidate)
                     }
@@ -183,9 +190,12 @@ struct ModelsView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(candidate.displayName).font(.subheadline.weight(.semibold)).lineLimit(2)
-                    Text("\(candidate.quant) • \(candidate.repository)")
-                        .font(.caption)
+                    Text("\(candidate.familyLabel) • \(candidate.quant)")
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
+                    Text(candidate.repository)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -218,8 +228,15 @@ struct ModelsView: View {
 
     private func discover() async {
         state.discovering = true
-        do { state.candidates = try await model.models.discoverQwen38_27B() }
-        catch { state.error = error.localizedDescription }
+        state.discoveryNote = nil
+        do {
+            state.candidates = try await model.models.discoverBestAvailable27B()
+            if let first = state.candidates.first {
+                state.discoveryNote = "Found \(first.familyLabel); ranked for the smallest practical weight traffic first."
+            }
+        } catch {
+            state.error = error.localizedDescription
+        }
         state.discovering = false
     }
 
@@ -273,20 +290,21 @@ struct ModelsView: View {
     private func seedShowcase() {
         let args = ProcessInfo.processInfo.arguments
         guard args.contains("--ui-showcase"), args.contains("models"), state.candidates.isEmpty else { return }
+        state.discoveryNote = "Qwen3.8 weights are checked first; this preview is showing the current open 27B fallback."
         state.candidates = [
             .init(
-                repository: "unsloth/Qwen3.8-27B-GGUF",
-                filename: "Qwen3.8-27B-IQ2_XXS.gguf",
-                downloadURL: URL(string: "https://huggingface.co")!,
-                size: 8_360_000_000,
+                repository: "bartowski/Qwen_Qwen3.6-27B-GGUF",
+                filename: "Qwen3.6-27B-IQ2_XXS.gguf",
+                downloadURL: URL(string: "https://huggingface.co/bartowski/Qwen_Qwen3.6-27B-GGUF/resolve/main/Qwen_Qwen3.6-27B-IQ2_XXS.gguf")!,
+                size: 9_610_000_000,
                 quant: "IQ2_XXS"
             ),
             .init(
-                repository: "community/Qwen3.8-27B-GGUF",
-                filename: "Qwen3.8-27B-IQ2_M.gguf",
-                downloadURL: URL(string: "https://huggingface.co/models")!,
-                size: 10_200_000_000,
-                quant: "IQ2_M"
+                repository: "acgs/Qwen3.6-27B-GGUF",
+                filename: "Qwen3.6-27B-UD-IQ2_XXS.gguf",
+                downloadURL: URL(string: "https://huggingface.co/acgs/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-UD-IQ2_XXS.gguf")!,
+                size: 9_390_000_000,
+                quant: "IQ2_XXS"
             )
         ]
     }
