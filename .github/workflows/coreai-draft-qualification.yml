@@ -1,0 +1,33 @@
+name: Core AI Qwen3.5 Draft Qualification
+
+on:
+  push:
+    branches: [experiment/coreai-qwen35-draft]
+    paths:
+      - 'Research/CoreAIDraft/**'
+      - '.github/workflows/coreai-draft-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coreai-draft-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tokenizer-proof:
+    name: Prove raw token-ID compatibility
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          python3 --version
+      - name: Compare official Qwen tokenizer assets
+        run: python3 Research/CoreAIDraft/tokenizer_compatibility.py
