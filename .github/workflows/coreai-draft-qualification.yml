@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  tokenizer-proof:
-    name: Prove raw token-ID compatibility
+  qualification:
+    name: Token identity + state budget
     runs-on: xcode-27
     timeout-minutes: 15
     steps:
@@ -29,5 +29,7 @@ jobs:
         run: |
           xcodebuild -version
           python3 --version
-      - name: Compare official Qwen tokenizer assets
+      - name: Prove official tokenizer assets are identical
         run: python3 Research/CoreAIDraft/tokenizer_compatibility.py
+      - name: Validate Core AI recurrent-state contract
+        run: python3 Research/CoreAIDraft/qwen35_state_contract.py
