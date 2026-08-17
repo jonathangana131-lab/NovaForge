@@ -261,24 +261,24 @@ final class AppModel {
             .init(title: "Run browser smoke test", state: .pending),
         ]
         events = [
-            .init(kind: .tool, title: "Searched project", detail: "Retrieved 6 relevant files from src/ without loading the full workspace into context."),
+            .init(kind: .tool, title: "Structural project retrieval", detail: "Retrieved declarations, call sites, and nearby branches from src/ with path:line provenance instead of loading the whole workspace."),
             .init(kind: .checkpoint, title: "Checkpoint 18", detail: "Workspace journal saved after physics refactor."),
             .init(kind: .memory, title: "Experience memory compacted", detail: "Older tool output moved out of hot KV; exact evidence remains addressable by memory ID."),
-            .init(kind: .success, title: "Build passed", detail: "Modular browser artifact is ready for preview."),
+            .init(kind: .success, title: "Artifact preview ready", detail: "The modular browser project is ready for WebKit preview."),
         ]
         runtimeMetrics = .init(
-            tokensPerSecond: 3.8,
-            timeToFirstTokenMS: 412,
-            outputTokens: 684,
-            promptTokens: 1210,
-            cachedPrefixTokens: 846,
-            memoryMB: 2850,
-            contextTokens: 1860,
+            tokensPerSecond: 0,
+            timeToFirstTokenMS: 0,
+            outputTokens: 0,
+            promptTokens: 0,
+            cachedPrefixTokens: 0,
+            memoryMB: 0,
+            contextTokens: 0,
             contextBudget: 4096,
-            thermal: "Nominal",
-            backend: "Qwen3.8-27B • simulator preview"
+            thermal: "Simulator",
+            backend: "UI showcase • no model benchmarked"
         )
-        currentModelName = "Qwen3.8-27B IQ2"
+        currentModelName = "No local model loaded"
 
         switch route {
         case "models": selectedTab = .models
