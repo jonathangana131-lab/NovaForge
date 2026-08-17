@@ -122,8 +122,14 @@ actor ANESemanticAccelerator {
     private func isBundleInstalled() -> Bool {
         guard let modelsDirectory else { return false }
         let bundle = modelsDirectory.appendingPathComponent("embeddinggemma-300m", isDirectory: true)
-        return fm.fileExists(atPath: bundle.appendingPathComponent("encoder.mlmodelc/model.mil").path)
-            && fm.fileExists(atPath: bundle.appendingPathComponent("hf_model/tokenizer.json").path)
+        let compiled = bundle.appendingPathComponent("encoder.mlmodelc", isDirectory: true)
+        let package = bundle.appendingPathComponent("encoder.mlpackage", isDirectory: true)
+        let tokenizer = bundle.appendingPathComponent("hf_model/tokenizer.json")
+        let config = bundle.appendingPathComponent("model_config.json")
+        let encoderPresent = fm.fileExists(atPath: compiled.path) || fm.fileExists(atPath: package.path)
+        return encoderPresent
+            && fm.fileExists(atPath: tokenizer.path)
+            && fm.fileExists(atPath: config.path)
     }
 
     private func dot(_ lhs: [Float], _ rhs: [Float]) -> Float {
