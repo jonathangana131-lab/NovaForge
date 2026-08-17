@@ -17,6 +17,12 @@ actor ModelManager {
         let size: Int64?
         let quant: String
         var displayName: String { filename.replacingOccurrences(of: ".gguf", with: "", options: .caseInsensitive) }
+        var familyLabel: String {
+            let lower = (repository + "/" + filename).lowercased()
+            if lower.contains("qwen3.8") || lower.contains("qwen-3.8") || lower.contains("qwen_3.8") { return "Qwen3.8-27B" }
+            if lower.contains("qwen3.6") || lower.contains("qwen-3.6") || lower.contains("qwen_3.6") { return "Qwen3.6-27B" }
+            return "27B GGUF"
+        }
     }
 
     struct StateSnapshot: Sendable {
@@ -28,9 +34,9 @@ actor ModelManager {
         case invalidGGUF, noCandidates, insufficientStorage(Int64), badHTTP(Int)
         var errorDescription: String? {
             switch self {
-            case .invalidGGUF: "The file is not a valid GGUF model."
-            case .noCandidates: "No compatible single-file Qwen3.8-27B GGUF was found right now."
-            case .insufficientStorage(let bytes): "Not enough free storage. Need about \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))."
+            case .invalidGGUF: "The file is not a valid complete GGUF model."
+            case .noCandidates: "No compatible single-file Qwen 27B GGUF was found right now. You can still import a GGUF from Files."
+            case .insufficientStorage(let bytes): "Not enough free storage. Need about \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) more."
             case .badHTTP(let status): "Model server returned HTTP \(status)."
             }
         }
@@ -95,56 +101,19 @@ actor ModelManager {
         return .init(name: destination.deletingPathExtension().lastPathComponent, url: destination, size: (attrs[.size] as? NSNumber)?.int64Value ?? 0, modified: Date())
     }
 
-    func discoverQwen38_27B() async throws -> [Candidate] {
-        // Use multiple spellings because Hub indexing for brand-new models can lag. We still apply
-        // strict repo/filename checks below so an older Qwen 27B result cannot be offered as 3.8.
-        let searches = ["Qwen3.8 27B GGUF", "Qwen3.8-27B GGUF", "Qwen 3.8 27B GGUF"]
-        var repos: [String] = []
-        for query in searches {
-            var components = URLComponents(string: "https://huggingface.co/api/models")!
-            components.queryItems = [.init(name: "search", value: query), .init(name: "limit", value: "24"), .init(name: "full", value: "true")]
-            let (data, response) = try await URLSession.shared.data(from: components.url!)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { continue }
-            let objects = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
-            for object in objects {
-                guard let id = object["id"] as? String else { continue }
-                let lower = id.lowercased()
-                guard lower.contains("qwen"), isQwen38_27B(lower) else { continue }
-                if !repos.contains(id) { repos.append(id) }
-            }
-            if repos.count >= 10 { break }
-        }
-
-        var candidates: [Candidate] = []
-        for repo in repos.prefix(12) {
-            let encoded = repo.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repo
-            let url = URL(string: "https://huggingface.co/api/models/\(encoded)?blobs=true")!
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard (response as? HTTPURLResponse)?.statusCode == 200,
-                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  let siblings = object["siblings"] as? [[String: Any]] else { continue }
-
-            for sibling in siblings {
-                guard let filename = sibling["rfilename"] as? String, filename.lowercased().hasSuffix(".gguf") else { continue }
-                let lower = filename.lowercased()
-                if lower.contains("mmproj") || isSplitGGUF(lower) { continue }
-                guard isQwen38_27B((repo + "/" + filename).lowercased()) else { continue }
-                guard let download = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? filename)?download=true") else { continue }
-                let size = (sibling["size"] as? NSNumber)?.int64Value
-                // A 27B GGUF that is only a few MB is metadata/projector junk even if it has a .gguf suffix.
-                if let size, size < 2_000_000_000 { continue }
-                candidates.append(.init(repository: repo, filename: filename, downloadURL: download, size: size, quant: quantLabel(filename)))
-            }
-        }
-
-        // Deduplicate mirrors that expose the exact same URL/name and prefer ultra-low-bit files for
-        // the iPhone 12 memory/bandwidth envelope. Split repositories are intentionally not offered
-        // until all parts can be transactionally downloaded and validated together.
-        var seen = Set<String>()
-        candidates = candidates.filter { seen.insert($0.id).inserted }
-        guard !candidates.isEmpty else { throw ModelError.noCandidates }
-        return candidates.sorted { lhs, rhs in score(lhs) < score(rhs) }
+    /// Live discovery deliberately prefers the newest requested family but never makes the app
+    /// unusable while its weights are unavailable. Qwen3.8 is checked first; the current open
+    /// Qwen3.6-27B family is the compatibility fallback. A future public 3.8 GGUF automatically
+    /// wins without an app update.
+    func discoverBestAvailable27B() async throws -> [Candidate] {
+        if let newest = try? await discoverFamily(version: "3.8"), !newest.isEmpty { return newest }
+        let fallback = try await discoverFamily(version: "3.6")
+        guard !fallback.isEmpty else { throw ModelError.noCandidates }
+        return fallback
     }
+
+    // Kept for source compatibility with older UI code while the model screen migrates.
+    func discoverQwen38_27B() async throws -> [Candidate] { try await discoverBestAvailable27B() }
 
     func destination(for candidate: Candidate) throws -> URL {
         if let size = candidate.size { try ensureStorage(bytes: size + 768_000_000) }
@@ -164,15 +133,72 @@ actor ModelManager {
     func validateGGUF(_ url: URL) throws -> Bool {
         let attrs = try fm.attributesOfItem(atPath: url.path)
         guard ((attrs[.size] as? NSNumber)?.int64Value ?? 0) >= 64 else { return false }
+        guard !isSplitGGUF(url.lastPathComponent.lowercased()) else { return false }
         let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
         let header = try handle.read(upToCount: 8) ?? Data()
         guard header.count >= 8, header.prefix(4) == Data([0x47, 0x47, 0x55, 0x46]) else { return false }
-        // GGUF version is little-endian at bytes 4...7. llama.cpp currently accepts modern v2/v3
-        // files; reject obviously corrupt/HTML downloads before the expensive model loader touches them.
         let version = header.dropFirst(4).prefix(4).enumerated().reduce(UInt32(0)) { partial, pair in
             partial | (UInt32(pair.element) << UInt32(pair.offset * 8))
         }
         return (2...3).contains(version)
+    }
+
+    private func discoverFamily(version: String) async throws -> [Candidate] {
+        let searches = [
+            "Qwen\(version) 27B GGUF",
+            "Qwen\(version)-27B GGUF",
+            "Qwen \(version) 27B GGUF"
+        ]
+        var repos: [String] = []
+
+        for query in searches {
+            var components = URLComponents(string: "https://huggingface.co/api/models")!
+            components.queryItems = [
+                .init(name: "search", value: query),
+                .init(name: "limit", value: "28"),
+                .init(name: "full", value: "true")
+            ]
+            let (data, response) = try await URLSession.shared.data(from: components.url!)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { continue }
+            let objects = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
+            for object in objects {
+                guard let id = object["id"] as? String else { continue }
+                let lower = id.lowercased()
+                guard lower.contains("qwen"), isQwenFamily27B(lower, version: version) else { continue }
+                if !repos.contains(id) { repos.append(id) }
+            }
+            if repos.count >= 12 { break }
+        }
+
+        // The official conversion repo is a useful fallback even if Hub search indexing lags.
+        if version == "3.6", !repos.contains("ggml-org/Qwen3.6-27B-GGUF") {
+            repos.append("ggml-org/Qwen3.6-27B-GGUF")
+        }
+
+        var candidates: [Candidate] = []
+        for repo in repos.prefix(14) {
+            let encoded = repo.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repo
+            let url = URL(string: "https://huggingface.co/api/models/\(encoded)?blobs=true")!
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let siblings = object["siblings"] as? [[String: Any]] else { continue }
+
+            for sibling in siblings {
+                guard let filename = sibling["rfilename"] as? String, filename.lowercased().hasSuffix(".gguf") else { continue }
+                let lower = filename.lowercased()
+                if lower.contains("mmproj") || lower.contains("dflash") || lower.contains("mtp") || isSplitGGUF(lower) { continue }
+                guard isQwenFamily27B((repo + "/" + filename).lowercased(), version: version) else { continue }
+                guard let download = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? filename)?download=true") else { continue }
+                let size = (sibling["size"] as? NSNumber)?.int64Value
+                if let size, size < 2_000_000_000 { continue }
+                candidates.append(.init(repository: repo, filename: filename, downloadURL: download, size: size, quant: quantLabel(filename)))
+            }
+        }
+
+        var seen = Set<String>()
+        candidates = candidates.filter { seen.insert($0.id).inserted }
+        return candidates.sorted { lhs, rhs in score(lhs) < score(rhs) }
     }
 
     private func ensureStorage(bytes: Int64) throws {
@@ -194,8 +220,6 @@ actor ModelManager {
     }
 
     private func isSplitGGUF(_ lowerName: String) -> Bool {
-        // Standard llama.cpp split naming is ...-00001-of-00004.gguf. Reject every shard, not just
-        // part one; loading part 2 alone was a real bug in the old discovery implementation.
         guard let ofRange = lowerName.range(of: "-of-") else { return false }
         let before = lowerName[..<ofRange.lowerBound]
         let after = lowerName[ofRange.upperBound...]
@@ -204,10 +228,11 @@ actor ModelManager {
         return leftDigits.count >= 3 && rightDigits.count >= 3
     }
 
-    private func isQwen38_27B(_ lower: String) -> Bool {
-        let qwen38 = lower.contains("qwen3.8") || lower.contains("qwen-3.8") || lower.contains("qwen_3.8")
+    private func isQwenFamily27B(_ lower: String, version: String) -> Bool {
+        let versionForms = ["qwen\(version)", "qwen-\(version)", "qwen_\(version)", "qwen_qwen\(version)"]
+        let versionMatch = versionForms.contains(where: { lower.contains($0) })
         let twentySeven = lower.contains("27b") || lower.contains("27-b") || lower.contains("27_b")
-        return qwen38 && twentySeven
+        return versionMatch && twentySeven
     }
 
     private func quantLabel(_ name: String) -> String {
@@ -217,17 +242,26 @@ actor ModelManager {
     }
 
     private func score(_ item: Candidate) -> Int64 {
-        let rank: Int64
+        let quantRank: Int64
         switch item.quant {
-        case "IQ1_S": rank = 0
-        case "IQ1_M": rank = 1
-        case "IQ2_XXS": rank = 2
-        case "IQ2_XS": rank = 3
-        case "IQ2_S": rank = 4
-        case "IQ2_M": rank = 5
-        case "Q2_K": rank = 6
-        default: rank = 20
+        case "IQ1_S": quantRank = 0
+        case "IQ1_M": quantRank = 1
+        case "IQ2_XXS": quantRank = 2
+        case "IQ2_XS": quantRank = 3
+        case "IQ2_S": quantRank = 4
+        case "IQ2_M": quantRank = 5
+        case "Q2_K": quantRank = 6
+        default: quantRank = 20
         }
-        return rank * 100_000_000_000 + (item.size ?? Int64.max / 8)
+
+        // Publisher trust only breaks close ties; the iPhone 12's dominant constraint is bytes
+        // touched per target pass, so quant/size remain the primary ranking keys.
+        let repo = item.repository.lowercased()
+        let publisherPenalty: Int64
+        if repo.hasPrefix("ggml-org/") || repo.hasPrefix("qwen/") { publisherPenalty = 0 }
+        else if repo.hasPrefix("bartowski/") || repo.hasPrefix("unsloth/") || repo.hasPrefix("acgs/") { publisherPenalty = 5_000_000 }
+        else { publisherPenalty = 25_000_000 }
+
+        return quantRank * 100_000_000_000 + (item.size ?? Int64.max / 8) + publisherPenalty
     }
 }
