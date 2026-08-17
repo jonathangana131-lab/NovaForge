@@ -2474,38 +2474,51 @@ private struct WebArtifactView: UIViewRepresentable {
             loadingPublication = nil
 
             guard let reloadToken = activeReloadToken,
-                  let viewportSize,
-                  viewportSize.width > 1,
-                  viewportSize.height > 1,
                   onLoadStateChange != nil else {
                 dispatchViewportResize(in: webView, explicitSize: viewportSize)
                 return
             }
 
             if !fullBleedGameMode {
-                // WKNavigation.didFinish is the correct readiness boundary for a
-                // normal embedded file preview. Apply NovaForge's authoritative
-                // viewport first, then reveal the page. The stricter two-frame
-                // render proof is reserved for fullscreen/rotation where backing-
-                // store dimensions are correctness-critical.
+                // For a normal embedded local-file preview, main-frame navigation
+                // completion is the authoritative readiness boundary. Do not keep
+                // a visibly loaded page hidden behind "Loading preview" while
+                // waiting for evaluateJavaScript's completion callback: WebKit on
+                // iOS 27 can defer that callback even though didFinish has fired.
+                // Viewport adjustment is presentation-only here, so publish ready
+                // first and apply the authoritative size best-effort afterward.
+                renderAttempt = nil
+                failedViewportSize = nil
+                loadingPublication = nil
+                if let viewportSize,
+                   viewportSize.width > 1,
+                   viewportSize.height > 1 {
+                    readyViewportSize = viewportSize
+                } else {
+                    readyViewportSize = nil
+                }
+                onLoadStateChange?(.ready)
+
                 dispatchViewportResize(in: webView, explicitSize: viewportSize) { [weak self] error in
                     guard let self,
                           self.activeReloadToken == reloadToken,
-                          self.isActive(navigation),
-                          self.viewportMatches(self.currentViewportSize, viewportSize)
+                          self.isActive(navigation)
                     else { return }
-                    self.renderAttempt = nil
-                    self.loadingPublication = nil
+                    #if DEBUG
                     if let error {
-                        self.readyViewportSize = nil
-                        self.failedViewportSize = viewportSize
-                        self.onLoadStateChange?(.failed("The preview could not apply its viewport. \(error.localizedDescription)"))
-                    } else {
-                        self.readyViewportSize = viewportSize
-                        self.failedViewportSize = nil
-                        self.onLoadStateChange?(.ready)
+                        print("NF_ARTIFACT_NORMAL_VIEWPORT_RESIZE_WARNING \(error.localizedDescription)")
                     }
+                    #endif
                 }
+                return
+            }
+
+            guard let viewportSize,
+                  viewportSize.width > 1,
+                  viewportSize.height > 1 else {
+                // Full-bleed game mode still requires an authoritative viewport
+                // before its compositor proof can begin.
+                dispatchViewportResize(in: webView, explicitSize: viewportSize)
                 return
             }
 
