@@ -107,11 +107,17 @@ public enum LlamaRuntimeTuner {
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .totalFileAllocatedSizeKey]) else {
             return 0
         }
-        if let allocated = values.totalFileAllocatedSize, allocated > 0 {
-            return UInt64(allocated)
-        }
+
+        // Runtime residency decisions must use the GGUF's *logical* byte length.
+        // APFS sparse files, clones, compression, and partially de-duplicated
+        // storage can make allocated blocks dramatically smaller than the address
+        // range llama.cpp must map/touch. Using allocated size first could make a
+        // multi-gigabyte target look like a tiny resident model.
         if let size = values.fileSize, size > 0 {
             return UInt64(size)
+        }
+        if let allocated = values.totalFileAllocatedSize, allocated > 0 {
+            return UInt64(allocated)
         }
         return 0
     }
