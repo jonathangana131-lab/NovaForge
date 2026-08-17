@@ -33,7 +33,7 @@ jobs:
         run: python3 Research/CoreAIDraft/tokenizer_compatibility.py
       - name: Validate persistent-state memory budget
         run: python3 Research/CoreAIDraft/qwen35_state_contract.py
-      - name: Validate hybrid Core AI state shapes
+      - name: Validate ANE-safe functional state shapes
         run: python3 Research/CoreAIDraft/qwen35_coreai_state_contract.py
 
   delta-equivalence:
@@ -54,3 +54,47 @@ jobs:
         env:
           HF_HUB_DISABLE_TELEMETRY: '1'
         run: python Research/CoreAIDraft/qwen35_delta_equivalence.py
+
+  coreai-functional-state-compile:
+    name: Core AI functional-state compiler smoke
+    runs-on: xcode-27
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Show Core AI toolchain
+        run: |
+          xcodebuild -version
+          xcrun coreai-build --help >/dev/null
+          python --version
+      - name: Install Apple-pinned Core AI exporter stack
+        run: |
+          python -m pip install --disable-pip-version-check \
+            'torch==2.9.0' \
+            'coreai-core==1.0.0b2' \
+            'coreai-torch==0.4.1'
+      - name: Export FP16 functional recurrent-state graph
+        run: |
+          mkdir -p artifacts/coreai-draft-smoke
+          python Research/CoreAIDraft/coreai_functional_state_smoke.py \
+            --dtype float16 \
+            --output artifacts/coreai-draft-smoke/qwen35-functional-state-smoke.aimodel
+      - name: Compile synthetic graph for iOS
+        run: |
+          set -euo pipefail
+          xcrun coreai-build compile \
+            artifacts/coreai-draft-smoke/qwen35-functional-state-smoke.aimodel \
+            --platform iOS
+      - name: Upload compiler smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coreai-qwen35-functional-state-smoke-${{ github.run_id }}
+          path: artifacts/coreai-draft-smoke
+          if-no-files-found: warn
+          retention-days: 7
