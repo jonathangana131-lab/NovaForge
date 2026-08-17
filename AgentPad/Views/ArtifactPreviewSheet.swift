@@ -764,15 +764,11 @@ private struct ArtifactPreviewStudio: View {
     }
 
     private var previewHintTitle: String {
-        if artifact.isWebPage {
-            switch previewLoadState {
-            case .loading: return "Loading preview"
-            case .failed: return "Preview unavailable"
-            case .ready: break
-            }
-        }
-        if artifact.isSwiftGameArtifact { return "Native game ready" }
+        // This is the preview *mode*, not its transient network/render state.
+        // Keep it stable while WebKit moves through loading/ready/failed so the
+        // user always knows they are in the normal embedded preview surface.
         if artifact.isWebPage { return "Normal preview" }
+        if artifact.isSwiftGameArtifact { return "Native game ready" }
         if artifact.isImageArtifact { return artifact.path.lowercased().contains("screenshot") ? "Screenshot evidence" : "Image artifact" }
         if artifact.isPDFArtifact { return "Report artifact" }
         if artifact.isLogArtifact { return "Log evidence" }
