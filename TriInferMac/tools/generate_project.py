@@ -6,14 +6,19 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "App"
 PROJECT = ROOT / "TriInferCode.xcodeproj"
 SCHEME_DIR = PROJECT / "xcshareddata" / "xcschemes"
-EXCLUDE = {"AppModel.swift", "AppModelV2.swift"}
-SOURCES = sorted(p for p in APP.glob("*.swift") if p.name not in EXCLUDE)
+SOURCES = sorted(APP.glob("*.swift"), key=lambda p: p.name.lower())
+
+if not SOURCES:
+    raise SystemExit("No Swift sources found in App/")
+
 
 def uid(key: str) -> str:
     return hashlib.sha1(key.encode()).hexdigest()[:24].upper()
 
+
 def q(value: str) -> str:
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
 
 project_id = uid("project")
 target_id = uid("target")
@@ -46,7 +51,7 @@ webkit_build = uid("webkit-build")
 source_refs = {p: uid("ref:" + p.name) for p in SOURCES}
 source_builds = {p: uid("build:" + p.name) for p in SOURCES}
 
-lines = []
+lines: list[str] = []
 a = lines.append
 a("// !$*UTF8*$!")
 a("{")
@@ -54,6 +59,7 @@ a("\tarchiveVersion = 1;")
 a("\tclasses = {};")
 a("\tobjectVersion = 56;")
 a("\tobjects = {")
+
 a("\n/* Begin PBXBuildFile section */")
 for p in SOURCES:
     a(f"\t\t{source_builds[p]} /* {p.name} in Sources */ = {{isa = PBXBuildFile; fileRef = {source_refs[p]} /* {p.name} */; }};")
@@ -96,7 +102,7 @@ a(f"\t\t{target_id} /* TriInferCode */ = {{isa = PBXNativeTarget; buildConfigura
 a("/* End PBXNativeTarget section */")
 
 a("\n/* Begin PBXProject section */")
-a(f"\t\t{project_id} /* Project object */ = {{isa = PBXProject; attributes = {{BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2610; LastUpgradeCheck = 2610; TargetAttributes = {{{target_id} = {{CreatedOnToolsVersion = 26.1;}};}}; }}; buildConfigurationList = {proj_config_list}; compatibilityVersion = \"Xcode 14.0\"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = {main_group}; productRefGroup = {products_group}; projectDirPath = \"\"; projectRoot = \"\"; targets = ({target_id},); }};")
+a(f"\t\t{project_id} /* Project object */ = {{isa = PBXProject; attributes = {{BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2700; LastUpgradeCheck = 2700; TargetAttributes = {{{target_id} = {{CreatedOnToolsVersion = 27.0;}};}}; }}; buildConfigurationList = {proj_config_list}; compatibilityVersion = \"Xcode 14.0\"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = {main_group}; productRefGroup = {products_group}; projectDirPath = \"\"; projectRoot = \"\"; targets = ({target_id},); }};")
 a("/* End PBXProject section */")
 
 a("\n/* Begin PBXResourcesBuildPhase section */")
@@ -109,10 +115,10 @@ a(f"\t\t{sources_phase} = {{isa = PBXSourcesBuildPhase; buildActionMask = 214748
 a("/* End PBXSourcesBuildPhase section */")
 
 a("\n/* Begin XCBuildConfiguration section */")
-proj_common = 'ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 26.0; SWIFT_VERSION = 6.0;'
+proj_common = 'ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 27.0; SWIFT_VERSION = 6.0;'
 a(f"\t\t{proj_debug} = {{isa = XCBuildConfiguration; buildSettings = {{{proj_common} DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; SWIFT_OPTIMIZATION_LEVEL = \"-Onone\";}}; name = Debug; }};")
 a(f"\t\t{proj_release} = {{isa = XCBuildConfiguration; buildSettings = {{{proj_common} DEBUG_INFORMATION_FORMAT = \"dwarf-with-dsym\"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = \"-O\";}}; name = Release; }};")
-target_common = 'CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 300; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = App/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",); MARKETING_VERSION = 3.0; PRODUCT_BUNDLE_IDENTIFIER = ai.triinfer.code; PRODUCT_NAME = "TriInfer Code"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 1;'
+target_common = 'CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 400; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = App/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",); MARKETING_VERSION = 4.0; PRODUCT_BUNDLE_IDENTIFIER = ai.triinfer.code; PRODUCT_NAME = "TriInfer Code"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 1;'
 a(f"\t\t{target_debug} = {{isa = XCBuildConfiguration; buildSettings = {{{target_common} GCC_PREPROCESSOR_DEFINITIONS = (\"DEBUG=1\", \"$(inherited)\",);}}; name = Debug; }};")
 a(f"\t\t{target_release} = {{isa = XCBuildConfiguration; buildSettings = {{{target_common}}}; name = Release; }};")
 a("/* End XCBuildConfiguration section */")
@@ -128,8 +134,9 @@ a("}")
 PROJECT.mkdir(parents=True, exist_ok=True)
 (PROJECT / "project.pbxproj").write_text("\n".join(lines) + "\n")
 SCHEME_DIR.mkdir(parents=True, exist_ok=True)
+
 scheme = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Scheme LastUpgradeVersion="2610" version="1.7">
+<Scheme LastUpgradeVersion="2700" version="1.7">
  <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target_id}" BuildableName="TriInfer Code.app" BlueprintName="TriInferCode" ReferencedContainer="container:TriInferCode.xcodeproj"/></BuildActionEntry></BuildActionEntries></BuildAction>
  <TestAction buildConfiguration="Debug" shouldUseLaunchSchemeArgsEnv="YES"/>
  <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES"><BuildableProductRunnable runnableDebuggingMode="0"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target_id}" BuildableName="TriInfer Code.app" BlueprintName="TriInferCode" ReferencedContainer="container:TriInferCode.xcodeproj"/></BuildableProductRunnable></LaunchAction>
@@ -138,4 +145,4 @@ scheme = f'''<?xml version="1.0" encoding="UTF-8"?>
  <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
 </Scheme>'''
 (SCHEME_DIR / "TriInferCode.xcscheme").write_text(scheme)
-print(f"Generated {PROJECT} with {len(SOURCES)} Swift sources")
+print(f"Generated Xcode 27 / iOS 27 {PROJECT} with {len(SOURCES)} active Swift sources")
