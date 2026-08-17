@@ -557,6 +557,82 @@ final class AgentLocalModelProviderTransport: ProviderTransport, Sendable {
         return total
     }
 
+    /// Produces the bounded message view used by the physical local model.
+    /// The full canonical transcript has already been parsed and validated before
+    /// this runs; omission therefore never weakens canonical/tool-history checks.
+    /// Leading instructions stay byte-identical for prompt-cache stability, the
+    /// active user/tool tail is never dropped, and older turns are admitted from
+    /// newest to oldest only while the conservative physical-context budget fits.
+    static func projectedInferenceMessages(
+        _ messages: [AgentLocalModelInferenceMessage],
+        maximumOutputTokens: UInt64,
+        contextWindowTokens: UInt64
+    ) throws -> [AgentLocalModelInferenceMessage] {
+        guard !messages.isEmpty,
+              contextWindowTokens > maximumOutputTokens else {
+            throw AgentLocalModelProviderTransportError.inputLimitExceeded
+        }
+        let promptBudget = contextWindowTokens - maximumOutputTokens
+
+        func fits(_ candidate: [AgentLocalModelInferenceMessage]) throws -> Bool {
+            try conservativeInputTokenUpperBound(for: candidate) <= promptBudget
+        }
+
+        if try fits(messages) {
+            return messages
+        }
+
+        guard let latestUserIndex = messages.lastIndex(where: { $0.role == .user }) else {
+            throw AgentLocalModelProviderTransportError.invalidRequestEnvelope
+        }
+
+        var prefixCount = 0
+        while prefixCount < latestUserIndex {
+            switch messages[prefixCount].role {
+            case .system, .developer:
+                prefixCount += 1
+            case .user, .assistant:
+                break
+            }
+            if prefixCount < latestUserIndex {
+                let role = messages[prefixCount].role
+                if role != .system && role != .developer { break }
+            }
+        }
+
+        let stablePrefix = Array(messages.prefix(prefixCount))
+        let activeTail = Array(messages[latestUserIndex...])
+        let omissionReceipt = AgentLocalModelInferenceMessage(
+            role: .system,
+            content: "NovaForge local context projection: older canonical turns were omitted from this inference window after full validation. They remain authoritative in persisted history and Project Capsule/retrieval state. Continue from the retained recent context only."
+        )
+
+        var retainedMiddle: [AgentLocalModelInferenceMessage] = []
+        var projected = stablePrefix + [omissionReceipt] + activeTail
+        guard try fits(projected) else {
+            throw AgentLocalModelProviderTransportError.inputLimitExceeded
+        }
+
+        if prefixCount < latestUserIndex {
+            for index in stride(
+                from: latestUserIndex - 1,
+                through: prefixCount,
+                by: -1
+            ) {
+                let candidate = stablePrefix
+                    + [omissionReceipt]
+                    + [messages[index]]
+                    + retainedMiddle
+                    + activeTail
+                guard try fits(candidate) else { break }
+                retainedMiddle.insert(messages[index], at: 0)
+                projected = candidate
+            }
+        }
+
+        return projected
+    }
+
     private static func validateDescriptor(
         _ descriptor: ProviderAdapterDescriptor,
         toolMode: AgentLocalModelToolMode?
@@ -737,18 +813,28 @@ final class AgentLocalModelProviderTransport: ProviderTransport, Sendable {
             throw AgentLocalModelProviderTransportError.invalidRequestEnvelope
         }
 
-        let inputUpperBound = try conservativeInputTokenUpperBound(for: messages)
+        let physicalContextWindow = min(
+            descriptor.route.capabilities.contextWindowTokens,
+            UInt64(variant.contextTokens)
+        )
+        let projectedMessages = try projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: maximumOutputTokens,
+            contextWindowTokens: physicalContextWindow
+        )
+        let inputUpperBound = try conservativeInputTokenUpperBound(
+            for: projectedMessages
+        )
         let reserved = inputUpperBound.addingReportingOverflow(maximumOutputTokens)
         guard !reserved.overflow,
-              reserved.partialValue <= descriptor.route.capabilities.contextWindowTokens,
-              reserved.partialValue <= UInt64(variant.contextTokens)
+              reserved.partialValue <= physicalContextWindow
         else { throw AgentLocalModelProviderTransportError.inputLimitExceeded }
 
         return AgentLocalModelParsedRequest(
             inference: AgentLocalModelInferenceRequest(
                 scope: scope,
                 modelID: modelID,
-                messages: messages,
+                messages: projectedMessages,
                 temperature: temperature,
                 maximumOutputTokens: maximumOutputTokens
             ),

@@ -1384,3 +1384,106 @@ private func unsignedInteger(_ value: JSONValue) -> UInt64? {
     case .integer, .floatingPoint: return nil
     }
 }
+
+
+extension AgentLocalModelProviderTransportTests {
+    func testLocalInferenceProjectionBoundsLongHistoryAndPreservesActiveTail() throws {
+        let stableSystem = AgentLocalModelInferenceMessage(
+            role: .system,
+            content: "stable-system-v1"
+        )
+        let stableDeveloper = AgentLocalModelInferenceMessage(
+            role: .developer,
+            content: "stable-developer-v1"
+        )
+        var messages = [stableSystem, stableDeveloper]
+        for index in 0..<12 {
+            messages.append(.init(
+                role: .user,
+                content: "older-user-\(index)-" + String(repeating: "x", count: 90)
+            ))
+            messages.append(.init(
+                role: .assistant,
+                content: "older-assistant-\(index)-" + String(repeating: "y", count: 90)
+            ))
+        }
+        let activeUser = AgentLocalModelInferenceMessage(
+            role: .user,
+            content: "ACTIVE USER REQUEST"
+        )
+        let activeToolSummary = AgentLocalModelInferenceMessage(
+            role: .assistant,
+            content: "ACTIVE TOOL RESULT"
+        )
+        messages.append(activeUser)
+        messages.append(activeToolSummary)
+
+        let projected = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 64,
+            contextWindowTokens: 640
+        )
+
+        XCTAssertLessThan(projected.count, messages.count)
+        XCTAssertEqual(projected[0], stableSystem)
+        XCTAssertEqual(projected[1], stableDeveloper)
+        XCTAssertTrue(projected.contains(where: {
+            $0.content.contains("older canonical turns were omitted")
+        }))
+        XCTAssertEqual(Array(projected.suffix(2)), [activeUser, activeToolSummary])
+        XCTAssertLessThanOrEqual(
+            try AgentLocalModelProviderTransport.conservativeInputTokenUpperBound(
+                for: projected
+            ) + 64,
+            640
+        )
+    }
+
+    func testLocalInferenceProjectionIsDeterministic() throws {
+        var messages: [AgentLocalModelInferenceMessage] = [
+            .init(role: .system, content: "stable"),
+        ]
+        for index in 0..<16 {
+            messages.append(.init(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "history-\(index)-" + String(repeating: "z", count: 72)
+            ))
+        }
+        messages.append(.init(role: .user, content: "latest"))
+
+        let first = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 48,
+            contextWindowTokens: 512
+        )
+        let second = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 48,
+            contextWindowTokens: 512
+        )
+        XCTAssertEqual(first, second)
+    }
+
+    func testLocalInferenceProjectionFailsRatherThanTruncatingActiveTail() {
+        let messages: [AgentLocalModelInferenceMessage] = [
+            .init(role: .system, content: "stable"),
+            .init(
+                role: .user,
+                content: "active-" + String(repeating: "q", count: 2_000)
+            ),
+        ]
+
+        XCTAssertThrowsError(
+            try AgentLocalModelProviderTransport.projectedInferenceMessages(
+                messages,
+                maximumOutputTokens: 64,
+                contextWindowTokens: 256
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentLocalModelProviderTransportError,
+                .inputLimitExceeded
+            )
+        }
+    }
+}
