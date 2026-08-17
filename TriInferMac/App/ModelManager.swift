@@ -101,10 +101,6 @@ actor ModelManager {
         return .init(name: destination.deletingPathExtension().lastPathComponent, url: destination, size: (attrs[.size] as? NSNumber)?.int64Value ?? 0, modified: Date())
     }
 
-    /// Live discovery deliberately prefers the newest requested family but never makes the app
-    /// unusable while its weights are unavailable. Qwen3.8 is checked first; the current open
-    /// Qwen3.6-27B family is the compatibility fallback. A future public 3.8 GGUF automatically
-    /// wins without an app update.
     func discoverBestAvailable27B() async throws -> [Candidate] {
         if let newest = try? await discoverFamily(version: "3.8"), !newest.isEmpty { return newest }
         let fallback = try await discoverFamily(version: "3.6")
@@ -112,7 +108,6 @@ actor ModelManager {
         return fallback
     }
 
-    // Kept for source compatibility with older UI code while the model screen migrates.
     func discoverQwen38_27B() async throws -> [Candidate] { try await discoverBestAvailable27B() }
 
     func destination(for candidate: Candidate) throws -> URL {
@@ -122,12 +117,18 @@ actor ModelManager {
 
     func finalizeDownload(tempURL: URL, candidate: Candidate) throws -> InstalledModel {
         guard try validateGGUF(tempURL) else { throw ModelError.invalidGGUF }
+        let attrs = try fm.attributesOfItem(atPath: tempURL.path)
+        let actual = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        if let expected = candidate.size, expected > 0 {
+            // HTTP transfer/content encoding should not alter GGUF bytes. A materially short file is
+            // always incomplete even if its first 8 bytes happen to contain a valid GGUF header.
+            guard actual >= expected else { throw ModelError.invalidGGUF }
+        }
         let destination = try destination(for: candidate)
         try fm.moveItem(at: tempURL, to: destination)
         var values = URLResourceValues(); values.isExcludedFromBackup = true
         var mutable = destination; try? mutable.setResourceValues(values)
-        let attrs = try fm.attributesOfItem(atPath: destination.path)
-        return .init(name: destination.deletingPathExtension().lastPathComponent, url: destination, size: (attrs[.size] as? NSNumber)?.int64Value ?? 0, modified: Date())
+        return .init(name: destination.deletingPathExtension().lastPathComponent, url: destination, size: actual, modified: Date())
     }
 
     func validateGGUF(_ url: URL) throws -> Bool {
@@ -144,20 +145,12 @@ actor ModelManager {
     }
 
     private func discoverFamily(version: String) async throws -> [Candidate] {
-        let searches = [
-            "Qwen\(version) 27B GGUF",
-            "Qwen\(version)-27B GGUF",
-            "Qwen \(version) 27B GGUF"
-        ]
+        let searches = ["Qwen\(version) 27B GGUF", "Qwen\(version)-27B GGUF", "Qwen \(version) 27B GGUF"]
         var repos: [String] = []
 
         for query in searches {
             var components = URLComponents(string: "https://huggingface.co/api/models")!
-            components.queryItems = [
-                .init(name: "search", value: query),
-                .init(name: "limit", value: "28"),
-                .init(name: "full", value: "true")
-            ]
+            components.queryItems = [.init(name: "search", value: query), .init(name: "limit", value: "28"), .init(name: "full", value: "true")]
             let (data, response) = try await URLSession.shared.data(from: components.url!)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { continue }
             let objects = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
@@ -170,10 +163,7 @@ actor ModelManager {
             if repos.count >= 12 { break }
         }
 
-        // The official conversion repo is a useful fallback even if Hub search indexing lags.
-        if version == "3.6", !repos.contains("ggml-org/Qwen3.6-27B-GGUF") {
-            repos.append("ggml-org/Qwen3.6-27B-GGUF")
-        }
+        if version == "3.6", !repos.contains("ggml-org/Qwen3.6-27B-GGUF") { repos.append("ggml-org/Qwen3.6-27B-GGUF") }
 
         var candidates: [Candidate] = []
         for repo in repos.prefix(14) {
@@ -190,7 +180,11 @@ actor ModelManager {
                 if lower.contains("mmproj") || lower.contains("dflash") || lower.contains("mtp") || isSplitGGUF(lower) { continue }
                 guard isQwenFamily27B((repo + "/" + filename).lowercased(), version: version) else { continue }
                 guard let download = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? filename)?download=true") else { continue }
-                let size = (sibling["size"] as? NSNumber)?.int64Value
+
+                // HF exposes large-file size inconsistently: recent API payloads normally place it
+                // under sibling.lfs.size, while some mirrors still expose sibling.size directly.
+                let lfs = sibling["lfs"] as? [String: Any]
+                let size = (lfs?["size"] as? NSNumber)?.int64Value ?? (sibling["size"] as? NSNumber)?.int64Value
                 if let size, size < 2_000_000_000 { continue }
                 candidates.append(.init(repository: repo, filename: filename, downloadURL: download, size: size, quant: quantLabel(filename)))
             }
@@ -253,15 +247,11 @@ actor ModelManager {
         case "Q2_K": quantRank = 6
         default: quantRank = 20
         }
-
-        // Publisher trust only breaks close ties; the iPhone 12's dominant constraint is bytes
-        // touched per target pass, so quant/size remain the primary ranking keys.
         let repo = item.repository.lowercased()
         let publisherPenalty: Int64
         if repo.hasPrefix("ggml-org/") || repo.hasPrefix("qwen/") { publisherPenalty = 0 }
-        else if repo.hasPrefix("bartowski/") || repo.hasPrefix("unsloth/") || repo.hasPrefix("acgs/") { publisherPenalty = 5_000_000 }
+        else if repo.hasPrefix("bartowski/") || repo.hasPrefix("unsloth/") || repo.hasPrefix("acgs/") || repo.hasPrefix("mradermacher/") { publisherPenalty = 5_000_000 }
         else { publisherPenalty = 25_000_000 }
-
         return quantRank * 100_000_000_000 + (item.size ?? Int64.max / 8) + publisherPenalty
     }
 }
