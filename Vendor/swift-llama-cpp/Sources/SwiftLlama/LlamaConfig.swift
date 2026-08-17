@@ -6,24 +6,23 @@
 //
 
 /// Model-file loading policy. `automatic` keeps upstream llama.cpp defaults,
-/// while `mmap` explicitly requests file-backed model weights so very large
-/// GGUFs do not have to be copied wholesale into anonymous process memory.
+/// while `mmap` explicitly requests file-backed model weights so large GGUFs
+/// can stay file-backed instead of requiring a second anonymous-memory copy.
 public enum LlamaModelLoadMode: String, Equatable, Sendable {
     case automatic
     case mmap
 }
 
-/// KV-cache storage precision. Keep F16 as the compatibility default; callers
-/// can opt into a quantized cache only after the exact model/runtime/device
-/// combination has been measured and qualified.
+/// KV-cache storage precision. F16 remains the fast compatibility baseline.
+/// Quantized KV is reserved for measured or allocation-triggered rescue paths.
 public enum LlamaKVCacheType: String, Equatable, Sendable {
     case f16
     case q8_0
     case q4_0
 }
 
-/// Flash Attention selection. `automatic` delegates capability selection to
-/// llama.cpp so unsupported backends can continue to use their normal path.
+/// Flash Attention selection. `automatic` delegates backend capability and
+/// scheduling decisions to llama.cpp.
 public enum LlamaFlashAttentionMode: String, Equatable, Sendable {
     case automatic
     case disabled
@@ -43,6 +42,10 @@ public struct LlamaConfig: Equatable, Sendable {
     public let valueCacheType: LlamaKVCacheType
     public let flashAttentionMode: LlamaFlashAttentionMode
     public let offloadKQV: Bool
+    /// When the requested context cannot be allocated, allow the runtime to
+    /// retry smaller/quantized contexts instead of immediately failing. The
+    /// normal fast path is unchanged when its first allocation succeeds.
+    public let allowLowMemoryFallback: Bool
 
     public init(
         batchSize: UInt32,
@@ -52,14 +55,15 @@ public struct LlamaConfig: Equatable, Sendable {
         generationThreadCount: Int32 = 2,
         batchThreadCount: Int32 = 2,
         yieldEveryTokenCount: Int = 1,
-        modelLoadMode: LlamaModelLoadMode = .automatic,
+        modelLoadMode: LlamaModelLoadMode = .mmap,
         keyCacheType: LlamaKVCacheType = .f16,
         valueCacheType: LlamaKVCacheType = .f16,
         flashAttentionMode: LlamaFlashAttentionMode = .automatic,
-        offloadKQV: Bool = true
+        offloadKQV: Bool = true,
+        allowLowMemoryFallback: Bool = true
     ) {
-        self.batchSize = batchSize
-        self.maxTokenCount = maxTokenCount
+        self.batchSize = max(1, batchSize)
+        self.maxTokenCount = max(256, maxTokenCount)
         self.useGPU = useGPU
         self.gpuLayerCount = gpuLayerCount
         self.generationThreadCount = max(1, generationThreadCount)
@@ -70,5 +74,6 @@ public struct LlamaConfig: Equatable, Sendable {
         self.valueCacheType = valueCacheType
         self.flashAttentionMode = flashAttentionMode
         self.offloadKQV = offloadKQV
+        self.allowLowMemoryFallback = allowLowMemoryFallback
     }
 }
