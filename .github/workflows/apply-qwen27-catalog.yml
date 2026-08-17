@@ -1,0 +1,45 @@
+name: Apply Qwen 27B Catalog
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_qwen27_catalog_patch.py
+      - .github/workflows/apply-qwen27-catalog.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-qwen27-catalog-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply fail-closed source transform
+        run: python3 ci/apply_qwen27_catalog_patch.py
+      - name: Validate transformed source
+        run: |
+          git diff --check
+          grep -F 'expectedBytes: 9_388_779_744' AgentPad/Services/LocalModelRuntime.swift
+          grep -F '968bfc712832031afebec339da3ae61c6822ab9a118e1d72b6be2a7781a96e30' AgentPad/Services/LocalModelRuntime.swift
+          grep -F 'deviceFit: .extreme' AgentPad/Services/LocalModelRuntime.swift
+      - name: Commit catalog integration
+        run: |
+          if git diff --quiet; then
+            echo 'Catalog already integrated.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Qwen Catalog Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift
+          git commit -m 'Integrate verified Qwen 27B Extreme model'
+          git push origin HEAD:feature/qwen38-forge-ios27
