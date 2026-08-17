@@ -95,7 +95,9 @@ def export_asset(output: Path, dtype: torch.dtype) -> None:
         .to_coreai()
     )
     program.optimize()
-    program.save_asset(str(output))
+    # coreai-core's Asset.save_asset API expects pathlib.Path so it can inspect
+    # the .aimodel suffix directly.
+    program.save_asset(output)
 
     if not output.exists():
         raise RuntimeError(f"Core AI asset was not written: {output}")
