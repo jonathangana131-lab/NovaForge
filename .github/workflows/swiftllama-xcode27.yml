@@ -29,13 +29,13 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
-      - name: Resolve and build runtime package tests
+      - name: Resolve and compile full runtime package test graph
         working-directory: Vendor/swift-llama-cpp
         run: |
           set -euo pipefail
           swift package resolve
           swift build --build-tests
-      - name: Run runtime package tests with binary framework path
+      - name: Run model-independent runtime policy tests
         working-directory: Vendor/swift-llama-cpp
         run: |
           set -euo pipefail
@@ -58,4 +58,10 @@ jobs:
           LLAMA_FRAMEWORK_PARENT="$(cd "$(dirname "$LLAMA_FRAMEWORK")" && pwd)"
           export DYLD_FRAMEWORK_PATH="$LLAMA_FRAMEWORK_PARENT${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
           echo "DYLD_FRAMEWORK_PATH=$DYLD_FRAMEWORK_PATH"
-          swift test --skip-build --parallel
+
+          # The vendored upstream integration tests intentionally expect a 1B
+          # GGUF fixture that NovaForge does not commit. Compile every test so
+          # API/ABI regressions are still caught, then execute only the
+          # deterministic model-independent policy suites in this fast lane.
+          swift test --skip-build --filter LlamaRuntimeTunerTests
+          swift test --skip-build --filter LlamaPerformanceTests
