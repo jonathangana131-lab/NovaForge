@@ -116,11 +116,14 @@ public final actor LlamaService {
         guard !messages.isEmpty else { throw LlamaError.emptyMessageArray }
         let llama = try initializeLlamaIfNecessary()
         await stopCompletion()
-        try await  llama.initializeCompletion(messages: messages)
+        try await llama.initializeCompletion(messages: messages)
         try await llama.updateSamplingConfig(samplingConfig)
 
         return AsyncThrowingStream { continuation in
-            currentTask = Task {
+            // Keep the producer task owned by this stream. If the consumer
+            // drops/cancels the stream, cancel this exact task rather than a
+            // later generation that may already have replaced currentTask.
+            let generationTask = Task<Void, Error> {
                 do {
                     var tokenBuffer: [String] = []
                     var generatedTokenCount = 0
@@ -145,20 +148,29 @@ public final actor LlamaService {
                                 await Task.yield()
                             }
                         case .endOfString:
-                            continuation.yield(tokenBuffer.joined())
+                            if !tokenBuffer.isEmpty {
+                                continuation.yield(tokenBuffer.joined())
+                            }
                             break generationLoop
                         }
                     }
                     continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+            currentTask = generationTask
+            continuation.onTermination = { @Sendable _ in
+                generationTask.cancel()
             }
         }
     }
 
     public func stopCompletion() async {
         await currentTask?.cancelAndWait()
+        currentTask = nil
     }
 
     private func initializeLlamaIfNecessary() throws -> Llama {
