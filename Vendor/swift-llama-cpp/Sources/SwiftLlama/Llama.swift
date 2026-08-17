@@ -26,6 +26,12 @@ final actor Llama {
         var model_params = llama_model_default_params()
 
         model_params.n_gpu_layers = config.useGPU ? config.gpuLayerCount : 0
+        switch config.modelLoadMode {
+        case .automatic:
+            model_params.load_mode = LLAMA_LOAD_MODE_AUTO
+        case .mmap:
+            model_params.load_mode = LLAMA_LOAD_MODE_MMAP
+        }
 
         #if targetEnvironment(simulator)
                 model_params.n_gpu_layers = 0
@@ -46,7 +52,32 @@ final actor Llama {
         contextParam.n_threads_batch = config.batchThreadCount
         contextParam.n_batch = config.batchSize
         contextParam.n_ubatch = config.batchSize
-        contextParam.offload_kqv = true
+        contextParam.offload_kqv = config.offloadKQV
+
+        switch config.keyCacheType {
+        case .f16:
+            contextParam.type_k = GGML_TYPE_F16
+        case .q8_0:
+            contextParam.type_k = GGML_TYPE_Q8_0
+        case .q4_0:
+            contextParam.type_k = GGML_TYPE_Q4_0
+        }
+        switch config.valueCacheType {
+        case .f16:
+            contextParam.type_v = GGML_TYPE_F16
+        case .q8_0:
+            contextParam.type_v = GGML_TYPE_Q8_0
+        case .q4_0:
+            contextParam.type_v = GGML_TYPE_Q4_0
+        }
+        switch config.flashAttentionMode {
+        case .automatic:
+            contextParam.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO
+        case .disabled:
+            contextParam.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED
+        case .enabled:
+            contextParam.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED
+        }
 
         let context = LlamaContext(model: model, parameters: contextParam)
         guard let context else {
@@ -153,7 +184,7 @@ final actor Llama {
         return matchPercentage >= 0.5 // At least 50% of tokens match
     }
     
-    /// Optimized reprocessing that only clears cache from the divergence point
+    /// Optimized reprocessing that only clears cache from the divergence point onward
     private func optimizedReprocessing(newTokenList: [llama_token], divergenceIndex: Int) throws {
         // Clear KV cache from the divergence point onward
         context.clearKVCacheFromPosition(Int32(divergenceIndex))
