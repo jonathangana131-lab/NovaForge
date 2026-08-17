@@ -29,8 +29,37 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
-      - name: Resolve and test runtime package
+      - name: Resolve and build runtime package tests
         working-directory: Vendor/swift-llama-cpp
         run: |
+          set -euo pipefail
           swift package resolve
-          swift test --parallel
+          swift build --build-tests
+      - name: Run runtime package tests with binary framework path
+        working-directory: Vendor/swift-llama-cpp
+        run: |
+          set -euo pipefail
+
+          mapfile -t LLAMA_FRAMEWORKS < <(find .build -type d -name llama.framework -print | sort -u)
+          if [ "${#LLAMA_FRAMEWORKS[@]}" -eq 0 ]; then
+            echo 'Resolved llama.framework was not found under .build' >&2
+            find .build -maxdepth 6 -type d -name '*.framework' -print || true
+            exit 69
+          fi
+
+          echo 'Resolved llama frameworks:'
+          printf '  %s\n' "${LLAMA_FRAMEWORKS[@]}"
+
+          DYLD_PATHS=''
+          for framework in "${LLAMA_FRAMEWORKS[@]}"; do
+            parent="$(cd "$(dirname "$framework")" && pwd)"
+            if [ -z "$DYLD_PATHS" ]; then
+              DYLD_PATHS="$parent"
+            else
+              DYLD_PATHS="$DYLD_PATHS:$parent"
+            fi
+          done
+
+          export DYLD_FRAMEWORK_PATH="$DYLD_PATHS${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+          echo "DYLD_FRAMEWORK_PATH=$DYLD_FRAMEWORK_PATH"
+          swift test --skip-build --parallel
