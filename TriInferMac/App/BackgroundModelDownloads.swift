@@ -8,6 +8,16 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
     static let shared = BackgroundModelDownloads()
     static let sessionIdentifier = "ai.triinfer.code.model-downloads.v1"
 
+    enum TransferError: LocalizedError {
+        case giantTransferAlreadyActive(String)
+        var errorDescription: String? {
+            switch self {
+            case .giantTransferAlreadyActive(let filename):
+                "A large model transfer is already active (\(filename)). Finish, pause/cancel, or install it before starting another 27B download."
+            }
+        }
+    }
+
     struct Job: Codable, Sendable, Hashable, Identifiable {
         enum State: String, Codable, Sendable { case queued, downloading, paused, completed, failed }
         var id: String
@@ -40,7 +50,7 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
         configuration.allowsCellularAccess = true
         configuration.waitsForConnectivity = true
         configuration.timeoutIntervalForResource = 60 * 60 * 24 * 7
-        configuration.httpMaximumConnectionsPerHost = 2
+        configuration.httpMaximumConnectionsPerHost = 1
         return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }()
 
@@ -58,7 +68,6 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
         jobsURL = root.appendingPathComponent("jobs.json")
         super.init()
 
-        // A partially downloaded 7–10 GB model must never enter device backup accounting.
         for directory in [root, stagingDirectory] {
             var values = URLResourceValues(); values.isExcludedFromBackup = true
             var mutable = directory
@@ -70,14 +79,21 @@ final class BackgroundModelDownloads: NSObject, URLSessionDownloadDelegate, @unc
         reconnectTasks()
     }
 
-    func start(candidate: ModelManager.Candidate) {
+    func start(candidate: ModelManager.Candidate) throws {
         lock.lock()
         if let existing = jobs[candidate.id] {
             lock.unlock()
             if existing.state == .paused || existing.state == .failed { resume(candidate.id) }
             return
         }
+
+        let giant = (candidate.size ?? 2_000_000_000) >= 2_000_000_000
+        let conflicting = giant ? jobs.values.first(where: { job in
+            job.id != candidate.id && job.state != .failed
+                && ((job.expectedBytes ?? 2_000_000_000) >= 2_000_000_000)
+        }) : nil
         lock.unlock()
+        if let conflicting { throw TransferError.giantTransferAlreadyActive(conflicting.filename) }
 
         let task = session.downloadTask(with: candidate.downloadURL)
         task.taskDescription = candidate.id
