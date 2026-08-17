@@ -8,8 +8,8 @@ extension WorkspaceManager {
     }
 
     /// Static integrity check for modular browser projects. It verifies index.html, local HTML
-    /// scripts/styles/assets, JS module imports, and CSS url() references without executing
-    /// untrusted workspace code inside the agent process.
+    /// scripts/styles/assets, JS module imports/runtime asset loaders, and CSS url() references
+    /// without executing untrusted workspace code inside the agent process.
     func validateBrowserProject() throws -> String {
         let all = try entries()
         let files = Set(all.filter { !$0.isDirectory }.map(\.relativePath))
@@ -18,7 +18,6 @@ extension WorkspaceManager {
         }
 
         var refs: [Reference] = []
-        var parseWarnings: [String] = []
 
         for entry in all where !entry.isDirectory && entry.size <= 1_000_000 {
             let lower = entry.relativePath.lowercased()
@@ -34,15 +33,33 @@ extension WorkspaceManager {
                 )
             }
             if lower.hasSuffix(".js") || lower.hasSuffix(".mjs") {
+                // Named/default imports and dynamic import("...").
                 refs += references(
-                    pattern: #"(?:from\s+|import\s*\()\s*[\"']([^\"']+)[\"']"#,
+                    pattern: #"(?:from\s+|import\s*\(\s*)[\"']([^\"']+)[\"']"#,
                     text: text,
                     source: entry.relativePath,
                     kind: "JS module"
                 )
-                if text.contains("import ") && !text.contains("from ") && !text.contains("import(") && !text.contains("import '") && !text.contains("import \"") {
-                    parseWarnings.append("\(entry.relativePath): contains import syntax that the static validator could not fully classify.")
-                }
+                // Side-effect modules: import "./bootstrap.js".
+                refs += references(
+                    pattern: #"\bimport\s*[\"']([^\"']+)[\"']"#,
+                    text: text,
+                    source: entry.relativePath,
+                    kind: "JS side-effect module"
+                )
+                // Common game/runtime local resources that otherwise only fail once WebKit runs.
+                refs += references(
+                    pattern: #"\b(?:fetch|new\s+Worker|new\s+SharedWorker|new\s+Audio)\s*\(\s*[\"']([^\"']+)[\"']"#,
+                    text: text,
+                    source: entry.relativePath,
+                    kind: "JS runtime asset"
+                )
+                refs += references(
+                    pattern: #"\.src\s*=\s*[\"']([^\"']+)[\"']"#,
+                    text: text,
+                    source: entry.relativePath,
+                    kind: "JS src asset"
+                )
             }
             if lower.hasSuffix(".css") {
                 refs += references(
@@ -76,13 +93,11 @@ extension WorkspaceManager {
             var output = "FAIL: browser project integrity check found problems."
             if !invalid.isEmpty { output += "\nEscaping references:\n" + invalid.prefix(20).map { "- \($0)" }.joined(separator: "\n") }
             if !missing.isEmpty { output += "\nMissing local references:\n" + missing.prefix(30).map { "- \($0)" }.joined(separator: "\n") }
-            if !parseWarnings.isEmpty { output += "\nWarnings:\n" + parseWarnings.prefix(10).map { "- \($0)" }.joined(separator: "\n") }
             return output
         }
 
         var output = "PASS: modular browser project references are internally consistent."
         output += "\nFiles: \(files.count) • HTML: \(htmlCount) • JS modules: \(jsCount) • CSS: \(cssCount) • other/assets: \(assetCount) • local references checked: \(checked)."
-        if !parseWarnings.isEmpty { output += "\nWarnings:\n" + parseWarnings.prefix(10).map { "- \($0)" }.joined(separator: "\n") }
         output += "\nThis is a static integrity gate; use the in-app WebKit Preview for runtime rendering/interaction validation."
         return output
     }
