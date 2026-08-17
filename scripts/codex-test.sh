@@ -409,6 +409,7 @@ boot_simulator() {
 
   local started=$SECONDS
   local state=""
+  local consecutive_booted=0
   : > "$LOG_DIR/simulator-boot.log"
   while (( SECONDS - started < SIM_BOOT_TIMEOUT )); do
     state="$(python3 - "$SIMULATOR_ID" <<'PY'
@@ -429,17 +430,21 @@ PY
 )"
     printf '%s state=%s\n' "$(date -u +%FT%TZ)" "${state:-unknown}" >> "$LOG_DIR/simulator-boot.log"
     if [[ "$state" == "Booted" ]]; then
-      # A Booted state precedes full service readiness on some Xcode 27 images.
-      # A trivial spawn is a bounded, nonblocking proof that launchd is serving
-      # the simulator. Never hand the entire lane to a single `bootstatus -b`.
-      if xcrun simctl spawn "$SIMULATOR_ID" /usr/bin/true >/dev/null 2>&1; then
-        echo "Simulator $SIMULATOR_ID is booted and responsive."
+      consecutive_booted=$(( consecutive_booted + 1 ))
+      # Xcode 27 beta runners can report Booted while `simctl spawn` remains
+      # unusable for minutes. Three stable CoreSimulator observations are enough
+      # to hand readiness to xcodebuild, which is the authoritative app-launch
+      # proof and already has a destination timeout of its own.
+      if (( consecutive_booted >= 3 )); then
+        echo "Simulator $SIMULATOR_ID reported Booted for three consecutive polls."
         return 0
       fi
     elif [[ -z "$state" ]]; then
       echo "Simulator $SIMULATOR_ID disappeared while booting." >&2
       xcrun simctl list devices available >&2 || true
       return 2
+    else
+      consecutive_booted=0
     fi
     sleep 2
   done
@@ -457,9 +462,41 @@ refresh_simulator() {
     "$TIMEOUT_RUNNER" 60 "$LOG_DIR/simulator-refresh-$batch-shutdown.log" \
     xcrun simctl shutdown "$SIMULATOR_ID"
   xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
-  TIMEOUT_RUNNER_LABEL="simulator-refresh-boot" \
-    "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$LOG_DIR/simulator-refresh-$batch-boot.log" \
-    xcrun simctl bootstatus "$SIMULATOR_ID" -b
+  local started=$SECONDS
+  local state=""
+  local stable=0
+  : > "$LOG_DIR/simulator-refresh-$batch-boot.log"
+  while (( SECONDS - started < SIM_BOOT_TIMEOUT )); do
+    state="$(python3 - "$SIMULATOR_ID" <<'PY'
+import json, subprocess, sys
+udid = sys.argv[1]
+try:
+    data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "-j"], stderr=subprocess.DEVNULL))
+except Exception:
+    print("")
+    raise SystemExit(0)
+for devices in data.get("devices", {}).values():
+    for device in devices:
+        if device.get("udid") == udid:
+            print(device.get("state", ""))
+            raise SystemExit(0)
+print("")
+PY
+)"
+    printf '%s state=%s\n' "$(date -u +%FT%TZ)" "${state:-unknown}" >> "$LOG_DIR/simulator-refresh-$batch-boot.log"
+    if [[ "$state" == "Booted" ]]; then
+      stable=$(( stable + 1 ))
+      if (( stable >= 3 )); then
+        return 0
+      fi
+    else
+      stable=0
+    fi
+    sleep 2
+  done
+  echo "Refreshed simulator did not remain Booted within ${SIM_BOOT_TIMEOUT}s." >&2
+  cat "$LOG_DIR/simulator-refresh-$batch-boot.log" >&2 || true
+  return 124
 }
 
 build_test_bundle() {
