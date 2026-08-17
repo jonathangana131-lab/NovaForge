@@ -1,0 +1,37 @@
+name: Apply Xcode 27 Teardown Guard
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_xcode27_teardown_guard.py
+      - .github/workflows/apply-xcode27-teardown-guard.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: xcode-27
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - run: python3 ci/apply_xcode27_teardown_guard.py
+      - run: |
+          git diff --check
+          grep -F 'RECOVERED: XCTest suite passed; Xcode 27 teardown' scripts/codex-test.sh
+      - name: Commit teardown guard
+        run: |
+          if git diff --quiet; then
+            echo 'Teardown guard already integrated.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Xcode Teardown Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add scripts/codex-test.sh
+          git commit -m 'Recover verified Xcode 27 XCTest teardown hangs'
+          git push origin HEAD:feature/qwen38-forge-ios27
