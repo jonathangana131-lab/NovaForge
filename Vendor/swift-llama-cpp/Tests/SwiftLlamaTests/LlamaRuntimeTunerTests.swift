@@ -2,7 +2,7 @@ import XCTest
 @testable import SwiftLlama
 
 final class LlamaRuntimeTunerTests: XCTestCase {
-    func testOversizedGGUFUsesMappedCompressedProfile() throws {
+    func testOversizedGGUFUsesMappedCompressedCPUBackedProfile() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("runtime-tuner-\(UUID().uuidString).gguf")
         FileManager.default.createFile(atPath: url.path, contents: Data([0]))
@@ -33,10 +33,14 @@ final class LlamaRuntimeTunerTests: XCTestCase {
         XCTAssertEqual(decision.config.loadMode, .mmap)
         XCTAssertEqual(decision.config.keyCacheType, .q8_0)
         XCTAssertEqual(decision.config.valueCacheType, .q8_0)
-        XCTAssertEqual(decision.config.gpuLayerCount, 1)
+        XCTAssertFalse(decision.config.useGPU)
+        XCTAssertEqual(decision.config.gpuLayerCount, 0)
+        XCTAssertFalse(decision.config.offloadKQV)
+        XCTAssertFalse(decision.config.operationOffload)
         XCTAssertEqual(decision.config.microBatchSize, 8)
         XCTAssertEqual(decision.config.generationThreadCount, 2)
         XCTAssertFalse(decision.config.useExtraBufferTypes)
+        XCTAssertTrue(decision.reason.contains("persistent Metal residency disabled"))
     }
 
     func testResidentModelPreservesRequestedProfile() throws {
