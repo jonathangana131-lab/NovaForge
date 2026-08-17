@@ -37,7 +37,7 @@ jobs:
         run: python3 Research/CoreAIDraft/qwen35_coreai_state_contract.py
 
   delta-equivalence:
-    name: DeltaNet recurrent math equivalence
+    name: DeltaNet recurrent math + FP16 drift
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -54,6 +54,8 @@ jobs:
         env:
           HF_HUB_DISABLE_TELEMETRY: '1'
         run: python Research/CoreAIDraft/qwen35_delta_equivalence.py
+      - name: Stress FP16 persisted recurrent state for 2K decode steps
+        run: python Research/CoreAIDraft/qwen35_fp16_state_drift.py
 
   coreai-functional-state-export:
     name: Core AI functional-state export smoke
