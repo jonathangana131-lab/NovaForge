@@ -50,9 +50,31 @@ public final class LlamaBatch {
         rawBatch.n_tokens += 1
     }
 
-    /// Mark whether the last token should output logits.
+    /// Mark whether the last token should output logits. Empty batches are a
+    /// no-op so callers cannot index one element before the allocated buffer.
     public func setLastTokenLogits(_ logits: Bool) {
+        guard rawBatch.n_tokens > 0 else { return }
         rawBatch.logits[Int(rawBatch.n_tokens - 1)] = logits ? 1 : 0
+    }
+
+    /// Prompt ingestion should decode a full batch immediately only when more
+    /// prompt tokens remain. The final full batch must stay intact until its
+    /// last token is marked for logits; otherwise an exact capacity multiple
+    /// leaves an empty batch and loses the logits needed for first sampling.
+    static func shouldFlushPromptBatch(
+        currentSize: Int32,
+        capacity: UInt32,
+        tokenIndex: Int,
+        tokenCount: Int
+    ) -> Bool {
+        guard capacity > 0,
+              capacity <= UInt32(Int32.max),
+              currentSize == Int32(capacity),
+              tokenIndex >= 0,
+              tokenIndex < tokenCount else {
+            return false
+        }
+        return tokenIndex < tokenCount - 1
     }
 
      /// Convenience: build a single-sequence batch for a set of tokens where only the last token emits logits.
