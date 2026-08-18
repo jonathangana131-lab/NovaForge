@@ -108,6 +108,14 @@ public final class LlamaModel {
         nextRequiredBufferSize(for: result, currentSize: currentSize)
     }
 
+    /// Chat-template rendering reports the exact required byte count as a
+    /// non-negative value. Retry only when that count is strictly larger than
+    /// the buffer just supplied so malformed/non-growing results fail closed.
+    static func nextChatTemplateBufferSize(for result: Int32, currentSize: Int32) -> Int32? {
+        guard currentSize >= 0, result > currentSize else { return nil }
+        return result
+    }
+
     /// Build a bounded first detokenization buffer without overflowing Swift's
     /// integer conversions for pathological token counts.
     static func initialDetokenizationBufferSize(tokenCount: Int) -> Int32? {
@@ -231,84 +239,78 @@ public final class LlamaModel {
         llama_vocab_n_tokens(vocabPointer)
     }
 
-    /// Apply chat template using the default model template (or custom by name).
+    /// Apply chat template using the default model template.
     public func applyChatTemplate(to messages: [LlamaChatMessage], addAssistant: Bool? = nil) -> String {
-        let cTemplatePointer = llama_model_chat_template(modelPointer, nil)
-
-        // Convert Swift messages to C messages
-        var cMessages = messages.map { message -> llama_chat_message in
-           let roleCString = strdup(message.role.rawValue)
-           let contentCString = strdup(message.content)
-           return llama_chat_message(role: roleCString, content: contentCString)
-        }
-
-        // Initial buffer size
-        let bufferSizeMultiplier = 3
-        var bufferSize = bufferSizeMultiplier * messages.reduce(0) { $0 + $1.content.count }
-        var buffer = [CChar](repeating: 0, count: bufferSize)
-
-        var resultSize: Int32 = 0
-        repeat {
-           // If the buffer was too small, increase the buffer size
-           if resultSize >= Int32(bufferSize) {
-               bufferSize = Int(resultSize + 1) // the buffer has to be null (0) terminated
-               buffer = [CChar](repeating: 0, count: bufferSize)
-           }
-
-           resultSize = llama_chat_apply_template(
-               cTemplatePointer,
-               &cMessages,
-               messages.count,
-               addAssistant ?? (messages.last?.role != .assistant),
-               &buffer,
-               Int32(bufferSize)
-           )
-        } while resultSize >= Int32(bufferSize)
-
-        // Free the allocated C strings
-        for message in cMessages {
-           free(UnsafeMutablePointer(mutating: message.role))
-           free(UnsafeMutablePointer(mutating: message.content))
-        }
-
-        // Convert the C string buffer to a Swift string
-        return Self.stringFromNullTerminated(buffer)
+        let template = llama_model_chat_template(modelPointer, nil)
+        return renderChatTemplate(
+            template: template,
+            messages: messages,
+            addAssistant: addAssistant ?? (messages.last?.role != .assistant)
+        )
     }
 
     /// Apply chat template by template name found in the model.
     public func applyChatTemplate(name: String, to messages: [LlamaChatMessage], addAssistant: Bool? = nil) -> String {
-        let cTemplatePointer = name.withCString { cname in
-            llama_model_chat_template(modelPointer, cname)
+        let template = name.withCString { namePointer in
+            llama_model_chat_template(modelPointer, namePointer)
         }
-        // Convert Swift messages to C messages
+        return renderChatTemplate(
+            template: template,
+            messages: messages,
+            addAssistant: addAssistant ?? (messages.last?.role != .assistant)
+        )
+    }
+
+    /// llama.cpp supports a zero-capacity probe for chat templates. Use that
+    /// exact required size rather than estimating Swift Character counts and
+    /// converting potentially overflowing Int values into Int32 capacities.
+    private func renderChatTemplate(
+        template: UnsafePointer<CChar>?,
+        messages: [LlamaChatMessage],
+        addAssistant: Bool
+    ) -> String {
         var cMessages = messages.map { message -> llama_chat_message in
-           let roleCString = strdup(message.role.rawValue)
-           let contentCString = strdup(message.content)
-           return llama_chat_message(role: roleCString, content: contentCString)
+            llama_chat_message(role: strdup(message.role.rawValue), content: strdup(message.content))
         }
-        let bufferSizeMultiplier = 3
-        var bufferSize = bufferSizeMultiplier * messages.reduce(0) { $0 + $1.content.count }
-        var buffer = [CChar](repeating: 0, count: bufferSize)
-        var resultSize: Int32 = 0
-        repeat {
-            if resultSize >= Int32(bufferSize) {
-                bufferSize = Int(resultSize + 1)
-                buffer = [CChar](repeating: 0, count: bufferSize)
+        defer {
+            for message in cMessages {
+                free(UnsafeMutablePointer(mutating: message.role))
+                free(UnsafeMutablePointer(mutating: message.content))
             }
-            resultSize = llama_chat_apply_template(
-                cTemplatePointer,
-                &cMessages,
-                messages.count,
-                addAssistant ?? (messages.last?.role != .assistant),
-                &buffer,
-                Int32(bufferSize)
-            )
-        } while resultSize >= Int32(bufferSize)
-        for message in cMessages {
-            free(UnsafeMutablePointer(mutating: message.role))
-            free(UnsafeMutablePointer(mutating: message.content))
         }
-        return Self.stringFromNullTerminated(buffer)
+
+        func apply(to buffer: UnsafeMutablePointer<CChar>?, capacity: Int32) -> Int32 {
+            cMessages.withUnsafeBufferPointer { messageBuffer in
+                llama_chat_apply_template(
+                    template,
+                    messageBuffer.baseAddress,
+                    messageBuffer.count,
+                    addAssistant,
+                    buffer,
+                    capacity
+                )
+            }
+        }
+
+        var bufferSize = apply(to: nil, capacity: 0)
+        guard bufferSize >= 0 else { return "" }
+        guard bufferSize > 0 else { return "" }
+
+        while true {
+            var buffer = [CChar](repeating: 0, count: Int(bufferSize))
+            let written = buffer.withUnsafeMutableBufferPointer { bufferPointer in
+                apply(to: bufferPointer.baseAddress, capacity: bufferSize)
+            }
+
+            if let requiredSize = Self.nextChatTemplateBufferSize(for: written, currentSize: bufferSize) {
+                bufferSize = requiredSize
+                continue
+            }
+
+            guard written >= 0, written <= bufferSize else { return "" }
+            let chars = Array(buffer.prefix(Int(written))) + [0]
+            return String(cString: chars, encoding: .utf8) ?? ""
+        }
     }
 
     /// Total number of parameters in the model.
