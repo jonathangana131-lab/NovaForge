@@ -42,4 +42,48 @@ struct LlamaConfigPolicyTests {
         #expect(!config.offloadKQV)
         #expect(!config.allowLowMemoryFallback)
     }
+
+    @Test("Fast rescue returns to F16 even for a quantized request")
+    func fastRescueUsesF16CompatibilityProfile() {
+        let config = LlamaConfig(
+            batchSize: 16,
+            maxTokenCount: 768,
+            keyCacheType: .q4_0,
+            valueCacheType: .q8_0
+        )
+
+        let requested = config.requestedAllocationProfile
+        let fastRescue = config.fastLowMemoryAllocationProfile
+
+        #expect(requested.keyCacheType == .q4_0)
+        #expect(requested.valueCacheType == .q8_0)
+        #expect(fastRescue != requested)
+        #expect(fastRescue.contextTokens == 768)
+        #expect(fastRescue.batchTokens == 16)
+        #expect(fastRescue.keyCacheType == .f16)
+        #expect(fastRescue.valueCacheType == .f16)
+    }
+
+    @Test("Rescue profiles bound allocation size and reserve Q8 for deep rescue")
+    func rescueProfileBounds() {
+        let config = LlamaConfig(
+            batchSize: 128,
+            maxTokenCount: 4_096,
+            keyCacheType: .q4_0,
+            valueCacheType: .q4_0
+        )
+
+        let fastRescue = config.fastLowMemoryAllocationProfile
+        let deepRescue = config.deepLowMemoryAllocationProfile
+
+        #expect(fastRescue.contextTokens == 1_024)
+        #expect(fastRescue.batchTokens == 32)
+        #expect(fastRescue.keyCacheType == .f16)
+        #expect(fastRescue.valueCacheType == .f16)
+
+        #expect(deepRescue.contextTokens == 768)
+        #expect(deepRescue.batchTokens == 16)
+        #expect(deepRescue.keyCacheType == .q8_0)
+        #expect(deepRescue.valueCacheType == .q8_0)
+    }
 }
