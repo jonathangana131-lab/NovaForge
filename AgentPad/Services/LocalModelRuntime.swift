@@ -316,14 +316,17 @@ enum Qwen38ReleaseDiscovery {
         return 3
     }
 
-    private static func quantization(from filename: String) -> String {
+    static func quantization(from filename: String) -> String {
         let upper = filename.uppercased()
         // Prefer native ultra-low-bit formats first. Current ggml/llama.cpp
         // has Q1_0 (1.125 bpw), IQ1, Q2_0 and ternary TQ families; keeping
         // these explicit means a future exact Qwen 3.8 27B release can fit the
         // iPhone-12 storage-backed path without an app update.
+        // Match the specific G128 filename marker before generic Q1_0:
+        // `Q1_0_G128` contains `Q1_0`, so generic-first silently erases the
+        // format distinction used by release identity and runtime policy.
         for marker in [
-            "Q1_0", "Q1_0_G128", "IQ1_S", "TQ1_0", "IQ1_M",
+            "Q1_0_G128", "Q1_0", "IQ1_S", "TQ1_0", "IQ1_M",
             "TQ2_0", "Q2_0", "UD-IQ2_XXS", "IQ2_XXS", "IQ2_XS",
             "Q2_K_XS", "Q2_K", "Q3_K_XS", "Q3_K_S", "Q3_K_M", "Q4_K_M"
         ] where upper.contains(marker) {

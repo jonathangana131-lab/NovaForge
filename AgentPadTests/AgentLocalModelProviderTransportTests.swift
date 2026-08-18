@@ -1545,6 +1545,24 @@ extension AgentLocalModelProviderTransportTests {
 
 
 extension AgentLocalModelProviderTransportTests {
+    func testQwen38QuantizationDetectionPrefersSpecificQ1G128Marker() {
+        XCTAssertEqual(
+            Qwen38ReleaseDiscovery.quantization(
+                from: "Qwen3.8-27B-Q1_0_G128.gguf"
+            ),
+            "Q1_0_G128"
+        )
+        XCTAssertEqual(
+            Qwen38ReleaseDiscovery.quantization(
+                from: "Qwen3.8-27B-Q1_0.gguf"
+            ),
+            "Q1_0"
+        )
+    }
+}
+
+
+extension AgentLocalModelProviderTransportTests {
     func testLocalModelBenchmarkPrefersExactTokenTelemetry() {
         let result = LocalModelBenchmarkResult(
             modelName: "Qwen 27B Extreme",
