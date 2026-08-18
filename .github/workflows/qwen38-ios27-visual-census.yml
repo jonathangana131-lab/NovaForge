@@ -1,0 +1,122 @@
+name: Qwen 3.8 iOS 27 Visual Census
+
+on:
+  push:
+    branches: [qa/qwen38-ios27-visual-census]
+    paths:
+      - '.github/workflows/qwen38-ios27-visual-census.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen38-ios27-visual-census
+  cancel-in-progress: true
+
+jobs:
+  visual-census:
+    runs-on: xcode-27
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Select Xcode 27 and iPhone on iOS 27
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
+          xcodebuild -version
+          UDID=$(xcrun simctl list -j devices available | jq -r '[.devices | to_entries[] | select(.key | contains("iOS-27")) | .value[] | select(.isAvailable == true and (.name | startswith("iPhone")))] | last | .udid // empty')
+          test -n "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Build UI tests once
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf DerivedData/VisualCensus artifacts/visual-census
+          mkdir -p artifacts/visual-census/screenshots artifacts/visual-census/xcresult-attachments
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath DerivedData/VisualCensus \
+            -skipPackageUpdates -skipPackagePluginValidation -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            NOVAFORGE_SOURCE_COMMIT="b41e178d41a76763da55b7273a12019a93a69537" \
+            build-for-testing | tee artifacts/visual-census/build.log
+          XCTESTRUN=$(find DerivedData/VisualCensus/Build/Products -maxdepth 1 -name 'AgentPad_*.xctestrun' -print | head -1)
+          test -f "$XCTESTRUN"
+          echo "$XCTESTRUN" > artifacts/visual-census/xctestrun.path
+
+      - name: Run visual journeys
+        id: tests
+        continue-on-error: true
+        shell: bash
+        env:
+          NOVAFORGE_CAPTURE_MODE: all
+          TEST_RUNNER_NOVAFORGE_CAPTURE_MODE: all
+          NOVAFORGE_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/visual-census/screenshots
+          TEST_RUNNER_NOVAFORGE_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/visual-census/screenshots
+        run: |
+          set -o pipefail
+          XCTESTRUN=$(cat artifacts/visual-census/xctestrun.path)
+          timeout 1800 xcodebuild \
+            -xctestrun "$XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -parallel-testing-enabled NO \
+            -maximum-concurrent-test-simulator-destinations 1 \
+            -resultBundlePath artifacts/visual-census/VisualCensus.xcresult \
+            test-without-building \
+            '-only-testing:AgentPadUITests/AgentPadUITests/testChatComposerKeyboardAndResponseScreenshots' \
+            '-only-testing:AgentPadUITests/AgentPadUITests/testBottomMenuStaysAlignedBeforeAndAfterTabLoads' \
+            '-only-testing:AgentPadUITests/AgentPadUITests/testRunsHistoryDisclosureControlsScreenshot' \
+            '-only-testing:AgentPadUITests/AgentPadUITests/testStreamingKeepsBottomPinnedDuringLiveResponse' \
+            '-only-testing:AgentPadUITests/AgentPadUITests/testCodeBlockActionsExposePhoneSizedTargets' \
+            '-only-testing:AgentPadUITests/AgentPadUITests/testLocalWebArtifactCreatesPreviewableLandingPage' \
+            2>&1 | tee artifacts/visual-census/test.log
+
+      - name: Capture final rendered simulator and export XCTest attachments
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl io '${{ steps.sim.outputs.udid }}' screenshot artifacts/visual-census/screenshots/final-simulator.png || true
+          if [ -d artifacts/visual-census/VisualCensus.xcresult ]; then
+            xcrun xcresulttool export attachments \
+              --path artifacts/visual-census/VisualCensus.xcresult \
+              --output-path artifacts/visual-census/xcresult-attachments \
+              2>&1 | tee artifacts/visual-census/xcresult-export.log || true
+          fi
+          find artifacts/visual-census/screenshots -type f -maxdepth 1 -print | sort | tee artifacts/visual-census/screenshot-list.txt
+          COUNT=$(find artifacts/visual-census/screenshots -type f -name '*.png' | wc -l | tr -d ' ')
+          echo "png_count=$COUNT" | tee artifacts/visual-census/visual-receipt.txt
+          test "$COUNT" -ge 8
+
+      - name: Upload screenshot census
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwen38-ios27-visual-census-${{ github.run_id }}
+          path: artifacts/visual-census
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enforce all selected visual journeys
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f artifacts/visual-census/test.log
+          grep -Fq "Test Suite 'Selected tests' passed" artifacts/visual-census/test.log
+          test "$(find artifacts/visual-census/screenshots -type f -name '*.png' | wc -l | tr -d ' ')" -ge 8
