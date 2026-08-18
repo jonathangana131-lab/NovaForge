@@ -40,6 +40,12 @@ NEWEST_XCODE=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print 
 [ -n "$NEWEST_XCODE" ] || { echo "No Xcode installation found" >&2; exit 69; }
 sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
 
+if ! command -v cmake >/dev/null 2>&1; then
+  command -v brew >/dev/null 2>&1 || { echo "cmake is required for exact-tag llama simulator QA" >&2; exit 69; }
+  brew install cmake
+fi
+bash "$ROOT_DIR/ci/prepare_llama_simulator_slice.sh" "$DERIVED_DATA"
+
 UDID=$(xcrun simctl list -j devices available | jq -r \
   '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.isAvailable == true and (.name | startswith("iPhone")))] | last | .udid // empty')
 if [ -z "$UDID" ]; then
