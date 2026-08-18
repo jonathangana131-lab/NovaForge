@@ -120,6 +120,30 @@ jobs:
           swift test --skip-build --filter LlamaRuntimeTunerTests
           swift test --skip-build --filter LlamaPerformanceTests
 
+      - name: Build shipping iPhone target against official b10472 device slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf DerivedData/CI-Device
+          mkdir -p artifacts/device-build
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData/CI-Device \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee artifacts/device-build/xcodebuild-iphoneos.log
+          APP_PATH=$(find DerivedData/CI-Device/Build/Products -type d -name 'AgentPad.app' -print | head -n 1)
+          test -n "$APP_PATH"
+          test -x "$APP_PATH/AgentPad"
+          echo "PASS: official b10472 device XCFramework links into $APP_PATH"
+
       - name: Build and run critical verification
         env:
           NOVAFORGE_TEST_LANE: critical
@@ -132,7 +156,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: qwen38-xcode27-verify-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/verify-critical
+          path: |
+            artifacts/verify-critical
+            artifacts/device-build
+            artifacts/llama-simulator-b10472/receipt.txt
           if-no-files-found: warn
           retention-days: 14
 
@@ -164,6 +191,7 @@ jobs:
           path: |
             captures
             artifacts/visual
+            artifacts/llama-simulator-b10472/receipt.txt
           if-no-files-found: warn
           retention-days: 14
 
@@ -199,6 +227,7 @@ jobs:
           Exact Xcode-27 critical + visual tested source: ${TESTED_SHA}
           Validation run: ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}
           Product target: exact Qwen 3.8 27B only; no substitute model
+          Runtime: official llama.cpp b10472 device XCFramework; simulator QA synthesizes only the missing simulator slice from exact upstream tag b10472 inside disposable DerivedData.
           Open in Xcode 27: AgentPad.xcodeproj
           TXT
           cd package-root
