@@ -16,6 +16,17 @@ struct LlamaModelTests {
         #expect(LlamaModel.nextTokenPieceBufferSize(for: Int32.min, currentSize: 64) == nil)
     }
 
+    @Test("Tokenizer buffer growth accepts only larger bounded requests")
+    func testTokenizerBufferGrowthBounds() {
+        #expect(LlamaModel.nextTokenizationBufferSize(for: -256, currentSize: 128) == 256)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: -129, currentSize: 128) == 129)
+
+        #expect(LlamaModel.nextTokenizationBufferSize(for: 0, currentSize: 128) == nil)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: 12, currentSize: 128) == nil)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: -128, currentSize: 128) == nil)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: Int32.min, currentSize: 128) == nil)
+    }
+
     @Test("Tokenize of empty string is empty and chat template returns something")
     func testTokenizeEmptyAndChatTemplate() throws {
         let model = try #require(LlamaModel(path: URL.llama1B.path))
