@@ -86,4 +86,12 @@ struct LlamaConfigPolicyTests {
         #expect(deepRescue.keyCacheType == .q8_0)
         #expect(deepRescue.valueCacheType == .q8_0)
     }
+
+    @Test("Token piece buffer grows to llama.cpp requested size")
+    func tokenPieceBufferGrowth() {
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -128, currentSize: 64) == 128)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: 12, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -64, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -128, currentSize: 0) == nil)
+    }
 }
