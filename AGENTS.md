@@ -42,15 +42,34 @@ A commit, PR, test pass, screenshot, review, or merge is a checkpoint, not an au
 
 ## Coordination: use GitHub, not a custom swarm database
 
-There is no fixed worker quota and no reason to fill idle slots.
+There is **no fixed agent count** and no reason to fill idle slots. Concurrency is adaptive:
 
-Default to one implementation per overlapping subsystem. Parallelize only clearly independent work. A practical ceiling is four concurrent writers in this repository; fewer is usually better. Review/test/visual QA may happen alongside implementation.
+- default to one implementation for an overlapping subsystem/root cause;
+- add writers only for genuinely independent outcomes with separable files/runtime authority/integration paths;
+- reviewers, test agents, and visual QA may work against a live candidate without creating a competing implementation;
+- when CI/review/integration pressure rises, spend capacity converging current PRs rather than opening more branches;
+- when independent work is plentiful and current candidates integrate cleanly, more agents may work in parallel;
+- optimize for accepted product outcomes landing on `main`, not simultaneous agent count.
 
 Before opening a branch or making a broad edit, inspect current PRs/branches for overlap. If another live PR already addresses substantially the same problem, finish/review/fix that path or choose a genuinely independent target.
 
 Do not create recovery/successor branches merely because CI is pending, a chat ended, or the existing implementation is difficult. Rebase/update the real branch or deliberately replace it once, close the loser, and converge.
 
 No worker IDs, custom claims, leases, heartbeats, fencing tokens, mission graph, admission controller, capacity miner, synthetic role allocator, or stop-authority protocol is required.
+
+## Legacy / Qwen branch convergence
+
+Historical swarm and Qwen experiment/qualification branches are candidates, not ownership authority. Do not block product progress on cleaning every old branch first.
+
+For overlapping local-model work:
+
+1. compare each candidate against current `main` and current product/runtime contracts;
+2. choose the strongest implementation/evidence path for the actual outcome;
+3. finish/fix/rebase that path or transplant useful deltas into one direct-to-`main` candidate when necessary;
+4. close obsolete/duplicate recovery or experiment PRs after preserving unique evidence;
+5. do not keep multiple permanent Qwen 3.8 branches for the same runtime capability.
+
+The current Qwen 3.8 27B iOS 27 qualification work is a real NovaForge product lane. It should converge into the main app/runtime when software/device evidence earns it; lack of physical-device qualification blocks only the physical claim, not independent correctness/UX/integration work.
 
 ## Branch / PR / merge behavior
 
@@ -77,8 +96,6 @@ Never weaken a test merely to make a branch green. Never describe uninspected ge
 ## Local AI and Qwen truth
 
 Local AI is a primary NovaForge capability, not a side settings feature.
-
-The repository currently contains active Qwen 3.8 work, including the Qwen 3.8 27B iOS 27 qualification lane. Treat that as real product work, not as a separate swarm project. Finish the strongest current implementation rather than spawning more Qwen recovery branches.
 
 - Never invent supported model sizes, tokens/sec, RAM, thermal, energy, context, or device-compatibility claims.
 - Simulator/source success is not physical iPhone qualification.
