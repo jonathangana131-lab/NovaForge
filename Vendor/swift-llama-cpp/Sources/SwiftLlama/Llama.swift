@@ -273,11 +273,16 @@ final actor Llama {
             let tokenPosition = startIndex + i
             let tokenId = tokens[i]
             batch.addToken(tokenId, at: Int32(tokenPosition), logits: false)
-            processedTokens.append(tokenId)
-            if batch.size == effectiveBatchSize {
+            if LlamaBatch.shouldFlushPromptBatch(
+                currentSize: batch.size,
+                capacity: effectiveBatchSize,
+                tokenIndex: i,
+                tokenCount: tokens.count
+            ) {
                 try processBatch()
                 batch.reset()
             }
+            processedTokens.append(tokenId)
         }
 
         batch.setLastTokenLogits(true)
