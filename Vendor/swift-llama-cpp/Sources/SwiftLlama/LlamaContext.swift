@@ -183,14 +183,22 @@ public final class LlamaContext {
 
     public func apply(loraAdapter: LlamaLoraAdapter, scale: Float = 1.0) throws {
         if let index = loraBindings.firstIndex(where: { $0.adapter === loraAdapter }) {
+            let previousBinding = loraBindings[index]
             loraBindings[index].scale = scale
-        } else {
-            loraBindings.append((loraAdapter, scale))
+            do {
+                try synchronizeLoraBindings()
+            } catch {
+                loraBindings[index] = previousBinding
+                throw error
+            }
+            return
         }
+
+        loraBindings.append((loraAdapter, scale))
         do {
             try synchronizeLoraBindings()
         } catch {
-            loraBindings.removeAll(where: { $0.adapter === loraAdapter })
+            loraBindings.removeLast()
             throw error
         }
     }
