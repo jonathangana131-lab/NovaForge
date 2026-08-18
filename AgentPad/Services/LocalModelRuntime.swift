@@ -1737,6 +1737,16 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
             throw LocalModelRuntimeError.incompatibleDevice(message)
         }
 
+        // A binary/ternary exact-target build exists specifically to make the
+        // 27B weight traffic survivable on phone-class memory. For that class,
+        // spend the saved bytes on the smallest production KV cache the current
+        // llama.cpp Metal backend supports. Keep K/V symmetric so Flash
+        // Attention never falls onto the mixed-precision fallback path.
+        let quantization = variant.quantization.uppercased()
+        let usesUltraLowBitWeights = [
+            "Q1_0_G128", "Q1_0", "IQ1_S", "IQ1_M", "TQ1_0", "TQ2_0"
+        ].contains(quantization)
+
         let service = LlamaService(
             modelUrl: modelURL,
             config: .init(
@@ -1746,7 +1756,9 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
                 gpuLayerCount: variant.gpuLayerCount,
                 generationThreadCount: variant.generationThreadCount,
                 batchThreadCount: variant.batchThreadCount,
-                yieldEveryTokenCount: 1
+                yieldEveryTokenCount: 1,
+                keyCacheType: usesUltraLowBitWeights ? .q4_0 : .f16,
+                valueCacheType: usesUltraLowBitWeights ? .q4_0 : .f16
             )
         )
         loadedService = (variant.id, service)
