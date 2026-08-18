@@ -35,8 +35,14 @@ if [[ -z "$OFFICIAL_XCFRAMEWORK" || ! -f "$OFFICIAL_XCFRAMEWORK/Info.plist" ]]; 
   exit 69
 fi
 
-if /usr/libexec/PlistBuddy -c 'Print :AvailableLibraries' "$OFFICIAL_XCFRAMEWORK/Info.plist" 2>/dev/null \
-  | grep -q 'SupportedPlatformVariant = simulator'; then
+if python3 - "$OFFICIAL_XCFRAMEWORK" <<'PY'
+import plistlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+with (root / 'Info.plist').open('rb') as fh:
+    libs = plistlib.load(fh).get('AvailableLibraries', [])
+raise SystemExit(0 if any(x.get('SupportedPlatform') == 'ios' and x.get('SupportedPlatformVariant') == 'simulator' for x in libs) else 1)
+PY
+then
   echo "Official $LLAMA_VERSION artifact already contains a simulator slice; no synthesis needed."
   exit 0
 fi
@@ -68,7 +74,11 @@ SIM_XCFRAMEWORK="$SOURCE_DIR/build-apple/llama.xcframework"
   exit 70
 }
 
-mapfile -t OFFICIAL_FRAMEWORKS < <(python3 - "$OFFICIAL_XCFRAMEWORK" <<'PY'
+# macOS still ships Bash 3.x in some environments, so avoid mapfile/readarray.
+OFFICIAL_FRAMEWORKS=()
+while IFS= read -r framework; do
+  [[ -n "$framework" ]] && OFFICIAL_FRAMEWORKS+=("$framework")
+done < <(python3 - "$OFFICIAL_XCFRAMEWORK" <<'PY'
 import plistlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 with (root / 'Info.plist').open('rb') as fh:
@@ -82,7 +92,11 @@ for item in data.get('AvailableLibraries', []):
     print(path)
 PY
 )
-mapfile -t SIM_FRAMEWORKS < <(python3 - "$SIM_XCFRAMEWORK" <<'PY'
+
+SIM_FRAMEWORKS=()
+while IFS= read -r framework; do
+  [[ -n "$framework" ]] && SIM_FRAMEWORKS+=("$framework")
+done < <(python3 - "$SIM_XCFRAMEWORK" <<'PY'
 import plistlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 with (root / 'Info.plist').open('rb') as fh:
