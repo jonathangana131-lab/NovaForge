@@ -55,21 +55,16 @@ final actor Llama {
             }
         }
 
-        func contextParameters(
-            contextTokens: UInt32,
-            batchTokens: UInt32,
-            keyType: LlamaKVCacheType,
-            valueType: LlamaKVCacheType
-        ) -> llama_context_params {
+        func contextParameters(for profile: LlamaContextAllocationProfile) -> llama_context_params {
             var params = llama_context_default_params()
-            params.n_ctx = contextTokens
+            params.n_ctx = profile.contextTokens
             params.n_threads = config.generationThreadCount
             params.n_threads_batch = config.batchThreadCount
-            params.n_batch = batchTokens
-            params.n_ubatch = batchTokens
+            params.n_batch = profile.batchTokens
+            params.n_ubatch = profile.batchTokens
             params.offload_kqv = config.offloadKQV
-            params.type_k = cacheType(keyType)
-            params.type_v = cacheType(valueType)
+            params.type_k = cacheType(profile.keyCacheType)
+            params.type_v = cacheType(profile.valueCacheType)
 
             switch config.flashAttentionMode {
             case .automatic:
@@ -82,84 +77,58 @@ final actor Llama {
             return params
         }
 
-        func makeContext(
-            contextTokens: UInt32,
-            batchTokens: UInt32,
-            keyType: LlamaKVCacheType,
-            valueType: LlamaKVCacheType
-        ) -> LlamaContext? {
-            let params = contextParameters(
-                contextTokens: contextTokens,
-                batchTokens: batchTokens,
-                keyType: keyType,
-                valueType: valueType
-            )
-            return LlamaContext(model: model, parameters: params)
+        func makeContext(for profile: LlamaContextAllocationProfile) -> LlamaContext? {
+            LlamaContext(model: model, parameters: contextParameters(for: profile))
         }
 
-        var selectedContextTokens = config.maxTokenCount
-        var selectedBatchTokens = config.batchSize
-        var selectedProfile = "requested"
-        var selectedContext = makeContext(
-            contextTokens: selectedContextTokens,
-            batchTokens: selectedBatchTokens,
-            keyType: config.keyCacheType,
-            valueType: config.valueCacheType
-        )
+        let requestedProfile = config.requestedAllocationProfile
+        let fastRescueProfile = config.fastLowMemoryAllocationProfile
+        let deepRescueProfile = config.deepLowMemoryAllocationProfile
+
+        var selectedProfile = requestedProfile
+        var selectedProfileName = "requested"
+        var selectedContext = makeContext(for: requestedProfile)
 
         if selectedContext == nil, config.allowLowMemoryFallback {
-            // First rescue tier preserves F16 KV speed and simply reduces the
-            // allocation surfaces most likely to fail on 4 GB-class phones.
-            let reducedContext = min(config.maxTokenCount, 1_024)
-            let reducedBatch = min(config.batchSize, 32)
-            if reducedContext != selectedContextTokens || reducedBatch != selectedBatchTokens {
-                print("Context allocation failed; retrying fast low-memory profile (ctx=\(reducedContext), batch=\(reducedBatch), F16 KV)")
-                selectedContext = makeContext(
-                    contextTokens: reducedContext,
-                    batchTokens: reducedBatch,
-                    keyType: config.keyCacheType,
-                    valueType: config.valueCacheType
-                )
+            // The first rescue tier is an explicit F16 compatibility profile,
+            // not merely a smaller copy of a caller-requested Q4/Q8 profile.
+            // That matters when allocation failed because a backend/cache-type
+            // combination is unsupported rather than because only size is high.
+            if fastRescueProfile != requestedProfile {
+                print("Context allocation failed; retrying fast low-memory profile (ctx=\(fastRescueProfile.contextTokens), batch=\(fastRescueProfile.batchTokens), F16 KV)")
+                selectedContext = makeContext(for: fastRescueProfile)
                 if selectedContext != nil {
-                    selectedContextTokens = reducedContext
-                    selectedBatchTokens = reducedBatch
-                    selectedProfile = "fast-memory-rescue"
+                    selectedProfile = fastRescueProfile
+                    selectedProfileName = "fast-memory-rescue"
                 }
             }
 
-            // Deep rescue only runs after both requested and reduced fast
-            // allocations fail. Q8 KV can trade throughput for a much smaller
-            // cache, so it is intentionally failure-triggered rather than the
-            // universal default on Apple GPUs.
-            if selectedContext == nil {
-                let rescueContext = min(config.maxTokenCount, 768)
-                let rescueBatch = min(config.batchSize, 16)
-                print("Fast context allocation still failed; retrying deep low-memory profile (ctx=\(rescueContext), batch=\(rescueBatch), Q8 KV)")
-                selectedContext = makeContext(
-                    contextTokens: rescueContext,
-                    batchTokens: rescueBatch,
-                    keyType: .q8_0,
-                    valueType: .q8_0
-                )
+            // Deep rescue only runs after both requested and distinct fast
+            // allocations fail. Avoid repeating an allocation profile that has
+            // already failed, while retaining Q8 as the final compact KV tier.
+            if selectedContext == nil,
+               deepRescueProfile != requestedProfile,
+               deepRescueProfile != fastRescueProfile {
+                print("Fast context allocation still failed; retrying deep low-memory profile (ctx=\(deepRescueProfile.contextTokens), batch=\(deepRescueProfile.batchTokens), Q8 KV)")
+                selectedContext = makeContext(for: deepRescueProfile)
                 if selectedContext != nil {
-                    selectedContextTokens = rescueContext
-                    selectedBatchTokens = rescueBatch
-                    selectedProfile = "quantized-memory-rescue"
+                    selectedProfile = deepRescueProfile
+                    selectedProfileName = "quantized-memory-rescue"
                 }
             }
         }
 
         guard let context = selectedContext else {
-            print("Could not load context after all configured allocation tiers")
+            print("Could not load context after all distinct configured allocation tiers")
             throw LlamaError.couldNotInitializeContext
         }
 
-        print("Selected llama context profile: \(selectedProfile), ctx=\(selectedContextTokens), batch=\(selectedBatchTokens)")
-        self.maxTokenCount = min(UInt32(model.trainedContextSize()), selectedContextTokens)
-        self.effectiveBatchSize = selectedBatchTokens
+        print("Selected llama context profile: \(selectedProfileName), ctx=\(selectedProfile.contextTokens), batch=\(selectedProfile.batchTokens), keyKV=\(selectedProfile.keyCacheType.rawValue), valueKV=\(selectedProfile.valueCacheType.rawValue)")
+        self.maxTokenCount = min(UInt32(model.trainedContextSize()), selectedProfile.contextTokens)
+        self.effectiveBatchSize = selectedProfile.batchTokens
         self.model = context.model
         self.context = context
-        self.batch = .init(initialSize: Int32(selectedBatchTokens))
+        self.batch = .init(initialSize: Int32(selectedProfile.batchTokens))
     }
 
     deinit {
