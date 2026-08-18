@@ -50,12 +50,12 @@ if new_service not in runtime:
     runtime = runtime.replace(old_service, new_service)
     changed = True
 
-# Prefer the current upstream Q1_0 name. Q1_0_G128 is retained as a legacy
-# alias because some converters still use the older filename marker even when
-# the stored GGUF tensor type is the upstream 128-weight Q1_0 format.
-old_markers = '''            "Q1_0_G128", "Q1_0", "IQ1_S", "TQ1_0", "IQ1_M",
+# Keep lexical detection specific-before-generic. Q1_0_G128 contains Q1_0, so
+# checking generic Q1_0 first silently erases the G128 identity. Quant ranking
+# below remains independent: generic Q1_0 can still be the preferred release.
+old_markers = '''            "Q1_0", "Q1_0_G128", "IQ1_S", "TQ1_0", "IQ1_M",
 '''
-new_markers = '''            "Q1_0", "Q1_0_G128", "IQ1_S", "TQ1_0", "IQ1_M",
+new_markers = '''            "Q1_0_G128", "Q1_0", "IQ1_S", "TQ1_0", "IQ1_M",
 '''
 if old_markers in runtime:
     runtime = runtime.replace(old_markers, new_markers, 1)
