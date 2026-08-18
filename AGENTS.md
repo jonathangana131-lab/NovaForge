@@ -12,6 +12,16 @@ The target is a coherent, excellent NovaForge release, not a growing collection 
 
 When the user says `Go`, `continue`, `keep going`, `work on NovaForge`, `finish NovaForge`, or similarly gives broad authorization, begin real repository work immediately. Do not ask the user to choose a task when live GitHub and the product docs can determine the next useful outcome.
 
+## Standalone Qwen app boundary
+
+The owner's original Qwen 3.8 27B request is for a **separate iPhone app**, not for NovaForge itself to become a Qwen-3.8-only product.
+
+PR #295 (`feature/qwen38-forge-ios27`) currently modifies the existing NovaForge/`AgentPad` app target and therefore is **not** the requested standalone app as-is. Treat that PR and its related branches as prototype/evidence/source-donor work until the Qwen application has a clearly separate product boundary (for example a separate app target or separate repository with its own bundle/product identity).
+
+Do not merge Qwen-3.8-only product restrictions, model-manager branding, or iOS-target changes from #295 into NovaForge `main` merely to finish the standalone app. General-purpose local-inference improvements may be extracted into NovaForge when they are independently useful, reviewed, and do not collapse the two products into one.
+
+The standalone Qwen app must keep its own product/runtime qualification truthful: source or simulator success is not proof that Qwen 3.8 27B runs acceptably on a physical iPhone.
+
 ## Source of truth
 
 Use, in this order:
@@ -57,19 +67,17 @@ Do not create recovery/successor branches merely because CI is pending, a chat e
 
 No worker IDs, custom claims, leases, heartbeats, fencing tokens, mission graph, admission controller, capacity miner, synthetic role allocator, or stop-authority protocol is required.
 
-## Legacy / Qwen branch convergence
+## Legacy / local-model branch convergence
 
-Historical swarm and Qwen experiment/qualification branches are candidates, not ownership authority. Do not block product progress on cleaning every old branch first.
+Historical swarm and model experiment/qualification branches are candidates, not ownership authority. Do not block product progress on cleaning every old branch first.
 
 For overlapping local-model work:
 
 1. compare each candidate against current `main` and current product/runtime contracts;
-2. choose the strongest implementation/evidence path for the actual outcome;
-3. finish/fix/rebase that path or transplant useful deltas into one direct-to-`main` candidate when necessary;
-4. close obsolete/duplicate recovery or experiment PRs after preserving unique evidence;
-5. do not keep multiple permanent Qwen 3.8 branches for the same runtime capability.
-
-The current Qwen 3.8 27B iOS 27 qualification work is a real NovaForge product lane. It should converge into the main app/runtime when software/device evidence earns it; lack of physical-device qualification blocks only the physical claim, not independent correctness/UX/integration work.
+2. identify whether the code belongs to NovaForge or to the separate standalone model app before integrating it;
+3. for NovaForge-owned work, choose the strongest implementation/evidence path and finish/fix/rebase that path or transplant useful deltas into one direct-to-`main` candidate;
+4. for standalone-Qwen-owned work, preserve useful runtime/qualification code without merging the standalone product identity into NovaForge;
+5. close obsolete/duplicate recovery or experiment PRs after preserving unique evidence.
 
 ## Branch / PR / merge behavior
 
@@ -93,9 +101,9 @@ Use whole-product visual sweeps, long stress/soak runs, complete accessibility p
 
 Never weaken a test merely to make a branch green. Never describe uninspected generated screenshots as visual acceptance.
 
-## Local AI and Qwen truth
+## Local AI truth
 
-Local AI is a primary NovaForge capability, not a side settings feature.
+Local AI is a primary NovaForge capability, not a side settings feature, but NovaForge is not required to become the standalone Qwen-3.8-only app.
 
 - Never invent supported model sizes, tokens/sec, RAM, thermal, energy, context, or device-compatibility claims.
 - Simulator/source success is not physical iPhone qualification.
@@ -104,7 +112,7 @@ Local AI is a primary NovaForge capability, not a side settings feature.
 - If exact physical-device evidence is unavailable, continue with software correctness, integration, UX, storage, cancellation, model-management, benchmark plumbing, and other independent work; keep the missing physical claim explicit.
 - Prefer measured device-aware runtime behavior over marketing-style labels.
 
-The local-model work should converge into the main NovaForge app/runtime instead of living indefinitely in experimental branches.
+General-purpose local-model infrastructure should converge into NovaForge when it improves NovaForge itself. Model/product-specific code for the standalone Qwen app should remain outside the NovaForge product boundary.
 
 ## Product direction worth preserving
 
