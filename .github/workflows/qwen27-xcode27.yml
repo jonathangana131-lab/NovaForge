@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: true
 
@@ -54,7 +54,7 @@ jobs:
             exit 71
           fi
 
-          grep -En 'static var all: \[LocalModelVariant\]|static var presentationOrder|safestVariant|usesUltraLowBitWeights' AgentPad/Services/LocalModelRuntime.swift
+          grep -En 'static var all: \[LocalModelVariant\]|static var presentationOrder|safestVariant|usesUltraLowBitWeights|runtimeSupports' AgentPad/Services/LocalModelRuntime.swift
           grep -En 'testLocalCatalogPresentsOnlyQwen38TargetAndNeverFallsBack|testStaticCatalogDoesNotSelfAwardDeviceQualification' \
             AgentPadTests/AgentRuntimeLifecycleTests.swift \
             AgentPadTests/AgentLocalModelProviderTransportTests.swift
@@ -198,7 +198,7 @@ jobs:
           NovaForge / TriInfer Code — Qwen 3.8 27B iOS 27
           Exact Xcode-27 critical + visual tested source: ${TESTED_SHA}
           Validation run: ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}
-          Product target: exact Qwen 3.8 27B only; no Qwen 3.6/3.5 substitute
+          Product target: exact Qwen 3.8 27B only; no substitute model
           Open in Xcode 27: AgentPad.xcodeproj
           TXT
           cd package-root
