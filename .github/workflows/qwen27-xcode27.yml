@@ -172,6 +172,7 @@ jobs:
           NOVAFORGE_TEST_LANE: critical
           XCODEBUILD_CAP_MINUTES: 65
           UNIT_TEST_TIMEOUT: 540
+          UI_TEST_RESTART_INTERVAL: 1
         run: bash ci/verify.sh
 
       - name: Upload Xcode 27 diagnostics
