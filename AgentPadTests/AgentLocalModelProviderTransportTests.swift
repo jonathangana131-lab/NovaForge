@@ -948,30 +948,31 @@ final class AgentLocalModelProviderTransportTests: XCTestCase {
         XCTAssertFalse(target.isIPhone12SafeDefault)
         XCTAssertEqual(target.deviceFit, .extreme)
         XCTAssertTrue(target.parameterLabel.localizedCaseInsensitiveContains("27B"))
-        XCTAssertTrue(
-            [target.id, target.displayName, target.details]
-                .joined(separator: " ")
-                .localizedCaseInsensitiveContains("3.8")
-        )
 
-        let forbiddenStaticClaims = [
+        let identity = [
+            target.id, target.displayName, target.shortName, target.parameterLabel,
+        ].joined(separator: " ")
+        XCTAssertTrue(identity.localizedCaseInsensitiveContains("3.8"))
+        XCTAssertTrue(identity.localizedCaseInsensitiveContains("27B"))
+        XCTAssertFalse(identity.localizedCaseInsensitiveContains("3.6"))
+        XCTAssertFalse(identity.localizedCaseInsensitiveContains("3.5"))
+
+        // Product copy may explicitly explain that older models are NOT
+        // substitutes. Reject false qualification claims, not that explanation.
+        let forbiddenQualificationClaims = [
             "Device proven",
             "physical-device canary proven",
             "The proven iPhone 12 default",
-            "Qwen 3.6",
-            "Qwen3.6",
-            "Qwen 3.5",
-            "Qwen3.5",
         ]
         let staticPresentation = [
             target.deviceFit.title,
             target.benchmarkSummary,
             target.details,
         ].joined(separator: " ")
-        for claim in forbiddenStaticClaims {
+        for claim in forbiddenQualificationClaims {
             XCTAssertFalse(
                 staticPresentation.localizedCaseInsensitiveContains(claim),
-                "Qwen 3.8 product metadata must not contain forbidden claim: \(claim)"
+                "Qwen 3.8 product metadata must not self-award qualification: \(claim)"
             )
         }
     }
