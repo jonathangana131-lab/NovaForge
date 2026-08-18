@@ -28,6 +28,9 @@ jobs:
           git diff --check
           grep -Fq 'usesUltraLowBitWeights' AgentPad/Services/LocalModelRuntime.swift
           grep -Fq 'keyCacheType: usesUltraLowBitWeights ? .q4_0 : .f16' AgentPad/Services/LocalModelRuntime.swift
+          grep -Fq 'guard runtimeSupports(quant) else { return nil }' AgentPad/Services/LocalModelRuntime.swift
+          grep -Fq 'private static func runtimeSupports(_ quantization: String) -> Bool' AgentPad/Services/LocalModelRuntime.swift
+          grep -Fq 'case "Q1_0": 0' AgentPad/Services/LocalModelRuntime.swift
           grep -Fq 'testPhoneClassQ1ProfilePreservesSymmetricQ4KVWhileRemainingMapped' Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaRuntimeTunerTests.swift
       - name: Commit production policy
         run: |
@@ -36,5 +39,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add AgentPad/Services/LocalModelRuntime.swift Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaRuntimeTunerTests.swift
-          git commit -m 'Runtime: use symmetric Q4 KV for ultra-low-bit Qwen 3.8'
+          git commit -m 'Runtime: harden executable Qwen 3.8 ultra-low-bit discovery'
           git push origin HEAD:feature/qwen38-forge-ios27
