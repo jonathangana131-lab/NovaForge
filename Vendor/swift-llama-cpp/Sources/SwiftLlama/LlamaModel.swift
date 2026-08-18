@@ -83,13 +83,24 @@ public final class LlamaModel {
         return String(cString: results, encoding: .utf8) ?? ""
     }
 
-    /// Return the next token-piece buffer size requested by llama.cpp.
-    /// A negative `llama_token_to_piece` result encodes the required byte count.
-    static func nextTokenPieceBufferSize(for result: Int32, currentSize: Int32) -> Int32? {
+    /// Decode llama.cpp's negative required-size convention without risking
+    /// `Int32.min` negation overflow or retrying a non-growing allocation.
+    private static func nextRequiredBufferSize(for result: Int32, currentSize: Int32) -> Int32? {
         guard result < 0, currentSize > 0 else { return nil }
         let requiredSize = -Int64(result)
         guard requiredSize > Int64(currentSize), requiredSize <= Int64(Int32.max) else { return nil }
         return Int32(requiredSize)
+    }
+
+    /// Return the next token-piece buffer size requested by llama.cpp.
+    /// A negative `llama_token_to_piece` result encodes the required byte count.
+    static func nextTokenPieceBufferSize(for result: Int32, currentSize: Int32) -> Int32? {
+        nextRequiredBufferSize(for: result, currentSize: currentSize)
+    }
+
+    /// Return the next token buffer size requested by llama.cpp tokenization.
+    static func nextTokenizationBufferSize(for result: Int32, currentSize: Int32) -> Int32? {
+        nextRequiredBufferSize(for: result, currentSize: currentSize)
     }
 
     /// Convert a token id to its piece (optionally rendering special tokens).
@@ -140,15 +151,35 @@ public final class LlamaModel {
     ///   - addBos: Allow to add BOS/EOS if model is configured so.
     ///   - special: Allow tokenizing special/control tokens.
     public func tokenize(text: String, addBos: Bool, special: Bool) -> [llama_token] {
-        guard !text.isEmpty else {
-            return []
-        }
+        guard !text.isEmpty else { return [] }
+
         let utf8Count = text.utf8.count
-        let maxTokens = trainedContextSize()
-        let tokenBufferSize = utf8Count + (addBos ? 1 : 0) + 1
-        var tokensBuffer = [llama_token](repeating: llama_token(), count: Int(tokenBufferSize))
-        let tokenCount = llama_tokenize(vocabPointer, text, Int32(utf8Count), &tokensBuffer, maxTokens, addBos, special)
-        return Array(tokensBuffer.prefix(upTo: Int(tokenCount)))
+        guard utf8Count <= Int(Int32.max) else { return [] }
+
+        let initialCapacity = Int64(utf8Count) + (addBos ? 1 : 0) + 1
+        guard initialCapacity > 0, initialCapacity <= Int64(Int32.max) else { return [] }
+        var bufferSize = Int32(initialCapacity)
+
+        while true {
+            var tokensBuffer = [llama_token](repeating: llama_token(), count: Int(bufferSize))
+            let tokenCount = llama_tokenize(
+                vocabPointer,
+                text,
+                Int32(utf8Count),
+                &tokensBuffer,
+                bufferSize,
+                addBos,
+                special
+            )
+
+            if let requiredSize = Self.nextTokenizationBufferSize(for: tokenCount, currentSize: bufferSize) {
+                bufferSize = requiredSize
+                continue
+            }
+
+            guard tokenCount >= 0, tokenCount <= bufferSize else { return [] }
+            return Array(tokensBuffer.prefix(Int(tokenCount)))
+        }
     }
 
     /// Convert tokens back to text (inverse of tokenize)
