@@ -1,0 +1,50 @@
+name: Apply Qwen 3.8 Static Assertion Fix
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_static_catalog_assertion_fix.py'
+      - '.github/workflows/apply-qwen38-static-assertion.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Apply exact assertion transform and verify diff scope
+        run: |
+          set -euo pipefail
+          BEFORE_LINES=$(wc -l < AgentPadTests/AgentLocalModelProviderTransportTests.swift)
+          python3 ci/apply_qwen38_static_catalog_assertion_fix.py
+          AFTER_LINES=$(wc -l < AgentPadTests/AgentLocalModelProviderTransportTests.swift)
+          test "$BEFORE_LINES" -eq "$AFTER_LINES" || {
+            echo "Transport test line count changed unexpectedly: $BEFORE_LINES -> $AFTER_LINES" >&2
+            exit 70
+          }
+          git diff --check
+          CHANGED=$(git diff --name-only)
+          test "$CHANGED" = 'AgentPadTests/AgentLocalModelProviderTransportTests.swift' || {
+            echo "Unexpected changed files: $CHANGED" >&2
+            exit 71
+          }
+          git diff --numstat
+      - name: Commit focused assertion repair
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          git commit -m 'Fix Qwen 3.8 no-substitute qualification assertion'
+          git fetch origin feature/qwen38-forge-ios27
+          git rebase origin/feature/qwen38-forge-ios27
+          git push origin HEAD:feature/qwen38-forge-ios27
