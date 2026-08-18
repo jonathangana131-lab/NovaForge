@@ -24,6 +24,16 @@ fi
 sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer"
 xcodebuild -version
 
+# Current upstream llama.cpp releases keep the shipping XCFramework lean and no
+# longer bundle an iOS Simulator library. Keep the real iPhone slice untouched,
+# but synthesize the missing simulator library from the exact pinned upstream
+# tag inside this disposable DerivedData tree so app/unit/UI QA can still run.
+if ! command -v cmake >/dev/null 2>&1; then
+  command -v brew >/dev/null 2>&1 || { echo "cmake is required for exact-tag llama simulator QA" >&2; exit 69; }
+  brew install cmake
+fi
+bash "$ROOT_DIR/ci/prepare_llama_simulator_slice.sh" "$DERIVED_DATA"
+
 echo "==> Selecting one available iPhone simulator"
 UDID=$(xcrun simctl list -j devices available | jq -r '
   [.devices
