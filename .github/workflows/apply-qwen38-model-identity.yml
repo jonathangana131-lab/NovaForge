@@ -1,0 +1,58 @@
+name: Apply exact Qwen 3.8 model identity gate
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_model_identity.py'
+      - '.github/workflows/apply-qwen38-model-identity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-qwen38-model-identity
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Apply fail-closed identity transform
+        run: |
+          set -euo pipefail
+          python3 ci/apply_qwen38_model_identity.py
+          git diff --check
+          grep -Fq 'func modelIdentitySnapshot() -> LlamaModelIdentitySnapshot' Vendor/swift-llama-cpp/Sources/SwiftLlama/Llama.swift
+          grep -Fq 'public func modelIdentitySnapshot() async throws -> LlamaModelIdentitySnapshot' Vendor/swift-llama-cpp/Sources/SwiftLlama/LlamaService.swift
+          grep -Fq 'Exact Qwen 3.8 27B identity verification failed.' AgentPad/Services/LocalModelRuntime.swift
+          grep -Fq 'testQwen38IdentityPolicyRejectsRenamedQwen36' AgentPadTests/AgentLocalModelProviderTransportTests.swift
+      - name: Commit transformed production source
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- \
+            Vendor/swift-llama-cpp/Sources/SwiftLlama/Llama.swift \
+            Vendor/swift-llama-cpp/Sources/SwiftLlama/LlamaService.swift \
+            AgentPad/Services/LocalModelRuntime.swift \
+            AgentPadTests/AgentLocalModelProviderTransportTests.swift; then
+            echo 'Identity gate already applied.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            Vendor/swift-llama-cpp/Sources/SwiftLlama/Llama.swift \
+            Vendor/swift-llama-cpp/Sources/SwiftLlama/LlamaService.swift \
+            AgentPad/Services/LocalModelRuntime.swift \
+            AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          git commit -m 'Runtime: verify loaded GGUF is exact Qwen 3.8 27B'
+          git fetch origin feature/qwen38-forge-ios27
+          git rebase origin/feature/qwen38-forge-ios27
+          git push origin HEAD:feature/qwen38-forge-ios27
