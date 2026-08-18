@@ -406,13 +406,14 @@ public struct ProviderRouteRegistry: Sendable {
 }
 
 /// Stable, secret-free projection suitable for durable run receipts. It keeps
-/// enough exact route truth to prove the accepted wire contract later without
-/// serializing credentials or transport state.
+/// the full credential-free adapter descriptor plus support/policy truth so
+/// recovery can fail closed on capability, deployment, provenance, or wire drift.
 public struct ProviderRouteReceiptProjection: Codable, Equatable, Sendable {
     public let providerID: ProviderID
     public let modelID: ProviderModelID
     public let adapterID: ProviderAdapterID
     public let dialect: ProviderAdapterDialect
+    public let routeDescriptor: ProviderAdapterDescriptor
     public let endpointAuthorityID: String
     public let requestPath: String
     public let authenticationMode: ProviderAuthenticationMode
@@ -436,6 +437,7 @@ public struct ProviderRouteReceiptProjection: Codable, Equatable, Sendable {
         modelID = profile.descriptor.route.modelID
         adapterID = profile.descriptor.route.adapterID
         dialect = profile.descriptor.dialect
+        routeDescriptor = profile.descriptor
         endpointAuthorityID = profile.endpoint.authorityID
         requestPath = profile.descriptor.requestPath
         authenticationMode = profile.authenticationMode
