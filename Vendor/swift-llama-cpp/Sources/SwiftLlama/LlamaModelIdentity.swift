@@ -46,12 +46,15 @@ extension LlamaModel {
     public func metadataString(forKey key: String) -> String? {
         func read(into buffer: inout [CChar]) -> Int32 {
             key.withCString { cKey in
-                llama_model_meta_val_str(
-                    modelPointer,
-                    cKey,
-                    &buffer,
-                    buffer.count
-                )
+                buffer.withUnsafeMutableBufferPointer { storage in
+                    guard let baseAddress = storage.baseAddress else { return -1 }
+                    return llama_model_meta_val_str(
+                        modelPointer,
+                        cKey,
+                        baseAddress,
+                        storage.count
+                    )
+                }
             }
         }
 
