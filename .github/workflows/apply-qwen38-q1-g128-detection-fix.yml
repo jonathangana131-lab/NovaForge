@@ -1,0 +1,49 @@
+name: Apply Qwen 3.8 Q1 G128 detection fix
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_qwen38_q1_g128_detection_fix.py
+      - .github/workflows/apply-qwen38-q1-g128-detection-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply fail-closed Q1 marker transform
+        run: python3 ci/apply_qwen38_q1_g128_detection_fix.py
+      - name: Validate transformed source
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -F 'static func quantization(from filename: String)' AgentPad/Services/LocalModelRuntime.swift
+          grep -F 'testQwen38QuantizationDetectionPrefersSpecificQ1G128Marker' AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('AgentPad/Services/LocalModelRuntime.swift').read_text()
+          block = text.split('static func quantization(from filename: String)', 1)[1].split('private static func runtimeSupports', 1)[0]
+          assert block.index('"Q1_0_G128"') < block.index('"Q1_0"')
+          print('PASS: specific Q1_0_G128 marker precedes generic Q1_0')
+          PY
+      - name: Commit release-compatibility repair
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'Q1 G128 detection repair already integrated.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Qwen Release Guard Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          git commit -m 'Fix Q1 G128 release detection specificity'
+          git push origin HEAD:feature/qwen38-forge-ios27
