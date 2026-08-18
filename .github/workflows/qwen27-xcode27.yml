@@ -62,7 +62,8 @@ jobs:
             "runAttempt": "${GITHUB_RUN_ATTEMPT}",
             "testedSha": "${TESTED_SHA}",
             "verifyArtifact": "qwen38-xcode27-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
-            "screensArtifact": "qwen38-xcode27-screens-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            "screensArtifact": "qwen38-xcode27-screens-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+            "packageArtifact": "TriInferCode-Qwen38-iOS27-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           }
           JSON
           git config user.name 'github-actions[bot]'
@@ -151,3 +152,54 @@ jobs:
             artifacts/visual
           if-no-files-found: warn
           retention-days: 14
+
+  package-tested-tree:
+    name: Package exact tested app
+    needs: [verify-xcode27, visual-xcode27]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify-xcode27.outputs.tested_sha }}
+          fetch-depth: 1
+      - name: Build clean Xcode source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          TESTED_SHA='${{ needs.verify-xcode27.outputs.tested_sha }}'
+          ROOT='TriInferCode-Qwen38-iOS27'
+          mkdir -p "package-root/$ROOT"
+          rsync -a ./ "package-root/$ROOT/" \
+            --exclude '.git/' \
+            --exclude 'DerivedData/' \
+            --exclude '.build/' \
+            --exclude 'artifacts/' \
+            --exclude 'QA/' \
+            --exclude '*.xcresult' \
+            --exclude '*.zip'
+          cat > "package-root/$ROOT/BUILD-RECEIPT.txt" <<TXT
+          NovaForge / TriInfer Code — Qwen 3.8 27B iOS 27
+          Exact Xcode-27 critical + visual tested source: ${TESTED_SHA}
+          Validation run: ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}
+          Product target: exact Qwen 3.8 27B only; no Qwen 3.6/3.5 substitute
+          Open in Xcode 27: AgentPad.xcodeproj
+          TXT
+          cd package-root
+          zip -qry "../TriInferCode-Qwen38-iOS27-${TESTED_SHA:0:12}.zip" "$ROOT"
+          cd ..
+          unzip -tq "TriInferCode-Qwen38-iOS27-${TESTED_SHA:0:12}.zip"
+          sha256sum "TriInferCode-Qwen38-iOS27-${TESTED_SHA:0:12}.zip" | tee package-sha256.txt
+          echo "ARCHIVE=TriInferCode-Qwen38-iOS27-${TESTED_SHA:0:12}.zip" >> "$GITHUB_ENV"
+      - name: Upload exact tested app package
+        uses: actions/upload-artifact@v7
+        with:
+          name: TriInferCode-Qwen38-iOS27-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ARCHIVE }}
+            package-sha256.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
