@@ -34,9 +34,9 @@ public enum LlamaRuntimeTuner {
         }
 
         // Leave a large fraction of physical RAM to iOS, SwiftUI, the agent
-        // graph, recurrent/KV state, scratch buffers and file-cache pages. A model
-        // exceeding this budget must be treated as a mapped/storage-backed target
-        // rather than a conventional fully-resident model.
+        // graph, recurrent/KV state, Metal scratch and file-cache pages. A model
+        // exceeding this budget must be treated as a mapped/storage-backed
+        // target rather than a conventional fully-resident model.
         let residentWeightBudget = physicalMemoryBytes * 58 / 100
         let storageBacked = fileBytes > residentWeightBudget
         guard storageBacked else {
@@ -53,19 +53,24 @@ public enum LlamaRuntimeTuner {
         let microBatch = min(requested.microBatchSize, extremeOversubscription ? 8 : 16)
         let logicalBatch = min(requested.batchSize, extremeOversubscription ? 24 : 48)
 
-        // Important Apple-unified-memory rule for giant mapped models: a tiny
-        // n_gpu_layers value does not prove a tiny GPU working set. Depending on
-        // tensor ordering/backend placement, Metal can wire a much larger address
-        // span than the nominal offloaded layers. The safe baseline therefore
-        // keeps cold target weights completely outside persistent Metal residency.
-        // A higher layer count is an *empirical override* that must be earned by
-        // an exact-device benchmark/available-memory receipt at the app layer.
-        let usePersistentMetalWeights = false
-        let boundedGPULayers: Int32 = 0
+        // Current llama.cpp Metal on Apple unified-memory devices can wrap
+        // existing mapped host pointers in MTLStorageModeShared buffers instead
+        // of making a second private copy. We still keep the initial hot set tiny:
+        // touching too many mapped pages can create residency pressure even when
+        // the buffer itself is zero-copy. Exact-device telemetry may promote the
+        // hot set later; the baseline never jumps straight to full offload.
+        let boundedGPULayers: Int32
+        if requested.useGPU {
+            boundedGPULayers = min(max(requested.gpuLayerCount, 1), extremeOversubscription ? 1 : 2)
+        } else {
+            boundedGPULayers = 0
+        }
+        let useBoundedMetalHotSet = boundedGPULayers > 0
 
         // Q8 KV is the conservative compressed default: it materially reduces
         // long-context cache pressure without assuming Q4 quality is acceptable.
-        // Q4 remains explicitly selectable for measured research profiles.
+        // If the caller explicitly selected Q4, preserve it for a measured
+        // extreme profile instead of silently expanding the cache again.
         let keyCache: LlamaKVCacheType = requested.keyCacheType == .f16 ? .q8_0 : requested.keyCacheType
         let valueCache: LlamaKVCacheType = requested.valueCacheType == .f16 ? .q8_0 : requested.valueCacheType
 
@@ -73,7 +78,7 @@ public enum LlamaRuntimeTuner {
             batchSize: logicalBatch,
             microBatchSize: microBatch,
             maxTokenCount: requested.maxTokenCount,
-            useGPU: usePersistentMetalWeights,
+            useGPU: useBoundedMetalHotSet,
             gpuLayerCount: boundedGPULayers,
             generationThreadCount: min(requested.generationThreadCount, 2),
             batchThreadCount: min(max(requested.batchThreadCount, 2), 4),
@@ -82,6 +87,10 @@ public enum LlamaRuntimeTuner {
             flashAttention: requested.flashAttention == .disabled ? .disabled : .automatic,
             keyCacheType: keyCache,
             valueCacheType: valueCache,
+            // Keep K/Q/V and generic operation offload disabled for the giant
+            // target baseline. The hot set is weight-only until a device receipt
+            // proves that broader graph offload improves throughput without
+            // crossing the memory/thermal envelope.
             offloadKQV: false,
             operationOffload: false,
             unifiedKV: requested.unifiedKV,
@@ -97,8 +106,8 @@ public enum LlamaRuntimeTuner {
             physicalMemoryBytes: physicalMemoryBytes,
             storageBacked: true,
             reason: extremeOversubscription
-                ? "Extreme storage-backed profile: mmap + Q8 KV + CPU/file-backed weights + tiny micro-batches; persistent Metal residency disabled until a device receipt proves it safe."
-                : "Storage-backed profile: mmap + Q8 KV + CPU/file-backed weights; persistent Metal residency disabled until measured safe."
+                ? "Extreme storage-backed profile: mmap + compressed KV + 1 shared-Metal hot layer + tiny micro-batches; broader offload requires a device receipt."
+                : "Storage-backed profile: mmap + compressed KV + at most 2 shared-Metal hot layers; broader offload requires measured headroom."
         )
     }
 
