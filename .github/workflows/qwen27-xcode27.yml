@@ -38,18 +38,25 @@ jobs:
           set -euo pipefail
           python3 ci/apply_artifact_preview_mode_fix.py
           python3 ci/apply_qwen38_download_guard.py
+          python3 ci/apply_qwen38_catalog_contract_fix.py
           git diff --check
 
-          if ! git diff --quiet -- AgentPad/Views/ArtifactPreviewSheet.swift AgentPad/Services/LocalModelRuntime.swift; then
+          TRANSFORMED=(
+            AgentPad/Views/ArtifactPreviewSheet.swift
+            AgentPad/Services/LocalModelRuntime.swift
+            AgentPadTests/AgentLocalModelProviderTransportTests.swift
+            AgentPadTests/AgentRuntimeLifecycleTests.swift
+          )
+          if ! git diff --quiet -- "${TRANSFORMED[@]}"; then
             if [ "$GITHUB_EVENT_NAME" != "push" ]; then
-              echo 'Production source transforms are not committed on the PR head.' >&2
-              git diff -- AgentPad/Views/ArtifactPreviewSheet.swift AgentPad/Services/LocalModelRuntime.swift
+              echo 'Production Qwen 3.8 transforms are not committed on the PR head.' >&2
+              git diff -- "${TRANSFORMED[@]}"
               exit 71
             fi
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add AgentPad/Views/ArtifactPreviewSheet.swift AgentPad/Services/LocalModelRuntime.swift
-            git commit -m 'Harden Qwen 3.8 preview and download boundaries'
+            git add "${TRANSFORMED[@]}"
+            git commit -m 'Make active local model authority Qwen 3.8 only'
             git fetch origin feature/qwen38-forge-ios27
             git rebase origin/feature/qwen38-forge-ios27
             git push origin HEAD:feature/qwen38-forge-ios27
