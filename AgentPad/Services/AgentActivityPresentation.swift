@@ -27,11 +27,11 @@ enum AgentActivityPresentation {
         arguments: [String: String],
         detail: String?
     ) -> (title: String, target: String?) {
-        let target = arguments["path"] ??
-            arguments["file"] ??
-            arguments["to"] ??
-            arguments["from"] ??
-            sanitizedDetail(detail ?? "")
+        let target = sanitizedTarget(arguments["path"]) ??
+            sanitizedTarget(arguments["file"]) ??
+            sanitizedTarget(arguments["to"]) ??
+            sanitizedTarget(arguments["from"]) ??
+            sanitizedDetail(detail)
         let loweredName = name.lowercased()
         if loweredName.contains("word tree") ||
             loweredName.contains("live feed") ||
@@ -107,6 +107,22 @@ enum AgentActivityPresentation {
             return "Waiting for model"
         }
         return trimmed.prefix(1).uppercased() + trimmed.dropFirst()
+    }
+
+    private static func sanitizedTarget(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data)
+        else {
+            return trimmed
+        }
+
+        if object is [String: Any] || object is [Any] {
+            return "Details saved in History."
+        }
+        return trimmed
     }
 
     private static func sanitizedDetail(_ text: String?) -> String? {
