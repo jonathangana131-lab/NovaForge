@@ -39,12 +39,14 @@ jobs:
           python3 ci/apply_artifact_preview_mode_fix.py
           python3 ci/apply_qwen38_download_guard.py
           python3 ci/apply_qwen38_static_catalog_assertion_fix.py
+          python3 ci/apply_qwen38_ultralow_kv.py
           git diff --check
 
           TRANSFORMED=(
             AgentPad/Views/ArtifactPreviewSheet.swift
             AgentPad/Services/LocalModelRuntime.swift
             AgentPadTests/AgentLocalModelProviderTransportTests.swift
+            Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaRuntimeTunerTests.swift
           )
           if ! git diff --quiet -- "${TRANSFORMED[@]}"; then
             echo 'Committed Qwen 3.8 release source does not match its fail-closed transforms.' >&2
@@ -52,10 +54,12 @@ jobs:
             exit 71
           fi
 
-          grep -En 'static var all: \[LocalModelVariant\]|static var presentationOrder|safestVariant' AgentPad/Services/LocalModelRuntime.swift
+          grep -En 'static var all: \[LocalModelVariant\]|static var presentationOrder|safestVariant|usesUltraLowBitWeights' AgentPad/Services/LocalModelRuntime.swift
           grep -En 'testLocalCatalogPresentsOnlyQwen38TargetAndNeverFallsBack|testStaticCatalogDoesNotSelfAwardDeviceQualification' \
             AgentPadTests/AgentRuntimeLifecycleTests.swift \
             AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          grep -En 'testPhoneClassQ1ProfilePreservesSymmetricQ4KVWhileRemainingMapped' \
+            Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaRuntimeTunerTests.swift
           echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Publish live Xcode 27 receipt
