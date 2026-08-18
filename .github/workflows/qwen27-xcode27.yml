@@ -39,6 +39,7 @@ jobs:
           python3 ci/apply_artifact_preview_mode_fix.py
           python3 ci/apply_qwen38_download_guard.py
           python3 ci/apply_qwen38_catalog_contract_fix.py
+          python3 ci/apply_qwen38_static_catalog_assertion_fix.py
           git diff --check
 
           TRANSFORMED=(
