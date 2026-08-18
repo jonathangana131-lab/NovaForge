@@ -1,86 +1,30 @@
-NOVAFORGE PROJECT INSTRUCTIONS V14 — GO MODE
+NOVAFORGE PROJECT INSTRUCTIONS — AUTONOMOUS MODE
 
-Project: NovaForge
 Repository: jonathangana131-lab/NovaForge
-Protocol: NF-SWARM-v14
+Execution authority: root `AGENTS.md`
 
-WHEN THE USER SAYS `GO`:
-- work on NovaForge immediately;
-- fresh-check live GitHub before deciding what to do;
-- read `AGENTS.md`;
-- read `NovaForge_V14_Project_Sources_Pack.txt`;
-- read `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt`;
-- read `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md`;
-- read `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md`;
-- read `docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md` whenever local models, memory, inference, model selection, compaction, performance, autonomy, or iPhone-device capability is relevant;
-- read `CONTINUATION_PROMPT.md`;
-- preserve the V13 NovaForge 2.0 product constitution/design/runtime direction while applying the stronger V14 local-AI/autonomous-Forge direction;
-- identify current flagships, dependencies, high-contention paths, and active ownership;
-- claim the highest-value safe non-conflicting lane;
-- implement real work immediately;
-- a commit/PR/test/review/merge is a checkpoint, not an endpoint;
-- refresh and continue while safe useful work remains.
+The previous NF-SWARM-v14 execution system is retired for normal development. Do not restore worker quotas, swarm lanes/claims, recovery-branch ladders, capacity filling, or synthetic stop authority because historical V14 files still exist in the repository.
+
+WHEN THE USER SAYS `GO`, `continue`, `work on NovaForge`, `finish NovaForge`, OR EQUIVALENT:
+- begin actual GitHub/code work immediately;
+- read current `AGENTS.md`;
+- refresh live `main`, open PRs, CI/reviews, recent commits, and relevant current product/local-AI docs;
+- finish a strong existing near-merge candidate before creating a competing implementation when practical;
+- otherwise choose the highest-value current blocker to a coherent product/release outcome;
+- implement, test/build/run/inspect as appropriate, fix findings, merge when accepted, refresh, and continue;
+- do not stop after only a plan, issue, commit, PR, review, test, or merge while another useful safe outcome is available in the current execution window.
 
 PRODUCT NORTH STAR:
-NovaForge is an iPhone-native local-first AI creation OS, not a generic chatbot with code buttons. The normal experience is Describe -> Understand -> Forge -> Run -> Experience -> Critique -> Repair -> Polish -> Complete.
+NovaForge is an iPhone-native, local-first AI creation OS. The normal loop is Describe -> Understand -> Forge -> Run -> Experience -> Critique -> Repair -> Polish -> Complete. Composer/Plan Space, Full Forge autonomy, generated-runtime playtest/repair, durable projects, native visual quality, and local AI remain flagship product directions.
 
-The quality target is ABOVE merely copying ChatGPT. First-party iOS/ChatGPT coherence is the floor. NovaForge must develop an original flagship-quality visual and interaction identity. The Composer, Plan Space, Full Forge mission experience, Local Model Center, Run mode, History/Time Machine, visual editing, and completion/evidence surfaces must be brainstormed, prototyped, run, screenshot-critiqued, accessibility-tested, performance-checked, and repeatedly polished until they feel exceptional rather than merely competent.
+LOCAL AI / QWEN:
+Treat active Qwen 3.8 work as part of the NovaForge product. Converge it into the main app/runtime rather than creating an endless family of validation/recovery branches. Never invent exact iPhone compatibility, memory, speed, thermal, energy, context, or quality claims; physical-device claims require exact physical-device evidence. Local Only must never silently use cloud.
 
-FLAGSHIP COMPOSER / PLAN SPACE:
-The Composer is not a plain text field. Treat it as the front door to the creation OS. It should adapt fluidly around the user's intent, reveal only material controls, support visual Plan Space decisions/previews, Decide for me, Autonomy, Build Depth, Intelligence, Privacy, Creativity and Refactor Risk, and keep one obvious next action that morphs with state. Avoid card soup, generic AI gradients, giant chrome, debug aesthetics, and settings-form UX.
+COORDINATION:
+Use current GitHub branches, PRs, checks, reviews, and code as coordination. There is no fixed agent count. Default to one implementation per overlapping subsystem and use parallel agents only for clearly independent work. Fewer strong, mergeable branches are better than a large worker population.
 
-FULL FORGE AUTONOMY:
-Full Forge must be a real evidence-backed autonomous mode that can plan, implement, build, run, interact/play, inspect, test, visually critique, repair, regression-test, accessibility/performance-test, polish, and loop until the machine-readable Completion Constitution is genuinely satisfied or a real blocker requires the user. A model saying `done` is never completion evidence.
-
-AUTONOMOUS GAME COMPLETION:
-Forge Runtime should expose safe semantic self-play/playtest inputs. NovaForge should be able to run generated games, operate them through authorized controls, test goal paths and edge cases, inspect screenshots/runtime state, detect defects, patch, rerun, compare, and repeat until accepted. Completion must bind real build/runtime/test/visual/accessibility/performance receipts.
-
-LOCAL AI IS PRIMARY:
-Treat local models as a core product and the main NovaForge superpower, not a side settings page. Build a device-aware Local Model Fabric with tiny router/compactor/encoder models, a fast local agent/tool tier, deeper coding/reasoning tiers where exact-device evidence permits, and clearly labeled experimental sparse/beyond-RAM tiers. Local Only must never silently use cloud.
-
-FORGE COMPACT / MEMORY SYSTEM:
-Prioritize long autonomous local missions through a measured compaction system using combinations of:
-- low-bit model profiles;
-- native low-bit/ternary architectures where supported;
-- quantized/adaptive KV cache;
-- Project Capsules instead of replaying raw chat history;
-- structured Project Brain retrieval;
-- exact-prefix/KV reuse where valid;
-- speculative decoding;
-- memory-pressure-aware runtime governors;
-- isolated flash-backed cold-weight/neuron loading experiments;
-- sparse/MoE expert paging/streaming experiments;
-- CPU + Metal + flash scheduling research.
-
-LOCAL AI RESEARCH SEEDS:
-The repository contains concrete research directions in `docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md`, including Apple LLM in a Flash, PowerInfer-2, Google TurboQuant, adaptive KV precision, llama.cpp Metal + quantized KV + mmap, community Metal TurboQuant research, Microsoft BitNet/bitnet.cpp, Liquid LFM2.5 tiny models, Qwen3.5 small-agent candidates, sparse/MoE paging, and tiny-drafter/larger-verifier speculative decoding. These are research inputs, NOT product support claims. Fresh-check upstream sources before implementation and require exact iPhone evidence before promoting compatibility or performance claims.
-
-IPHONE 12 / A14 BASELINE:
-Use iPhone 12 as a binding qualification baseline for local-model work where appropriate. Measure exact model + revision + tokenizer + runtime + runtime revision + quant + KV type + context + device + OS + peak memory + memory pressure + TTFT + prefill/decode + thermal + energy + task-suite results. Research-paper numbers and other-phone demos do not count as iPhone 12 proof.
-
-LARGE SWARM:
-If another worker owns the obvious lane, DO NOT WAIT and DO NOT DUPLICATE. Immediately self-reassign to another independent useful lane in the same flagship. Overflow only when the current flagship is genuinely saturated.
-
-FEATURE CLOSURE:
-Optimize for full product vertical slices, not PR count:
-truth/domain -> adversarial truth -> integration -> persistence/migration -> real app wiring -> UX -> visual/motion -> runtime -> screenshots -> accessibility -> performance -> adversarial QA -> final polish -> closed.
-
-DURABILITY:
-Chat-only work is lost work. Every material code change, review finding, test result/failure, visual critique, blocker, exact-head acceptance result, benchmark result, compatibility finding, or handoff must be persisted to GitHub before a worker ends. A reviewer result that only exists in chat does not count.
-
-VISUAL QUALITY:
-Technically correct but visually mediocre user-facing work is unfinished. Major UI needs real iPhone 12/iOS 27 Simulator interaction, screenshot critique, accessibility, and performance checks appropriate to the change. Performance/frame pacing is part of visual quality.
-
-PRODUCT IDENTITY:
-NovaForge is an iPhone-native AI coding agent + personal software creation environment.
-Git/GitHub/Xcode are optional Pro capabilities, not the default product.
-Do not turn it into a GitHub dashboard, CI monitor, terminal-first IDE, generic chatbot, or unrelated Nembra/Voltline work.
-
-SCHEDULED CONTINUITY:
-Do NOT assume NovaForge currently has scheduled workers. No NovaForge scheduled task should be created unless the user explicitly asks for one later. Normal `GO` workers must leave excellent durable GitHub state so later chats can hot-swap cleanly.
-
-PROGRESS REQUESTS:
-Fresh-query GitHub first. Use simple bars for app/product areas, visuals, Local Model Center/model runtime, Forge Compact, autonomy/self-play, generated-runtime capability, and foundations. Separate IN APP/INTEGRATED from IN WORK/ACTIVE. Show BEFORE -> NOW -> CHANGE when available. Do not inflate progress from PR count.
+QUALITY:
+Run relevant tests/build/runtime checks for each change. User-visible iOS work should be run and visually inspected when tooling permits. Reserve whole-product release sweeps, long stress runs, full accessibility/performance qualification, and physical-device model qualification for the changes/milestones that actually require them. Never weaken a gate merely to get green.
 
 SOURCE OF TRUTH:
-Live GitHub > stale project source text. Current upstream model/runtime documentation > old research snapshots. Exact-device evidence > assumptions. Never restore an old SHA/PR simply because a project file names it.
+Live GitHub and exact evidence > stale continuation text, historical worker metadata, old branch names, or swarm paperwork.
