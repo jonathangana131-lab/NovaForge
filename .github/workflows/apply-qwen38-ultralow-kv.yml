@@ -1,0 +1,40 @@
+name: Apply Qwen 3.8 ultra-low-bit KV policy
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_ultralow_kv.py'
+      - '.github/workflows/apply-qwen38-ultralow-kv.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply exact-target ultra-low-bit policy
+        run: python3 ci/apply_qwen38_ultralow_kv.py
+      - name: Validate transformed source
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq 'usesUltraLowBitWeights' AgentPad/Services/LocalModelRuntime.swift
+          grep -Fq 'keyCacheType: usesUltraLowBitWeights ? .q4_0 : .f16' AgentPad/Services/LocalModelRuntime.swift
+          grep -Fq 'testPhoneClassQ1ProfilePreservesSymmetricQ4KVWhileRemainingMapped' Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaRuntimeTunerTests.swift
+      - name: Commit production policy
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- AgentPad/Services/LocalModelRuntime.swift Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaRuntimeTunerTests.swift; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift Vendor/swift-llama-cpp/Tests/SwiftLlamaTests/LlamaRuntimeTunerTests.swift
+          git commit -m 'Runtime: use symmetric Q4 KV for ultra-low-bit Qwen 3.8'
+          git push origin HEAD:feature/qwen38-forge-ios27
