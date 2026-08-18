@@ -1159,6 +1159,7 @@ enum LocalModelDownloader {
         destination: URL,
         progress: @escaping @Sendable (LocalModelDownloadProgress) async -> Void
     ) async throws {
+        try validateDownloadableVariant(variant)
         let directory = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let temporaryURL = temporaryURL(for: destination)
@@ -1259,7 +1260,19 @@ enum LocalModelDownloader {
         return .promoted(receivedBytes: existingBytes)
     }
 
+    static func validateDownloadableVariant(_ variant: LocalModelVariant) throws {
+        guard variant.expectedBytes > 0,
+              !variant.expectedSHA256.isEmpty,
+              variant.downloadURL.host?.lowercased() != "example.invalid"
+        else {
+            throw LocalModelRuntimeError.downloadFailed(
+                "Qwen 3.8 27B public weights are not available yet. Check for the verified release before downloading."
+            )
+        }
+    }
+
     static func validateCompleteDownload(variant: LocalModelVariant, receivedBytes: Int64) throws {
+        try validateDownloadableVariant(variant)
         let expectedBytes = variant.expectedBytes
         guard receivedBytes == expectedBytes else {
             let receivedLabel = ByteCountFormatter.string(fromByteCount: receivedBytes, countStyle: .file)
