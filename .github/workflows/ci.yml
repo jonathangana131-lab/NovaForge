@@ -29,11 +29,13 @@ concurrency:
 jobs:
   verify:
     name: Critical verification
+    # The Qwen 3.8 / iOS 27 product branch has a dedicated xcode-27 workflow
+    # that runs this same critical verifier plus runtime policy, synchronized
+    # visual proof, and packaging. The generic macos-26 image has no eligible
+    # iOS 27 Simulator destination, so do not let that older toolchain create a
+    # false required-check failure on the exact-target PR.
+    if: github.event_name != 'pull_request' || github.head_ref != 'feature/qwen38-forge-ios27'
     runs-on: macos-26
-    # The critical lane now builds once and exercises the expanded harness,
-    # provider-contract, persistence, and Simulator journey matrix. Recent
-    # healthy runs finish near 43 minutes, so leave enough headroom for normal
-    # hosted-runner variance instead of cancelling a correct verification.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
