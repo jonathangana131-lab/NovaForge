@@ -4,6 +4,7 @@ import AgentProviders
 import AgentTools
 import CryptoKit
 import Foundation
+import ForgeCompactCore
 
 enum AgentCanonicalContextLimitKind: String, Equatable, Sendable {
     case modelItems
@@ -176,6 +177,8 @@ struct AgentCanonicalContextConfiguration: Equatable, Sendable {
 /// at initialization and is cryptographically bound to each prepared turn.
 struct AgentCanonicalContextPreparer: AgentContextPreparing, Sendable {
     static let version = "canonical-context-v1"
+    static let projectMemorySupplementBudgetBytes = 64 * 1_024
+    private static let projectMemoryCapsuleHeaderReserveBytes = 1 * 1_024
 
     let configuration: AgentCanonicalContextConfiguration
 
@@ -235,7 +238,7 @@ struct AgentCanonicalContextPreparer: AgentContextPreparing, Sendable {
                 artifacts: state.artifacts,
                 checkpoints: state.checkpoints
             )
-            let text = try canonicalJSONString(supplement)
+            let text = try projectMemorySupplementText(supplement)
             try enforceUTF8Limit(
                 text,
                 kind: .textPartUTF8Bytes,
@@ -1915,6 +1918,115 @@ private extension AgentCanonicalContextPreparer {
             }),
         ])
     }
+}
+
+private extension AgentCanonicalContextPreparer {
+    func projectMemorySupplementText(
+        _ supplement: AgentCanonicalContextSupplement
+    ) throws -> String {
+        let rawText = try canonicalJSONString(supplement)
+        guard rawText.utf8.count > Self.projectMemorySupplementBudgetBytes else {
+            return rawText
+        }
+
+        do {
+            let sourceRevision = forgeCompactSourceRevision(rawText)
+            let authority = try ProjectCapsuleAuthority(
+                projectID: configuration.context.projectID?.description
+                    ?? configuration.context.workspaceID.description,
+                missionID: configuration.context.lineage.runID.description,
+                sourceRevision: sourceRevision,
+                missionRevision: 0,
+                authorityEpoch: 0,
+                capsuleRevision: 0
+            )
+            var items: [ForgeCompactContextItem] = []
+            items.reserveCapacity(supplement.artifacts.count + supplement.checkpoints.count)
+
+            for artifact in supplement.artifacts {
+                let content = try canonicalJSONString(
+                    AgentForgeCompactArtifactPayload(artifact: artifact)
+                )
+                items.append(try ForgeCompactContextItem(
+                    id: "artifact:" + forgeCompactContentID(content),
+                    sourceRevision: sourceRevision,
+                    tier: .l2ProjectMemory,
+                    kind: .sourceLocation,
+                    priority: 60,
+                    content: content,
+                    provenance: ForgeCompactProvenance(
+                        kind: .source,
+                        reference: "artifact:" + artifact.artifactID.description
+                    ),
+                    isAuthoritative: true
+                ))
+            }
+            for checkpoint in supplement.checkpoints {
+                let content = try canonicalJSONString(
+                    AgentForgeCompactCheckpointPayload(checkpoint: checkpoint)
+                )
+                items.append(try ForgeCompactContextItem(
+                    id: "checkpoint:" + forgeCompactContentID(content),
+                    sourceRevision: sourceRevision,
+                    tier: .l2ProjectMemory,
+                    kind: .workingNote,
+                    priority: 80,
+                    content: content,
+                    provenance: ForgeCompactProvenance(
+                        kind: .checkpoint,
+                        reference: "checkpoint:" + checkpoint.checkpointID.description
+                    ),
+                    isAuthoritative: false
+                ))
+            }
+
+            let capsuleBudget = Self.projectMemorySupplementBudgetBytes
+                - Self.projectMemoryCapsuleHeaderReserveBytes
+            let capsule = try ProjectCapsuleBuilder.build(
+                authority: authority,
+                items: items,
+                budgetBytes: capsuleBudget
+            )
+            guard !capsule.selectedItems.isEmpty else { return rawText }
+
+            let header = "[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"
+                + "[source_revision=\(sourceRevision)]"
+                + "[source_items=\(capsule.sourceItemCount)]"
+                + "[selected=\(capsule.selectedItems.count)]"
+                + "[omitted=\(capsule.omittedItems.count)]"
+            let candidate = header + "\n" + capsule.renderedContext
+            guard candidate.utf8.count <= Self.projectMemorySupplementBudgetBytes,
+                  candidate.utf8.count < rawText.utf8.count
+            else {
+                return rawText
+            }
+            return candidate
+        } catch {
+            // Forge Compact is an optimization layer. The canonical raw supplement
+            // remains the source-faithful fallback and must never block a valid turn.
+            return rawText
+        }
+    }
+
+    func forgeCompactSourceRevision(_ text: String) -> String {
+        "sha256:" + forgeCompactContentID(text)
+    }
+
+    func forgeCompactContentID(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+}
+
+private struct AgentForgeCompactArtifactPayload: Encodable {
+    let kind = "artifact_reference"
+    let artifact: ArtifactReference
+}
+
+private struct AgentForgeCompactCheckpointPayload: Encodable {
+    let kind = "context_checkpoint_reference"
+    let checkpoint: ContextCheckpointReference
 }
 
 private struct AgentCanonicalContextSupplement: Encodable {

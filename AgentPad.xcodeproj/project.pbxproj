@@ -195,6 +195,8 @@
 		D42000000000000000000101 /* AgentDomain in Frameworks */ = {isa = PBXBuildFile; productRef = D42000000000000000001601 /* AgentDomain */; };
 		D42000000000000000000102 /* AgentEngine in Frameworks */ = {isa = PBXBuildFile; productRef = D42000000000000000001602 /* AgentEngine */; };
 		D42000000000000000000103 /* AgentStore in Frameworks */ = {isa = PBXBuildFile; productRef = D42000000000000000001603 /* AgentStore */; };
+		FC4100000000000000000101 /* ForgeCompactCore in Frameworks */ = {isa = PBXBuildFile; productRef = FC4100000000000000001601 /* ForgeCompactCore */; };
+		FC4200000000000000000101 /* ForgeCompactCore in Frameworks */ = {isa = PBXBuildFile; productRef = FC4200000000000000001601 /* ForgeCompactCore */; };
 		D41000000000000000000104 /* AgentProviders in Frameworks */ = {isa = PBXBuildFile; productRef = D41000000000000000001604 /* AgentProviders */; };
 		D41000000000000000000105 /* AgentShadow in Frameworks */ = {isa = PBXBuildFile; productRef = D41000000000000000001605 /* AgentShadow */; };
 		D41000000000000000000106 /* AgentTools in Frameworks */ = {isa = PBXBuildFile; productRef = D41000000000000000001606 /* AgentTools */; };
@@ -532,6 +534,7 @@
 				D41000000000000000000104 /* AgentProviders in Frameworks */,
 				D41000000000000000000105 /* AgentShadow in Frameworks */,
 				D41000000000000000000106 /* AgentTools in Frameworks */,
+				FC4100000000000000000101 /* ForgeCompactCore in Frameworks */,
 				D41000000000000000000107 /* AgentPolicy in Frameworks */,
 				AA0000000000000000000163 /* SwiftLlama in Frameworks */,
 			);
@@ -547,6 +550,7 @@
 				D42000000000000000000104 /* AgentProviders in Frameworks */,
 				D42000000000000000000105 /* AgentShadow in Frameworks */,
 				D42000000000000000000106 /* AgentTools in Frameworks */,
+				FC4200000000000000000101 /* ForgeCompactCore in Frameworks */,
 				D42000000000000000000107 /* AgentPolicy in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -914,6 +918,7 @@
 				D41000000000000000001604 /* AgentProviders */,
 				D41000000000000000001605 /* AgentShadow */,
 				D41000000000000000001606 /* AgentTools */,
+				FC4100000000000000001601 /* ForgeCompactCore */,
 				D41000000000000000001607 /* AgentPolicy */,
 				AA0000000000000000001602 /* SwiftLlama */,
 			);
@@ -942,6 +947,7 @@
 				D42000000000000000001604 /* AgentProviders */,
 				D42000000000000000001605 /* AgentShadow */,
 				D42000000000000000001606 /* AgentTools */,
+				FC4200000000000000001601 /* ForgeCompactCore */,
 				D42000000000000000001607 /* AgentPolicy */,
 			);
 			productName = AgentPadTests;
@@ -1018,6 +1024,7 @@
 			packageReferences = (
 				AA0000000000000000001601 /* XCLocalSwiftPackageReference "Vendor/swift-llama-cpp" */,
 				D40000000000000000001601 /* XCLocalSwiftPackageReference "Packages/AgentHarnessKit" */,
+				FC4000000000000000001601 /* XCLocalSwiftPackageReference "Packages/ForgeCompactCore" */,
 			);
 			productRefGroup = AA0000000000000000000940 /* Products */;
 			projectDirPath = "";
@@ -1746,6 +1753,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AgentHarnessKit;
 		};
+		FC4000000000000000001601 /* XCLocalSwiftPackageReference "Packages/ForgeCompactCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/ForgeCompactCore;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1823,6 +1834,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D40000000000000000001601 /* XCLocalSwiftPackageReference "Packages/AgentHarnessKit" */;
 			productName = AgentPolicy;
+		};
+		FC4100000000000000001601 /* ForgeCompactCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FC4000000000000000001601 /* XCLocalSwiftPackageReference "Packages/ForgeCompactCore" */;
+			productName = ForgeCompactCore;
+		};
+		FC4200000000000000001601 /* ForgeCompactCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FC4000000000000000001601 /* XCLocalSwiftPackageReference "Packages/ForgeCompactCore" */;
+			productName = ForgeCompactCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -132,6 +132,111 @@ final class AgentCanonicalContextPreparerTests: XCTestCase {
         XCTAssertEqual(first.toolLocalities, [:])
     }
 
+    func testLargeProjectMemorySupplementCompactsWithoutTouchingCanonicalTranscript() async throws {
+        let fixture = CanonicalContextFixture(seed: 81)
+        let itemID: ModelItemID = canonicalTagged(8_101)
+        let items = [fixture.userItem(id: itemID)]
+        let artifacts: [ArtifactReference] = (0..<400).map { index in
+            ArtifactReference(
+                artifactID: canonicalTagged(81_000 + UInt64(index)),
+                mediaType: "text/plain",
+                contentDigest: canonicalDigest(character: "f"),
+                displayName: "memory-\(index)-" + String(repeating: "x", count: 220)
+            )
+        }
+        let state = fixture.state(modelItems: items, artifacts: artifacts)
+        let baselineState = fixture.state(modelItems: items)
+        let preparer = try fixture.preparer()
+
+        let first = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let second = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let baseline = try await preparer.prepareProviderTurn(state: baselineState, tools: [])
+
+        XCTAssertEqual(first.request, second.request)
+        XCTAssertEqual(first.contextDigest, second.contextDigest)
+        XCTAssertEqual(first.itemIDs, baseline.itemIDs)
+        XCTAssertEqual(first.itemIDs, [itemID])
+        XCTAssertEqual(
+            Array(first.request.messages.dropFirst(3)),
+            Array(baseline.request.messages.dropFirst(2)),
+            "Forge Compact may replace only the project-memory supplement; canonical transcript messages must remain byte-for-byte equivalent"
+        )
+
+        let supplement = try text(from: first.request.messages[2])
+        XCTAssertTrue(supplement.hasPrefix("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
+        XCTAssertTrue(supplement.contains("[source_items=400]"))
+        XCTAssertFalse(supplement.contains("[omitted=0]"))
+        XCTAssertTrue(supplement.contains("[L2][sourceLocation][truth][current]"))
+        XCTAssertFalse(supplement.contains("novaforge_context_supplement_v1"))
+        XCTAssertLessThanOrEqual(
+            supplement.utf8.count,
+            AgentCanonicalContextPreparer.projectMemorySupplementBudgetBytes
+        )
+    }
+
+    func testCompactedCheckpointSummaryRemainsAdvisoryWithoutProvenanceProof() async throws {
+        let fixture = CanonicalContextFixture(seed: 83)
+        let itemID: ModelItemID = canonicalTagged(8_301)
+        let items = [fixture.userItem(id: itemID)]
+        let checkpoints: [ContextCheckpointReference] = (0..<220).map { index in
+            ContextCheckpointReference(
+                checkpointID: canonicalTagged(83_000 + UInt64(index)),
+                schemaVersion: .current,
+                summary: "unverified-summary-\(index)-"
+                    + String(repeating: "z", count: 260),
+                sourceItemIDs: [itemID],
+                sourceDigest: canonicalDigest(character: "d")
+            )
+        }
+        let state = fixture.state(modelItems: items, checkpoints: checkpoints)
+        let preparer = try fixture.preparer()
+
+        let prepared = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let supplement = try text(from: prepared.request.messages[2])
+
+        XCTAssertTrue(supplement.hasPrefix("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
+        XCTAssertTrue(supplement.contains("[source_items=220]"))
+        XCTAssertTrue(supplement.contains("[L2][workingNote][advisory][current]"))
+        XCTAssertFalse(supplement.contains("[L2][workingNote][truth][current]"))
+        XCTAssertEqual(prepared.itemIDs, [itemID])
+    }
+
+    func testProjectMemorySupplementFailureFallsBackByteForByteToCanonicalRawJSON() async throws {
+        let fixture = CanonicalContextFixture(seed: 82)
+        let itemID: ModelItemID = canonicalTagged(8_201)
+        let items = [fixture.userItem(id: itemID)]
+        let checkpoints: [ContextCheckpointReference] = (0..<2).map { index in
+            ContextCheckpointReference(
+                checkpointID: canonicalTagged(82_000 + UInt64(index)),
+                schemaVersion: .current,
+                summary: "checkpoint-\(index)-" + String(repeating: "y", count: 40_000),
+                sourceItemIDs: [itemID],
+                sourceDigest: canonicalDigest(character: "e")
+            )
+        }
+        let state = fixture.state(modelItems: items, checkpoints: checkpoints)
+        let preparer = try fixture.preparer()
+
+        let prepared = try await preparer.prepareProviderTurn(state: state, tools: [])
+        let supplement = try text(from: prepared.request.messages[2])
+        let expected = try canonicalEncodableJSONString(
+            CanonicalContextSupplementMirror(
+                kind: "novaforge_context_supplement_v1",
+                artifacts: [],
+                checkpoints: checkpoints
+            )
+        )
+
+        XCTAssertEqual(supplement, expected)
+        XCTAssertGreaterThan(
+            supplement.utf8.count,
+            AgentCanonicalContextPreparer.projectMemorySupplementBudgetBytes
+        )
+        XCTAssertTrue(supplement.contains("novaforge_context_supplement_v1"))
+        XCTAssertFalse(supplement.contains("[NOVAFORGE_PROJECT_MEMORY_CAPSULE_V1]"))
+        XCTAssertEqual(prepared.itemIDs, [itemID])
+    }
+
     func testSingleToolEnvelopeUsesExactProviderCallIDAndLosslessResult() async throws {
         let fixture = CanonicalContextFixture(seed: 2)
         let descriptor = try readFileDescriptor()
@@ -1036,6 +1141,18 @@ private func canonicalJSONString(_ value: JSONValue) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     return String(decoding: try encoder.encode(value), as: UTF8.self)
+}
+
+private func canonicalEncodableJSONString<T: Encodable>(_ value: T) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return String(decoding: try encoder.encode(value), as: UTF8.self)
+}
+
+private struct CanonicalContextSupplementMirror: Encodable {
+    let kind: String
+    let artifacts: [ArtifactReference]
+    let checkpoints: [ContextCheckpointReference]
 }
 
 private func assertCanonicalContextError<T: Sendable>(
