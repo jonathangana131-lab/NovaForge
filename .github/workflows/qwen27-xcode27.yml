@@ -52,8 +52,8 @@ jobs:
             exit 71
           fi
 
-          rg -n 'static var all: \[LocalModelVariant\]|static var presentationOrder|safestVariant' AgentPad/Services/LocalModelRuntime.swift
-          rg -n 'testLocalCatalogPresentsOnlyQwen38TargetAndNeverFallsBack|testStaticCatalogDoesNotSelfAwardDeviceQualification' \
+          grep -En 'static var all: \[LocalModelVariant\]|static var presentationOrder|safestVariant' AgentPad/Services/LocalModelRuntime.swift
+          grep -En 'testLocalCatalogPresentsOnlyQwen38TargetAndNeverFallsBack|testStaticCatalogDoesNotSelfAwardDeviceQualification' \
             AgentPadTests/AgentRuntimeLifecycleTests.swift \
             AgentPadTests/AgentLocalModelProviderTransportTests.swift
           echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
