@@ -170,7 +170,10 @@ enum AgentSystemFreshRunRequestFactory {
                 prompt: prompt,
                 acceptedAt: acceptedAt,
                 features: features,
-                budget: standardBudget,
+                budget: AgentRunEffortBudgetPolicy.budget(
+                    reasoningEffort: preferences.reasoningEffort,
+                    orchestrationMode: orchestrationMode
+                ),
                 lineage: lineage
             )
         )
