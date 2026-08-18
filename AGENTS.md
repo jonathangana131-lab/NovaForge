@@ -1,134 +1,151 @@
-# NovaForge iOS Agent Notes
+# NovaForge autonomous development contract
 
-## V14 execution authority — read first
+This root `AGENTS.md` is the execution authority for Codex and other coding agents working in NovaForge.
 
-NovaForge product identity remains **NovaForge 2.0 / iPhone AI Creation OS** from V13, but concurrent execution is now governed by **NF-SWARM-v14**.
+The old NF-SWARM-v14 / large-swarm scheduler, worker-lane ownership, synthetic capacity rules, recovery-branch ladders, and related coordination ceremony are retired for normal development. Historical swarm/continuation documents may still contain useful product research or evidence, but they do not decide whether an agent may do ordinary repository work.
 
-Before substantial work, read in this order:
+## Product goal
 
-1. `NovaForge_Master_Continuation_v14_Swarm_Product_Closure_GO.txt` — canonical `GO` behavior and feature-closure execution kernel.
-2. `docs/NOVAFORGE_V14_SWARM_OPERATING_SYSTEM.md` — large-swarm anti-collision, no-wait, integration-closer, durability, visual, and continuity rules.
-3. `CONTINUATION_PROMPT.md` — concise fresh-session boot/resume contract.
-4. `NovaForge_V14_Project_Sources_Pack.txt` — compact all-in-one V14 project source pack for product north star, autonomy, local AI, Forge Compact, and exact iPhone qualification direction.
-5. `docs/NOVAFORGE_V14_LOCAL_AI_AUTONOMOUS_FORGE.md` — flagship local-model fabric, Forge Compact, Composer/Plan Space, Full Forge autonomy, self-play/playtest, repair and evidence-backed completion direction.
-6. `docs/NOVAFORGE_V14_LOCAL_AI_RESEARCH_SEEDS.md` — concrete low-RAM/high-speed research seeds: LLM in a Flash, PowerInfer-2, TurboQuant, adaptive KV, llama.cpp Metal/KV/mmap, BitNet, tiny edge models, sparse/MoE paging and speculative decoding. These are research inputs, not support claims.
-7. `docs/NOVAFORGE_V13_PRODUCT_CONSTITUTION.md` — product identity and generation goals.
-8. `docs/NOVAFORGE_V13_AGENT_RUNTIME_ARCHITECTURE.md` — durable mission, Project Brain, Forge Runtime, model/runtime boundaries.
-9. `docs/NOVAFORGE_V13_DESIGN_SYSTEM.md` — visual language and quality bar.
-10. `docs/NOVAFORGE_V13_ROADMAP.md` — product closure waves and capability ordering.
-11. GitHub issue `#23` — live swarm coordination context; live GitHub code/PRs always outrank stale issue text.
+NovaForge is an iPhone-native, local-first AI creation OS. The normal product loop is **Describe -> Understand -> Forge -> Run -> Experience -> Critique -> Repair -> Polish -> Complete**.
 
-When the user says only `GO`, do not ask what to do. Fresh-check live GitHub, map active ownership, claim the highest-value safe non-conflicting lane, execute immediately, checkpoint durably, refresh, and continue.
+The target is a coherent, excellent NovaForge release, not a growing collection of agent branches. Product quality, local-model truth, durability, speed, visual polish, and working autonomy matter more than PR count or worker count.
 
-### V14 mandatory swarm rules
+When the user says `Go`, `continue`, `keep going`, `work on NovaForge`, `finish NovaForge`, or similarly gives broad authorization, begin real repository work immediately. Do not ask the user to choose a task when live GitHub and the product docs can determine the next useful outcome.
 
-- **No-wait rule:** if another worker owns the obvious lane, do not wait and do not duplicate it; immediately self-reassign to another useful independent lane inside the same flagship.
-- **Feature gravity:** workers belong to a feature/capability, not one PR. A merged/blocked/superseded PR triggers refresh + hot-swap, not session end.
-- **GitHub-or-it-didn’t-happen:** chat-only reviewer findings, test results, visual critiques, blockers, or handoffs are lost work. Persist every material result to GitHub before ending.
-- **Integration closer:** current flagships should have a closer composing accepted independent work into the strongest current spine while other workers continue adjacent lanes.
-- **Visual quality is a release gate:** app-visible work requires real Simulator/runtime interaction, screenshot critique, accessibility, and performance evidence appropriate to the change.
-- **CI is a checkpoint:** while CI runs, do useful non-conflicting work instead of idling/polling.
-- **Scheduled continuity is conditional:** if NovaForge schedulers are explicitly configured in the future, they should continue useful repository work after interactive workers die/time out/go idle and must leave durable GitHub state. Do not assume schedulers exist today.
+## Source of truth
 
-The V13 product documents below remain authoritative product/architecture context. V14 supersedes older swarm execution behavior where they conflict.
+Use, in this order:
 
-## V14 flagship product emphasis
+1. current `main` code and tests;
+2. current open PRs, checks, reviews, and recent commits;
+3. current NovaForge product/architecture/design/local-AI docs;
+4. exact runtime/device evidence;
+5. issues that still reproduce on current code.
 
-NovaForge must become a **local-first AI creation machine**, not merely a prettier coding chat.
+Live code and exact evidence outrank stale continuation snapshots, worker labels, old branch names, or historical swarm instructions.
 
-- The Composer + Plan Space are flagship surfaces and must reach first-party visual/interaction quality.
-- Full Forge is an evidence-backed autonomous mode: build, run, interact/play, inspect, test, visually critique, repair, regress, polish, then complete only when the Completion Constitution is satisfied.
-- Local models are primary. Build a device-aware Local Model Fabric with tiny specialist/router models, a default local agent, deeper local tiers where possible, and truthful experimental beyond-RAM modes.
-- Build Forge Compact for model/KV/context efficiency: low-bit profiles, KV compression, Project Capsules, structured Project Brain retrieval, prefix/KV reuse where valid, speculative decoding, and isolated flash/expert-streaming research.
-- Forge Runtime should expose safe semantic playtest inputs so NovaForge can actually self-test generated games/apps instead of merely inspecting source.
-- “Complete” must point to exact build/runtime/test/visual/accessibility/performance evidence; a model saying done is never proof.
+## Autonomous loop
 
-## V13 product authority — preserved
+For broad work:
 
-NovaForge is operating under **NovaForge 2.0 iPhone AI Creation OS** product direction.
+1. Refresh `main`, open PRs, red CI, recent merges, and release-critical issues.
+2. Prefer finishing a strong existing PR over creating another implementation of the same outcome.
+3. If no near-merge work should be completed first, pick the highest-value current blocker to a coherent product/release outcome.
+4. Read affected code and relevant product contracts before editing.
+5. Implement real work.
+6. Run the relevant tests/build/runtime/visual checks for the risk of the change.
+7. Fix review/test/runtime findings on the same branch when practical.
+8. Merge when accepted and repository permissions allow it; verify `main` afterward.
+9. Refresh GitHub and continue while the current execution window permits useful progress.
 
-Critical product identity: NovaForge is an iPhone-native AI coding agent + personal software creation environment. Git/GitHub/Xcode are optional Pro capabilities, not the default product. Normal flow is **Describe -> Build -> Run -> Improve**.
+A commit, PR, test pass, screenshot, review, or merge is a checkpoint, not an automatic stopping point.
 
-Legacy code is not sacred. Preserve proven provider/security/local-model/domain behavior and useful user data; controlled rewrite/refactor of obsolete giant presentation/state architecture is explicitly allowed when migration/regression safety exists.
+## Coordination: use GitHub, not a custom swarm database
 
-## Project
+There is no fixed worker quota and no reason to fill idle slots.
 
-- App name: NovaForge
-- Xcode project: `AgentPad.xcodeproj`
-- Shared scheme: `AgentPad`
-- App bundle id: `com.joey.NovaForge`
-- Built simulator app: `NovaForge.app`
-- Known simulator id: `4B9AB34A-404C-485F-B0BC-964F24D0AE83`
+Default to one implementation per overlapping subsystem. Parallelize only clearly independent work. A practical ceiling is four concurrent writers in this repository; fewer is usually better. Review/test/visual QA may happen alongside implementation.
 
-## Preferred iOS Tooling
+Before opening a branch or making a broad edit, inspect current PRs/branches for overlap. If another live PR already addresses substantially the same problem, finish/review/fix that path or choose a genuinely independent target.
 
-- XcodeBuildMCP is registered globally in Codex as `XcodeBuildMCP`.
-- If the MCP tools are not visible in the current thread, start a fresh Codex thread/session after config reload.
-- Prefer XcodeBuildMCP for simulator discovery, session defaults, build/run, UI description, screenshots, and log capture.
-- Fall back to the repo scripts below when the MCP server is unavailable.
+Do not create recovery/successor branches merely because CI is pending, a chat ended, or the existing implementation is difficult. Rebase/update the real branch or deliberately replace it once, close the loser, and converge.
 
-## Commands
+No worker IDs, custom claims, leases, heartbeats, fencing tokens, mission graph, admission controller, capacity miner, synthetic role allocator, or stop-authority protocol is required.
 
-Build for simulator:
+## Branch / PR / merge behavior
+
+- Keep branches short-lived and outcome-focused.
+- Do not open empty/placeholder PRs.
+- Prefer PRs directly against `main` unless a concrete integration dependency requires stacking.
+- Avoid long PR chains. Fold compatible fixes into the current candidate instead of creating a PR tree.
+- Close obsolete/duplicate branches and PRs after replacement or merge.
+- If checks/review/evidence are sufficient and permissions allow it, merge and verify `main`.
+- If the current environment cannot perform a required final merge or device test, leave one clear merge-ready candidate or one exact blocker, not more coordination scaffolding.
+
+## Quality gates by risk
+
+For ordinary changes, run focused tests plus the build/static checks that cover touched code. Do not force final-release ceremony onto every small PR.
+
+For user-visible SwiftUI changes, build/run the real app or Simulator when available, interact with the changed flow, inspect screenshots, and check accessibility for the affected surface.
+
+For persistence, auth, local-model runtime, tool execution, project mutation, concurrency, security, or architecture changes, add targeted regression coverage and validate the real boundary being changed.
+
+Use whole-product visual sweeps, long stress/soak runs, complete accessibility passes, performance qualification, physical-device model qualification, and release packaging at major milestones/release-candidate time or when a change specifically requires them.
+
+Never weaken a test merely to make a branch green. Never describe uninspected generated screenshots as visual acceptance.
+
+## Local AI and Qwen truth
+
+Local AI is a primary NovaForge capability, not a side settings feature.
+
+The repository currently contains active Qwen 3.8 work, including the Qwen 3.8 27B iOS 27 qualification lane. Treat that as real product work, not as a separate swarm project. Finish the strongest current implementation rather than spawning more Qwen recovery branches.
+
+- Never invent supported model sizes, tokens/sec, RAM, thermal, energy, context, or device-compatibility claims.
+- Simulator/source success is not physical iPhone qualification.
+- Local Only must never silently use cloud.
+- Preserve validated tool/action boundaries and user data while improving the runtime.
+- If exact physical-device evidence is unavailable, continue with software correctness, integration, UX, storage, cancellation, model-management, benchmark plumbing, and other independent work; keep the missing physical claim explicit.
+- Prefer measured device-aware runtime behavior over marketing-style labels.
+
+The local-model work should converge into the main NovaForge app/runtime instead of living indefinitely in experimental branches.
+
+## Product direction worth preserving
+
+NovaForge should remain a creation environment rather than a GitHub/CI dashboard or terminal-first IDE. Git/GitHub/Xcode are optional power-user capabilities, not the default user experience.
+
+The Composer and Plan Space are flagship surfaces. Full Forge should eventually plan, implement, build, run, interact/play, inspect, test, visually critique, repair, regress, polish, and finish using real evidence rather than a model saying `done`.
+
+Preserve user projects and durable state through explicit migrations. Legacy architecture is not sacred when a measured refactor produces a simpler, faster, more reliable product with regression coverage.
+
+## Preferred iOS tooling
+
+Project: `AgentPad.xcodeproj`
+Shared scheme: `AgentPad`
+Bundle id: `com.joey.NovaForge`
+
+XcodeBuildMCP is preferred when available for simulator discovery, build/run, UI inspection, screenshots, and logs.
+
+Build for Simulator:
 
 ```sh
 xcodebuild -project AgentPad.xcodeproj -scheme AgentPad -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
 ```
 
-Run focused tests:
+Run tests:
 
 ```sh
 xcodebuild -project AgentPad.xcodeproj -scheme AgentPad -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO test
 ```
 
-Build, install, launch, and capture one smoke screenshot:
+Smoke/tour helpers when available:
 
 ```sh
 BUILD_FIRST=1 scripts/codex-sim-smoke.sh
-```
-
-Capture the primary NovaForge surface tour:
-
-```sh
 BUILD_FIRST=1 scripts/codex-sim-tour.sh
 ```
 
-Useful launch arguments already supported by the smoke/tour scripts:
+Run one long Xcode/simulator command at a time with sensible timeouts. Do not leave runaway build/simulator helper processes behind.
 
-- `--reset-ui`
-- `--open-chat` (lands on Forge)
-- `--open-project` (lands on Forge; mission state on the strip)
-- `--open-files` (lands on Workspace)
-- `--open-runs` (lands on History)
-- `--open-terminal` (debug terminal surface)
-- `--open-settings` (lands on Control)
-- `--first-run-local-model-missing`
-- `--settings-local-model-ready`
-- `--pending-approval-demo`
+## Issue discipline
 
-## Historical Four-Tab Architecture (July 2026)
+Fix small adjacent defects in the current work when safe. Do not mass-mine issues to create work for idle agents.
 
-This is the current/legacy implementation shape, **not a permanent V13/V14 navigation requirement**.
+Open an issue when a real defect cannot responsibly be fixed in the current change, needs external evidence, or deserves independent scheduling. Keep it reproducible and concise. Issue count is not progress.
 
-- Tabs: **Forge** (chat + live mission strip + inline approvals — the loop), **Workspace** (files, artifact shelf, terminal), **History** (run receipts), **Control** (settings).
-- Projects are a context, not a tab: the scope pill in the Forge header switches projects; the full project dashboard presents as the modal "mission dossier" (`MissionDossierCover` in `ForgeChrome.swift`, presented from `AppRootView.missionDossierCover`).
-- `AppTab` keeps legacy static aliases (`.chat`, `.project`, `.files`, `.runs`, `.settings`, `.terminal`) and `AppTab.resolve(_:)` so old launch args, Siri intents, and fixtures keep routing.
-- Forge chrome lives in `AgentPad/Views/ForgeChrome.swift`: `ForgeHeader` (single-deck, never clips, one prioritized `ForgeSignal` chip), `ForgeMissionStrip` (Approve/Reject/Stop/countdown inline; also reused on History), `MissionDossierCover`.
-- `ChatHeaderStrip.swift` is a tombstone — do not resurrect the chip train.
-- Historical de-theater rules remain good: content starts early, one fact stated once, search/filters appear only when collections need them.
+## Codex behavior
 
-Under V14 these concepts can be migrated, replaced, or restructured if the new product shell proves better while preserving user data and accepted behavior.
+Codex should use this `AGENTS.md` automatically as repository instruction. For a broad request such as `work on NovaForge and keep making the best progress you can`, inspect live GitHub, choose the strongest current outcome, edit/test/commit real code, and continue. Do not return only a roadmap.
 
-## Working Rules
+If several Codex tasks are launched, use them for clearly disjoint work or for review/testing of the same candidate; do not make them race to implement the same subsystem.
 
-- Keep SwiftUI edits scoped and reversible where possible.
-- Preserve user project state and persistence through explicit migration.
-- Prefer existing design components only when they meet the quality bar; legacy components are not sacred.
-- Use `@State`, `@Binding`, `@Environment`, `@Query`, `.task`, and `.task(id:)` before adding unnecessary view-model layers, while allowing proper feature/domain models where durability requires them.
-- Use iOS 27 Liquid Glass APIs only with availability checks and excellent fallbacks.
-- Run one long build/simulator command at a time with hard timeouts.
-- Do not leave `xcodebuild`, `simctl`, or simulator helper commands running.
-- Do not use destructive git commands.
-- Major visual work requires real Simulator/runtime interaction + screenshots + critique.
-- A PR is a checkpoint, not an excuse to stop while meaningful safe work remains.
-- Do not let coordination bureaucracy outrank actual product development.
+## Ordinary ChatGPT / GitHub-connector behavior
+
+A ChatGPT coding session should follow the same loop. Refresh live GitHub first, act on real code/PRs, use available review/merge actions, and continue after checkpoints. When local Xcode/device actions are unavailable, make another useful non-conflicting repository contribution rather than reverting to swarm bookkeeping.
+
+## Release behavior
+
+Drive toward the next coherent NovaForge release with fewer stronger branches as it approaches. Finish integration, close obsolete work, run the full applicable release acceptance surface, fix release blockers, and publish only when the repository's actual release requirements are met.
+
+The operating principle is:
+
+**inspect live truth -> finish the highest-value real outcome -> test it -> merge it -> refresh -> continue**
