@@ -1729,17 +1729,17 @@ final class AgentPadUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(app.staticTexts["On-Device Models"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Qwen Coder 1.5B — iPhone 12"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Qwen 3.8 27B — Awaiting Open Weights"].waitForExistence(timeout: 5))
 
         let picker = app.buttons["modelPickerButton"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         picker.tap()
         XCTAssertTrue(app.staticTexts["Choose On-Device Model"].waitForExistence(timeout: 5))
         XCTAssertTrue(identifiedElement("localModelSafetyCard", in: app).waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Atlas 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Qwen 3.8 27B — Awaiting Open Weights"].waitForExistence(timeout: 5))
         XCTAssertTrue(
-            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Jul 20, 2026")).firstMatch.waitForExistence(timeout: 5),
-            "The primary local-model picker should show the release date before selection."
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Not released")).firstMatch.waitForExistence(timeout: 5),
+            "The exact Qwen 3.8 target should show its verified release state before selection."
         )
         capture("18-local-model-settings", app: app)
     }
