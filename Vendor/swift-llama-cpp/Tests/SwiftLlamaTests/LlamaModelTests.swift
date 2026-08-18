@@ -3,6 +3,19 @@ import Foundation
 @testable import SwiftLlama
 
 struct LlamaModelTests {
+    @Test("Token piece buffer growth accepts only larger bounded requests")
+    func testTokenPieceBufferGrowthBounds() {
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -128, currentSize: 64) == 128)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -65, currentSize: 64) == 65)
+
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: 0, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: 12, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -64, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -32, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -128, currentSize: 0) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: Int32.min, currentSize: 64) == nil)
+    }
+
     @Test("Tokenize of empty string is empty and chat template returns something")
     func testTokenizeEmptyAndChatTemplate() throws {
         let model = try #require(LlamaModel(path: URL.llama1B.path))
