@@ -83,13 +83,32 @@ public final class LlamaModel {
         return String(cString: results, encoding: .utf8) ?? ""
     }
 
+    /// Return the next token-piece buffer size requested by llama.cpp.
+    /// A negative `llama_token_to_piece` result encodes the required byte count.
+    static func nextTokenPieceBufferSize(for result: Int32, currentSize: Int32) -> Int32? {
+        guard result < 0, currentSize > 0 else { return nil }
+        let requiredSize = -Int64(result)
+        guard requiredSize > Int64(currentSize), requiredSize <= Int64(Int32.max) else { return nil }
+        return Int32(requiredSize)
+    }
+
     /// Convert a token id to its piece (optionally rendering special tokens).
     public func piece(from token: llama_token, renderSpecial: Bool = false, lstrip: Int32 = 0) -> String {
-        let bufferSize: Int32 = 64
-        var buffer = [CChar](repeating: 0, count: Int(bufferSize))
-        let charCount = llama_token_to_piece(vocabPointer, token, &buffer, bufferSize, lstrip, renderSpecial)
-        let chars = Array(buffer.prefix(upTo: Int(charCount))) + [0]
-        return String(cString: chars, encoding: .utf8) ?? ""
+        var bufferSize: Int32 = 64
+
+        while true {
+            var buffer = [CChar](repeating: 0, count: Int(bufferSize))
+            let charCount = llama_token_to_piece(vocabPointer, token, &buffer, bufferSize, lstrip, renderSpecial)
+
+            if let requiredSize = Self.nextTokenPieceBufferSize(for: charCount, currentSize: bufferSize) {
+                bufferSize = requiredSize
+                continue
+            }
+
+            guard charCount >= 0, charCount <= bufferSize else { return "" }
+            let chars = Array(buffer.prefix(Int(charCount))) + [0]
+            return String(cString: chars, encoding: .utf8) ?? ""
+        }
     }
 
     /// Beginning-of-sentence token id.
