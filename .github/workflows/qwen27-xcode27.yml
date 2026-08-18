@@ -1,5 +1,5 @@
 name: Qwen 3.8 27B Xcode 27 Validation
-# Stable exact-tree Xcode 27 + iOS 27 qualification.
+# Exact-tree Xcode 27 + iOS 27 qualification for the Qwen-3.8-only product.
 
 on:
   push:
@@ -28,24 +28,27 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: true
-      - name: Apply pending production source transform
+
+      - name: Apply fail-closed production transforms
         id: patch
         shell: bash
         run: |
           set -euo pipefail
-          if python3 ci/apply_artifact_preview_mode_fix.py; then
-            git diff --check
-          fi
-          if ! git diff --quiet -- AgentPad/Views/ArtifactPreviewSheet.swift; then
+          python3 ci/apply_artifact_preview_mode_fix.py
+          python3 ci/apply_qwen38_download_guard.py
+          git diff --check
+
+          if ! git diff --quiet -- AgentPad/Views/ArtifactPreviewSheet.swift AgentPad/Services/LocalModelRuntime.swift; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add AgentPad/Views/ArtifactPreviewSheet.swift
-            git commit -m 'Fix normal artifact preview mode state'
+            git add AgentPad/Views/ArtifactPreviewSheet.swift AgentPad/Services/LocalModelRuntime.swift
+            git commit -m 'Harden Qwen 3.8 preview and download boundaries'
             git fetch origin feature/qwen38-forge-ios27
             git rebase origin/feature/qwen38-forge-ios27
             git push origin HEAD:feature/qwen38-forge-ios27
           fi
           echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Publish live Xcode 27 receipt
         shell: bash
         run: |
@@ -69,23 +72,46 @@ jobs:
           git fetch origin feature/qwen38-forge-ios27
           git rebase origin/feature/qwen38-forge-ios27 || true
           git push origin HEAD:feature/qwen38-forge-ios27 || true
+
       - name: Show Xcode and iOS runtimes
         run: |
           xcodebuild -version
           xcrun simctl list runtimes
+
       - name: Install source-search dependency
         run: command -v rg >/dev/null 2>&1 || brew install ripgrep
-      - name: Run SwiftLlama runtime safety tests first
+
+      - name: Build SwiftLlama runtime test graph
+        working-directory: Vendor/swift-llama-cpp
         run: |
           set -euo pipefail
-          cd Vendor/swift-llama-cpp
-          swift test --filter LlamaRuntimeTunerTests
+          swift package resolve
+          swift build --build-tests
+
+      - name: Run giant-model runtime safety policy
+        working-directory: Vendor/swift-llama-cpp
+        run: |
+          set -euo pipefail
+          LLAMA_FRAMEWORK="$(find .build -type d -path '*/macos-*/llama.framework' -print | head -n 1)"
+          if [ -z "$LLAMA_FRAMEWORK" ]; then
+            echo 'Resolved macOS llama.framework was not found under .build' >&2
+            find .build -maxdepth 9 -type d -name 'llama.framework' -print || true
+            exit 69
+          fi
+          LLAMA_BINARY="$LLAMA_FRAMEWORK/Versions/Current/llama"
+          test -f "$LLAMA_BINARY"
+          LLAMA_FRAMEWORK_PARENT="$(cd "$(dirname "$LLAMA_FRAMEWORK")" && pwd)"
+          export DYLD_FRAMEWORK_PATH="$LLAMA_FRAMEWORK_PARENT${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+          swift test --skip-build --filter LlamaRuntimeTunerTests
+          swift test --skip-build --filter LlamaPerformanceTests
+
       - name: Build and run critical verification
         env:
           NOVAFORGE_TEST_LANE: critical
           XCODEBUILD_CAP_MINUTES: 65
           UNIT_TEST_TIMEOUT: 540
         run: bash ci/verify.sh
+
       - name: Upload Xcode 27 diagnostics
         if: always()
         uses: actions/upload-artifact@v7
