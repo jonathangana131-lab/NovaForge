@@ -1,0 +1,98 @@
+name: Upgrade llama.cpp b10472
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - '.github/workflows/upgrade-llama-b10472.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qwen38-llama-b10472-upgrade
+  cancel-in-progress: false
+
+jobs:
+  qualify-and-pin:
+    runs-on: xcode-27
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Download exact official XCFramework and compute SwiftPM checksum
+        id: asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION='b10472'
+          URL="https://github.com/ggml-org/llama.cpp/releases/download/${VERSION}/llama-${VERSION}-xcframework.zip"
+          curl --fail --location --retry 4 --retry-all-errors --output /tmp/llama-${VERSION}-xcframework.zip "$URL"
+          CHECKSUM="$(swift package compute-checksum /tmp/llama-${VERSION}-xcframework.zip)"
+          test "${#CHECKSUM}" -eq 64
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
+          echo "Qualified $VERSION XCFramework checksum: $CHECKSUM"
+
+      - name: Pin b10472 immutably
+        shell: bash
+        env:
+          LLAMA_VERSION: ${{ steps.asset.outputs.version }}
+          LLAMA_CHECKSUM: ${{ steps.asset.outputs.checksum }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('Vendor/swift-llama-cpp/Package.swift')
+          text = path.read_text()
+          import re
+          text, n1 = re.subn(r'let llamaVersion = "b[0-9]+"', f'let llamaVersion = "{os.environ["LLAMA_VERSION"]}"', text, count=1)
+          text, n2 = re.subn(r'let llamaChecksum = "[0-9a-f]{64}"', f'let llamaChecksum = "{os.environ["LLAMA_CHECKSUM"]}"', text, count=1)
+          if n1 != 1 or n2 != 1:
+              raise SystemExit(f'failed to pin package: version={n1} checksum={n2}')
+          path.write_text(text)
+          PY
+          git diff --check
+          grep -Fq 'let llamaVersion = "b10472"' Vendor/swift-llama-cpp/Package.swift
+
+      - name: Resolve and compile current SwiftLlama against b10472
+        working-directory: Vendor/swift-llama-cpp
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .build
+          swift package resolve
+          swift build --build-tests
+
+      - name: Execute model-independent runtime gates
+        working-directory: Vendor/swift-llama-cpp
+        shell: bash
+        run: |
+          set -euo pipefail
+          LLAMA_FRAMEWORK="$(find .build -type d -path '*/macos-*/llama.framework' -print | head -n 1)"
+          test -n "$LLAMA_FRAMEWORK"
+          export DYLD_FRAMEWORK_PATH="$(cd "$(dirname "$LLAMA_FRAMEWORK")" && pwd)"
+          swift test --skip-build --filter LlamaRuntimeTunerTests
+          swift test --skip-build --filter LlamaPerformanceTests
+
+      - name: Commit qualified runtime pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Vendor/swift-llama-cpp/Package.swift; then
+            echo 'b10472 already pinned.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Vendor/swift-llama-cpp/Package.swift
+          git commit -m 'Runtime: pin latest llama.cpp b10472 XCFramework'
+          git fetch origin feature/qwen38-forge-ios27
+          git rebase origin/feature/qwen38-forge-ios27
+          git push origin HEAD:feature/qwen38-forge-ios27
