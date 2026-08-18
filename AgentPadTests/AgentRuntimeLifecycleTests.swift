@@ -4609,73 +4609,82 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: finalURL.path))
     }
 
-    func testLocalCatalogPresentsNewestModelFirstButKeepsDeviceProvenDefault() throws {
-        let atlas = try XCTUnwrap(
-            LocalModelCatalog.variant(
-                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
-            )
-        )
-
-        XCTAssertEqual(LocalModelCatalog.presentationOrder.first?.id, atlas.id)
-        XCTAssertEqual(atlas.releaseDateISO8601, "2026-07-20")
-        XCTAssertEqual(atlas.expectedBytes, 397_808_608)
-        XCTAssertEqual(
-            atlas.expectedSHA256,
-            "3df10fa96ad19ddcda435506781308c9eeeedaab35f1a0a86ff198ad0e1ce871"
-        )
-        XCTAssertEqual(atlas.deviceFit, .ultraLight)
-        XCTAssertTrue(LocalModelCatalog.defaultVariant.isIPhone12SafeDefault)
-        XCTAssertEqual(LocalModelCatalog.defaultVariant.deviceFit, .deviceProven)
+    func testLocalCatalogPresentsOnlyQwen38TargetAndNeverFallsBack() throws {
+        let target = LocalModelCatalog.defaultVariant
+        XCTAssertEqual(LocalModelCatalog.presentationOrder.count, 1)
+        XCTAssertEqual(LocalModelCatalog.all.count, 1)
+        XCTAssertEqual(LocalModelCatalog.presentationOrder.first?.id, target.id)
+        XCTAssertEqual(LocalModelCatalog.safestVariant(forPhysicalMemory: 1).id, target.id)
+        XCTAssertNil(LocalModelCatalog.variant(for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"))
+        XCTAssertNil(LocalModelCatalog.variant(for: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"))
+        XCTAssertEqual(target.deviceFit, .extreme)
     }
 
     func testRuntimeMemoryAdmissionFailsClosedBeforeFirstAllocation() throws {
-        let atlas = try XCTUnwrap(
-            LocalModelCatalog.variant(
-                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
-            )
+        var target = LocalModelCatalog.defaultVariant
+        // The unreleased sentinel intentionally has no load budget yet. Exercise
+        // the admission boundary with an explicit Qwen-3.8-shaped test variant.
+        target = LocalModelVariant(
+            id: "qwen38:test-memory",
+            displayName: "Qwen 3.8 27B Test",
+            shortName: "Qwen 3.8 27B",
+            quantization: "TEST",
+            filename: "qwen38-test.gguf",
+            downloadURL: URL(string: "https://example.com/qwen38-test.gguf")!,
+            expectedBytes: 1,
+            expectedSHA256: String(repeating: "a", count: 64),
+            minimumPhysicalMemoryBytes: 1,
+            recommendedFreeDiskBytes: 1,
+            contextTokens: 4_096,
+            batchTokens: 8,
+            maxNewTokens: 64,
+            maxGenerationSeconds: 30,
+            useGPU: false,
+            gpuLayerCount: 0,
+            generationThreadCount: 2,
+            batchThreadCount: 2,
+            isIPhone12SafeDefault: false,
+            releaseDateISO8601: "2026-08-17",
+            releaseDateLabel: "Test",
+            parameterLabel: "27B",
+            licenseLabel: "test",
+            benchmarkSummary: "Unit test",
+            capabilitySummary: "Unit test",
+            deviceFit: .extreme,
+            estimatedPeakMemoryBytes: 1_500_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 1_200_000_000,
+            sourceURL: URL(string: "https://example.com/qwen38-test")!,
+            details: "Qwen 3.8 memory-boundary test fixture."
         )
 
         XCTAssertNil(
             LocalModelRuntimeMemoryPolicy.admissionMessage(
-                for: atlas,
-                availableMemory: atlas.minimumAvailableMemoryBeforeLoadBytes,
+                for: target,
+                availableMemory: target.minimumAvailableMemoryBeforeLoadBytes,
                 thermalState: .nominal
             )
         )
         let blocked = LocalModelRuntimeMemoryPolicy.admissionMessage(
-            for: atlas,
-            availableMemory: atlas.minimumAvailableMemoryBeforeLoadBytes - 1,
+            for: target,
+            availableMemory: target.minimumAvailableMemoryBeforeLoadBytes - 1,
             thermalState: .nominal
         )
         XCTAssertNotNil(blocked)
         XCTAssertTrue(blocked?.contains("before first-prompt allocation") == true)
     }
 
-    func testRuntimeMemoryAdmissionBlocksHotLargeModelButAllowsUltraLight() throws {
-        let qwen = LocalModelCatalog.defaultVariant
-        let atlas = try XCTUnwrap(
-            LocalModelCatalog.variant(
-                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
-            )
-        )
-
+    func testRuntimeMemoryAdmissionBlocksQwen38WhenThermallySerious() {
+        let target = LocalModelCatalog.defaultVariant
         XCTAssertNotNil(
             LocalModelRuntimeMemoryPolicy.admissionMessage(
-                for: qwen,
-                availableMemory: nil,
-                thermalState: .serious
-            )
-        )
-        XCTAssertNil(
-            LocalModelRuntimeMemoryPolicy.admissionMessage(
-                for: atlas,
+                for: target,
                 availableMemory: nil,
                 thermalState: .serious
             )
         )
         XCTAssertNotNil(
             LocalModelRuntimeMemoryPolicy.admissionMessage(
-                for: atlas,
+                for: target,
                 availableMemory: nil,
                 thermalState: .critical
             )

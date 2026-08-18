@@ -394,7 +394,7 @@ enum LocalModelCatalog {
     static let repository = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
     static let verifiedRevision = "f86cb2c1fa58255f8052cc32aeede1b7482d4361"
 
-    static let all: [LocalModelVariant] = [
+    private static let legacyCatalog: [LocalModelVariant] = [
         .init(
             id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M",
             displayName: "Qwen Coder 1.5B — iPhone 12",
@@ -525,6 +525,13 @@ enum LocalModelCatalog {
         ),
     ]
 
+    /// The active runtime catalog is the exact Qwen 3.8 27B target only.
+    /// Legacy variants above are private historical fixtures and can never be
+    /// selected as a production fallback.
+    static var all: [LocalModelVariant] {
+        presentationOrder
+    }
+
     static var exactQwen38Variant: LocalModelVariant? {
         Qwen38ReleaseDiscovery.cachedVariant()
     }
@@ -554,10 +561,9 @@ enum LocalModelCatalog {
     }
 
     static func safestVariant(forPhysicalMemory physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> LocalModelVariant {
-        all.first { $0.isIPhone12SafeDefault && physicalMemory >= $0.minimumPhysicalMemoryBytes }
-            ?? all.first { $0.deviceFit != .extreme && physicalMemory >= $0.minimumPhysicalMemoryBytes }
-            ?? all.first { $0.deviceFit != .extreme }
-            ?? all.last!
+        // Qwen-3.8-only build: memory pressure may change the execution profile,
+        // never the model identity. No smaller substitute is permitted.
+        defaultVariant
     }
 
     static func compatibilityMessage(

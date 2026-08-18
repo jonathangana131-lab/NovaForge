@@ -941,38 +941,38 @@ final class AgentLocalModelProviderTransportTests: XCTestCase {
     }
 
     func testStaticCatalogDoesNotSelfAwardDeviceQualification() {
-        let defaultVariant = LocalModelCatalog.defaultVariant
-        XCTAssertTrue(defaultVariant.isIPhone12SafeDefault)
-        XCTAssertEqual(defaultVariant.deviceFit.title, "Qualification pending")
-        XCTAssertEqual(defaultVariant.deviceFit.symbol, "iphone")
+        let target = LocalModelCatalog.defaultVariant
+        XCTAssertEqual(LocalModelCatalog.all.count, 1)
+        XCTAssertEqual(LocalModelCatalog.presentationOrder.count, 1)
+        XCTAssertEqual(LocalModelCatalog.all.first?.id, target.id)
+        XCTAssertFalse(target.isIPhone12SafeDefault)
+        XCTAssertEqual(target.deviceFit, .extreme)
+        XCTAssertTrue(target.parameterLabel.localizedCaseInsensitiveContains("27B"))
         XCTAssertTrue(
-            defaultVariant.benchmarkSummary.localizedCaseInsensitiveContains(
-                "exact-device qualification pending"
-            )
-        )
-        XCTAssertTrue(
-            defaultVariant.details.localizedCaseInsensitiveContains(
-                "exact-device qualification remains pending"
-            )
+            [target.id, target.displayName, target.details]
+                .joined(separator: " ")
+                .localizedCaseInsensitiveContains("3.8")
         )
 
         let forbiddenStaticClaims = [
             "Device proven",
             "physical-device canary proven",
             "The proven iPhone 12 default",
+            "Qwen 3.6",
+            "Qwen3.6",
+            "Qwen 3.5",
+            "Qwen3.5",
         ]
-        for variant in LocalModelCatalog.all {
-            let staticPresentation = [
-                variant.deviceFit.title,
-                variant.benchmarkSummary,
-                variant.details,
-            ].joined(separator: " ")
-            for claim in forbiddenStaticClaims {
-                XCTAssertFalse(
-                    staticPresentation.localizedCaseInsensitiveContains(claim),
-                    "Static catalog metadata must not self-award device qualification: \(claim)"
-                )
-            }
+        let staticPresentation = [
+            target.deviceFit.title,
+            target.benchmarkSummary,
+            target.details,
+        ].joined(separator: " ")
+        for claim in forbiddenStaticClaims {
+            XCTAssertFalse(
+                staticPresentation.localizedCaseInsensitiveContains(claim),
+                "Qwen 3.8 product metadata must not contain forbidden claim: \(claim)"
+            )
         }
     }
 
