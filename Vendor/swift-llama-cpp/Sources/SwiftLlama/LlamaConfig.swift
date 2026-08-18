@@ -29,6 +29,16 @@ public enum LlamaFlashAttentionMode: String, Equatable, Sendable {
     case enabled
 }
 
+/// A deterministic context-allocation attempt. Keeping the requested and rescue
+/// profiles explicit prevents runtime logs/documentation from drifting away
+/// from the actual KV precision and allocation bounds used by llama.cpp.
+struct LlamaContextAllocationProfile: Equatable, Sendable {
+    let contextTokens: UInt32
+    let batchTokens: UInt32
+    let keyCacheType: LlamaKVCacheType
+    let valueCacheType: LlamaKVCacheType
+}
+
 public struct LlamaConfig: Equatable, Sendable {
     public let batchSize: UInt32
     public let maxTokenCount: UInt32
@@ -75,5 +85,36 @@ public struct LlamaConfig: Equatable, Sendable {
         self.flashAttentionMode = flashAttentionMode
         self.offloadKQV = offloadKQV
         self.allowLowMemoryFallback = allowLowMemoryFallback
+    }
+
+    var requestedAllocationProfile: LlamaContextAllocationProfile {
+        LlamaContextAllocationProfile(
+            contextTokens: maxTokenCount,
+            batchTokens: batchSize,
+            keyCacheType: keyCacheType,
+            valueCacheType: valueCacheType
+        )
+    }
+
+    /// First rescue tier: preserve the broadly compatible F16 KV fast path
+    /// while reducing the two largest configurable context allocations.
+    var fastLowMemoryAllocationProfile: LlamaContextAllocationProfile {
+        LlamaContextAllocationProfile(
+            contextTokens: min(maxTokenCount, 1_024),
+            batchTokens: min(batchSize, 32),
+            keyCacheType: .f16,
+            valueCacheType: .f16
+        )
+    }
+
+    /// Deep rescue tier: trade additional throughput for a smaller Q8 KV cache
+    /// after both the requested and F16 fast-memory allocations fail.
+    var deepLowMemoryAllocationProfile: LlamaContextAllocationProfile {
+        LlamaContextAllocationProfile(
+            contextTokens: min(maxTokenCount, 768),
+            batchTokens: min(batchSize, 16),
+            keyCacheType: .q8_0,
+            valueCacheType: .q8_0
+        )
     }
 }
