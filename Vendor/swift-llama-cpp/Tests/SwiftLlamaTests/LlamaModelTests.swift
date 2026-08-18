@@ -42,6 +42,18 @@ struct LlamaModelTests {
         #expect(LlamaModel.nextDetokenizationBufferSize(for: Int32.min, currentSize: 528) == nil)
     }
 
+    @Test("Chat template buffer growth accepts only a larger exact requirement")
+    func testChatTemplateBufferGrowthBounds() {
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 1_024, currentSize: 512) == 1_024)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 513, currentSize: 512) == 513)
+
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 512, currentSize: 512) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 128, currentSize: 512) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: -1, currentSize: 512) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: Int32.max, currentSize: Int32.max) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 1, currentSize: -1) == nil)
+    }
+
     @Test("Tokenize of empty string is empty and chat template returns something")
     func testTokenizeEmptyAndChatTemplate() throws {
         let model = try #require(LlamaModel(path: URL.llama1B.path))
