@@ -240,6 +240,7 @@ enum Qwen38ReleaseDiscovery {
                   digest.allSatisfy({ $0.isHexDigit })
             else { return nil }
             let quant = quantization(from: sibling.rfilename)
+            guard runtimeSupports(quant) else { return nil }
             let manifest = Qwen38ReleaseManifest(
                 repositoryID: modelID,
                 revision: revision,
@@ -291,7 +292,7 @@ enum Qwen38ReleaseDiscovery {
         // these explicit means a future exact Qwen 3.8 27B release can fit the
         // iPhone-12 storage-backed path without an app update.
         for marker in [
-            "Q1_0_G128", "Q1_0", "IQ1_S", "TQ1_0", "IQ1_M",
+            "Q1_0", "Q1_0_G128", "IQ1_S", "TQ1_0", "IQ1_M",
             "TQ2_0", "Q2_0", "UD-IQ2_XXS", "IQ2_XXS", "IQ2_XS",
             "Q2_K_XS", "Q2_K", "Q3_K_XS", "Q3_K_S", "Q3_K_M", "Q4_K_M"
         ] where upper.contains(marker) {
@@ -300,10 +301,21 @@ enum Qwen38ReleaseDiscovery {
         return "GGUF"
     }
 
+    private static func runtimeSupports(_ quantization: String) -> Bool {
+        switch quantization.uppercased() {
+        case "Q1_0", "Q1_0_G128", "IQ1_S", "TQ1_0", "IQ1_M",
+             "TQ2_0", "Q2_0", "UD-IQ2_XXS", "IQ2_XXS", "IQ2_XS",
+             "Q2_K_XS", "Q2_K", "Q3_K_XS", "Q3_K_S", "Q3_K_M", "Q4_K_M":
+            true
+        default:
+            false
+        }
+    }
+
     private static func quantRank(_ value: String) -> Int {
         switch value.uppercased() {
-        case "Q1_0_G128": 0
-        case "Q1_0": 1
+        case "Q1_0": 0
+        case "Q1_0_G128": 1
         case "IQ1_S": 2
         case "TQ1_0": 3
         case "IQ1_M": 4
