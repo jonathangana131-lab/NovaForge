@@ -97,6 +97,37 @@ struct Qwen38ReleaseManifest: Codable, Equatable, Sendable {
     let lastModified: String
 }
 
+#if canImport(SwiftLlama)
+enum Qwen38ModelIdentityPolicy {
+    private static let minimum27BParameters: UInt64 = 24_000_000_000
+    private static let maximum27BParameters: UInt64 = 31_000_000_000
+
+    static func validationError(for identity: LlamaModelIdentitySnapshot) -> String? {
+        let labels = [
+            identity.name,
+            identity.basename,
+            identity.architecture,
+            identity.sizeLabel,
+            identity.description,
+        ].compactMap { $0 }.joined(separator: " | ").lowercased()
+
+        let compact = labels
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        let identifiesQwen38 = compact.contains("qwen3.8") || compact.contains("qwen38")
+        guard identifiesQwen38 else {
+            return "GGUF metadata does not identify Qwen 3.8."
+        }
+
+        guard (minimum27BParameters ... maximum27BParameters).contains(identity.parameterCount) else {
+            return "GGUF parameter count is not in the verified Qwen 3.8 27B class."
+        }
+        return nil
+    }
+}
+#endif
+
 enum Qwen38ReleaseDiscoveryError: LocalizedError {
     case invalidResponse
     case invalidManifest
@@ -1773,6 +1804,14 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
                 valueCacheType: usesUltraLowBitWeights ? .q4_0 : .f16
             )
         )
+        if variant.id.hasPrefix("qwen38:") {
+            let identity = try await service.modelIdentitySnapshot()
+            if let identityError = Qwen38ModelIdentityPolicy.validationError(for: identity) {
+                throw LocalModelRuntimeError.incompatibleDevice(
+                    "Exact Qwen 3.8 27B identity verification failed. \(identityError)"
+                )
+            }
+        }
         loadedService = (variant.id, service)
         return service
     }

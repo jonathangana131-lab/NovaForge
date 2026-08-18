@@ -48,6 +48,14 @@ public final actor LlamaService {
         lastPerformanceSnapshot
     }
 
+    /// Returns content-free GGUF identity metadata for the exact model already
+    /// owned by this service. Calling this is also the fail-closed load gate used
+    /// by NovaForge before an exact-target model is admitted to an agent run.
+    public func modelIdentitySnapshot() async throws -> LlamaModelIdentitySnapshot {
+        let llama = try initializeLlamaIfNecessary()
+        return await llama.modelIdentitySnapshot()
+    }
+
     // MARK: Methods
 
     public func processMessages(_ messages: [LlamaChatMessage]) async throws {

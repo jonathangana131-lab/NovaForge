@@ -2,6 +2,9 @@ import AgentDomain
 import AgentProviders
 import AgentTools
 import XCTest
+#if canImport(SwiftLlama)
+import SwiftLlama
+#endif
 @testable import NovaForge
 
 final class AgentLocalModelProviderTransportTests: XCTestCase {
@@ -1603,3 +1606,52 @@ extension AgentLocalModelProviderTransportTests {
         XCTAssertTrue(result.hasExactTokenTelemetry)
     }
 }
+
+#if canImport(SwiftLlama)
+extension AgentLocalModelProviderTransportTests {
+    func testQwen38IdentityPolicyAcceptsExact27BClass() {
+        let identity = LlamaModelIdentitySnapshot(
+            name: "Qwen 3.8 27B",
+            basename: "Qwen3.8-27B",
+            architecture: "qwen3.8",
+            sizeLabel: "27B",
+            description: "Qwen 3.8 27B Q1_0",
+            parameterCount: 27_400_000_000,
+            modelBytes: 3_900_000_000,
+            vocabularySize: 250_000,
+            layerCount: 64
+        )
+        XCTAssertNil(Qwen38ModelIdentityPolicy.validationError(for: identity))
+    }
+
+    func testQwen38IdentityPolicyRejectsRenamedQwen36() {
+        let identity = LlamaModelIdentitySnapshot(
+            name: "Qwen 3.6 27B",
+            basename: "Qwen3.6-27B",
+            architecture: "qwen3.6",
+            sizeLabel: "27B",
+            description: "Qwen 3.6 27B renamed file",
+            parameterCount: 27_000_000_000,
+            modelBytes: 3_900_000_000,
+            vocabularySize: 250_000,
+            layerCount: 64
+        )
+        XCTAssertNotNil(Qwen38ModelIdentityPolicy.validationError(for: identity))
+    }
+
+    func testQwen38IdentityPolicyRejectsWrongParameterClass() {
+        let identity = LlamaModelIdentitySnapshot(
+            name: "Qwen 3.8",
+            basename: "Qwen3.8-7B",
+            architecture: "qwen3.8",
+            sizeLabel: "7B",
+            description: "Qwen 3.8 7B",
+            parameterCount: 7_600_000_000,
+            modelBytes: 1_200_000_000,
+            vocabularySize: 250_000,
+            layerCount: 32
+        )
+        XCTAssertNotNil(Qwen38ModelIdentityPolicy.validationError(for: identity))
+    }
+}
+#endif

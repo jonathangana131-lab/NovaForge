@@ -177,6 +177,10 @@ final actor Llama {
     /// Return the full processed token id sequence (prompt + generated).
     func getProcessedTokenIds() -> [llama_token] { processedTokens }
 
+    func modelIdentitySnapshot() -> LlamaModelIdentitySnapshot {
+        model.identitySnapshot()
+    }
+
     func initializeCompletion(messages: [LlamaChatMessage], addAssistant: Bool? = nil) throws {
         let formattedPrompt = model.applyChatTemplate(to: messages, addAssistant: addAssistant)
         try initializeCompletion(text: formattedPrompt)
