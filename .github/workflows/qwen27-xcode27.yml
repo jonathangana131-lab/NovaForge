@@ -162,9 +162,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build 2>&1 | tee artifacts/device-build/xcodebuild-iphoneos.log
-          APP_PATH=$(find DerivedData/CI-Device/Build/Products -type d -name 'AgentPad.app' -print | head -n 1)
+          APP_PATH=$(find DerivedData/CI-Device/Build/Products -type d -name 'NovaForge.app' -print | head -n 1)
           test -n "$APP_PATH"
-          test -x "$APP_PATH/AgentPad"
+          test -x "$APP_PATH/NovaForge"
           echo "PASS: official b10472 device XCFramework links into $APP_PATH"
 
       - name: Build and run critical verification
