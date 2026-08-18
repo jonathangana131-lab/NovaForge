@@ -103,6 +103,20 @@ public final class LlamaModel {
         nextRequiredBufferSize(for: result, currentSize: currentSize)
     }
 
+    /// Return the next detokenization buffer size requested by llama.cpp.
+    static func nextDetokenizationBufferSize(for result: Int32, currentSize: Int32) -> Int32? {
+        nextRequiredBufferSize(for: result, currentSize: currentSize)
+    }
+
+    /// Build a bounded first detokenization buffer without overflowing Swift's
+    /// integer conversions for pathological token counts.
+    static func initialDetokenizationBufferSize(tokenCount: Int) -> Int32? {
+        guard tokenCount > 0, tokenCount <= Int(Int32.max) else { return nil }
+        let heuristicSize = Int64(tokenCount) * 4 + 16
+        guard heuristicSize > 0, heuristicSize <= Int64(Int32.max) else { return nil }
+        return Int32(heuristicSize)
+    }
+
     /// Convert a token id to its piece (optionally rendering special tokens).
     public func piece(from token: llama_token, renderSpecial: Bool = false, lstrip: Int32 = 0) -> String {
         var bufferSize: Int32 = 64
@@ -182,24 +196,34 @@ public final class LlamaModel {
         }
     }
 
-    /// Convert tokens back to text (inverse of tokenize)
     /// Convert tokens back to text (inverse of tokenize()).
     public func detokenize(tokens: [llama_token], removeSpecial: Bool = true, unparseSpecial: Bool = false) -> String {
-        guard !tokens.isEmpty else { return "" }
-        // Heuristic buffer: tokens * avg 4 bytes + 16
-        var bufSize = Int32(tokens.count * 4 + 16)
-        var buffer = [CChar](repeating: 0, count: Int(bufSize))
-        var written: Int32 = -1
-        repeat {
-            written = tokens.withUnsafeBufferPointer { ptr in
-                llama_detokenize(vocabPointer, ptr.baseAddress, Int32(tokens.count), &buffer, bufSize, removeSpecial, unparseSpecial)
+        guard let initialSize = Self.initialDetokenizationBufferSize(tokenCount: tokens.count) else { return "" }
+        var bufferSize = initialSize
+
+        while true {
+            var buffer = [CChar](repeating: 0, count: Int(bufferSize))
+            let written = tokens.withUnsafeBufferPointer { ptr in
+                llama_detokenize(
+                    vocabPointer,
+                    ptr.baseAddress,
+                    Int32(tokens.count),
+                    &buffer,
+                    bufferSize,
+                    removeSpecial,
+                    unparseSpecial
+                )
             }
-            if written < 0 { // need bigger buffer
-                bufSize = -written + 1
-                buffer = [CChar](repeating: 0, count: Int(bufSize))
+
+            if let requiredSize = Self.nextDetokenizationBufferSize(for: written, currentSize: bufferSize) {
+                bufferSize = requiredSize
+                continue
             }
-        } while written < 0
-        return Self.stringFromNullTerminated(buffer)
+
+            guard written >= 0, written <= bufferSize else { return "" }
+            let chars = Array(buffer.prefix(Int(written))) + [0]
+            return String(cString: chars, encoding: .utf8) ?? ""
+        }
     }
 
     /// Number of tokens in the vocabulary.
