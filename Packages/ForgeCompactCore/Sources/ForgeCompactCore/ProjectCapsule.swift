@@ -2,6 +2,9 @@ import Foundation
 
 public struct ProjectCapsule: Codable, Hashable, Sendable {
     public static let currentSchemaVersion = 1
+    /// Conservative outer envelope for one compaction selection pass. This is a safety cap,
+    /// not a recommended working-set size or a device-performance claim.
+    public static let maximumSourceItems = 4_096
 
     public let schemaVersion: Int
     public let authority: ProjectCapsuleAuthority
@@ -18,6 +21,11 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         selectedItems: [ForgeCompactContextItem],
         omittedItems: [ForgeCompactOmittedItem]
     ) throws {
+        let sourceItemCount = try Self.checkedSourceItemCount(
+            selectedCount: selectedItems.count,
+            omittedCount: omittedItems.count
+        )
+
         self.schemaVersion = Self.currentSchemaVersion
         self.authority = authority
         self.budgetBytes = budgetBytes
@@ -25,15 +33,41 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         self.omittedItems = omittedItems
         self.renderedContext = ProjectCapsuleRenderer.renderedContext(for: selectedItems)
         self.renderedUTF8Bytes = renderedContext.utf8.count
-        self.sourceItemCount = selectedItems.count + omittedItems.count
+        self.sourceItemCount = sourceItemCount
         try validate()
+    }
+
+    static func checkedSourceItemCount(selectedCount: Int, omittedCount: Int) throws -> Int {
+        guard selectedCount >= 0, omittedCount >= 0 else {
+            throw ForgeCompactError.collectionTooLarge(
+                field: "capsule.sourceItems",
+                maximum: Self.maximumSourceItems
+            )
+        }
+        let (sourceItemCount, overflow) = selectedCount.addingReportingOverflow(omittedCount)
+        guard !overflow else {
+            throw ForgeCompactError.collectionTooLarge(
+                field: "capsule.sourceItems",
+                maximum: Self.maximumSourceItems
+            )
+        }
+        try ForgeCompactValidation.maximumCount(
+            sourceItemCount,
+            field: "capsule.sourceItems",
+            maximum: Self.maximumSourceItems
+        )
+        return sourceItemCount
     }
 
     private func validate() throws {
         guard schemaVersion == Self.currentSchemaVersion else {
             throw ForgeCompactError.invalidCapsuleSchema(schemaVersion)
         }
-        guard budgetBytes >= 0, sourceItemCount == selectedItems.count + omittedItems.count else {
+        let validatedSourceItemCount = try Self.checkedSourceItemCount(
+            selectedCount: selectedItems.count,
+            omittedCount: omittedItems.count
+        )
+        guard budgetBytes >= 0, sourceItemCount == validatedSourceItemCount else {
             throw ForgeCompactError.invalidCapsuleShape
         }
 
@@ -93,7 +127,11 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         guard schemaVersion == Self.currentSchemaVersion else {
             throw ForgeCompactError.invalidCapsuleSchema(schemaVersion)
         }
-        guard storedSourceItemCount == selectedItems.count + omittedItems.count else {
+        let validatedSourceItemCount = try Self.checkedSourceItemCount(
+            selectedCount: selectedItems.count,
+            omittedCount: omittedItems.count
+        )
+        guard storedSourceItemCount == validatedSourceItemCount else {
             throw ForgeCompactError.invalidCapsuleShape
         }
 
@@ -175,6 +213,11 @@ public enum ProjectCapsuleBuilder {
         guard (0...2_000_000).contains(budgetBytes) else {
             throw ForgeCompactError.invalidBudget(budgetBytes)
         }
+        try ForgeCompactValidation.maximumCount(
+            items.count,
+            field: "capsule.sourceItems",
+            maximum: ProjectCapsule.maximumSourceItems
+        )
 
         var IDs = Set<String>()
         for item in items {
