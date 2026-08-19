@@ -16,8 +16,8 @@ final class ForgePlaytestReceiptUniquenessTests: XCTestCase {
             try ForgePlaytestPersonaRequirement(persona: .goalRunner, minimumCompletedJourneys: 2),
         ])
         let bindings = try [
-            ForgePlaytestExecutionBinding(executionEvidence: evidenceA, trace: traceA),
-            ForgePlaytestExecutionBinding(executionEvidence: evidenceB, trace: traceB),
+            ForgePlaytestExecutionBinding(result: resultA, trace: traceA),
+            ForgePlaytestExecutionBinding(result: resultB, trace: traceB),
         ]
 
         XCTAssertThrowsError(
