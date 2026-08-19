@@ -12,6 +12,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let receipt = decide(activeEnvelopeID: active.id, envelopes: [larger, active])
 
         XCTAssertEqual(receipt.action, .keep(envelopeID: active.id))
+        XCTAssertEqual(receipt.selectedEnvelope, active)
         XCTAssertTrue(receipt.candidateVerdicts.allSatisfy(\.isEligible))
     }
 
@@ -27,6 +28,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: fits.id))
+        XCTAssertEqual(receipt.selectedEnvelope, fits)
         XCTAssertEqual(
             verdict(for: tooLarge.id, in: receipt)?.rejectionReasons,
             [.insufficientMeasuredHeadroom]
@@ -47,6 +49,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: compact.id))
+        XCTAssertEqual(receipt.selectedEnvelope, compact)
         XCTAssertEqual(
             verdict(for: active.id, in: receipt)?.rejectionReasons,
             [.insufficientMeasuredHeadroom]
@@ -57,6 +60,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let receipt = decide(memoryPressure: .critical, envelopes: [envelope(id: "safe")])
 
         XCTAssertEqual(receipt.action, .suspend(reason: .memoryPressureThresholdReached))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
@@ -68,6 +72,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .suspend(reason: .thermalPressureThresholdReached))
+        XCTAssertNil(receipt.selectedEnvelope)
     }
 
     func testRemoteEnvelopeIsNeverSelected() {
@@ -76,6 +81,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let receipt = decide(envelopes: [remote])
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertEqual(verdict(for: remote.id, in: receipt)?.rejectionReasons, [.nonLocalCompute])
     }
 
@@ -103,6 +109,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let receipt = decide(mode: .research, envelopes: [experimental])
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: experimental.id))
+        XCTAssertEqual(receipt.selectedEnvelope, experimental)
         XCTAssertTrue(verdict(for: experimental.id, in: receipt)?.isEligible == true)
     }
 
@@ -115,6 +122,67 @@ final class ForgeCompactGovernorTests: XCTestCase {
         XCTAssertEqual(
             verdict(for: unverified.id, in: receipt)?.rejectionReasons,
             [.unverifiedEvidence]
+        )
+    }
+
+    func testMeasuredEnvelopeCannotSelfAuthorizeWithoutQualificationGrant() {
+        let measured = envelope(id: "self-asserted")
+
+        let receipt = decide(trustEvidence: false, envelopes: [measured])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertNil(receipt.selectedEnvelope)
+        XCTAssertEqual(
+            verdict(for: measured.id, in: receipt)?.rejectionReasons,
+            [.qualificationGrantMissing]
+        )
+    }
+
+    func testQualificationGrantMustMatchExactConfigurationBinding() throws {
+        let measured = envelope(id: "qualified")
+        let differentlyBound = ForgeCompactExecutionEnvelope(
+            id: measured.id,
+            profileID: measured.profileID,
+            configurationBindingID: "different-binding",
+            deviceProfileID: measured.deviceProfileID,
+            evidenceReceiptID: measured.evidenceReceiptID,
+            computeLocation: measured.computeLocation,
+            evidenceStatus: measured.evidenceStatus,
+            contextTokens: measured.contextTokens,
+            observedPeakResidentBytes: measured.observedPeakResidentBytes
+        )
+        let wrongGrant = try ForgeCompactQualificationGrant(acceptedEnvelope: differentlyBound)
+
+        let receipt = decide(explicitGrants: [wrongGrant], envelopes: [measured])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(
+            verdict(for: measured.id, in: receipt)?.rejectionReasons,
+            [.qualificationGrantMissing]
+        )
+    }
+
+    func testQualificationGrantBindsMeasuredResourceFields() throws {
+        let accepted = envelope(id: "qualified", context: 8_192, peak: 2 * gib)
+        let grant = try ForgeCompactQualificationGrant(acceptedEnvelope: accepted)
+        let rewritten = ForgeCompactExecutionEnvelope(
+            id: accepted.id,
+            profileID: accepted.profileID,
+            configurationBindingID: accepted.configurationBindingID,
+            deviceProfileID: accepted.deviceProfileID,
+            evidenceReceiptID: accepted.evidenceReceiptID,
+            computeLocation: accepted.computeLocation,
+            evidenceStatus: accepted.evidenceStatus,
+            contextTokens: 4_096,
+            observedPeakResidentBytes: 1
+        )
+
+        let receipt = decide(explicitGrants: [grant], envelopes: [rewritten])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(
+            verdict(for: rewritten.id, in: receipt)?.rejectionReasons,
+            [.qualificationGrantMissing]
         )
     }
 
@@ -188,6 +256,15 @@ final class ForgeCompactGovernorTests: XCTestCase {
         XCTAssertEqual(verdict(for: invalid.id, in: receipt)?.rejectionReasons, [.invalidIdentity])
     }
 
+    func testControlCharacterEnvelopeIdentityIsRejected() {
+        let invalid = envelope(id: "bad\u{0000}id")
+
+        let receipt = decide(envelopes: [invalid])
+
+        XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
+        XCTAssertEqual(verdict(for: invalid.id, in: receipt)?.rejectionReasons, [.invalidIdentity])
+    }
+
     func testWhitespacePaddedActiveIdentityMakesSnapshotInvalid() {
         let receipt = decide(
             activeEnvelopeID: " active ",
@@ -195,6 +272,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .block(reason: .invalidRuntimeSnapshot))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
@@ -218,6 +296,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let receipt = decide(envelopes: [larger, smaller])
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: smaller.id))
+        XCTAssertEqual(receipt.selectedEnvelope, smaller)
     }
 
     func testStableSelectionUsesEnvelopeIDAsFinalTieBreaker() {
@@ -227,6 +306,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         let receipt = decide(envelopes: [z, a])
 
         XCTAssertEqual(receipt.action, .switchTo(envelopeID: a.id))
+        XCTAssertEqual(receipt.selectedEnvelope, a)
     }
 
     func testInvalidSnapshotBlocksBeforeEvaluatingCandidates() {
@@ -237,6 +317,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .block(reason: .invalidRuntimeSnapshot))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
@@ -248,6 +329,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
 
         XCTAssertEqual(receipt.action, .block(reason: .invalidPolicy))
+        XCTAssertNil(receipt.selectedEnvelope)
         XCTAssertTrue(receipt.candidateVerdicts.isEmpty)
     }
 
@@ -260,6 +342,7 @@ final class ForgeCompactGovernorTests: XCTestCase {
         XCTAssertEqual(receipt.selectedEnvelope, selected)
         XCTAssertEqual(receipt.selectedEnvelope?.configurationBindingID, "binding-audited")
         XCTAssertEqual(receipt.selectedEnvelope?.evidenceReceiptID, "receipt-exact-123")
+        XCTAssertEqual(receipt.evaluatedEnvelopes, [selected])
     }
 
     func testBlockedDecisionReceiptDoesNotInventSelectedEvidence() {
@@ -269,72 +352,90 @@ final class ForgeCompactGovernorTests: XCTestCase {
 
         XCTAssertEqual(receipt.action, .block(reason: .noEligibleLocalEnvelope))
         XCTAssertNil(receipt.selectedEnvelope)
+        XCTAssertEqual(receipt.evaluatedEnvelopes, [remote])
     }
 
-    func testDecisionReceiptDecodeRejectsSelectedEnvelopeActionMismatch() throws {
-        let receipt = decide(envelopes: [envelope(id: "audited")])
-        var json = try jsonObject(receipt)
+    func testDecisionArchiveRoundTripsAndRestoresWithFreshQualification() throws {
+        let measured = envelope(id: "measured")
+        let receipt = decide(envelopes: [measured])
+        let archiveData = try JSONEncoder().encode(receipt.archive())
+        let decoded = try JSONDecoder().decode(ForgeCompactDecisionArchive.self, from: archiveData)
+        let grant = try XCTUnwrap(grant(for: measured))
+
+        let restored = try decoded.restore(qualificationGrants: [grant])
+
+        XCTAssertEqual(restored, receipt)
+    }
+
+    func testDecisionArchiveCannotRestoreSelectionWithoutFreshQualification() throws {
+        let measured = envelope(id: "measured")
+        let archive = decide(envelopes: [measured]).archive()
+
+        XCTAssertThrowsError(try archive.restore(qualificationGrants: [])) { error in
+            XCTAssertEqual(
+                error as? ForgeCompactDecisionArchiveError,
+                .freshQualificationRequired
+            )
+        }
+    }
+
+    func testDecisionArchiveDecodeRejectsSelectedEnvelopeActionMismatch() throws {
+        let archive = decide(envelopes: [envelope(id: "audited")]).archive()
+        var json = try jsonObject(archive)
         var selected = try XCTUnwrap(json["selectedEnvelope"] as? [String: Any])
         selected["id"] = "forged-selection"
         json["selectedEnvelope"] = selected
 
         XCTAssertThrowsError(
             try JSONDecoder().decode(
-                ForgeCompactDecisionReceipt.self,
+                ForgeCompactDecisionArchive.self,
                 from: JSONSerialization.data(withJSONObject: json)
             )
-        )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCompactDecisionArchiveError, .invalidShape)
+        }
     }
 
-    func testDecisionReceiptDecodeRejectsMissingSelectedEnvelopeForSelection() throws {
-        let receipt = decide(envelopes: [envelope(id: "audited")])
-        var json = try jsonObject(receipt)
-        json.removeValue(forKey: "selectedEnvelope")
+    func testDecisionArchiveRestoreRejectsRewrittenMeasuredResourceFields() throws {
+        let measured = envelope(id: "audited", context: 8_192, peak: 2 * gib)
+        let archive = decide(envelopes: [measured]).archive()
+        let grant = try XCTUnwrap(grant(for: measured))
+        var json = try jsonObject(archive)
+        var evaluated = try XCTUnwrap(json["evaluatedEnvelopes"] as? [[String: Any]])
+        evaluated[0]["contextTokens"] = 4_096
+        evaluated[0]["observedPeakResidentBytes"] = 1
+        json["evaluatedEnvelopes"] = evaluated
+        let tampered = try JSONDecoder().decode(
+            ForgeCompactDecisionArchive.self,
+            from: JSONSerialization.data(withJSONObject: json)
+        )
 
-        XCTAssertThrowsError(
-            try JSONDecoder().decode(
-                ForgeCompactDecisionReceipt.self,
-                from: JSONSerialization.data(withJSONObject: json)
+        XCTAssertThrowsError(try tampered.restore(qualificationGrants: [grant])) { error in
+            XCTAssertEqual(
+                error as? ForgeCompactDecisionArchiveError,
+                .freshQualificationRequired
             )
-        )
+        }
     }
 
-    func testDecisionReceiptDecodeRejectsSelectedEnvelopeOnBlockedDecision() throws {
-        let blocked = decide(envelopes: [envelope(id: "remote-only", location: .remote)])
-        let selected = decide(envelopes: [envelope(id: "local")])
-        var blockedJSON = try jsonObject(blocked)
-        let selectedJSON = try jsonObject(selected)
-        blockedJSON["selectedEnvelope"] = try XCTUnwrap(selectedJSON["selectedEnvelope"])
-
-        XCTAssertThrowsError(
-            try JSONDecoder().decode(
-                ForgeCompactDecisionReceipt.self,
-                from: JSONSerialization.data(withJSONObject: blockedJSON)
-            )
-        )
-    }
-
-    func testDecisionReceiptDecodeRejectsEligibleVerdictOnNoEligibleBlock() throws {
-        let blocked = decide(envelopes: [envelope(id: "remote-only", location: .remote)])
-        var json = try jsonObject(blocked)
+    func testDecisionArchiveRestoreRejectsForgedEligibleVerdict() throws {
+        let remote = envelope(id: "remote-only", location: .remote)
+        let archive = decide(envelopes: [remote]).archive()
+        var json = try jsonObject(archive)
         var verdicts = try XCTUnwrap(json["candidateVerdicts"] as? [[String: Any]])
         verdicts[0]["rejectionReasons"] = []
         json["candidateVerdicts"] = verdicts
-
-        XCTAssertThrowsError(
-            try JSONDecoder().decode(
-                ForgeCompactDecisionReceipt.self,
-                from: JSONSerialization.data(withJSONObject: json)
-            )
+        let tampered = try JSONDecoder().decode(
+            ForgeCompactDecisionArchive.self,
+            from: JSONSerialization.data(withJSONObject: json)
         )
-    }
 
-    func testDecisionReceiptRoundTripsThroughJSON() throws {
-        let receipt = decide(envelopes: [envelope(id: "measured")])
-        let encoded = try JSONEncoder().encode(receipt)
-        let decoded = try JSONDecoder().decode(ForgeCompactDecisionReceipt.self, from: encoded)
-
-        XCTAssertEqual(decoded, receipt)
+        XCTAssertThrowsError(try tampered.restore(qualificationGrants: [])) { error in
+            XCTAssertEqual(
+                error as? ForgeCompactDecisionArchiveError,
+                .freshQualificationRequired
+            )
+        }
     }
 
     private func envelope(
@@ -359,6 +460,10 @@ final class ForgeCompactGovernorTests: XCTestCase {
         )
     }
 
+    private func grant(for envelope: ForgeCompactExecutionEnvelope) -> ForgeCompactQualificationGrant? {
+        try? ForgeCompactQualificationGrant(acceptedEnvelope: envelope)
+    }
+
     private func decide(
         memoryBudget: UInt64? = nil,
         requestedContext: UInt64 = 16_384,
@@ -370,6 +475,8 @@ final class ForgeCompactGovernorTests: XCTestCase {
         nominalReserve: UInt64? = nil,
         warningReserve: UInt64? = nil,
         suspendAtThermalPressure: ForgeCompactThermalPressure = .critical,
+        trustEvidence: Bool = true,
+        explicitGrants: Set<ForgeCompactQualificationGrant>? = nil,
         envelopes: [ForgeCompactExecutionEnvelope]
     ) -> ForgeCompactDecisionReceipt {
         let snapshot = ForgeCompactRuntimeSnapshot(
@@ -388,7 +495,20 @@ final class ForgeCompactGovernorTests: XCTestCase {
             suspendAtMemoryPressure: .critical,
             suspendAtThermalPressure: suspendAtThermalPressure
         )
-        return ForgeCompactGovernor.decide(snapshot: snapshot, policy: policy, envelopes: envelopes)
+        let grants: Set<ForgeCompactQualificationGrant>
+        if let explicitGrants {
+            grants = explicitGrants
+        } else if trustEvidence {
+            grants = Set(envelopes.compactMap { grant(for: $0) })
+        } else {
+            grants = []
+        }
+        return ForgeCompactGovernor.decide(
+            snapshot: snapshot,
+            policy: policy,
+            envelopes: envelopes,
+            qualificationGrants: grants
+        )
     }
 
     private func verdict(
