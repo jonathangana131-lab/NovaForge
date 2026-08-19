@@ -106,8 +106,8 @@ public struct LocalModelFabricPolicy: Equatable, Sendable {
 }
 
 /// A configured exact local profile. `qualificationRecord` is optional so an unqualified profile can be
-/// selected only in explicit Compatibility Lab probe mode. Mission trust can only arrive as opaque evidence
-/// authenticated by LocalModelQualificationCore; candidate/model-shaped receipts cannot mint it here.
+/// selected only in explicit Compatibility Lab probe mode. Mission trust can only arrive as opaque receipts
+/// authenticated by LocalModelQualificationCore; candidate/model-shaped evidence cannot mint them here.
 public struct LocalModelFabricCandidate: Sendable {
     public let tier: LocalModelFabricTier
     public let descriptor: LocalModelCatalogDescriptor
@@ -115,7 +115,7 @@ public struct LocalModelFabricCandidate: Sendable {
     public let legacyBenchmark: LocalModelBenchmarkObservation?
     public let subject: LocalModelQualificationSubject
     public let qualificationRecord: LocalModelQualificationRecord?
-    public let trustedEvidence: Set<LocalModelTrustedEvidence>
+    public let trustedReceipts: Set<LocalModelTrustedEvidenceReceipt>
 
     public init(
         tier: LocalModelFabricTier,
@@ -124,7 +124,7 @@ public struct LocalModelFabricCandidate: Sendable {
         legacyBenchmark: LocalModelBenchmarkObservation?,
         subject: LocalModelQualificationSubject,
         qualificationRecord: LocalModelQualificationRecord?,
-        trustedEvidence: Set<LocalModelTrustedEvidence>
+        trustedReceipts: Set<LocalModelTrustedEvidenceReceipt>
     ) throws {
         guard Self.matches(descriptor: descriptor, subject: subject) else {
             throw LocalModelFabricValidationError.descriptorSubjectMismatch
@@ -139,7 +139,7 @@ public struct LocalModelFabricCandidate: Sendable {
         self.legacyBenchmark = legacyBenchmark
         self.subject = subject
         self.qualificationRecord = qualificationRecord
-        self.trustedEvidence = trustedEvidence
+        self.trustedReceipts = trustedReceipts
     }
 
     private static func matches(
@@ -298,25 +298,31 @@ public struct LocalModelFabricSelectionDecision: Equatable, Sendable {
 }
 
 public enum LocalModelFabricSelector {
+    typealias QualificationDecision = (isQualified: Bool, blockingReasons: [String])
+
     public static func select(
         candidates: [LocalModelFabricCandidate],
         request: LocalModelFabricRequest
     ) -> LocalModelFabricSelectionDecision {
-        select(candidates: candidates, request: request) { record, claim, trustedEvidence in
-            record.readiness(for: claim, trustedEvidence: trustedEvidence)
+        select(candidates: candidates, request: request) { record, claim, trustedReceipts in
+            let readiness = record.readiness(for: claim, trustedReceipts: trustedReceipts)
+            return (
+                isQualified: readiness.isQualified,
+                blockingReasons: readiness.blockingReasons
+            )
         }
     }
 
     /// Internal policy-test seam. It exercises Fabric ranking/resource policy independently of the
-    /// qualification package's producer boundary without exposing any public trust-minting path.
+    /// qualification package's producer boundary without exposing any public trust/qualification constructor.
     static func selectForTesting(
         candidates: [LocalModelFabricCandidate],
         request: LocalModelFabricRequest,
         qualificationEvaluator: (
             LocalModelQualificationRecord,
             LocalModelQualificationClaim,
-            Set<LocalModelTrustedEvidence>
-        ) -> LocalModelQualificationReadiness
+            Set<LocalModelTrustedEvidenceReceipt>
+        ) -> QualificationDecision
     ) -> LocalModelFabricSelectionDecision {
         select(
             candidates: candidates,
@@ -331,8 +337,8 @@ public enum LocalModelFabricSelector {
         qualificationEvaluator: (
             LocalModelQualificationRecord,
             LocalModelQualificationClaim,
-            Set<LocalModelTrustedEvidence>
-        ) -> LocalModelQualificationReadiness
+            Set<LocalModelTrustedEvidenceReceipt>
+        ) -> QualificationDecision
     ) -> LocalModelFabricSelectionDecision {
         var accepted: [Evaluation] = []
         var rejections: [LocalModelFabricCandidateRejection] = []
@@ -407,8 +413,8 @@ public enum LocalModelFabricSelector {
         qualificationEvaluator: (
             LocalModelQualificationRecord,
             LocalModelQualificationClaim,
-            Set<LocalModelTrustedEvidence>
-        ) -> LocalModelQualificationReadiness
+            Set<LocalModelTrustedEvidenceReceipt>
+        ) -> QualificationDecision
     ) -> Evaluation {
         let key = canonicalSubjectKey(candidate.subject)
         var result = Evaluation(
@@ -465,7 +471,7 @@ public enum LocalModelFabricSelector {
         }
 
         let claim = qualificationClaim(for: request.privacy)
-        let readiness = qualificationEvaluator(record, claim, candidate.trustedEvidence)
+        let readiness = qualificationEvaluator(record, claim, candidate.trustedReceipts)
         if !readiness.isQualified {
             result.reasons.append(.canonicalQualificationRejected)
             result.canonicalBlockingReasons = readiness.blockingReasons
