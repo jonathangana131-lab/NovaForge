@@ -16,8 +16,9 @@ Persistent product direction:
 
 - NovaForge is an iPhone-native, local-first AI creation OS.
 - Composer/Plan Space, Full Forge autonomy, run/playtest/repair loops, durable projects, and excellent native UI remain flagship product areas.
-- Local AI is primary. Qwen 3.8 work in this repository is part of the product and should converge into the main app/runtime rather than remain a permanent branch family.
-- Never invent iPhone model compatibility, RAM, speed, context, thermal, energy, or quality claims. Exact physical-device claims require exact physical-device evidence.
+- Local AI is primary in NovaForge, but the owner's Qwen 3.8 27B request is for a **separate iPhone app**. PR #295 and related Qwen-only branches are prototype/evidence/source-donor work until that app has a separate product boundary; do not merge Qwen-only branding, product restrictions, or target changes into NovaForge `main` merely to finish the standalone app.
+- General-purpose local-inference, qualification, storage, cancellation, model-management, and runtime improvements may converge into NovaForge when they independently improve NovaForge and preserve its multi-model creation-OS identity.
+- Never invent iPhone model compatibility, RAM, speed, context, thermal, energy, or quality claims. Exact physical-device claims require exact physical-device evidence; source or Simulator success is not physical-device Qwen qualification.
 - Local Only must never silently use cloud.
 - User-facing UI work should be built/run and visually inspected when the environment supports it.
 
