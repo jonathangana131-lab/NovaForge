@@ -147,17 +147,15 @@ final class ForgeRuntimeWebKitSemanticHostTests: XCTestCase {
     }
 
     func testAuthorizedInteractionCannotReplayAcrossRuntimeVersions() async throws {
-        let runtimeV1 = ForgeRuntimeVersion(major: 1, minor: 0)
-        let runtimeV2 = ForgeRuntimeVersion(major: 2, minor: 0)
         let loadedFixture = try makeProjectFixture(
             projectID: "project-a",
             revision: "rev-123",
-            runtimeVersion: runtimeV1
+            runtimeVersion: .init(major: 1, minor: 0)
         )
         let authorizedFixture = try makeProjectFixture(
             projectID: "project-a",
             revision: "rev-123",
-            runtimeVersion: runtimeV2
+            runtimeVersion: .init(major: 2, minor: 0)
         )
         defer {
             try? FileManager.default.removeItem(at: loadedFixture.rootURL)
@@ -263,17 +261,19 @@ final class ForgeRuntimeWebKitSemanticHostTests: XCTestCase {
             display: .init(name: projectID),
             storage: .init(namespace: projectID, quotaBytes: 1_048_576)
         )
-        let manifestData = try JSONEncoder().encode(manifest)
-        try manifestData.write(
+        try JSONEncoder().encode(manifest).write(
             to: rootURL.appendingPathComponent(ForgeRuntimeProjectLoader.defaultManifestPath),
             options: .atomic
         )
         let host = ForgeRuntimeHostSupport(
-            maximumFormatVersion: .init(major: 1, minor: 0),
-            runtimeVersion: runtimeVersion,
+            supportedManifestMajor: 1,
+            maximumManifestMinor: 0,
+            supportedRuntimeMajor: runtimeVersion.major,
+            maximumRuntimeMinor: runtimeVersion.minor,
             supportedCapabilityIDs: [],
-            maximumStorageQuotaBytes: 8 * 1_048_576,
-            curatedModuleVersions: [:]
+            curatedModuleVersions: [:],
+            supportsMixedOrientation: false,
+            maximumStorageQuotaBytes: 8 * 1_048_576
         )
         let request = try ForgeRuntimeProjectLoader().load(
             projectRootURL: rootURL,
