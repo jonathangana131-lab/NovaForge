@@ -136,9 +136,14 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
         // real allocation boundary rather than a post-allocation check. Codable archives can be
         // model-shaped or persisted input; an oversized array must fail before materializing it.
         var targetsContainer = try container.nestedUnkeyedContainer(forKey: .targets)
+        if let count = targetsContainer.count, count > Self.maximumTargets {
+            throw ForgeQualityError.tooManyTargets
+        }
         var decodedTargets: [ForgeQualityTarget] = []
-        decodedTargets.reserveCapacity(Self.maximumTargets)
+        decodedTargets.reserveCapacity(min(targetsContainer.count ?? Self.maximumTargets, Self.maximumTargets))
         while !targetsContainer.isAtEnd {
+            // `UnkeyedDecodingContainer.count` is optional. Retain the pre-append guard so custom
+            // decoders that cannot report a count still cannot materialize a 65th target.
             guard decodedTargets.count < Self.maximumTargets else {
                 throw ForgeQualityError.tooManyTargets
             }
