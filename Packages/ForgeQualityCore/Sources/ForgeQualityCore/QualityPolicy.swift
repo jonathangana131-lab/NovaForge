@@ -131,6 +131,20 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
         guard schemaVersion == Self.currentSchemaVersion else {
             throw ForgeQualityError.unsupportedSchemaVersion(schemaVersion)
         }
+
+        // Decode the untrusted collection incrementally so the public 64-target limit is a
+        // real allocation boundary rather than a post-allocation check. Codable archives can be
+        // model-shaped or persisted input; an oversized array must fail before materializing it.
+        var targetsContainer = try container.nestedUnkeyedContainer(forKey: .targets)
+        var decodedTargets: [ForgeQualityTarget] = []
+        decodedTargets.reserveCapacity(Self.maximumTargets)
+        while !targetsContainer.isAtEnd {
+            guard decodedTargets.count < Self.maximumTargets else {
+                throw ForgeQualityError.tooManyTargets
+            }
+            decodedTargets.append(try targetsContainer.decode(ForgeQualityTarget.self))
+        }
+
         try self.init(
             policyID: container.decode(ForgeQualityID.self, forKey: .policyID),
             policyRevision: container.decode(UInt64.self, forKey: .policyRevision),
@@ -139,7 +153,7 @@ public struct ForgeQualityPolicy: Codable, Hashable, Sendable {
             completionTarget: container.decode(ForgeQualityCompletionTarget.self, forKey: .completionTarget),
             checkpointID: container.decode(ForgeQualityID.self, forKey: .checkpointID),
             measurementProtocol: container.decode(ForgeQualityMeasurementProtocolIdentity.self, forKey: .measurementProtocol),
-            targets: container.decode([ForgeQualityTarget].self, forKey: .targets)
+            targets: decodedTargets
         )
     }
 }
