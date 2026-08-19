@@ -91,65 +91,21 @@ final class ForgeHistoryQualityStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        let moduleName = "ForgeHistoryCore.swiftmodule"
-        let fileManager = FileManager.default
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
             .deletingLastPathComponent()
 
-        if let configuration = ProcessInfo.processInfo.environment[
-            "NOVAFORGE_SWIFT_PACKAGE_CONFIGURATION"
-        ] {
-            let modulesURL = packageRoot
-                .appendingPathComponent(".build", isDirectory: true)
-                .appendingPathComponent(configuration, isDirectory: true)
-                .appendingPathComponent("Modules", isDirectory: true)
-            if fileManager.fileExists(
-                atPath: modulesURL.appendingPathComponent(moduleName).path
-            ) {
+        for _ in 0..<10 {
+            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+            let moduleURL = modulesURL.appendingPathComponent("ForgeHistoryCore.swiftmodule")
+            if FileManager.default.fileExists(atPath: moduleURL.path) {
                 return modulesURL
             }
-        }
 
-        let testBundle = Bundle(for: ForgeHistoryQualityStaticTrustBoundaryTests.self)
-        var searchRoots = [testBundle.bundleURL]
-        if let executableURL = testBundle.executableURL {
-            searchRoots.append(executableURL.deletingLastPathComponent())
-        }
-        searchRoots.append(
-            URL(fileURLWithPath: CommandLine.arguments[0])
-                .deletingLastPathComponent()
-        )
-
-        for searchRoot in searchRoots {
-            var directory = searchRoot
-            for _ in 0..<12 {
-                let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-                if fileManager.fileExists(
-                    atPath: modulesURL.appendingPathComponent(moduleName).path
-                ) {
-                    return modulesURL
-                }
-
-                let parent = directory.deletingLastPathComponent()
-                if parent.path == directory.path {
-                    break
-                }
-                directory = parent
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path {
+                break
             }
-        }
-
-        for configuration in ["debug", "release"] {
-            let modulesURL = packageRoot
-                .appendingPathComponent(".build", isDirectory: true)
-                .appendingPathComponent(configuration, isDirectory: true)
-                .appendingPathComponent("Modules", isDirectory: true)
-            if fileManager.fileExists(
-                atPath: modulesURL.appendingPathComponent(moduleName).path
-            ) {
-                return modulesURL
-            }
+            directory = parent
         }
 
         throw NSError(
@@ -157,7 +113,7 @@ final class ForgeHistoryQualityStaticTrustBoundaryTests: XCTestCase {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "ForgeHistoryCore module is missing from the active SwiftPM build"
+                    "ForgeHistoryCore module is missing from the active SwiftPM test executable ancestry"
             ]
         )
     }
