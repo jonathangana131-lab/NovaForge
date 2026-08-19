@@ -202,6 +202,82 @@ final class MissionProjectBrainDomainTests: XCTestCase {
         XCTAssertEqual(staleWithoutReason.validationError, .missingStaleReason)
     }
 
+    func testProjectBrainScopeRejectsWhitespaceAndControlAliases() throws {
+        let canonical = ProjectBrainScope(
+            kind: .file,
+            reference: "AgentPad/Views/ForgeChrome.swift"
+        )
+        XCTAssertNil(canonical.validationError)
+
+        let aliases = [
+            " AgentPad/Views/ForgeChrome.swift",
+            "AgentPad/Views/ForgeChrome.swift ",
+            "AgentPad/Views/ForgeChrome.swift\n",
+            "AgentPad/Views/Forge\tChrome.swift",
+        ]
+
+        for alias in aliases {
+            let scope = ProjectBrainScope(kind: .file, reference: alias)
+            XCTAssertEqual(scope.validationError, .nonCanonicalScopeReference, alias)
+
+            let roundTrip = try JSONDecoder().decode(
+                ProjectBrainScope.self,
+                from: JSONEncoder().encode(scope)
+            )
+            XCTAssertEqual(roundTrip.validationError, .nonCanonicalScopeReference, alias)
+        }
+
+        XCTAssertEqual(
+            ProjectBrainScope(kind: .project, reference: " ").validationError,
+            .blankScopeReference
+        )
+        XCTAssertEqual(
+            ProjectBrainScope(kind: .mission, reference: " ").validationError,
+            .missingScopeReference
+        )
+    }
+
+    func testProjectBrainProvenanceRejectsWhitespaceAndControlAliases() throws {
+        let instant = AgentInstant(rawValue: 600)
+        let canonical = ProjectBrainProvenance(
+            kind: .sourceFile,
+            reference: "AgentPad/Views/ForgeChrome.swift",
+            capturedAt: instant
+        )
+        XCTAssertNil(canonical.validationError)
+
+        let aliases = [
+            " AgentPad/Views/ForgeChrome.swift",
+            "AgentPad/Views/ForgeChrome.swift ",
+            "AgentPad/Views/ForgeChrome.swift\r",
+            "AgentPad/Views/Forge\tChrome.swift",
+        ]
+
+        for alias in aliases {
+            let provenance = ProjectBrainProvenance(
+                kind: .sourceFile,
+                reference: alias,
+                capturedAt: instant
+            )
+            XCTAssertEqual(provenance.validationError, .nonCanonicalProvenanceReference, alias)
+
+            let roundTrip = try JSONDecoder().decode(
+                ProjectBrainProvenance.self,
+                from: JSONEncoder().encode(provenance)
+            )
+            XCTAssertEqual(roundTrip.validationError, .nonCanonicalProvenanceReference, alias)
+        }
+
+        XCTAssertEqual(
+            ProjectBrainProvenance(
+                kind: .sourceFile,
+                reference: " ",
+                capturedAt: instant
+            ).validationError,
+            .blankProvenanceReference
+        )
+    }
+
     private func uuid(_ value: UInt8) -> UUID {
         UUID(uuid: (
             0, 0, 0, 0,
