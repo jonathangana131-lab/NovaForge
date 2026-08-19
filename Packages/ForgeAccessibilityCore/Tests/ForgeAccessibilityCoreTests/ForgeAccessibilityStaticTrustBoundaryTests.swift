@@ -57,8 +57,7 @@ final class ForgeAccessibilityStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
-            .deletingLastPathComponent()
+        var directory = Bundle(for: ForgeAccessibilityStaticTrustBoundaryTests.self).bundleURL
 
         for _ in 0..<10 {
             let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
@@ -79,7 +78,7 @@ final class ForgeAccessibilityStaticTrustBoundaryTests: XCTestCase {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "ForgeAccessibilityCore module is missing from the active SwiftPM test executable ancestry"
+                    "ForgeAccessibilityCore module is missing from the active SwiftPM XCTest bundle ancestry"
             ]
         )
     }
