@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PACKAGES_DIR="$ROOT_DIR/Packages"
 CONFIGURATION="${NOVAFORGE_SWIFT_PACKAGE_CONFIGURATION:-debug}"
 export LC_ALL=C
 
@@ -14,17 +13,27 @@ case "$CONFIGURATION" in
     ;;
 esac
 
-if [[ ! -d "$PACKAGES_DIR" ]]; then
-  echo "error: Packages directory is missing: $PACKAGES_DIR" >&2
+if ! git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "error: Swift package contract gate requires a Git checkout: $ROOT_DIR" >&2
   exit 2
 fi
 
-shopt -s nullglob
-package_manifests=("$PACKAGES_DIR"/*/Package.swift)
-shopt -u nullglob
+package_manifests=()
+while IFS= read -r tracked_path; do
+  case "$tracked_path" in
+    Package.swift|*/Package.swift)
+      manifest="$ROOT_DIR/$tracked_path"
+      if [[ ! -f "$manifest" ]]; then
+        echo "error: tracked Swift package manifest is missing from the working tree: $tracked_path" >&2
+        exit 2
+      fi
+      package_manifests+=("$manifest")
+      ;;
+  esac
+done < <(git -C "$ROOT_DIR" ls-files)
 
 if (( ${#package_manifests[@]} == 0 )); then
-  echo "error: no top-level Swift packages found under Packages/*/Package.swift" >&2
+  echo "error: no tracked Swift package manifests found" >&2
   exit 2
 fi
 
@@ -32,7 +41,11 @@ list_packages() {
   local manifest package_dir
   for manifest in "${package_manifests[@]}"; do
     package_dir="${manifest%/Package.swift}"
-    printf '%s\n' "${package_dir#"$ROOT_DIR"/}"
+    if [[ "$package_dir" == "$ROOT_DIR" ]]; then
+      printf '.\n'
+    else
+      printf '%s\n' "${package_dir#"$ROOT_DIR"/}"
+    fi
   done
 }
 
@@ -48,30 +61,50 @@ case "${1:-}" in
     ;;
 esac
 
-printf 'NovaForge Swift package contract gate: %d package(s), configuration=%s\n' \
+printf 'NovaForge Swift package contract gate: %d tracked package(s), configuration=%s\n' \
   "${#package_manifests[@]}" "$CONFIGURATION"
 
 status=0
 for manifest in "${package_manifests[@]}"; do
   package_dir="${manifest%/Package.swift}"
-  relative_package="${package_dir#"$ROOT_DIR"/}"
+  if [[ "$package_dir" == "$ROOT_DIR" ]]; then
+    relative_package="."
+  else
+    relative_package="${package_dir#"$ROOT_DIR"/}"
+  fi
 
   echo "::group::${relative_package} (${CONFIGURATION})"
-  if swift test \
+
+  if ! package_description="$(swift package --package-path "$package_dir" dump-package)"; then
+    echo "::error title=Swift package manifest failed::${relative_package} (${CONFIGURATION}) could not be loaded"
+    status=1
+    echo "::endgroup::"
+    continue
+  fi
+
+  if grep -Eq '"type"[[:space:]]*:[[:space:]]*"test"' <<<"$package_description"; then
+    action="test"
+    echo "Contract action: swift test"
+  else
+    action="build"
+    echo "Contract action: swift build (no test target declared)"
+  fi
+
+  if swift "$action" \
     --package-path "$package_dir" \
     --configuration "$CONFIGURATION" \
     -Xswiftc -warnings-as-errors; then
-    echo "PASS: ${relative_package} (${CONFIGURATION})"
+    echo "PASS: ${relative_package} (${CONFIGURATION}; ${action})"
   else
-    echo "::error title=Swift package contract failed::${relative_package} (${CONFIGURATION}) failed"
+    echo "::error title=Swift package contract failed::${relative_package} (${CONFIGURATION}; ${action}) failed"
     status=1
   fi
   echo "::endgroup::"
 done
 
 if (( status != 0 )); then
-  echo "One or more Swift package contract suites failed." >&2
+  echo "One or more tracked Swift package contracts failed." >&2
   exit "$status"
 fi
 
-echo "All discovered Swift package contract suites passed (${CONFIGURATION})."
+echo "All tracked Swift package contracts passed (${CONFIGURATION})."
