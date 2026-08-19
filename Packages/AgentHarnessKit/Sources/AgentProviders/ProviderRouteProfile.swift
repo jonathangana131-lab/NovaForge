@@ -188,6 +188,7 @@ public enum ProviderRouteProfileValidationError: Error, Equatable, Sendable {
     case emptyDataHandlingSourceID
     case emptyDataHandlingVerifiedAt
     case descriptorPathMismatch(descriptorPath: String, profilePath: String)
+    case unsafeEndpointRelativePath(String)
     case cancellationCapabilityMismatch
     case supportedRouteHasUnverifiedAuthentication
     case supportedRouteHasUnverifiedDataHandling
@@ -252,6 +253,11 @@ public struct ProviderRouteProfile: Equatable, Sendable {
             throw ProviderRouteProfileValidationError.descriptorPathMismatch(
                 descriptorPath: descriptor.requestPath,
                 profilePath: endpoint.relativePath
+            )
+        }
+        guard isSafeProviderAuthorityRelativePath(endpoint.relativePath) else {
+            throw ProviderRouteProfileValidationError.unsafeEndpointRelativePath(
+                endpoint.relativePath
             )
         }
         if cancellationBehavior != .unavailable,
@@ -455,5 +461,18 @@ public struct ProviderRouteReceiptProjection: Codable, Equatable, Sendable {
         supportRevision = profile.evidence.revision
         catalogSourceID = profile.evidence.catalogSourceID
         healthSourceID = profile.evidence.healthSourceID
+    }
+}
+
+private func isSafeProviderAuthorityRelativePath(_ value: String) -> Bool {
+    guard value.hasPrefix("/"), !value.hasPrefix("//"),
+          !value.contains("://"), !value.contains("?"),
+          !value.contains("#"), !value.contains("\\"),
+          value.utf8.count <= 2_048
+    else { return false }
+    return value.unicodeScalars.allSatisfy { scalar in
+        !CharacterSet.whitespacesAndNewlines.contains(scalar) &&
+            !CharacterSet.controlCharacters.contains(scalar) &&
+            scalar.properties.generalCategory != .format
     }
 }
