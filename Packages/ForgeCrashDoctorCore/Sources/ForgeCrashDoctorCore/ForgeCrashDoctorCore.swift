@@ -454,7 +454,8 @@ public struct ForgeCrashRepairAttempt: Codable, Hashable, Sendable {
 }
 
 /// Ordered durable candidate history. Validation prevents duplicate, reordered, or unbounded failure records
-/// from silently changing retry budgets after relaunch.
+/// from silently changing retry budgets after relaunch. Persisted history remains candidate data until a
+/// canonical verification adapter authenticates the failed attempts and constructs trusted history.
 public struct ForgeCrashRepairHistory: Codable, Hashable, Sendable {
     public let attempts: [ForgeCrashRepairAttempt]
 
@@ -474,8 +475,20 @@ public struct ForgeCrashRepairHistory: Codable, Hashable, Sendable {
     }
 }
 
-/// Host-supplied retry envelope. The model may propose work inside this budget but cannot treat its own
-/// output as verification success; completion remains owned by runtime/test evidence.
+/// Non-Codable verification-owned retry authority. Ordinary callers and persisted/model-authored
+/// repair history cannot construct this value. A future canonical verification adapter in this module
+/// must authenticate every failed attempt before creating trusted history.
+public struct ForgeCrashTrustedRepairHistory: Hashable, Sendable {
+    public let history: ForgeCrashRepairHistory
+
+    init(history: ForgeCrashRepairHistory) {
+        self.history = history
+    }
+}
+
+/// Host-supplied structural retry envelope. It remains useful for candidate/internal analysis, but the
+/// public trusted triage path always uses the package-owned conservative policy so callers cannot lower
+/// the blocker threshold with their own Codable policy value.
 public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
     public let maximumFocusedFailuresPerRepeatKey: Int
     public let maximumTotalFailuresBeforeBlocker: Int
@@ -492,6 +505,11 @@ public struct ForgeCrashRetryPolicy: Codable, Hashable, Sendable {
         }
         self.maximumFocusedFailuresPerRepeatKey = maximumFocusedFailuresPerRepeatKey
         self.maximumTotalFailuresBeforeBlocker = maximumTotalFailuresBeforeBlocker
+    }
+
+    static var conservativeV1: ForgeCrashRetryPolicy {
+        // Constants satisfy the initializer invariants by construction.
+        try! ForgeCrashRetryPolicy()
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -522,7 +540,22 @@ public struct ForgeCrashRepairSubmission: Hashable, Sendable {
 }
 
 public enum ForgeCrashTriage {
+    /// Public triage authority consumes only authenticated incident + failed-history evidence and uses
+    /// the package-owned retry budget. Codable history/policy values cannot mint blocker escalation.
     public static func makeSubmission(
+        for trustedIncident: ForgeCrashTrustedIncident,
+        trustedHistory: ForgeCrashTrustedRepairHistory
+    ) -> ForgeCrashRepairSubmission {
+        makeSubmission(
+            for: trustedIncident,
+            failedHistory: trustedHistory.history,
+            policy: .conservativeV1
+        )
+    }
+
+    /// Package-internal structural evaluator retained for exhaustive tests and the future canonical
+    /// verification adapter. Ordinary package consumers cannot feed candidate history/policy directly.
+    static func makeSubmission(
         for trustedIncident: ForgeCrashTrustedIncident,
         failedHistory: ForgeCrashRepairHistory,
         policy: ForgeCrashRetryPolicy
