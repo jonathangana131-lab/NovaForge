@@ -1,6 +1,6 @@
 import AgentDomain
 import AgentTransport
-import CryptoKit
+import Crypto
 import Foundation
 import XCTest
 
