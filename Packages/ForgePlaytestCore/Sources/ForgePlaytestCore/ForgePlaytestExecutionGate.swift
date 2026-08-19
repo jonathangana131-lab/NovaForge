@@ -1,23 +1,30 @@
-/// Exact execution binding supplied by the canonical runtime adapter.
+/// Producer-authenticated handoff for one complete executed journey subject.
 ///
-/// The binding carries the full validated trace value rather than only a human-readable trace ID,
-/// so a result from an older/different trace cannot be replayed against a plan that reused the ID.
-/// The referenced receipt is still opaque here: only a producer-owned runtime adapter may treat it
-/// as authentic dispatch/execution evidence.
+/// The binding is deliberately non-Codable and ordinary package consumers cannot construct it.
+/// A canonical runtime/evidence adapter inside this authority boundary must authenticate every
+/// artifact carried by `result` before minting the binding. Binding the complete result prevents a
+/// legitimate runtime execution receipt from being replayed with caller-fabricated screenshot,
+/// runtime-state, milestone, save/reload, performance, accessibility, visual, or defect evidence.
+/// The complete validated trace is also bound so a result from an older/different trace cannot be
+/// replayed against a plan that reused a human-readable trace ID.
 public struct ForgePlaytestExecutionBinding: Hashable, Sendable {
+    public let result: ForgePlaytestJourneyResult
     public let executionEvidence: ForgePlaytestEvidenceReference
     public let trace: ForgePlaytestTrace
 
-    public init(
-        executionEvidence: ForgePlaytestEvidenceReference,
+    init(
+        result: ForgePlaytestJourneyResult,
         trace: ForgePlaytestTrace
     ) throws {
-        guard executionEvidence.kind == .runtimeExecution else {
-            throw ForgePlaytestExecutionGateError.nonExecutionEvidence(
-                executionEvidence.receiptID
-            )
+        let executionEvidence = result.evidence.filter { $0.kind == .runtimeExecution }
+        guard executionEvidence.count == 1 else {
+            if executionEvidence.isEmpty {
+                throw ForgePlaytestExecutionGateError.nonExecutionEvidence(result.journeyID)
+            }
+            throw ForgePlaytestExecutionGateError.ambiguousExecutionEvidence(result.journeyID)
         }
-        self.executionEvidence = executionEvidence
+        self.result = result
+        self.executionEvidence = executionEvidence[0]
         self.trace = trace
     }
 }
@@ -31,6 +38,7 @@ public enum ForgePlaytestExecutionGateError: Error, Equatable, Sendable {
     case unexpectedBinding(String)
     case ambiguousExecutionEvidence(String)
     case executionEvidenceMismatch(String)
+    case executionResultMismatch(String)
     case executionTraceMismatch(String)
     case duplicateDefectEvidenceBinding(journeyID: String, defectID: String)
     case defectEvidenceBindingProjectMismatch(journeyID: String, defectID: String)
@@ -115,11 +123,11 @@ private struct ForgePlaytestDefectBindingKey: Hashable {
 public extension ForgePlaytestGateEvaluator {
     /// Public evidence gate for downstream runtime/mission integration.
     ///
-    /// Every result that claims runtime execution must have one exact binding supplied by the
-    /// canonical runtime adapter. The binding must point at the same execution evidence reference
-    /// carried by the result and must reproduce the complete validated planned trace value.
-    /// Results without runtime-execution evidence (for example, a pre-launch failed journey) must
-    /// not be given a synthetic execution binding.
+    /// Every result that claims runtime execution must have one exact, non-forgeable binding minted
+    /// only after a canonical producer authenticates the complete journey result. The binding must
+    /// reproduce the result byte-for-value and the complete validated planned trace. Results without
+    /// runtime-execution evidence (for example, a pre-launch failed journey) must not be given a
+    /// synthetic execution binding.
     ///
     /// Every high/critical defect that can steer `.repairRequired` must also carry one exact,
     /// non-forgeable `ForgePlaytestAuthenticatedDefectBinding`. Opaque receipt IDs and public defect
@@ -139,11 +147,11 @@ public extension ForgePlaytestGateEvaluator {
 
         var bindingsByJourneyID: [String: ForgePlaytestExecutionBinding] = [:]
         for binding in executionBindings {
-            let journeyID = binding.executionEvidence.journeyID
-            guard binding.executionEvidence.project.projectID == project.projectID else {
+            let journeyID = binding.result.journeyID
+            guard binding.result.project.projectID == project.projectID else {
                 throw ForgePlaytestExecutionGateError.bindingProjectMismatch(journeyID)
             }
-            guard binding.executionEvidence.project.sourceRevision == project.sourceRevision else {
+            guard binding.result.project.sourceRevision == project.sourceRevision else {
                 throw ForgePlaytestExecutionGateError.bindingSourceRevisionMismatch(journeyID)
             }
             guard bindingsByJourneyID.updateValue(binding, forKey: journeyID) == nil else {
@@ -171,6 +179,9 @@ public extension ForgePlaytestGateEvaluator {
             }
             guard let binding = bindingsByJourneyID[result.journeyID] else {
                 throw ForgePlaytestExecutionGateError.missingBinding(result.journeyID)
+            }
+            guard binding.result == result else {
+                throw ForgePlaytestExecutionGateError.executionResultMismatch(result.journeyID)
             }
             guard binding.executionEvidence == executionEvidence[0] else {
                 throw ForgePlaytestExecutionGateError.executionEvidenceMismatch(result.journeyID)
