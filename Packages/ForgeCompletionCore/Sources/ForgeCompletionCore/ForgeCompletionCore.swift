@@ -25,7 +25,7 @@ public enum ForgeCompletionError: Error, Equatable, Sendable {
 private enum ForgeCompletionValidation {
     static func identifier(_ value: String, field: String, maximumLength: Int = 512) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= maximumLength else {
+        guard !trimmed.isEmpty, trimmed.utf8.count <= maximumLength else {
             throw ForgeCompletionError.invalidIdentifier(field)
         }
         guard !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
@@ -36,7 +36,7 @@ private enum ForgeCompletionValidation {
 
     static func text(_ value: String, field: String, maximumLength: Int = 16_384) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= maximumLength else {
+        guard !trimmed.isEmpty, trimmed.utf8.count <= maximumLength else {
             throw ForgeCompletionError.invalidText(field)
         }
         return trimmed
