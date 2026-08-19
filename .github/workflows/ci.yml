@@ -30,10 +30,6 @@ jobs:
   verify:
     name: Critical verification
     runs-on: macos-26
-    # The critical lane now builds once and exercises the expanded harness,
-    # provider-contract, persistence, and Simulator journey matrix. Recent
-    # healthy runs finish near 43 minutes, so leave enough headroom for normal
-    # hosted-runner variance instead of cancelling a correct verification.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
@@ -49,6 +45,32 @@ jobs:
           path: artifacts/verify-critical
           if-no-files-found: warn
           retention-days: 14
+
+  crash-doctor-authority:
+    name: Crash Doctor authority contracts
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent
+        env:
+          EXPECTED_PRODUCT_HEAD: 5978eb8bfaa940122e20e506af4d1257696947e7
+        run: |
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD"
+      - name: Debug Crash Doctor contracts
+        run: swift test --package-path Packages/ForgeCrashDoctorCore -Xswiftc -warnings-as-errors
+      - name: Release Crash Doctor contracts
+        run: swift test --package-path Packages/ForgeCrashDoctorCore -c release -Xswiftc -warnings-as-errors
+      - name: UTF-8 storage-bound regressions
+        run: swift test --package-path Packages/ForgeCrashDoctorCore --filter ForgeCrashUTF8BoundsTests -Xswiftc -warnings-as-errors
+      - name: External trust-boundary regressions
+        run: |
+          swift test --package-path Packages/ForgeCrashDoctorCore --filter ForgeCrashDoctorTrustBoundaryTests -Xswiftc -warnings-as-errors
+          swift test --package-path Packages/ForgeCrashDoctorCore --filter ForgeCrashRepairHistoryStaticTrustTests -Xswiftc -warnings-as-errors
 
   screenshot-tour:
     name: Synchronized visual proof
