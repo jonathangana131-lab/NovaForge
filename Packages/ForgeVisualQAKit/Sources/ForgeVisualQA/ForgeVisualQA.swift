@@ -213,7 +213,7 @@ public enum VisualRegressionComparator {
         baseline: VisualTrustedCapture,
         candidate: VisualTrustedCapture
     ) -> VisualComparisonDecision {
-        guard baseline.project.projectID == candidate.project.projectID else {
+        guard baseline.project == candidate.project else {
             return .notComparable(.differentProject)
         }
         guard baseline.evidenceKind == candidate.evidenceKind else {
