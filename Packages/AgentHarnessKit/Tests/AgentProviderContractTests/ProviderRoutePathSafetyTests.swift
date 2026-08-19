@@ -18,7 +18,7 @@ final class ProviderRoutePathSafetyTests: XCTestCase {
             "https://example.invalid/v1/chat/completions",
             "//example.invalid/v1/chat/completions",
             "v1/chat/completions",
-            "/v1/chat/completions?api_key=secret",
+            "/v1/chat/completions?api_key=fixture-secret",
             "/v1/chat/completions#fragment",
             "/v1\\chat\\completions",
             "/v1/chat completions",
@@ -33,7 +33,7 @@ final class ProviderRoutePathSafetyTests: XCTestCase {
             XCTAssertThrowsError(try makeProfile(adapter: adapter, path: path), path) { error in
                 XCTAssertEqual(
                     error as? ProviderRouteProfileValidationError,
-                    .unsafeEndpointRelativePath(path),
+                    .unsafeEndpointRelativePath,
                     path
                 )
             }
@@ -44,6 +44,19 @@ final class ProviderRoutePathSafetyTests: XCTestCase {
                     path
                 )
             }
+        }
+    }
+
+    func testUnsafeProfileFailureDoesNotRetainCredentialBearingPath() {
+        let path = "https://user:fixture-secret@example.invalid/v1/chat/completions"
+        let adapter = makeAdapter(path: path)
+
+        XCTAssertThrowsError(try makeProfile(adapter: adapter, path: path)) { error in
+            XCTAssertEqual(
+                error as? ProviderRouteProfileValidationError,
+                .unsafeEndpointRelativePath
+            )
+            XCTAssertFalse(String(reflecting: error).contains("fixture-secret"))
         }
     }
 
