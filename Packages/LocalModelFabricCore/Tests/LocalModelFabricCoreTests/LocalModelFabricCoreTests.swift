@@ -10,7 +10,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
     func testMissionPrefersFirstQualifiedTier() throws {
         let instant = try candidate(model: "instant", sha: shaA, tier: .instant)
         let core = try candidate(model: "core", sha: shaB, tier: .core)
-        let decision = LocalModelFabricSelector.select(
+        let decision = selectWithTrustedQualification(
             candidates: [core, instant],
             request: try request(preferredTiers: [.instant, .core])
         )
@@ -22,7 +22,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
 
     func testLegacyUntestedPreflightDoesNotBlockCanonicalQualifiedMission() throws {
         let qualified = try candidate(model: "qualified", sha: shaA, tier: .core, includeLegacyBenchmark: false)
-        let decision = LocalModelFabricSelector.select(
+        let decision = selectWithTrustedQualification(
             candidates: [qualified],
             request: try request(preferredTiers: [.core])
         )
@@ -31,8 +31,8 @@ final class LocalModelFabricCoreTests: XCTestCase {
         XCTAssertTrue(decision.rejections.isEmpty)
     }
 
-    func testUntrustedCanonicalEvidenceCannotAuthorizeMission() throws {
-        let untrusted = try candidate(model: "untrusted", sha: shaA, tier: .core, trustEvidence: false)
+    func testPublicMissionWithoutOpaqueQualificationEvidenceFailsClosed() throws {
+        let untrusted = try candidate(model: "untrusted", sha: shaA, tier: .core)
         let decision = LocalModelFabricSelector.select(
             candidates: [untrusted],
             request: try request(preferredTiers: [.core])
@@ -43,7 +43,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
         XCTAssertFalse(decision.rejections[0].canonicalBlockingReasons.isEmpty)
     }
 
-    func testSimulatorEvidenceCannotAuthorizeMission() throws {
+    func testSimulatorCandidateCannotSelfAuthorizeMission() throws {
         let simulatorDevice = try device(environment: .simulator, hardwareIdentifier: "iPhone13,2-sim")
         let simulator = try candidate(
             model: "sim",
@@ -60,7 +60,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
         XCTAssertTrue(decision.rejections[0].reasons.contains(.canonicalQualificationRejected))
     }
 
-    func testLocalOnlyRequiresCanonicalNetworkAudit() throws {
+    func testLocalOnlyMissionWithoutOpaqueQualificationEvidenceFailsClosed() throws {
         let noAudit = try candidate(model: "local", sha: shaA, tier: .core, includeLocalOnlyAudit: false)
         let decision = LocalModelFabricSelector.select(
             candidates: [noAudit],
@@ -69,6 +69,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
 
         XCTAssertNil(decision.selection)
         XCTAssertTrue(decision.rejections[0].reasons.contains(.canonicalQualificationRejected))
+        XCTAssertFalse(decision.rejections[0].canonicalBlockingReasons.isEmpty)
     }
 
     func testRoleSuiteRevisionAndPassThresholdFailClosed() throws {
@@ -80,7 +81,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
             attempted: 10,
             passed: 6
         )
-        let decision = LocalModelFabricSelector.select(
+        let decision = selectWithTrustedQualification(
             candidates: [oldSuite],
             request: try request(preferredTiers: [.core], minimumPassRate: 0.8)
         )
@@ -99,7 +100,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
             memoryPressure: .critical,
             thermal: .serious
         )
-        let decision = LocalModelFabricSelector.select(
+        let decision = selectWithTrustedQualification(
             candidates: [unsafe],
             request: try request(
                 preferredTiers: [.core],
@@ -117,7 +118,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
     func testExactOSBuildDriftCannotReuseQualification() throws {
         let oldDevice = try device(osBuild: "24A-old")
         let stale = try candidate(model: "stale", sha: shaA, tier: .core, exactDevice: oldDevice)
-        let decision = LocalModelFabricSelector.select(
+        let decision = selectWithTrustedQualification(
             candidates: [stale],
             request: try request(preferredTiers: [.core], currentDevice: try device())
         )
@@ -131,8 +132,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
             model: "probe",
             sha: shaA,
             tier: .instant,
-            includeRecord: false,
-            trustEvidence: false
+            includeRecord: false
         )
         let decision = LocalModelFabricSelector.select(
             candidates: [probe],
@@ -147,14 +147,14 @@ final class LocalModelFabricCoreTests: XCTestCase {
 
     func testExperimentalBeyondRAMRequiresExplicitOptIn() throws {
         let experimental = try candidate(model: "experimental", sha: shaA, tier: .experimentalBeyondRAM)
-        let denied = LocalModelFabricSelector.select(
+        let denied = selectWithTrustedQualification(
             candidates: [experimental],
             request: try request(preferredTiers: [.experimentalBeyondRAM], allowExperimental: false)
         )
         XCTAssertNil(denied.selection)
         XCTAssertTrue(denied.rejections[0].reasons.contains(.experimentalOptInRequired))
 
-        let allowed = LocalModelFabricSelector.select(
+        let allowed = selectWithTrustedQualification(
             candidates: [experimental],
             request: try request(preferredTiers: [.experimentalBeyondRAM], allowExperimental: true)
         )
@@ -166,8 +166,8 @@ final class LocalModelFabricCoreTests: XCTestCase {
         let beta = try candidate(model: "same", sha: shaA, tier: .core, tokenizerRevision: "beta")
         let request = try request(preferredTiers: [.core])
 
-        let forward = LocalModelFabricSelector.select(candidates: [alpha, beta], request: request)
-        let reversed = LocalModelFabricSelector.select(candidates: [beta, alpha], request: request)
+        let forward = selectWithTrustedQualification(candidates: [alpha, beta], request: request)
+        let reversed = selectWithTrustedQualification(candidates: [beta, alpha], request: request)
 
         XCTAssertEqual(
             forward.selection?.subject.artifact.tokenizerRevision,
@@ -194,7 +194,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
             ttft: 50,
             decode: 30
         )
-        let decision = LocalModelFabricSelector.select(
+        let decision = selectWithTrustedQualification(
             candidates: [faster, reliable],
             request: try request(preferredTiers: [.core], minimumPassRate: 0.8)
         )
@@ -435,8 +435,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
         decode: Double = 10,
         includeLocalOnlyAudit: Bool = true,
         includeLegacyBenchmark: Bool = false,
-        includeRecord: Bool = true,
-        trustEvidence: Bool = true
+        includeRecord: Bool = true
     ) throws -> LocalModelFabricCandidate {
         let descriptor = descriptor(model: model, sha: sha)
         let deviceProfile = deviceProfile()
@@ -466,8 +465,20 @@ final class LocalModelFabricCoreTests: XCTestCase {
             legacyBenchmark: includeLegacyBenchmark ? benchmark(descriptor: descriptor, device: deviceProfile) : nil,
             subject: subject,
             qualificationRecord: record,
-            trustedEvidence: trustEvidence ? Set(items) : []
+            trustedEvidence: []
         )
+    }
+
+    private func selectWithTrustedQualification(
+        candidates: [LocalModelFabricCandidate],
+        request: LocalModelFabricRequest
+    ) -> LocalModelFabricSelectionDecision {
+        LocalModelFabricSelector.selectForTesting(
+            candidates: candidates,
+            request: request
+        ) { _, claim, _ in
+            LocalModelQualificationReadiness(claim: claim, blockingReasons: [])
+        }
     }
 
     private func request(
