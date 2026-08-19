@@ -1,0 +1,41 @@
+name: Local AI benchmark fixtures
+
+on:
+  pull_request:
+    paths:
+      - "Benchmarks/LocalAI/**"
+      - "scripts/validate-v14-local-ai-benchmark-fixtures.py"
+      - "scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py"
+      - ".github/workflows/local-ai-benchmark-fixtures.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Benchmarks/LocalAI/**"
+      - "scripts/validate-v14-local-ai-benchmark-fixtures.py"
+      - "scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py"
+      - ".github/workflows/local-ai-benchmark-fixtures.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-ai-benchmark-fixtures-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate canonical fixture corpus
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate canonical corpus and exported suite
+        run: |
+          python3 scripts/validate-v14-local-ai-benchmark-fixtures.py Benchmarks/LocalAI/v1
+          python3 scripts/validate-v14-local-ai-benchmark-fixtures.py Benchmarks/LocalAI/v1 --suite-json > /tmp/novaforge-local-ai-suite.json
+          python3 -m json.tool /tmp/novaforge-local-ai-suite.json > /dev/null
+      - name: Run adversarial validator tests
+        run: python3 -m unittest scripts.tests.test_validate_v14_local_ai_benchmark_fixtures
+      - name: Compile validator sources
+        run: python3 -m py_compile scripts/validate-v14-local-ai-benchmark-fixtures.py scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py
