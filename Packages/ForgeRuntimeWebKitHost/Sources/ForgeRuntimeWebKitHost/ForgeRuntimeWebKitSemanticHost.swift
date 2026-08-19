@@ -50,13 +50,13 @@ public struct ForgeRuntimeWebKitArtifactLoadSubject: Equatable, Sendable {
 public struct ForgeRuntimeWebKitSemanticHostObservation: Equatable, Sendable {
     public let navigationGenerationID: UUID
     public let loadSubject: ForgeRuntimeWebKitArtifactLoadSubject
-    public let authorizationReceipt: ForgeRuntimeSemanticInteractionAuthorizationReceipt
+    public let authorizationReceipt: ForgeRuntimeSessionBoundSemanticInteractionAuthorizationReceipt
     public let pageObservation: ForgeRuntimeWebSemanticDispatchObservation
 
     init(
         navigationGenerationID: UUID,
         loadSubject: ForgeRuntimeWebKitArtifactLoadSubject,
-        authorizationReceipt: ForgeRuntimeSemanticInteractionAuthorizationReceipt,
+        authorizationReceipt: ForgeRuntimeSessionBoundSemanticInteractionAuthorizationReceipt,
         pageObservation: ForgeRuntimeWebSemanticDispatchObservation
     ) {
         self.navigationGenerationID = navigationGenerationID
@@ -153,8 +153,6 @@ public final class ForgeRuntimeWebKitSemanticHost {
     public func navigationDidStart(_ navigation: WKNavigation, in candidateWebView: WKWebView) {
         guard candidateWebView === webView else { return }
         guard navigation === activeNavigation, activeLoadSubject != nil else {
-            // A page-initiated navigation has no accepted load subject. Do not carry the previous
-            // source identity across it merely because the same WKWebView remains alive.
             activeNavigation = navigation
             readyNavigation = nil
             activeLoadSubject = nil
@@ -186,12 +184,11 @@ public final class ForgeRuntimeWebKitSemanticHost {
 
     /// Evaluates one package-authorized semantic interaction in the isolated automation world.
     ///
-    /// The interaction must match the exact session/project/source identity that initiated the
-    /// current generated-artifact load. The navigation generation is captured before evaluation and
-    /// revalidated afterward, so reload/navigation/process races fail closed rather than attaching an
-    /// old page result to a new artifact generation.
+    /// The interaction must match the exact session/project/source/runtime identity that initiated
+    /// the current generated-artifact load. The navigation generation and load subject are captured
+    /// before evaluation and revalidated afterward so reload/navigation/process races fail closed.
     public func execute(
-        _ authorized: ForgeRuntimeAuthorizedSemanticInteraction
+        _ authorized: ForgeRuntimeSessionBoundAuthorizedSemanticInteraction
     ) async throws -> ForgeRuntimeWebKitSemanticHostObservation {
         guard let webView else {
             throw ForgeRuntimeWebKitSemanticHostError.webViewReleased
@@ -209,7 +206,8 @@ public final class ForgeRuntimeWebKitSemanticHost {
         let request = authorized.request
         guard request.sessionID == activeLoadSubject.sessionID,
               request.projectID == activeLoadSubject.projectID,
-              request.sourceRevision == activeLoadSubject.sourceRevision else {
+              request.sourceRevision == activeLoadSubject.sourceRevision,
+              authorized.runtimeVersion == activeLoadSubject.runtimeVersion else {
             throw ForgeRuntimeWebKitSemanticHostError.artifactIdentityMismatch
         }
 
