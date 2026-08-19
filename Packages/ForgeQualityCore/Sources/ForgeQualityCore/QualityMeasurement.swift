@@ -190,9 +190,16 @@ public struct ForgeQualityMeasurementBatch: Codable, Hashable, Sendable {
         // candidate bytes. Decoding `[ForgeQualityMeasurement]` first would allocate the entire
         // attacker/model-shaped array before the public constructor could enforce the limit.
         var measurementsContainer = try container.nestedUnkeyedContainer(forKey: .measurements)
+        if let count = measurementsContainer.count, count > Self.maximumMeasurements {
+            throw ForgeQualityError.tooManyMeasurements
+        }
         var decodedMeasurements: [ForgeQualityMeasurement] = []
-        decodedMeasurements.reserveCapacity(Self.maximumMeasurements)
+        decodedMeasurements.reserveCapacity(
+            min(measurementsContainer.count ?? Self.maximumMeasurements, Self.maximumMeasurements)
+        )
         while !measurementsContainer.isAtEnd {
+            // `count` is optional for custom Decoders, so preserve the retained-count guard before
+            // every append. Unknown-count inputs still cannot materialize a 257th observation.
             guard decodedMeasurements.count < Self.maximumMeasurements else {
                 throw ForgeQualityError.tooManyMeasurements
             }
