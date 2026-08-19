@@ -465,7 +465,7 @@ final class LocalModelFabricCoreTests: XCTestCase {
             legacyBenchmark: includeLegacyBenchmark ? benchmark(descriptor: descriptor, device: deviceProfile) : nil,
             subject: subject,
             qualificationRecord: record,
-            trustedEvidence: []
+            trustedReceipts: []
         )
     }
 
@@ -476,8 +476,8 @@ final class LocalModelFabricCoreTests: XCTestCase {
         LocalModelFabricSelector.selectForTesting(
             candidates: candidates,
             request: request
-        ) { _, claim, _ in
-            LocalModelQualificationReadiness(claim: claim, blockingReasons: [])
+        ) { _, _, _ in
+            (isQualified: true, blockingReasons: [])
         }
     }
 
