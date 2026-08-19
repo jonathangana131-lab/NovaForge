@@ -4,6 +4,63 @@ import XCTest
 
 final class ForgeVisualQAStaticTrustBoundaryTests: XCTestCase {
     func testExternalConsumerCannotMintTrustedVisualCapture() throws {
+        try assertExternalSourceRejected(
+            """
+            import ForgeVisualQA
+
+            func attemptMint(_ capture: VisualCaptureReceipt) throws {
+                _ = try VisualTrustedCapture(
+                    authenticatedCapture: capture,
+                    artifactSHA256: String(repeating: "a", count: 64)
+                )
+            }
+            """,
+            expectedSymbol: "VisualTrustedCapture"
+        )
+    }
+
+    func testExternalConsumerCannotMintFirstMinuteAssessment() throws {
+        try assertExternalSourceRejected(
+            """
+            import ForgeVisualQA
+
+            func attemptMint(
+                _ capture: VisualTrustedCapture,
+                observations: [FirstMinuteObservation]
+            ) {
+                _ = FirstMinuteAssessment(capture: capture, observations: observations)
+            }
+            """,
+            expectedSymbol: "FirstMinuteAssessment"
+        )
+    }
+
+    func testExternalConsumerCannotMintAutoPolishPass() throws {
+        try assertExternalSourceRejected(
+            """
+            import ForgeVisualQA
+
+            func attemptMint(
+                _ capture: VisualTrustedCapture,
+                findings: [VisualFinding]
+            ) {
+                _ = AutoPolishPass(
+                    capture: capture,
+                    findings: findings,
+                    improvementScore: 1
+                )
+            }
+            """,
+            expectedSymbol: "AutoPolishPass"
+        )
+    }
+
+    private func assertExternalSourceRejected(
+        _ source: String,
+        expectedSymbol: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("forge-visual-static-trust-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -13,16 +70,7 @@ final class ForgeVisualQAStaticTrustBoundaryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
         let sourceURL = temporaryDirectory.appendingPathComponent("ExternalVisualTrustMint.swift")
-        try """
-        import ForgeVisualQA
-
-        func attemptMint(_ capture: VisualCaptureReceipt) throws {
-            _ = try VisualTrustedCapture(
-                authenticatedCapture: capture,
-                artifactSHA256: String(repeating: "a", count: 64)
-            )
-        }
-        """.write(to: sourceURL, atomically: true, encoding: .utf8)
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
 
         let process = Process()
         let output = Pipe()
@@ -46,16 +94,31 @@ final class ForgeVisualQAStaticTrustBoundaryTests: XCTestCase {
             as: UTF8.self
         )
 
-        XCTAssertNotEqual(process.terminationStatus, 0, "External visual trust mint unexpectedly compiled")
+        XCTAssertNotEqual(
+            process.terminationStatus,
+            0,
+            "External visual authority mint unexpectedly compiled",
+            file: file,
+            line: line
+        )
         XCTAssertFalse(
             diagnostics.localizedCaseInsensitiveContains("no such module 'ForgeVisualQA'"),
-            "Static boundary probe failed before reaching VisualTrustedCapture: \(diagnostics)"
+            "Static boundary probe failed before reaching \(expectedSymbol): \(diagnostics)",
+            file: file,
+            line: line
         )
-        XCTAssertTrue(diagnostics.contains("VisualTrustedCapture"), "Expected trusted-capture diagnostic: \(diagnostics)")
+        XCTAssertTrue(
+            diagnostics.contains(expectedSymbol),
+            "Expected \(expectedSymbol) diagnostic: \(diagnostics)",
+            file: file,
+            line: line
+        )
         XCTAssertTrue(
             diagnostics.localizedCaseInsensitiveContains("inaccessible")
                 || diagnostics.localizedCaseInsensitiveContains("internal protection level"),
-            "Expected access-control rejection, got: \(diagnostics)"
+            "Expected access-control rejection, got: \(diagnostics)",
+            file: file,
+            line: line
         )
     }
 
