@@ -45,7 +45,7 @@ final class ForgePlaytestExecutionGateTests: XCTestCase {
         ])
     }
 
-    func testPublicExecutionGateAcceptsExactFullTraceBinding() throws {
+    func testPublicExecutionGateAcceptsExactAuthenticatedJourneyAndTrace() throws {
         let plannedTrace = try trace(controlID: "jump")
         let execution = try evidence(.runtimeExecution, receipt: "exec", journey: "goal")
         let plan = try ForgePlaytestJourneyPlan(
@@ -63,7 +63,7 @@ final class ForgePlaytestExecutionGateTests: XCTestCase {
             evidence: [execution]
         )
         let binding = try ForgePlaytestExecutionBinding(
-            executionEvidence: execution,
+            result: result,
             trace: plannedTrace
         )
 
@@ -74,7 +74,7 @@ final class ForgePlaytestExecutionGateTests: XCTestCase {
             results: [result],
             executionBindings: [binding]
         ) else {
-            return XCTFail("Expected exact execution binding to pass")
+            return XCTFail("Expected exact authenticated journey binding to pass")
         }
         XCTAssertEqual(projection.acceptedJourneyIDs, ["goal"])
         XCTAssertEqual(projection.contributingReceiptIDs, ["exec"])
@@ -99,7 +99,7 @@ final class ForgePlaytestExecutionGateTests: XCTestCase {
             evidence: [execution]
         )
         let staleBinding = try ForgePlaytestExecutionBinding(
-            executionEvidence: execution,
+            result: staleResult,
             trace: staleExecutedTrace
         )
 
@@ -150,7 +150,54 @@ final class ForgePlaytestExecutionGateTests: XCTestCase {
         }
     }
 
-    func testAcceptedProjectionExcludesUnrelatedEvidence() throws {
+    func testAuthenticatedRuntimeReceiptCannotBeReplayedWithFabricatedResultEvidence() throws {
+        let plannedTrace = try trace()
+        let execution = try evidence(.runtimeExecution, receipt: "exec", journey: "goal")
+        let plan = try ForgePlaytestJourneyPlan(
+            journeyID: "goal",
+            project: project(),
+            persona: .goalRunner,
+            trace: plannedTrace
+        )
+        let authenticatedResult = try ForgePlaytestJourneyResult(
+            project: project(),
+            journeyID: "goal",
+            persona: .goalRunner,
+            traceID: plannedTrace.traceID,
+            status: .completed,
+            evidence: [execution]
+        )
+        let fabricatedScreenshot = try evidence(.screenshot, receipt: "fake-shot", journey: "goal")
+        let callerRewrittenResult = try ForgePlaytestJourneyResult(
+            project: project(),
+            journeyID: "goal",
+            persona: .goalRunner,
+            traceID: plannedTrace.traceID,
+            status: .completed,
+            evidence: [execution, fabricatedScreenshot]
+        )
+        let binding = try ForgePlaytestExecutionBinding(
+            result: authenticatedResult,
+            trace: plannedTrace
+        )
+
+        XCTAssertThrowsError(
+            try ForgePlaytestGateEvaluator.evaluate(
+                project: project(),
+                policy: try policy(kinds: [.runtimeExecution, .screenshot]),
+                plans: [plan],
+                results: [callerRewrittenResult],
+                executionBindings: [binding]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? ForgePlaytestExecutionGateError,
+                .executionResultMismatch("goal")
+            )
+        }
+    }
+
+    func testAcceptedProjectionExcludesUnrelatedAuthenticatedEvidence() throws {
         let plannedTrace = try trace()
         let execution = try evidence(.runtimeExecution, receipt: "exec", journey: "goal")
         let unrelatedScreenshot = try evidence(.screenshot, receipt: "shot-unrelated", journey: "goal")
@@ -169,7 +216,7 @@ final class ForgePlaytestExecutionGateTests: XCTestCase {
             status: .completed,
             evidence: [execution, unrelatedScreenshot, unrelatedLog]
         )
-        let binding = try ForgePlaytestExecutionBinding(executionEvidence: execution, trace: plannedTrace)
+        let binding = try ForgePlaytestExecutionBinding(result: result, trace: plannedTrace)
 
         guard case let .accepted(projection) = try ForgePlaytestGateEvaluator.evaluate(
             project: project(),
@@ -207,7 +254,7 @@ final class ForgePlaytestExecutionGateTests: XCTestCase {
             evidence: [execution, milestoneLog],
             milestones: [milestone]
         )
-        let binding = try ForgePlaytestExecutionBinding(executionEvidence: execution, trace: plannedTrace)
+        let binding = try ForgePlaytestExecutionBinding(result: result, trace: plannedTrace)
 
         guard case let .accepted(projection) = try ForgePlaytestGateEvaluator.evaluate(
             project: project(),
