@@ -2078,11 +2078,22 @@ final class AgentPadUITests: XCTestCase {
         reasoningSlider.coordinate(
             withNormalizedOffset: CGVector(dx: 0.90, dy: 0.34)
         ).tap()
+        let ultraCapabilityDetail = app.staticTexts.containing(
+            NSPredicate(
+                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@",
+                "Extra High model reasoning",
+                "isolated specialist agents"
+            )
+        ).firstMatch
         XCTAssertTrue(
+            ultraCapabilityDetail.waitForExistence(timeout: 5),
+            "GPT-5.5 Ultra must describe the actual xhigh model ceiling plus real isolated-agent orchestration."
+        )
+        XCTAssertFalse(
             app.staticTexts.containing(
-                NSPredicate(format: "label CONTAINS[c] %@", "workspace")
-            ).firstMatch.waitForExistence(timeout: 5),
-            "UltraCode should compactly explain its maximum-reasoning workspace behavior."
+                NSPredicate(format: "label CONTAINS[c] %@", "Max reasoning + isolated")
+            ).firstMatch.exists,
+            "GPT-5.5 Ultra must not claim provider-native Max reasoning when capability mapping clamps it to Extra High."
         )
         capture("23-reasoning-ultracode-liquid-glass", app: app)
 
