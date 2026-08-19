@@ -4,8 +4,8 @@
 //
 //  Home-screen project status in the facelift HUD language: reticle mark,
 //  tracked kicker, display-weight status line, journey rail, and the proof
-//  count as an instrument numeral. Reads the app-written snapshot; renders
-//  an honest sample when none exists yet.
+//  count as an instrument numeral. Reads the app-written snapshot; keeps the
+//  WidgetKit placeholder separate from the truthful no-snapshot state.
 //
 
 import SwiftUI
@@ -15,6 +15,7 @@ struct ProjectStatusEntry: TimelineEntry {
     let date: Date
     let snapshot: NovaWidgetSharedState.Snapshot
     let isSample: Bool
+    let hasSnapshot: Bool
 
     static var sample: ProjectStatusEntry {
         ProjectStatusEntry(
@@ -26,7 +27,23 @@ struct ProjectStatusEntry: TimelineEntry {
                 proofCount: 0,
                 updatedAt: .now
             ),
-            isSample: true
+            isSample: true,
+            hasSnapshot: false
+        )
+    }
+
+    static var empty: ProjectStatusEntry {
+        ProjectStatusEntry(
+            date: .now,
+            snapshot: .init(
+                projectName: "NovaForge",
+                statusHeadline: "Open NovaForge to show project status",
+                journeyPhase: "",
+                proofCount: 0,
+                updatedAt: .now
+            ),
+            isSample: false,
+            hasSnapshot: false
         )
     }
 }
@@ -46,9 +63,9 @@ struct ProjectStatusProvider: TimelineProvider {
 
     private func currentEntry() -> ProjectStatusEntry {
         if let snapshot = NovaWidgetSharedState.read() {
-            return ProjectStatusEntry(date: .now, snapshot: snapshot, isSample: false)
+            return ProjectStatusEntry(date: .now, snapshot: snapshot, isSample: false, hasSnapshot: true)
         }
-        return .sample
+        return .empty
     }
 }
 
@@ -118,6 +135,7 @@ struct ProjectStatusWidgetView: View {
     }
 
     private var isSmall: Bool { family == .systemSmall }
+    private var shouldShowJourney: Bool { entry.hasSnapshot || entry.isSample }
 
     var body: some View {
         VStack(alignment: .leading, spacing: isSmall ? 5 : 7) {
@@ -141,26 +159,69 @@ struct ProjectStatusWidgetView: View {
 
             Spacer(minLength: 0)
 
-            journeyRail
+            if shouldShowJourney {
+                journeyRail
+            } else {
+                emptyStateRail
+            }
 
             HStack(alignment: .lastTextBaseline, spacing: 5) {
-                Text("\(entry.snapshot.proofCount)")
-                    .font(.system(size: isSmall ? 15 : 17, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.green : NovaWidgetPalette.tertiary)
-                Text("PROOF")
-                    .font(.system(size: 7.5, weight: .heavy, design: .rounded))
-                    .tracking(1.2)
-                    .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.secondary : NovaWidgetPalette.tertiary)
+                if shouldShowJourney {
+                    Text("\(entry.snapshot.proofCount)")
+                        .font(.system(size: isSmall ? 15 : 17, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.green : NovaWidgetPalette.tertiary)
+                    Text("PROOF")
+                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundStyle(entry.snapshot.proofCount > 0 ? NovaWidgetPalette.secondary : NovaWidgetPalette.tertiary)
+                } else {
+                    Text("—")
+                        .font(.system(size: isSmall ? 15 : 17, weight: .heavy, design: .rounded))
+                        .foregroundStyle(NovaWidgetPalette.tertiary)
+                    Text("PROOF")
+                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundStyle(NovaWidgetPalette.tertiary)
+                }
                 Spacer(minLength: 0)
-                Text(entry.snapshot.updatedAt, style: .relative)
-                    .font(.system(size: 8, weight: .semibold, design: .rounded))
-                    .foregroundStyle(NovaWidgetPalette.tertiary)
-                    .lineLimit(1)
+                if shouldShowJourney {
+                    Text(entry.snapshot.updatedAt, style: .relative)
+                        .font(.system(size: 8, weight: .semibold, design: .rounded))
+                        .foregroundStyle(NovaWidgetPalette.tertiary)
+                        .lineLimit(1)
+                } else {
+                    Text("NO STATUS")
+                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .tracking(0.9)
+                        .foregroundStyle(NovaWidgetPalette.tertiary)
+                        .lineLimit(1)
+                }
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(entry.snapshot.projectName): \(entry.snapshot.statusHeadline). Phase \(entry.snapshot.journeyPhase). \(entry.snapshot.proofCount) proof items.")
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        guard shouldShowJourney else {
+            return "NovaForge: No project status available. Open NovaForge to show project status."
+        }
+        return "\(entry.snapshot.projectName): \(entry.snapshot.statusHeadline). Phase \(entry.snapshot.journeyPhase). \(entry.snapshot.proofCount) proof items."
+    }
+
+    private var emptyStateRail: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "circle.dashed")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(NovaWidgetPalette.tertiary)
+                .accessibilityHidden(true)
+            Text("NO PROJECT SNAPSHOT")
+                .font(.system(size: 8, weight: .heavy, design: .rounded))
+                .tracking(0.8)
+                .foregroundStyle(NovaWidgetPalette.tertiary)
+                .lineLimit(1)
+        }
     }
 
     private var journeyRail: some View {
