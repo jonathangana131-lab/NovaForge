@@ -3,49 +3,52 @@ import Foundation
 /// Exact subject the host authenticated for one accounting measurement.
 ///
 /// This type is intentionally non-Codable. Durable `ForgeCompactAccountingReceipt` bytes remain
-/// evidence candidates, not trusted state. A host should create/store a binding only after it has
-/// authenticated the external measurement that produced the receipt.
+/// evidence candidates, not trusted state. Only a canonical producer inside ForgeCompactCore may
+/// construct a binding after authenticating the complete external measurement subject.
 public struct ForgeCompactAccountingTrustBinding: Hashable, Sendable {
-    public let schemaVersion: Int
-    public let measurementReceiptID: String
-    public let authority: ProjectCapsuleAuthority
-    public let selectedItemIDs: [String]
-    public let baselineIdentity: ForgeCompactAccountingBaselineIdentity
-    public let basis: ForgeCompactAccountingBasis
-    public let provenance: ForgeCompactAccountingProvenance
-    public let baselineUTF8Bytes: UInt64
-    public let capsuleUTF8Bytes: UInt64
-    public let baselineUnits: UInt64
-    public let capsuleUnits: UInt64
+    /// Keep the complete validated receipt as the authenticated subject so future receipt fields
+    /// automatically participate in equality/matching instead of depending on a hand-maintained
+    /// trust-field checklist.
+    private let authenticatedReceipt: ForgeCompactAccountingReceipt
 
-    /// Captures the complete subject of a receipt the host has already authenticated.
-    /// Constructing this value does not itself authenticate the receipt.
-    public init(authenticatedReceipt receipt: ForgeCompactAccountingReceipt) {
-        schemaVersion = receipt.schemaVersion
-        measurementReceiptID = receipt.measurementReceiptID
-        authority = receipt.authority
-        selectedItemIDs = receipt.selectedItemIDs
-        baselineIdentity = receipt.baselineIdentity
-        basis = receipt.basis
-        provenance = receipt.provenance
-        baselineUTF8Bytes = receipt.baselineUTF8Bytes
-        capsuleUTF8Bytes = receipt.capsuleUTF8Bytes
-        baselineUnits = receipt.baselineUnits
-        capsuleUnits = receipt.capsuleUnits
+    // Preserve the inspection surface introduced by the original trust binding without making these
+    // projections the authorization comparison. The complete receipt above remains authoritative.
+    public var schemaVersion: Int { authenticatedReceipt.schemaVersion }
+    public var measurementReceiptID: String { authenticatedReceipt.measurementReceiptID }
+    public var authority: ProjectCapsuleAuthority { authenticatedReceipt.authority }
+    public var selectedItemIDs: [String] { authenticatedReceipt.selectedItemIDs }
+    public var baselineIdentity: ForgeCompactAccountingBaselineIdentity { authenticatedReceipt.baselineIdentity }
+    public var basis: ForgeCompactAccountingBasis { authenticatedReceipt.basis }
+    public var provenance: ForgeCompactAccountingProvenance { authenticatedReceipt.provenance }
+    public var baselineUTF8Bytes: UInt64 { authenticatedReceipt.baselineUTF8Bytes }
+    public var capsuleUTF8Bytes: UInt64 { authenticatedReceipt.capsuleUTF8Bytes }
+    public var baselineUnits: UInt64 { authenticatedReceipt.baselineUnits }
+    public var capsuleUnits: UInt64 { authenticatedReceipt.capsuleUnits }
+
+    /// Package-owned producer seam. Constructing this value is intentionally unavailable to ordinary
+    /// imports because caller-shaped/Codable accounting receipts are candidate data, not authentication.
+    init(authenticatedReceipt receipt: ForgeCompactAccountingReceipt) {
+        authenticatedReceipt = receipt
+    }
+
+    public static func == (
+        lhs: ForgeCompactAccountingTrustBinding,
+        rhs: ForgeCompactAccountingTrustBinding
+    ) -> Bool {
+        lhs.authenticatedReceipt == rhs.authenticatedReceipt
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        // Hashing is only a Set indexing aid; authorization is always whole-receipt equality.
+        // A deliberately sparse hash means future receipt fields cannot be accidentally omitted
+        // from trust semantics. Distinct same-ID subjects may collide, but Set equality keeps them
+        // distinct and `matches` still compares the complete authenticated receipt.
+        hasher.combine(authenticatedReceipt.schemaVersion)
+        hasher.combine(authenticatedReceipt.measurementReceiptID)
     }
 
     fileprivate func matches(_ receipt: ForgeCompactAccountingReceipt) -> Bool {
-        schemaVersion == receipt.schemaVersion
-            && measurementReceiptID == receipt.measurementReceiptID
-            && authority == receipt.authority
-            && selectedItemIDs == receipt.selectedItemIDs
-            && baselineIdentity == receipt.baselineIdentity
-            && basis == receipt.basis
-            && provenance == receipt.provenance
-            && baselineUTF8Bytes == receipt.baselineUTF8Bytes
-            && capsuleUTF8Bytes == receipt.capsuleUTF8Bytes
-            && baselineUnits == receipt.baselineUnits
-            && capsuleUnits == receipt.capsuleUnits
+        authenticatedReceipt == receipt
     }
 }
 
