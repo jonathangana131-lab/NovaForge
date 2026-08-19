@@ -332,12 +332,13 @@ public struct FirstMinuteObservation: Codable, Equatable, Hashable, Sendable {
 }
 
 /// Evidence-backed first-minute assessment. Deliberately non-Codable because trusted capture
-/// authority must be reacquired from the canonical runtime producer after relaunch.
+/// authority must be reacquired from the canonical runtime producer after relaunch. Construction
+/// is module-internal so caller-shaped observations cannot mint a positive assessment.
 public struct FirstMinuteAssessment: Equatable, Sendable {
     public let capture: VisualTrustedCapture
     public let observations: [FirstMinuteObservation]
 
-    public init(capture: VisualTrustedCapture, observations: [FirstMinuteObservation]) {
+    init(capture: VisualTrustedCapture, observations: [FirstMinuteObservation]) {
         self.capture = capture
         self.observations = observations
     }
@@ -445,13 +446,14 @@ public struct AutoPolishPolicy: Codable, Equatable, Sendable {
 }
 
 /// One visual-polish pass over authenticated runtime capture evidence. Non-Codable so accepted
-/// capture authority cannot be restored from candidate bytes after relaunch.
+/// capture authority cannot be restored from candidate bytes after relaunch. Construction is
+/// module-internal so caller-shaped findings cannot mint an acceptance-passed decision.
 public struct AutoPolishPass: Equatable, Sendable {
     public let capture: VisualTrustedCapture
     public let findings: [VisualFinding]
     public let improvementScore: Double
 
-    public init(
+    init(
         capture: VisualTrustedCapture,
         findings: [VisualFinding],
         improvementScore: Double
