@@ -22,6 +22,32 @@ struct LlamaConfigPolicyTests {
         #expect(config.maxTokenCount == 256)
     }
 
+    @Test("Actual context batch clamps executable Swift batch")
+    func actualContextBatchClampsExecutableBatch() {
+        let profile = LlamaConfig(
+            batchSize: 1_024,
+            maxTokenCount: 256
+        ).requestedAllocationProfile
+
+        #expect(profile.batchTokens == 1_024)
+        #expect(profile.reconciledBatchTokens(actualContextBatch: 256) == 256)
+        #expect(profile.reconciledBatchTokens(actualContextBatch: 2_048) == 1_024)
+        #expect(profile.reconciledBatchTokens(actualContextBatch: 0) == nil)
+    }
+
+    @Test("Executable batch rejects sizes outside Swift batch representation")
+    func executableBatchRejectsInt32Overflow() {
+        let profile = LlamaContextAllocationProfile(
+            contextTokens: UInt32.max,
+            batchTokens: UInt32.max,
+            keyCacheType: .f16,
+            valueCacheType: .f16
+        )
+
+        #expect(profile.reconciledBatchTokens(actualContextBatch: UInt32.max) == nil)
+        #expect(profile.reconciledBatchTokens(actualContextBatch: UInt32(Int32.max)) == UInt32(Int32.max))
+    }
+
     @Test("Explicit memory rescue policy remains opt-out")
     func explicitPolicyOverrides() {
         let config = LlamaConfig(
