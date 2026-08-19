@@ -45,6 +45,27 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
         XCTAssertEqual(reference.verificationStatus, .unverifiedReference)
     }
 
+    func testProjectorPreservesVisualQAReferenceAsUnverified() throws {
+        let project = try ForgeHistoryProjectID("project-a")
+        let checkpoint = try makeCheckpoint("c1", sequence: 1)
+        let timeline = try ForgeHistoryTimeline(projectID: project, checkpoints: [checkpoint])
+        let projection = try ForgeHistoryQualityReferenceTimelineProjector.project(
+            timeline: timeline,
+            qualityReferences: [
+                try binding(
+                    project: project,
+                    checkpoint: checkpoint.id,
+                    kind: .visualQA,
+                    receipt: "visual-qa-1"
+                ),
+            ]
+        )
+
+        let visualReference = projection.qualityState(for: checkpoint.id)?.evidence(kind: .visualQA)
+        XCTAssertEqual(visualReference?.producerReceiptReference.rawValue, "visual-qa-1")
+        XCTAssertEqual(visualReference?.verificationStatus, .unverifiedReference)
+    }
+
     func testProjectorPreservesQualityReferencesInCanonicalCheckpointOrder() throws {
         let project = try ForgeHistoryProjectID("project-a")
         let first = try makeCheckpoint("c1", sequence: 1)
@@ -276,12 +297,13 @@ final class ForgeHistoryQualityEvidenceTests: XCTestCase {
             projectID: project,
             checkpointID: checkpoint.id,
             evidence: [
+                .init(kind: .visualQA, producerReceiptReference: receipt),
                 .init(kind: .performance, producerReceiptReference: receipt),
                 .init(kind: .accessibility, producerReceiptReference: receipt),
             ]
         )
 
-        XCTAssertEqual(binding.evidence.map(\.kind), [.accessibility, .performance])
+        XCTAssertEqual(binding.evidence.map(\.kind), [.accessibility, .performance, .visualQA])
         XCTAssertEqual(Set(binding.evidence.map(\.producerReceiptReference)), [receipt])
         XCTAssertTrue(binding.evidence.allSatisfy { $0.verificationStatus == .unverifiedReference })
     }
