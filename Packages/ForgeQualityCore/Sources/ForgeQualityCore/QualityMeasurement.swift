@@ -181,12 +181,30 @@ public struct ForgeQualityMeasurementBatch: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == Self.currentSchemaVersion else {
+            throw ForgeQualityError.unsupportedSchemaVersion(schemaVersion)
+        }
+
+        // Preserve the product's 256-observation memory ceiling while decoding untrusted durable
+        // candidate bytes. Decoding `[ForgeQualityMeasurement]` first would allocate the entire
+        // attacker/model-shaped array before the public constructor could enforce the limit.
+        var measurementsContainer = try container.nestedUnkeyedContainer(forKey: .measurements)
+        var decodedMeasurements: [ForgeQualityMeasurement] = []
+        decodedMeasurements.reserveCapacity(Self.maximumMeasurements)
+        while !measurementsContainer.isAtEnd {
+            guard decodedMeasurements.count < Self.maximumMeasurements else {
+                throw ForgeQualityError.tooManyMeasurements
+            }
+            decodedMeasurements.append(try measurementsContainer.decode(ForgeQualityMeasurement.self))
+        }
+
         try self.init(
-            schemaVersion: container.decode(Int.self, forKey: .schemaVersion),
+            schemaVersion: schemaVersion,
             batchReceiptID: container.decode(ForgeQualityID.self, forKey: .batchReceiptID),
             binding: container.decode(ForgeQualityRunBinding.self, forKey: .binding),
             measurementProtocol: container.decode(ForgeQualityMeasurementProtocolIdentity.self, forKey: .measurementProtocol),
-            measurements: container.decode([ForgeQualityMeasurement].self, forKey: .measurements)
+            measurements: decodedMeasurements
         )
     }
 }
