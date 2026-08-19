@@ -1,0 +1,34 @@
+{
+  "protocol": "NF-SWARM-v14",
+  "lane": "preview-specialized-legacy-runtime-read-reachability",
+  "date": "2026-08-10",
+  "base_sha": "991ece0ed9add9acf1108055f489b25f6cc9843f",
+  "guard_commit_sha": "47b423f5e7ca8c5010e1e8dcc5d5b0079643bb4c",
+  "status": "bounded_hold",
+  "findings": {
+    "normal_chat_send": "Excluded from this lane because prior durable audit cec3d8b8 already established canonical AgentSystem routing.",
+    "app_intent_ask": "Stages .askPrompt and opens the Forge composer; no direct AgentRuntime construction or run entry point is accepted.",
+    "project_command_dispatch": "Uses agentSystemPresentation.start(...).",
+    "legacy_chat_retry_entry_points_max": 2,
+    "legacy_chat_continue_entry_points_max": 2,
+    "legacy_runtime_path_based_read_only_bridge_max": 1
+  },
+  "guard": "Packages/AgentHarnessKit/Tests/AgentPolicyTests/PreviewLegacyRuntimeReachabilitySourceTests.swift",
+  "validation": [
+    {
+      "kind": "standalone_swift_typecheck",
+      "result": "pass",
+      "details": "swiftc 6.2.4 typechecked the added XCTest source; this is not an integrated SwiftPM or Xcode test run."
+    }
+  ],
+  "truth_boundaries": [
+    "No exploit or data-exfiltration claim is made from source presence alone.",
+    "This guard freezes expansion of known legacy reachability debt; it does not migrate the remaining ChatView retry/continue compatibility routes.",
+    "No Simulator or physical-device evidence was produced in this environment."
+  ],
+  "next_acceptance": [
+    "Migrate the remaining ChatView compatibility retry/continue closures to canonical AgentSystem ownership, or prove those accepted controls cannot issue read-only workspace tools through AgentRuntime.",
+    "Remove or replace the AgentRuntime SandboxToolExecutor fallback, then reduce or delete the source-contract debt allowances.",
+    "Run the integrated AgentPolicyTests suite in GitHub CI."
+  ]
+}
