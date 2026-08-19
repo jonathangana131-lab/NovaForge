@@ -1,0 +1,51 @@
+name: AgentPolicy static probe exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/agentpolicy-static-probe-validation.yml"
+      - "Packages/AgentHarnessKit/Tests/AgentPolicyTests/MutationEffectStaticSecurityTests.swift"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentpolicy-static-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: AgentHarnessKit ${{ matrix.configuration }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - name: Check out exact validation head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      - name: Bind validation child to PR 321 product head
+        env:
+          EXPECTED_PRODUCT_HEAD: 83e3a5d751d16bcda49f818442840a2044293a8c
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD..HEAD"
+          changed="$(git diff --name-only "$EXPECTED_PRODUCT_HEAD..HEAD")"
+          test "$changed" = ".github/workflows/agentpolicy-static-probe-validation.yml"
+
+      - name: Run AgentHarnessKit contracts
+        env:
+          NOVAFORGE_SWIFT_PACKAGE_CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/AgentHarnessKit \
+            --configuration "$NOVAFORGE_SWIFT_PACKAGE_CONFIGURATION" \
+            -Xswiftc -warnings-as-errors
