@@ -51,6 +51,45 @@ final class AgentSystemProductionCompositionTests: XCTestCase {
         XCTAssertNil(resolved.hostedCredential)
     }
 
+    func testFreshAcceptedLocalRouteIgnoresCurrentHostedProviderSelection()
+        async throws
+    {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let project = Project(
+            name: "Local Route Drift Project",
+            workspaceName: "Local Route Drift Workspace"
+        )
+        context.insert(AgentSettings(
+            provider: .openAI,
+            customSystemPrompt: "accepted-local instruction"
+        ))
+        context.insert(project)
+        try context.save()
+
+        let workspace = SandboxWorkspace(name: project.workspaceName)
+        let resolver = SwiftDataAgentSystemRunEnvironmentResolver(
+            container: container
+        )
+        let resolved = try await resolver.resolveFreshEnvironment(
+            context: makeRunContext(
+                projectID: ProjectID(rawValue: project.id),
+                workspace: workspace
+            ),
+            providerRoute: localRoute()
+        )
+
+        XCTAssertEqual(resolved.systemInstruction, "accepted-local instruction")
+        XCTAssertNil(
+            resolved.hostedCredential,
+            "An accepted Local route must never resolve hosted credentials from current settings."
+        )
+        XCTAssertNil(
+            resolved.hostedAccountID,
+            "An accepted Local route must never inherit hosted account authority from current settings."
+        )
+    }
+
     func testFreshEnvironmentUsesNewestDuplicateSettingsBeforeLaunchCleanup()
         async throws
     {
@@ -302,6 +341,57 @@ final class AgentSystemProductionCompositionTests: XCTestCase {
             acceptedWorkspace.workspaceName
         )
         XCTAssertEqual(resolved.systemInstruction, "unchanged instruction")
+    }
+
+    func testRecoveryAcceptedLocalRouteIgnoresCurrentHostedProviderSelection()
+        async throws
+    {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let acceptedWorkspace = SandboxWorkspace(
+            name: "Local Route Recovery Drift Workspace"
+        )
+        let runContext = makeRunContext(
+            projectID: nil,
+            workspace: acceptedWorkspace
+        )
+        context.insert(AgentSettings(
+            provider: .openAI,
+            activeWorkspaceName: "Hosted Current Workspace",
+            customSystemPrompt: "recovered-local instruction"
+        ))
+        context.insert(AgentRunRecord(
+            id: runContext.lineage.runID.rawValue,
+            status: .running,
+            conversationID: runContext.conversationID.rawValue,
+            workspaceID: runContext.workspaceID.rawValue,
+            workspaceName: acceptedWorkspace.workspaceName,
+            provider: .local,
+            modelID: LocalModelCatalog.all[0].id
+        ))
+        try context.save()
+        let resolver = SwiftDataAgentSystemRunEnvironmentResolver(
+            container: container
+        )
+
+        let resolved = try await resolver.resolveRecoveryEnvironment(
+            context: runContext,
+            providerRoute: localRoute()
+        )
+
+        XCTAssertEqual(
+            resolved.workspace.workspaceName,
+            acceptedWorkspace.workspaceName
+        )
+        XCTAssertEqual(resolved.systemInstruction, "recovered-local instruction")
+        XCTAssertNil(
+            resolved.hostedCredential,
+            "A recovered Local route must not resolve credentials from the user's later hosted provider selection."
+        )
+        XCTAssertNil(
+            resolved.hostedAccountID,
+            "A recovered Local route must not inherit hosted account authority from later settings."
+        )
     }
 
     func testRecoveryWithoutExactLegacyRunProjectionFailsClosed()
