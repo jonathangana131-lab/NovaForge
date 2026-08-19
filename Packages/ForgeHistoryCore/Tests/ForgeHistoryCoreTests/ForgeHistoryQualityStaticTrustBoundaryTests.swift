@@ -91,8 +91,7 @@ final class ForgeHistoryQualityStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
-            .deletingLastPathComponent()
+        var directory = Bundle(for: ForgeHistoryQualityStaticTrustBoundaryTests.self).bundleURL
 
         for _ in 0..<10 {
             let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
@@ -113,7 +112,7 @@ final class ForgeHistoryQualityStaticTrustBoundaryTests: XCTestCase {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "ForgeHistoryCore module is missing from the active SwiftPM test executable ancestry"
+                    "ForgeHistoryCore module is missing from the active SwiftPM XCTest bundle ancestry"
             ]
         )
     }
