@@ -22,6 +22,33 @@ struct LlamaConfigPolicyTests {
         #expect(config.maxTokenCount == 256)
     }
 
+    @Test("Actual context size clamps executable token ceiling")
+    func actualContextSizeClampsExecutableContext() {
+        let profile = LlamaConfig(
+            batchSize: 64,
+            maxTokenCount: 4_096
+        ).requestedAllocationProfile
+
+        #expect(profile.reconciledContextTokens(actualContextTokens: 2_048, trainedContextTokens: 8_192) == 2_048)
+        #expect(profile.reconciledContextTokens(actualContextTokens: 8_192, trainedContextTokens: 2_048) == 2_048)
+        #expect(profile.reconciledContextTokens(actualContextTokens: 8_192, trainedContextTokens: 16_384) == 4_096)
+        #expect(profile.reconciledContextTokens(actualContextTokens: 0, trainedContextTokens: 8_192) == nil)
+        #expect(profile.reconciledContextTokens(actualContextTokens: 4_096, trainedContextTokens: 0) == nil)
+        #expect(profile.reconciledContextTokens(actualContextTokens: 4_096, trainedContextTokens: -1) == nil)
+    }
+
+    @Test("Executable context reserves room for generation bookkeeping")
+    func executableContextRejectsTinyActualContext() {
+        let profile = LlamaContextAllocationProfile(
+            contextTokens: 4,
+            batchTokens: 1,
+            keyCacheType: .f16,
+            valueCacheType: .f16
+        )
+
+        #expect(profile.reconciledContextTokens(actualContextTokens: 4, trainedContextTokens: 4) == nil)
+    }
+
     @Test("Actual context batch clamps executable Swift batch")
     func actualContextBatchClampsExecutableBatch() {
         let profile = LlamaConfig(
