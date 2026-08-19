@@ -6,6 +6,9 @@ on:
       - agent/local-model-fabric-convergence
     paths:
       - .github/workflows/local-model-fabric-opaque-trust-migration.yml
+  pull_request:
+    branches:
+      - agent/local-model-fabric-convergence
 
 permissions:
   contents: write
@@ -178,7 +181,6 @@ jobs:
 '''
           tests = tests.replace(helper_marker, helper + helper_marker)
 
-          # The old boolean remains only as fixture-call compatibility; it no longer mints or carries trust.
           if "trustedEvidence: trustEvidence ? Set(items) : []" in tests:
               raise SystemExit("test fixture still self-mints qualification trust")
           if tests.count("trustedEvidence: []") < 1:
