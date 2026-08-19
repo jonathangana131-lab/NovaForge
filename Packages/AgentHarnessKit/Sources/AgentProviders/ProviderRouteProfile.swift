@@ -314,6 +314,18 @@ public enum ProviderRouteRegistryFailure: Error, Equatable, Sendable {
     case receiptDrift(ProviderRouteKey)
 }
 
+/// Non-executable result for historical receipt inspection. It deliberately
+/// carries no current package-owned adapter descriptor or endpoint authority.
+public struct ProviderRouteReceiptVerification: Equatable, Sendable {
+    public let key: ProviderRouteKey
+    public let supportState: ProviderProductSupportState
+
+    init(profile: ProviderRouteProfile) {
+        key = profile.key
+        supportState = profile.supportState
+    }
+}
+
 /// Immutable catalog used as the shared selection/dispatch truth. Dynamic
 /// provider model lists can only intersect this registry; they cannot create a
 /// new trusted profile or change its wire dialect/capabilities.
@@ -395,9 +407,34 @@ public struct ProviderRouteRegistry: Sendable {
         return profile
     }
 
-    /// Receipt recovery is fail-closed if the current profile differs from the
-    /// exact support/wire snapshot accepted for the historical run.
-    public func profile(matching receipt: ProviderRouteReceiptProjection) throws -> ProviderRouteProfile {
+    /// Verifies historical receipt bytes against current package-owned truth
+    /// without returning an executable route profile.
+    public func verify(
+        receipt: ProviderRouteReceiptProjection
+    ) throws -> ProviderRouteReceiptVerification {
+        ProviderRouteReceiptVerification(profile: try receiptVerifiedProfile(matching: receipt))
+    }
+
+    /// Receipt-based dispatch requires both exact receipt equality and the same
+    /// selectability policy as fresh resolution. Persisted bytes cannot revive
+    /// BROKEN/LEGACY/REMOVED routes into executable authority.
+    public func profile(
+        matching receipt: ProviderRouteReceiptProjection,
+        allowExperimental: Bool = false
+    ) throws -> ProviderRouteProfile {
+        let profile = try receiptVerifiedProfile(matching: receipt)
+        guard profile.isSelectable(allowExperimental: allowExperimental) else {
+            throw ProviderRouteRegistryFailure.unavailableSupportState(
+                profile.key,
+                profile.supportState
+            )
+        }
+        return profile
+    }
+
+    private func receiptVerifiedProfile(
+        matching receipt: ProviderRouteReceiptProjection
+    ) throws -> ProviderRouteProfile {
         let key = ProviderRouteKey(providerID: receipt.providerID, modelID: receipt.modelID)
         guard let profile = profilesByKey[key] else {
             throw ProviderRouteRegistryFailure.unknownRoute(key)
