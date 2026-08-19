@@ -8,6 +8,19 @@
 import Foundation
 import llama
 
+/// llama.cpp's backend lifecycle is process-global. Pinned b10456 requires one
+/// initialization at program start; Swift static initialization is thread-safe,
+/// so every model-loading entry point shares the same process-lifetime backend.
+enum LlamaBackendLifetime {
+    private static let initialization: Void = {
+        llama_backend_init()
+    }()
+
+    static func ensureInitialized() {
+        _ = initialization
+    }
+}
+
 enum LlamaModelError: Error {
     case initializationError
 }
@@ -22,6 +35,7 @@ public final class LlamaModel {
     // MARK: - Lifecycle
 
     public init?(path: String, parameters: llama_model_params = llama_model_default_params()) {
+        LlamaBackendLifetime.ensureInitialized()
         guard let modelPointer = llama_model_load_from_file(path, parameters), let vocabPointer = llama_model_get_vocab(modelPointer) else {
             return nil
         }
@@ -32,6 +46,7 @@ public final class LlamaModel {
     /// Initializes a model from multiple GGUF split files.
     /// The `paths` must be ordered correctly.
     public init?(paths: [String], parameters: llama_model_params = llama_model_default_params()) {
+        LlamaBackendLifetime.ensureInitialized()
         var cStrings: [UnsafeMutablePointer<CChar>?] = paths.map { strdup($0) }
         defer { cStrings.forEach { if let p = $0 { free(UnsafeMutablePointer(mutating: p)) } } }
         let count = cStrings.count
