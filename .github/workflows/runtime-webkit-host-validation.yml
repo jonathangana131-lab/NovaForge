@@ -1,0 +1,61 @@
+name: Runtime WebKit host exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - "Packages/ForgeRuntimeKit/**"
+      - "Packages/ForgeRuntimeWebKitHost/**"
+      - ".github/workflows/runtime-webkit-host-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-webkit-host-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployment-floor-smoke:
+    name: macOS 15 deployment-floor smoke
+    runs-on: macos-15
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent
+        env:
+          EXPECTED_PRODUCT_HEAD: b9ba1401782f28ace4419bcbed4f7eed35aab9cd
+        run: |
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD"
+      - name: Debug package contracts
+        run: swift test --package-path Packages/ForgeRuntimeWebKitHost -Xswiftc -warnings-as-errors
+      - name: Network and project-isolation regressions
+        run: swift test --package-path Packages/ForgeRuntimeWebKitHost --filter ForgeRuntimeWebKitNetworkPolicyTests -Xswiftc -warnings-as-errors
+
+  validate:
+    name: WebKit host Debug + Release
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent
+        env:
+          EXPECTED_PRODUCT_HEAD: b9ba1401782f28ace4419bcbed4f7eed35aab9cd
+        run: |
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD"
+      - name: Debug package contracts
+        run: swift test --package-path Packages/ForgeRuntimeWebKitHost -Xswiftc -warnings-as-errors
+      - name: Release package contracts
+        run: swift test --package-path Packages/ForgeRuntimeWebKitHost -c release -Xswiftc -warnings-as-errors
+      - name: Network and project-isolation regressions
+        run: swift test --package-path Packages/ForgeRuntimeWebKitHost --filter ForgeRuntimeWebKitNetworkPolicyTests -Xswiftc -warnings-as-errors
+      - name: Cross-runtime replay regression
+        run: swift test --package-path Packages/ForgeRuntimeWebKitHost --filter testAuthorizedInteractionCannotReplayAcrossRuntimeVersions -Xswiftc -warnings-as-errors
