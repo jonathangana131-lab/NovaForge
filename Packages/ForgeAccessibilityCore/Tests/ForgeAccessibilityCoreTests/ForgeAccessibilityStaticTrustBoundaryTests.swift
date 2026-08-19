@@ -57,21 +57,27 @@ final class ForgeAccessibilityStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
-            .deletingLastPathComponent()
+        let searchRoots = [
+            Bundle(for: ForgeAccessibilityStaticTrustBoundaryTests.self).bundleURL,
+            URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent(),
+        ]
 
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ForgeAccessibilityCore.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) {
-                return modulesURL
-            }
+        for searchRoot in searchRoots {
+            var directory = searchRoot
 
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path {
-                break
+            for _ in 0..<10 {
+                let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+                let moduleURL = modulesURL.appendingPathComponent("ForgeAccessibilityCore.swiftmodule")
+                if FileManager.default.fileExists(atPath: moduleURL.path) {
+                    return modulesURL
+                }
+
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path {
+                    break
+                }
+                directory = parent
             }
-            directory = parent
         }
 
         throw NSError(
@@ -79,7 +85,7 @@ final class ForgeAccessibilityStaticTrustBoundaryTests: XCTestCase {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "ForgeAccessibilityCore module is missing from the active SwiftPM test executable ancestry"
+                    "ForgeAccessibilityCore module is missing from the active SwiftPM test bundle and executable ancestry"
             ]
         )
     }
