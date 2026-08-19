@@ -106,7 +106,8 @@ public struct LocalModelFabricPolicy: Equatable, Sendable {
 }
 
 /// A configured exact local profile. `qualificationRecord` is optional so an unqualified profile can be
-/// selected only in explicit Compatibility Lab probe mode. The selector never manufactures host trust.
+/// selected only in explicit Compatibility Lab probe mode. Mission trust can only arrive as opaque evidence
+/// authenticated by LocalModelQualificationCore; candidate/model-shaped receipts cannot mint it here.
 public struct LocalModelFabricCandidate: Sendable {
     public let tier: LocalModelFabricTier
     public let descriptor: LocalModelCatalogDescriptor
@@ -114,7 +115,7 @@ public struct LocalModelFabricCandidate: Sendable {
     public let legacyBenchmark: LocalModelBenchmarkObservation?
     public let subject: LocalModelQualificationSubject
     public let qualificationRecord: LocalModelQualificationRecord?
-    public let trustedEvidence: Set<LocalModelQualificationEvidence>
+    public let trustedEvidence: Set<LocalModelTrustedEvidence>
 
     public init(
         tier: LocalModelFabricTier,
@@ -123,7 +124,7 @@ public struct LocalModelFabricCandidate: Sendable {
         legacyBenchmark: LocalModelBenchmarkObservation?,
         subject: LocalModelQualificationSubject,
         qualificationRecord: LocalModelQualificationRecord?,
-        trustedEvidence: Set<LocalModelQualificationEvidence>
+        trustedEvidence: Set<LocalModelTrustedEvidence>
     ) throws {
         guard Self.matches(descriptor: descriptor, subject: subject) else {
             throw LocalModelFabricValidationError.descriptorSubjectMismatch
@@ -301,11 +302,47 @@ public enum LocalModelFabricSelector {
         candidates: [LocalModelFabricCandidate],
         request: LocalModelFabricRequest
     ) -> LocalModelFabricSelectionDecision {
+        select(candidates: candidates, request: request) { record, claim, trustedEvidence in
+            record.readiness(for: claim, trustedEvidence: trustedEvidence)
+        }
+    }
+
+    /// Internal policy-test seam. It exercises Fabric ranking/resource policy independently of the
+    /// qualification package's producer boundary without exposing any public trust-minting path.
+    static func selectForTesting(
+        candidates: [LocalModelFabricCandidate],
+        request: LocalModelFabricRequest,
+        qualificationEvaluator: (
+            LocalModelQualificationRecord,
+            LocalModelQualificationClaim,
+            Set<LocalModelTrustedEvidence>
+        ) -> LocalModelQualificationReadiness
+    ) -> LocalModelFabricSelectionDecision {
+        select(
+            candidates: candidates,
+            request: request,
+            qualificationEvaluator: qualificationEvaluator
+        )
+    }
+
+    private static func select(
+        candidates: [LocalModelFabricCandidate],
+        request: LocalModelFabricRequest,
+        qualificationEvaluator: (
+            LocalModelQualificationRecord,
+            LocalModelQualificationClaim,
+            Set<LocalModelTrustedEvidence>
+        ) -> LocalModelQualificationReadiness
+    ) -> LocalModelFabricSelectionDecision {
         var accepted: [Evaluation] = []
         var rejections: [LocalModelFabricCandidateRejection] = []
 
         for candidate in candidates {
-            let evaluation = evaluate(candidate: candidate, request: request)
+            let evaluation = evaluate(
+                candidate: candidate,
+                request: request,
+                qualificationEvaluator: qualificationEvaluator
+            )
             if evaluation.reasons.isEmpty {
                 accepted.append(evaluation)
             } else {
@@ -366,7 +403,12 @@ public enum LocalModelFabricSelector {
 
     private static func evaluate(
         candidate: LocalModelFabricCandidate,
-        request: LocalModelFabricRequest
+        request: LocalModelFabricRequest,
+        qualificationEvaluator: (
+            LocalModelQualificationRecord,
+            LocalModelQualificationClaim,
+            Set<LocalModelTrustedEvidence>
+        ) -> LocalModelQualificationReadiness
     ) -> Evaluation {
         let key = canonicalSubjectKey(candidate.subject)
         var result = Evaluation(
@@ -399,7 +441,7 @@ public enum LocalModelFabricSelector {
         }
 
         // Legacy compatibility is only a conservative artifact/device preflight. Its measured label does not
-        // authorize mission routing; canonical #101 evidence below is the only normal-routing authority.
+        // authorize mission routing; canonical qualification evidence below is the only normal-routing authority.
         let compatibility = LocalModelCompatibilityEvaluator.evaluate(
             descriptor: candidate.descriptor,
             device: candidate.deviceProfile,
@@ -423,7 +465,7 @@ public enum LocalModelFabricSelector {
         }
 
         let claim = qualificationClaim(for: request.privacy)
-        let readiness = record.readiness(for: claim, trustedEvidence: candidate.trustedEvidence)
+        let readiness = qualificationEvaluator(record, claim, candidate.trustedEvidence)
         if !readiness.isQualified {
             result.reasons.append(.canonicalQualificationRejected)
             result.canonicalBlockingReasons = readiness.blockingReasons
