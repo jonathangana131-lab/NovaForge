@@ -47,6 +47,7 @@ public struct SpeculativeRuntimeCapabilityDeclaration: Codable, Equatable, Hasha
     public let mechanismID: String
     public let kind: SpeculativeMechanismKind
     public let maximumDraftTokens: UInt16
+    public let maximumContextTokens: UInt64
     public let declarationRevision: String
 
     public init(
@@ -55,6 +56,7 @@ public struct SpeculativeRuntimeCapabilityDeclaration: Codable, Equatable, Hasha
         mechanismID: String,
         kind: SpeculativeMechanismKind,
         maximumDraftTokens: UInt16,
+        maximumContextTokens: UInt64,
         declarationRevision: String
     ) {
         self.runtimeID = runtimeID
@@ -62,6 +64,7 @@ public struct SpeculativeRuntimeCapabilityDeclaration: Codable, Equatable, Hasha
         self.mechanismID = mechanismID
         self.kind = kind
         self.maximumDraftTokens = maximumDraftTokens
+        self.maximumContextTokens = maximumContextTokens
         self.declarationRevision = declarationRevision
     }
 }
@@ -117,6 +120,7 @@ public enum SpeculativeTrialRejection: String, Codable, CaseIterable, Hashable, 
     case unexpectedDrafter
     case incompatibleTokenSemantics
     case invalidContext
+    case contextLimitExceeded
     case invalidDraftLimit
     case draftLimitExceeded
     case localOnlyViolation
@@ -175,8 +179,10 @@ public enum SpeculativeTrialValidator {
             append(.declarationRevisionMismatch, to: &rejections)
         }
 
-        if configuration.contextTokens == 0 {
+        if configuration.contextTokens == 0 || declaration.maximumContextTokens == 0 {
             append(.invalidContext, to: &rejections)
+        } else if configuration.contextTokens > declaration.maximumContextTokens {
+            append(.contextLimitExceeded, to: &rejections)
         }
 
         if configuration.maximumDraftTokens == 0 || declaration.maximumDraftTokens == 0 {
