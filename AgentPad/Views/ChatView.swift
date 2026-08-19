@@ -725,10 +725,9 @@ struct ChatView: View {
         if canonicalRunOwnsSelectedConversation {
             if canonicalPendingApproval != nil { return .pendingApproval }
             if agentRunPresentation.failure != nil ||
-                agentRunPresentation.activeGroup?.state == .failed ||
-                agentRunPresentation.activeGroup?.state == .rejected ||
-                agentRunPresentation.activeGroup?.state == .cancelled ||
-                agentRunPresentation.activeGroup?.state == .interrupted {
+                AgentCanonicalRunSurfacePolicy.presentsFailure(
+                    agentRunPresentation.activeGroup?.state
+                ) {
                 return .failed
             }
             if canonicalRunIsWorking { return .streaming }
@@ -766,10 +765,9 @@ struct ChatView: View {
         if canonicalRunOwnsSelectedConversation {
             if canonicalPendingApproval != nil { return .approval }
             if agentRunPresentation.failure != nil ||
-                agentRunPresentation.activeGroup?.state == .failed ||
-                agentRunPresentation.activeGroup?.state == .rejected ||
-                agentRunPresentation.activeGroup?.state == .cancelled ||
-                agentRunPresentation.activeGroup?.state == .interrupted {
+                AgentCanonicalRunSurfacePolicy.presentsFailure(
+                    agentRunPresentation.activeGroup?.state
+                ) {
                 return .failure
             }
             if canonicalRunIsWorking { return .progress }
@@ -2885,9 +2883,9 @@ struct ChatView: View {
         if canonicalRunOwnsSelectedConversation {
             return canonicalRunIsActive ||
                 agentRunPresentation.failure != nil ||
-                agentRunPresentation.activeGroup?.state == .failed ||
-                agentRunPresentation.activeGroup?.state == .cancelled ||
-                agentRunPresentation.activeGroup?.state == .interrupted
+                AgentCanonicalRunSurfacePolicy.requiresRecoveryAction(
+                    agentRunPresentation.activeGroup?.state
+                )
         }
         return runtime.isWorking ||
             runtime.pendingTool != nil ||

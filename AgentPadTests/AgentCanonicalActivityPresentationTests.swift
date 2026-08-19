@@ -217,6 +217,45 @@ final class AgentCanonicalActivityPresentationTests: XCTestCase {
         )
     }
 
+    func testCanonicalRunSurfacePolicyKeepsUserStopOutOfFailurePresentation() {
+        XCTAssertFalse(
+            AgentCanonicalRunSurfacePolicy.presentsFailure(.cancelled)
+        )
+        XCTAssertFalse(
+            AgentCanonicalRunSurfacePolicy.presentsFailure(.cancelling)
+        )
+        XCTAssertFalse(
+            AgentCanonicalRunSurfacePolicy.presentsFailure(nil)
+        )
+        XCTAssertTrue(
+            AgentCanonicalRunSurfacePolicy.presentsFailure(.failed)
+        )
+        XCTAssertTrue(
+            AgentCanonicalRunSurfacePolicy.presentsFailure(.rejected)
+        )
+        XCTAssertTrue(
+            AgentCanonicalRunSurfacePolicy.presentsFailure(.interrupted)
+        )
+    }
+
+    func testCanonicalRunSurfacePolicyKeepsUserStopOutOfRecoveryActions() {
+        XCTAssertFalse(
+            AgentCanonicalRunSurfacePolicy.requiresRecoveryAction(.cancelled)
+        )
+        XCTAssertFalse(
+            AgentCanonicalRunSurfacePolicy.requiresRecoveryAction(.rejected)
+        )
+        XCTAssertFalse(
+            AgentCanonicalRunSurfacePolicy.requiresRecoveryAction(nil)
+        )
+        XCTAssertTrue(
+            AgentCanonicalRunSurfacePolicy.requiresRecoveryAction(.failed)
+        )
+        XCTAssertTrue(
+            AgentCanonicalRunSurfacePolicy.requiresRecoveryAction(.interrupted)
+        )
+    }
+
     func testActiveToolReceiptsBecomeGranularLiveVerbs() {
         let expectations = [
             ("Workspace searched", "Searching files"),
