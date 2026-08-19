@@ -222,9 +222,9 @@ final class AgentPadUITests: XCTestCase {
         composer.typeText("Yo")
         tapReadySendButton(in: app)
 
-        let userText = app.staticTexts["Yo"].firstMatch
-        XCTAssertTrue(userText.waitForExistence(timeout: 5), "User message should appear immediately after Send.")
-
+        // The live field is transient evidence; observe it before querying the
+        // durable user bubble so accessibility stabilization cannot consume the
+        // fixture's deliberate streaming window before this assertion begins.
         let liveField = app.otherElements["liveResponseField"]
         XCTAssertTrue(liveField.waitForExistence(timeout: 4), "Streaming response should render as one live typefield.")
         XCTAssertLessThanOrEqual(visibleElementCount(app.otherElements.matching(identifier: "liveResponseField")), 1, "Streaming should update one live field instead of adding duplicates.")
@@ -234,6 +234,11 @@ final class AgentPadUITests: XCTestCase {
         // fixture intentionally may finish between two XCTest snapshots, so
         // never dereference the transient live element after existence proof.
         capture("sev0-chat-send-stream-live", app: app)
+
+        // The submitted user turn is durable, so it is safe to prove after the
+        // transient stream has already been observed.
+        let userText = app.staticTexts["Yo"].firstMatch
+        XCTAssertTrue(userText.waitForExistence(timeout: 5), "User message should appear immediately after Send.")
 
         let assistantResponse = app.otherElements.matching(identifier: "chatAssistantResponse").firstMatch
         XCTAssertTrue(assistantResponse.waitForExistence(timeout: 35), "Final assistant response should replace the deliberately paced live stream in the transcript.")
