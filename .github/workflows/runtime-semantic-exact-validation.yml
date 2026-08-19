@@ -1,0 +1,34 @@
+name: Runtime semantic exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - "Packages/ForgeRuntimeKit/**"
+      - ".github/workflows/runtime-semantic-exact-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: ForgeRuntimeKit Debug + Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent
+        env:
+          EXPECTED_PRODUCT_HEAD: 2d6f08de40dbbbe77d92973a19e6cdb6e9d4d3ed
+        run: |
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD"
+      - name: Debug package contracts
+        run: swift test --package-path Packages/ForgeRuntimeKit -Xswiftc -warnings-as-errors
+      - name: Release package contracts
+        run: swift test --package-path Packages/ForgeRuntimeKit -c release -Xswiftc -warnings-as-errors
+      - name: Runtime provenance regressions
+        run: swift test --package-path Packages/ForgeRuntimeKit --filter ForgeRuntimeSessionBoundSemanticAuthorizationTests -Xswiftc -warnings-as-errors
