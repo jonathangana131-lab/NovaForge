@@ -118,8 +118,49 @@ public struct ProjectCapsule: Codable, Hashable, Sendable {
         let schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         let authority = try c.decode(ProjectCapsuleAuthority.self, forKey: .authority)
         let budgetBytes = try c.decode(Int.self, forKey: .budgetBytes)
-        let selectedItems = try c.decode([ForgeCompactContextItem].self, forKey: .selectedItems)
-        let omittedItems = try c.decode([ForgeCompactOmittedItem].self, forKey: .omittedItems)
+
+        var selectedContainer = try c.nestedUnkeyedContainer(forKey: .selectedItems)
+        if let count = selectedContainer.count {
+            try ForgeCompactValidation.maximumCount(
+                count,
+                field: "capsule.sourceItems",
+                maximum: Self.maximumSourceItems
+            )
+        }
+        var selectedItems: [ForgeCompactContextItem] = []
+        selectedItems.reserveCapacity(min(selectedContainer.count ?? 0, Self.maximumSourceItems))
+        while !selectedContainer.isAtEnd {
+            guard selectedItems.count < Self.maximumSourceItems else {
+                throw ForgeCompactError.collectionTooLarge(
+                    field: "capsule.sourceItems",
+                    maximum: Self.maximumSourceItems
+                )
+            }
+            selectedItems.append(try selectedContainer.decode(ForgeCompactContextItem.self))
+        }
+
+        var omittedContainer = try c.nestedUnkeyedContainer(forKey: .omittedItems)
+        if let omittedCount = omittedContainer.count {
+            _ = try Self.checkedSourceItemCount(
+                selectedCount: selectedItems.count,
+                omittedCount: omittedCount
+            )
+        }
+        var omittedItems: [ForgeCompactOmittedItem] = []
+        omittedItems.reserveCapacity(
+            min(
+                omittedContainer.count ?? 0,
+                Self.maximumSourceItems - selectedItems.count
+            )
+        )
+        while !omittedContainer.isAtEnd {
+            _ = try Self.checkedSourceItemCount(
+                selectedCount: selectedItems.count,
+                omittedCount: omittedItems.count + 1
+            )
+            omittedItems.append(try omittedContainer.decode(ForgeCompactOmittedItem.self))
+        }
+
         let storedRenderedContext = try c.decode(String.self, forKey: .renderedContext)
         let storedRenderedUTF8Bytes = try c.decode(Int.self, forKey: .renderedUTF8Bytes)
         let storedSourceItemCount = try c.decode(Int.self, forKey: .sourceItemCount)
