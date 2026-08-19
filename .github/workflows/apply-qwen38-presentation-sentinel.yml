@@ -1,0 +1,36 @@
+name: Apply Qwen 3.8 awaiting-release presentation invariant
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_presentation_sentinel.py'
+      - '.github/workflows/apply-qwen38-presentation-sentinel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - run: python3 ci/apply_qwen38_presentation_sentinel.py
+      - name: Verify
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq '[exactQwen38Variant ?? Qwen38ReleaseDiscovery.unavailableVariant]' AgentPad/Services/LocalModelRuntime.swift
+      - name: Commit
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- AgentPad/Services/LocalModelRuntime.swift; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift
+          git commit -m 'Always present the strict Qwen 3.8 target card'
+          git push origin HEAD:feature/qwen38-forge-ios27

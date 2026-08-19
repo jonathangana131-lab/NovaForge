@@ -1,0 +1,67 @@
+name: SwiftLlama Xcode 27 Gate
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'Vendor/swift-llama-cpp/**'
+      - '.github/workflows/swiftllama-xcode27.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swiftllama-xcode27-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: SwiftLlama package tests
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Resolve and compile full runtime package test graph
+        working-directory: Vendor/swift-llama-cpp
+        run: |
+          set -euo pipefail
+          swift package resolve
+          swift build --build-tests
+      - name: Run model-independent runtime policy tests
+        working-directory: Vendor/swift-llama-cpp
+        run: |
+          set -euo pipefail
+
+          LLAMA_FRAMEWORK="$(find .build -type d -path '*/macos-*/llama.framework' -print | head -n 1)"
+          if [ -z "$LLAMA_FRAMEWORK" ]; then
+            echo 'Resolved macOS llama.framework was not found under .build' >&2
+            find .build -maxdepth 9 -type d -name 'llama.framework' -print || true
+            exit 69
+          fi
+
+          LLAMA_BINARY="$LLAMA_FRAMEWORK/Versions/Current/llama"
+          if [ ! -f "$LLAMA_BINARY" ]; then
+            echo "Resolved framework does not contain expected macOS binary: $LLAMA_BINARY" >&2
+            find "$LLAMA_FRAMEWORK" -maxdepth 4 -print || true
+            exit 70
+          fi
+
+          echo "Resolved macOS llama framework: $LLAMA_FRAMEWORK"
+          LLAMA_FRAMEWORK_PARENT="$(cd "$(dirname "$LLAMA_FRAMEWORK")" && pwd)"
+          export DYLD_FRAMEWORK_PATH="$LLAMA_FRAMEWORK_PARENT${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+          echo "DYLD_FRAMEWORK_PATH=$DYLD_FRAMEWORK_PATH"
+
+          # The vendored upstream integration tests intentionally expect a 1B
+          # GGUF fixture that NovaForge does not commit. Compile every test so
+          # API/ABI regressions are still caught, then execute only the
+          # deterministic model-independent policy suites in this fast lane.
+          swift test --skip-build --filter LlamaRuntimeTunerTests
+          swift test --skip-build --filter LlamaPerformanceTests

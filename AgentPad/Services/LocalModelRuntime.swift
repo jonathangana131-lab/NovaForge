@@ -14,12 +14,14 @@ enum LocalModelDeviceFit: String, Sendable, Hashable {
     case deviceProven
     case ultraLight
     case memorySaver
+    case extreme
 
     var title: String {
         switch self {
         case .deviceProven: "Qualification pending"
         case .ultraLight: "Ultra light"
         case .memorySaver: "Memory saver"
+        case .extreme: "27B Extreme"
         }
     }
 
@@ -28,6 +30,7 @@ enum LocalModelDeviceFit: String, Sendable, Hashable {
         case .deviceProven: "iphone"
         case .ultraLight: "bolt.fill"
         case .memorySaver: "memorychip.fill"
+        case .extreme: "externaldrive.badge.timemachine"
         }
     }
 }
@@ -84,6 +87,352 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     }
 }
 
+struct Qwen38ReleaseManifest: Codable, Equatable, Sendable {
+    let repositoryID: String
+    let revision: String
+    let filename: String
+    let expectedBytes: Int64
+    let sha256: String
+    let quantization: String
+    let lastModified: String
+}
+
+#if canImport(SwiftLlama)
+enum Qwen38ModelIdentityPolicy {
+    private static let minimum27BParameters: UInt64 = 24_000_000_000
+    private static let maximum27BParameters: UInt64 = 31_000_000_000
+
+    static func validationError(for identity: LlamaModelIdentitySnapshot) -> String? {
+        let labels = [
+            identity.name,
+            identity.basename,
+            identity.architecture,
+            identity.sizeLabel,
+            identity.description,
+        ].compactMap { $0 }.joined(separator: " | ").lowercased()
+
+        let compact = labels
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        let identifiesQwen38 = compact.contains("qwen3.8") || compact.contains("qwen38")
+        guard identifiesQwen38 else {
+            return "GGUF metadata does not identify Qwen 3.8."
+        }
+
+        guard (minimum27BParameters ... maximum27BParameters).contains(identity.parameterCount) else {
+            return "GGUF parameter count is not in the verified Qwen 3.8 27B class."
+        }
+        return nil
+    }
+}
+#endif
+
+enum Qwen38ReleaseDiscoveryError: LocalizedError {
+    case invalidResponse
+    case invalidManifest
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse:
+            "Hugging Face did not return a valid Qwen 3.8 27B catalog response."
+        case .invalidManifest:
+            "A candidate was found, but NovaForge could not prove its revision, size, and SHA-256."
+        }
+    }
+}
+
+enum Qwen38ReleaseDiscovery {
+    static let unavailableModelID = "qwen3.8-27b-awaiting-verified-open-weights"
+
+    /// A non-runnable sentinel used while exact Qwen 3.8 27B open weights do not
+    /// exist. Keeping the manager on this identity prevents any hidden fallback
+    /// model from being selected or downloaded in the Qwen-3.8-only build.
+    static let unavailableVariant = LocalModelVariant(
+        id: unavailableModelID,
+        displayName: "Qwen 3.8 27B — Awaiting Open Weights",
+        shortName: "Qwen 3.8 27B",
+        quantization: "Awaiting verified release",
+        filename: "qwen3.8-27b.awaiting-release",
+        downloadURL: URL(string: "https://huggingface.co/Qwen")!,
+        expectedBytes: 0,
+        expectedSHA256: String(repeating: "0", count: 64),
+        minimumPhysicalMemoryBytes: 3_800_000_000,
+        recommendedFreeDiskBytes: 0,
+        contextTokens: 4_096,
+        batchTokens: 16,
+        maxNewTokens: 512,
+        maxGenerationSeconds: 300,
+        useGPU: false,
+        gpuLayerCount: 0,
+        generationThreadCount: 1,
+        batchThreadCount: 1,
+        isIPhone12SafeDefault: false,
+        releaseDateISO8601: "",
+        releaseDateLabel: "Not released",
+        parameterLabel: "27B",
+        licenseLabel: "Awaiting model card",
+        benchmarkSummary: "Exact Qwen 3.8 27B weights have not been verified yet",
+        capabilitySummary: "Release watcher active · no substitute model allowed",
+        deviceFit: .extreme,
+        estimatedPeakMemoryBytes: 0,
+        minimumAvailableMemoryBeforeLoadBytes: 0,
+        sourceURL: URL(string: "https://huggingface.co/Qwen")!,
+        details: "NovaForge is locked to Qwen 3.8 27B. Refresh release discovery after verified open weights are published; no Qwen 3.6, 3.5, or small-model fallback will be loaded."
+    )
+
+    private struct HubModel: Decodable {
+        let id: String
+        let sha: String?
+        let lastModified: String?
+        let siblings: [HubSibling]?
+    }
+
+    private struct HubSibling: Decodable {
+        let rfilename: String
+        let size: Int64?
+        let lfs: HubLFS?
+    }
+
+    private struct HubLFS: Decodable {
+        let sha256: String?
+        let oid: String?
+        let size: Int64?
+    }
+
+    private struct Candidate {
+        let manifest: Qwen38ReleaseManifest
+        let publisherRank: Int
+        let quantRank: Int
+    }
+
+    static func cachedManifest() -> Qwen38ReleaseManifest? {
+        guard let url = try? manifestURL(),
+              let data = try? Data(contentsOf: url),
+              let manifest = try? JSONDecoder().decode(Qwen38ReleaseManifest.self, from: data),
+              validate(manifest)
+        else { return nil }
+        return manifest
+    }
+
+    static func cachedVariant() -> LocalModelVariant? {
+        cachedManifest().flatMap(makeVariant)
+    }
+
+    static func refresh() async throws -> LocalModelVariant? {
+        var components = URLComponents(string: "https://huggingface.co/api/models")!
+        components.queryItems = [
+            URLQueryItem(name: "search", value: "Qwen3.8 27B"),
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "full", value: "true"),
+        ]
+        guard let url = components.url else { throw Qwen38ReleaseDiscoveryError.invalidResponse }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw Qwen38ReleaseDiscoveryError.invalidResponse
+        }
+        let models = try JSONDecoder().decode([HubModel].self, from: data)
+        var candidates: [Candidate] = []
+        for model in models where exactTargetText(model.id) {
+            if let candidate = try await resolveCandidate(modelID: model.id) {
+                candidates.append(candidate)
+            }
+        }
+        guard let winner = candidates.sorted(by: candidateSort).first else {
+            return nil
+        }
+        try persist(winner.manifest)
+        return makeVariant(winner.manifest)
+    }
+
+    private static func resolveCandidate(modelID: String) async throws -> Candidate? {
+        guard exactTargetText(modelID) else { return nil }
+        var components = URLComponents(string: "https://huggingface.co/api/models/\(modelID)")!
+        components.queryItems = [URLQueryItem(name: "blobs", value: "true")]
+        guard let url = components.url else { return nil }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+        let detail = try JSONDecoder().decode(HubModel.self, from: data)
+        guard let revision = detail.sha, revision.count >= 7 else { return nil }
+
+        let files = (detail.siblings ?? []).filter { sibling in
+            let lower = sibling.rfilename.lowercased()
+            return lower.hasSuffix(".gguf") &&
+                !lower.contains("-00001-of-") &&
+                !lower.contains("-00002-of-") &&
+                exactTargetText("\(modelID)/\(sibling.rfilename)")
+        }
+        let manifests = files.compactMap { sibling -> Qwen38ReleaseManifest? in
+            let bytes = sibling.lfs?.size ?? sibling.size ?? 0
+            var digest = sibling.lfs?.sha256 ?? sibling.lfs?.oid ?? ""
+            digest = digest.replacingOccurrences(of: "sha256:", with: "")
+            guard bytes > 1_000_000_000,
+                  digest.count == 64,
+                  digest.allSatisfy({ $0.isHexDigit })
+            else { return nil }
+            let quant = quantization(from: sibling.rfilename)
+            guard runtimeSupports(quant) else { return nil }
+            let manifest = Qwen38ReleaseManifest(
+                repositoryID: modelID,
+                revision: revision,
+                filename: sibling.rfilename,
+                expectedBytes: bytes,
+                sha256: digest.lowercased(),
+                quantization: quant,
+                lastModified: detail.lastModified ?? ""
+            )
+            return validate(manifest) ? manifest : nil
+        }
+        guard let best = manifests.sorted(by: manifestSort).first else { return nil }
+        return Candidate(
+            manifest: best,
+            publisherRank: publisherRank(modelID),
+            quantRank: quantRank(best.quantization)
+        )
+    }
+
+    private static func exactTargetText(_ value: String) -> Bool {
+        let lower = value.lowercased()
+        let hasVersion = lower.contains("qwen3.8") || lower.contains("qwen-3.8") || lower.contains("qwen_3.8") || lower.contains("qwen3_8")
+        return hasVersion && lower.contains("27b") &&
+            !lower.contains("qwen3.6") && !lower.contains("qwen3.5")
+    }
+
+    private static func validate(_ manifest: Qwen38ReleaseManifest) -> Bool {
+        exactTargetText("\(manifest.repositoryID)/\(manifest.filename)") &&
+            manifest.filename.lowercased().hasSuffix(".gguf") &&
+            !manifest.filename.lowercased().contains("-00001-of-") &&
+            manifest.expectedBytes > 1_000_000_000 &&
+            manifest.sha256.count == 64 &&
+            manifest.sha256.allSatisfy { $0.isHexDigit } &&
+            manifest.revision.count >= 7
+    }
+
+    private static func publisherRank(_ id: String) -> Int {
+        let lower = id.lowercased()
+        if lower.hasPrefix("qwen/") { return 0 }
+        if lower.hasPrefix("unsloth/") { return 1 }
+        if lower.hasPrefix("bartowski/") { return 2 }
+        return 3
+    }
+
+    static func quantization(from filename: String) -> String {
+        let upper = filename.uppercased()
+        // Prefer native ultra-low-bit formats first. Current ggml/llama.cpp
+        // has Q1_0 (1.125 bpw), IQ1, Q2_0 and ternary TQ families; keeping
+        // these explicit means a future exact Qwen 3.8 27B release can fit the
+        // iPhone-12 storage-backed path without an app update.
+        // Match the specific G128 filename marker before generic Q1_0:
+        // `Q1_0_G128` contains `Q1_0`, so generic-first silently erases the
+        // format distinction used by release identity and runtime policy.
+        for marker in [
+            "Q1_0_G128", "Q1_0", "IQ1_S", "TQ1_0", "IQ1_M",
+            "TQ2_0", "Q2_0", "UD-IQ2_XXS", "IQ2_XXS", "IQ2_XS",
+            "Q2_K_XS", "Q2_K", "Q3_K_XS", "Q3_K_S", "Q3_K_M", "Q4_K_M"
+        ] where upper.contains(marker) {
+            return marker
+        }
+        return "GGUF"
+    }
+
+    private static func runtimeSupports(_ quantization: String) -> Bool {
+        switch quantization.uppercased() {
+        case "Q1_0", "Q1_0_G128", "IQ1_S", "TQ1_0", "IQ1_M",
+             "TQ2_0", "Q2_0", "UD-IQ2_XXS", "IQ2_XXS", "IQ2_XS",
+             "Q2_K_XS", "Q2_K", "Q3_K_XS", "Q3_K_S", "Q3_K_M", "Q4_K_M":
+            true
+        default:
+            false
+        }
+    }
+
+    private static func quantRank(_ value: String) -> Int {
+        switch value.uppercased() {
+        case "Q1_0": 0
+        case "Q1_0_G128": 1
+        case "IQ1_S": 2
+        case "TQ1_0": 3
+        case "IQ1_M": 4
+        case "TQ2_0": 5
+        case "Q2_0": 6
+        case "UD-IQ2_XXS": 7
+        case "IQ2_XXS": 8
+        case "IQ2_XS": 9
+        case "Q2_K_XS": 10
+        case "Q2_K": 11
+        case "Q3_K_XS": 12
+        case "Q3_K_S": 13
+        case "Q3_K_M": 14
+        case "Q4_K_M": 15
+        default: 40
+        }
+    }
+
+    private static func manifestSort(_ lhs: Qwen38ReleaseManifest, _ rhs: Qwen38ReleaseManifest) -> Bool {
+        let lq = quantRank(lhs.quantization)
+        let rq = quantRank(rhs.quantization)
+        if lq != rq { return lq < rq }
+        return lhs.expectedBytes < rhs.expectedBytes
+    }
+
+    private static func candidateSort(_ lhs: Candidate, _ rhs: Candidate) -> Bool {
+        if lhs.quantRank != rhs.quantRank { return lhs.quantRank < rhs.quantRank }
+        if lhs.publisherRank != rhs.publisherRank { return lhs.publisherRank < rhs.publisherRank }
+        return lhs.manifest.expectedBytes < rhs.manifest.expectedBytes
+    }
+
+    private static func persist(_ manifest: Qwen38ReleaseManifest) throws {
+        guard validate(manifest) else { throw Qwen38ReleaseDiscoveryError.invalidManifest }
+        let data = try JSONEncoder().encode(manifest)
+        try data.write(to: try manifestURL(), options: [.atomic])
+    }
+
+    private static func manifestURL() throws -> URL {
+        try LocalModelCatalog.modelDirectory().appendingPathComponent("qwen3.8-27b-release.json")
+    }
+
+    private static func makeVariant(_ manifest: Qwen38ReleaseManifest) -> LocalModelVariant? {
+        guard validate(manifest),
+              let downloadURL = URL(string: "https://huggingface.co/\(manifest.repositoryID)/resolve/\(manifest.revision)/\(manifest.filename)?download=true"),
+              let sourceURL = URL(string: "https://huggingface.co/\(manifest.repositoryID)/blob/\(manifest.revision)/\(manifest.filename)")
+        else { return nil }
+        let disk = max(Int64(12_500_000_000), manifest.expectedBytes + manifest.expectedBytes / 3)
+        let dateLabel = manifest.lastModified.isEmpty ? "Verified release" : String(manifest.lastModified.prefix(10))
+        return LocalModelVariant(
+            id: "qwen38:\(manifest.repositoryID)@\(manifest.revision):\(manifest.filename)",
+            displayName: "Qwen 3.8 27B — Extreme",
+            shortName: "Qwen 3.8 27B",
+            quantization: manifest.quantization,
+            filename: manifest.filename,
+            downloadURL: downloadURL,
+            expectedBytes: manifest.expectedBytes,
+            expectedSHA256: manifest.sha256,
+            minimumPhysicalMemoryBytes: 3_800_000_000,
+            recommendedFreeDiskBytes: disk,
+            contextTokens: 4_096,
+            batchTokens: 24,
+            maxNewTokens: 512,
+            maxGenerationSeconds: 300,
+            useGPU: true,
+            gpuLayerCount: 1,
+            generationThreadCount: 2,
+            batchThreadCount: 4,
+            isIPhone12SafeDefault: false,
+            releaseDateISO8601: String(manifest.lastModified.prefix(10)),
+            releaseDateLabel: dateLabel,
+            parameterLabel: "27B",
+            licenseLabel: "See pinned model card",
+            benchmarkSummary: "Exact Qwen 3.8 27B · device benchmark required after install",
+            capabilitySummary: "Long-running coding agent · repository reasoning · project execution",
+            deviceFit: .extreme,
+            estimatedPeakMemoryBytes: 2_050_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 1_200_000_000,
+            sourceURL: sourceURL,
+            details: "Exact Qwen 3.8 27B only. NovaForge pinned this GGUF to an immutable Hugging Face revision and LFS SHA-256. Oversized weights stay storage-backed with mmap, tiny hot Metal residency, Q8 KV, cache-stable context projection, and adaptive throughput policy."
+        )
+    }
+}
+
 enum LocalModelCatalog {
     /// Official, tool-template-capable coding checkpoint. VibeThinker was
     /// intentionally removed from the local-agent catalog because its own
@@ -91,7 +440,7 @@ enum LocalModelCatalog {
     static let repository = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
     static let verifiedRevision = "f86cb2c1fa58255f8052cc32aeede1b7482d4361"
 
-    static let all: [LocalModelVariant] = [
+    private static let legacyCatalog: [LocalModelVariant] = [
         .init(
             id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M",
             displayName: "Qwen Coder 1.5B — iPhone 12",
@@ -219,45 +568,67 @@ enum LocalModelCatalog {
             minimumAvailableMemoryBeforeLoadBytes: 1_150_000_000,
             sourceURL: URL(string: "https://huggingface.co/Siddh07ETH/Atlas-Coder-2-0.5B-GGUF")!,
             details: "NovaForge pins an exact GGUF revision and checksum, then caps context and output for its iPhone-targeted profile."
-        )
+        ),
     ]
 
+    /// The active runtime catalog is the exact Qwen 3.8 27B target only.
+    /// Legacy variants above are private historical fixtures and can never be
+    /// selected as a production fallback.
+    static var all: [LocalModelVariant] {
+        presentationOrder
+    }
+
+    static var exactQwen38Variant: LocalModelVariant? {
+        Qwen38ReleaseDiscovery.cachedVariant()
+    }
+
+    /// This dedicated branch exposes exactly one user-facing local target. The
+    /// older small catalog remains compiled only as an internal recovery/test
+    /// resource and is never offered as a substitute for Qwen 3.8 27B.
     static var presentationOrder: [LocalModelVariant] {
-        all.sorted {
-            if $0.releaseDateISO8601 == $1.releaseDateISO8601 {
-                return $0.expectedBytes > $1.expectedBytes
-            }
-            return $0.releaseDateISO8601 > $1.releaseDateISO8601
-        }
+        [exactQwen38Variant ?? Qwen38ReleaseDiscovery.unavailableVariant]
     }
 
     static var defaultVariant: LocalModelVariant {
-        safestVariant()
+        exactQwen38Variant ?? Qwen38ReleaseDiscovery.unavailableVariant
     }
 
     static func variant(for id: String) -> LocalModelVariant? {
-        all.first { $0.id == id }
+        if let target = exactQwen38Variant, target.id == id { return target }
+        if id == Qwen38ReleaseDiscovery.unavailableModelID {
+            return Qwen38ReleaseDiscovery.unavailableVariant
+        }
+        return nil
+    }
+
+    static func isExactQwen38Target(_ variant: LocalModelVariant) -> Bool {
+        guard let target = exactQwen38Variant else { return false }
+        return target.id == variant.id && target.expectedSHA256 == variant.expectedSHA256
     }
 
     static func safestVariant(forPhysicalMemory physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> LocalModelVariant {
-        all.first { $0.isIPhone12SafeDefault && physicalMemory >= $0.minimumPhysicalMemoryBytes }
-            ?? all.first { physicalMemory >= $0.minimumPhysicalMemoryBytes }
-            ?? all.last!
+        // Qwen-3.8-only build: memory pressure may change the execution profile,
+        // never the model identity. No smaller substitute is permitted.
+        defaultVariant
     }
 
     static func compatibilityMessage(
         for variant: LocalModelVariant,
         physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory
     ) -> String? {
+        if variant.id == Qwen38ReleaseDiscovery.unavailableModelID {
+            return "Exact Qwen 3.8 27B open weights have not been verified yet. Tap Refresh Qwen 3.8 Release after the model is published; NovaForge will not substitute another model."
+        }
+
         if physicalMemory < variant.minimumPhysicalMemoryBytes {
             let needed = ByteCountFormatter.string(fromByteCount: Int64(variant.minimumPhysicalMemoryBytes), countStyle: .memory)
             let current = ByteCountFormatter.string(fromByteCount: Int64(physicalMemory), countStyle: .memory)
-            return "\(variant.shortName) needs about \(needed) physical RAM. This device reports \(current). Choose an Ultra light or Memory saver model."
+            return "\(variant.shortName) needs about \(needed) physical RAM. This device reports \(current). This Qwen 3.8-only build cannot substitute a smaller model."
         }
 
         let safePeakBudget = physicalMemory * 55 / 100
         if variant.estimatedPeakMemoryBytes > safePeakBudget {
-            return "\(variant.shortName)'s estimated \(variant.estimatedPeakMemoryLabel) peak is too close to this device's memory ceiling. Choose an Ultra light or Memory saver model."
+            return "\(variant.shortName)'s estimated \(variant.estimatedPeakMemoryLabel) peak is too close to this device's memory ceiling. This Qwen 3.8-only build cannot substitute a smaller model."
         }
 
         return nil
@@ -266,8 +637,11 @@ enum LocalModelCatalog {
     static func modelDirectory() throws -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let directory = base.appendingPathComponent("LocalModels", isDirectory: true)
+        var directory = base.appendingPathComponent("LocalModels", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try directory.setResourceValues(values)
         return directory
     }
 
@@ -294,7 +668,7 @@ enum LocalModelRuntimeMemoryPolicy {
         case .critical:
             return "The iPhone is too hot to safely load a local model. Let it cool, then try again."
         case .serious where variant.deviceFit != .ultraLight:
-            return "The iPhone is running hot. NovaForge held back \(variant.shortName); use Atlas 2 or let the phone cool first."
+            return "The iPhone is running hot. NovaForge held back \(variant.shortName); let the phone cool, then retry Qwen 3.8 27B."
         case .nominal, .fair, .serious:
             break
         @unknown default:
@@ -311,7 +685,7 @@ enum LocalModelRuntimeMemoryPolicy {
                 fromByteCount: Int64(clamping: availableMemory),
                 countStyle: .memory
             )
-            return "NovaForge held back \(variant.shortName) before first-prompt allocation. It needs about \(needed) available; iOS reports \(available). Close memory-heavy apps or choose Atlas 2."
+            return "NovaForge held back \(variant.shortName) before first-prompt allocation. It needs about \(needed) available; iOS reports \(available). Close memory-heavy apps, then retry Qwen 3.8 27B."
         }
         return nil
     }
@@ -361,19 +735,65 @@ private final class LocalModelLifecycleObserverBag: @unchecked Sendable {
 }
 #endif
 
+struct LocalModelPerformanceSnapshot: Equatable, Sendable {
+    let prefillDuration: TimeInterval
+    let timeToFirstToken: TimeInterval?
+    let decodeDuration: TimeInterval
+    let generatedTokens: Int
+    let decodeTokensPerSecond: Double
+    let runtimeProfile: String
+}
+
 struct LocalModelBenchmarkResult: Equatable, Sendable {
     let modelName: String
     let timeToFirstToken: TimeInterval
     let totalDuration: TimeInterval
     let generatedCharacters: Int
+    let prefillDuration: TimeInterval?
+    let decodeDuration: TimeInterval?
+    let generatedTokens: Int?
+    let exactTokensPerSecond: Double?
+    let runtimeProfile: String?
 
-    /// Rough token estimate — llama.cpp doesn't surface counts through this
-    /// path, and honest ≈ beats fabricated precision.
+    init(
+        modelName: String,
+        timeToFirstToken: TimeInterval,
+        totalDuration: TimeInterval,
+        generatedCharacters: Int,
+        prefillDuration: TimeInterval? = nil,
+        decodeDuration: TimeInterval? = nil,
+        generatedTokens: Int? = nil,
+        exactTokensPerSecond: Double? = nil,
+        runtimeProfile: String? = nil
+    ) {
+        self.modelName = modelName
+        self.timeToFirstToken = max(0, timeToFirstToken)
+        self.totalDuration = max(0, totalDuration)
+        self.generatedCharacters = max(0, generatedCharacters)
+        self.prefillDuration = prefillDuration.map { max(0, $0) }
+        self.decodeDuration = decodeDuration.map { max(0, $0) }
+        self.generatedTokens = generatedTokens.map { max(0, $0) }
+        self.exactTokensPerSecond = exactTokensPerSecond.map { max(0, $0) }
+        self.runtimeProfile = runtimeProfile
+    }
+
+    /// Retained only as an explicit fallback for inference backends that do not
+    /// yet expose exact token accounting. llama.cpp-backed runs use the exact
+    /// generated-token count and decode timing from LlamaService.
     var estimatedTokens: Int { max(1, Int(Double(generatedCharacters) / 3.8)) }
 
+    var hasExactTokenTelemetry: Bool {
+        generatedTokens != nil && exactTokensPerSecond != nil
+    }
+
     var tokensPerSecond: Double {
+        if let exactTokensPerSecond { return exactTokensPerSecond }
         let generation = max(totalDuration - timeToFirstToken, 0.05)
         return Double(estimatedTokens) / generation
+    }
+
+    var displayedTokenCount: Int {
+        generatedTokens ?? estimatedTokens
     }
 }
 
@@ -791,6 +1211,7 @@ enum LocalModelDownloader {
         destination: URL,
         progress: @escaping @Sendable (LocalModelDownloadProgress) async -> Void
     ) async throws {
+        try validateDownloadableVariant(variant)
         let directory = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let temporaryURL = temporaryURL(for: destination)
@@ -891,7 +1312,19 @@ enum LocalModelDownloader {
         return .promoted(receivedBytes: existingBytes)
     }
 
+    static func validateDownloadableVariant(_ variant: LocalModelVariant) throws {
+        guard variant.expectedBytes > 0,
+              !variant.expectedSHA256.isEmpty,
+              variant.downloadURL.host?.lowercased() != "example.invalid"
+        else {
+            throw LocalModelRuntimeError.downloadFailed(
+                "Qwen 3.8 27B public weights are not available yet. Check for the verified release before downloading."
+            )
+        }
+    }
+
     static func validateCompleteDownload(variant: LocalModelVariant, receivedBytes: Int64) throws {
+        try validateDownloadableVariant(variant)
         let expectedBytes = variant.expectedBytes
         guard receivedBytes == expectedBytes else {
             let receivedLabel = ByteCountFormatter.string(fromByteCount: receivedBytes, countStyle: .file)
@@ -1298,6 +1731,27 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         #endif
     }
 
+    /// Returns only content-free timing/counter telemetry for the currently
+    /// loaded model. Prompt text, generated text, token ids and file paths are
+    /// deliberately absent from this bridge.
+    func performanceSnapshot(modelID: String) async -> LocalModelPerformanceSnapshot? {
+        #if canImport(SwiftLlama)
+        guard let loadedService, loadedService.variantID == modelID,
+              let snapshot = await loadedService.service.performanceSnapshot()
+        else { return nil }
+        return LocalModelPerformanceSnapshot(
+            prefillDuration: snapshot.prefillSeconds,
+            timeToFirstToken: snapshot.timeToFirstTokenSeconds,
+            decodeDuration: snapshot.decodeSeconds,
+            generatedTokens: snapshot.generatedTokenCount,
+            decodeTokensPerSecond: snapshot.decodeTokensPerSecond,
+            runtimeProfile: snapshot.runtimeReason
+        )
+        #else
+        return nil
+        #endif
+    }
+
     func unload(modelID: String? = nil) async {
         #if canImport(SwiftLlama)
         guard let loadedService,
@@ -1329,6 +1783,16 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
             throw LocalModelRuntimeError.incompatibleDevice(message)
         }
 
+        // A binary/ternary exact-target build exists specifically to make the
+        // 27B weight traffic survivable on phone-class memory. For that class,
+        // spend the saved bytes on the smallest production KV cache the current
+        // llama.cpp Metal backend supports. Keep K/V symmetric so Flash
+        // Attention never falls onto the mixed-precision fallback path.
+        let quantization = variant.quantization.uppercased()
+        let usesUltraLowBitWeights = [
+            "Q1_0_G128", "Q1_0", "IQ1_S", "IQ1_M", "TQ1_0", "TQ2_0"
+        ].contains(quantization)
+
         let service = LlamaService(
             modelUrl: modelURL,
             config: .init(
@@ -1338,9 +1802,19 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
                 gpuLayerCount: variant.gpuLayerCount,
                 generationThreadCount: variant.generationThreadCount,
                 batchThreadCount: variant.batchThreadCount,
-                yieldEveryTokenCount: 1
+                yieldEveryTokenCount: 1,
+                keyCacheType: usesUltraLowBitWeights ? .q4_0 : .f16,
+                valueCacheType: usesUltraLowBitWeights ? .q4_0 : .f16
             )
         )
+        if variant.id.hasPrefix("qwen38:") {
+            let identity = try await service.modelIdentitySnapshot()
+            if let identityError = Qwen38ModelIdentityPolicy.validationError(for: identity) {
+                throw LocalModelRuntimeError.incompatibleDevice(
+                    "Exact Qwen 3.8 27B identity verification failed. \(identityError)"
+                )
+            }
+        }
         loadedService = (variant.id, service)
         return service
     }

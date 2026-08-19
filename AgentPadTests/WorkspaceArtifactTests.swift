@@ -77,4 +77,32 @@ final class WorkspaceArtifactTests: XCTestCase {
 
         XCTAssertEqual(WorkspaceArtifact.fromToolOutput(output)?.path, "reports/performance.html")
     }
+
+    // MARK: - Qwen 3.8 27B product contract
+
+    func testProductCatalogPresentsOnlyQwen38_27BTarget() {
+        let presented = LocalModelCatalog.presentationOrder
+        XCTAssertEqual(presented.count, 1)
+        let target = presented[0]
+        let identity = "\(target.id) \(target.displayName) \(target.shortName)".lowercased()
+        XCTAssertTrue(identity.contains("qwen3.8") || identity.contains("qwen 3.8") || identity.contains("qwen38"))
+        XCTAssertTrue(identity.contains("27b"))
+        XCTAssertFalse(identity.contains("qwen3.6"))
+        XCTAssertFalse(identity.contains("qwen 3.6"))
+        XCTAssertFalse(identity.contains("qwen3.5"))
+        XCTAssertFalse(identity.contains("qwen 3.5"))
+    }
+
+    func testLegacyQwen36AndQwen35IDsCannotResolveAsProductModels() {
+        XCTAssertNil(LocalModelCatalog.variant(for: "qwen3.6-27b-ud-iq2-xxs"))
+        XCTAssertNil(LocalModelCatalog.variant(for: "Qwen/Qwen3.5-27B-GGUF"))
+        XCTAssertNil(LocalModelCatalog.variant(for: "Qwen/Qwen3.6-27B-GGUF"))
+    }
+
+    func testUnreleasedQwen38SentinelIsNeverDownloadCompatible() {
+        let sentinel = Qwen38ReleaseDiscovery.unavailableVariant
+        XCTAssertEqual(sentinel.expectedBytes, 0)
+        XCTAssertNotNil(LocalModelCatalog.compatibilityMessage(for: sentinel))
+        XCTAssertEqual(LocalModelCatalog.presentationOrder.count, 1)
+    }
 }

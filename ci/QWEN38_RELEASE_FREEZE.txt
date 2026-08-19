@@ -1,0 +1,9 @@
+TriInfer Code / NovaForge — Qwen 3.8 27B iOS 27 qualification freeze
+
+Target: exact Qwen 3.8 27B only. No substitute model is permitted.
+Runtime: llama.cpp b10472 iOS XCFramework, checksum pinned by SwiftPM.
+Low-memory path: exact GGUF discovery + SHA/size/revision validation; upstream Q1_0 preferred; unknown quant families rejected; symmetric Q4 KV requested for qualified ultra-low-bit weights; storage-backed mmap profile on oversubscribed devices.
+Context path: canonical history remains authoritative while the local model receives a bounded deterministic working projection with prefix reuse and compact tool observations.
+Validation authority: .github/workflows/qwen27-xcode27.yml on the immutable branch head, followed by synchronized iOS 27 visual census and exact-tree source packaging.
+
+Any change after this marker must be justified by a concrete compiler, test, simulator, or release-compatibility failure and requires a new qualification head.

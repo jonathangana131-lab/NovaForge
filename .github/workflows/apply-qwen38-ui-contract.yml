@@ -1,0 +1,42 @@
+name: Apply Qwen 3.8 UI contract
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_ui_contract.py'
+      - '.github/workflows/apply-qwen38-ui-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply exact-target chooser contract
+        run: python3 ci/apply_qwen38_ui_contract.py
+      - name: Validate transformed UI tests
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq 'composerModel-qwen3.8-27b-awaiting-verified-open-weights' AgentPadUITests/AgentPadUITests.swift
+          if grep -Fq 'composerModel-Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M' AgentPadUITests/AgentPadUITests.swift; then
+            echo 'stale selectable Qwen2.5 UI contract remains' >&2
+            exit 71
+          fi
+      - name: Commit production UI contract
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- AgentPadUITests/AgentPadUITests.swift; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPadUITests/AgentPadUITests.swift
+          git commit -m 'UI: make local chooser Qwen 3.8 only'
+          git push origin HEAD:feature/qwen38-forge-ios27

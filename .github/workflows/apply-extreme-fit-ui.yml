@@ -1,0 +1,37 @@
+name: Apply Extreme Fit UI
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_extreme_fit_ui_patch.py
+      - .github/workflows/apply-extreme-fit-ui.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: xcode-27
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - run: python3 ci/apply_extreme_fit_ui_patch.py
+      - run: |
+          git diff --check
+          grep -F 'case .extreme: AgentPalette.rose' AgentPad/Views/SettingsComponents.swift
+      - name: Commit UI exhaustiveness fix
+        run: |
+          if git diff --quiet; then
+            echo 'Extreme fit UI already exhaustive.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Xcode Fix Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Views/SettingsComponents.swift
+          git commit -m 'Style 27B Extreme model fit state'
+          git push origin HEAD:feature/qwen38-forge-ios27

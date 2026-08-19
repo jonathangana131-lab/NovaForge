@@ -1,0 +1,81 @@
+name: Package Qwen 3.8 iOS App
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - '.github/workflows/qwen38-package.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Build clean source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package-root/TriInferCode-Qwen38-iOS27
+          rsync -a ./ package-root/TriInferCode-Qwen38-iOS27/ \
+            --exclude '.git/' \
+            --exclude 'DerivedData/' \
+            --exclude '.build/' \
+            --exclude 'artifacts/' \
+            --exclude 'QA/' \
+            --exclude '*.xcresult' \
+            --exclude '*.zip'
+          cat > package-root/TriInferCode-Qwen38-iOS27/BUILD-RECEIPT.txt <<TXT
+          NovaForge / TriInfer Code — Qwen 3.8 27B iOS 27 build
+          Source commit: ${GITHUB_SHA}
+          Branch: feature/qwen38-forge-ios27
+          Target: exact Qwen 3.8 27B only; no model substitution
+          Open: AgentPad.xcodeproj
+          TXT
+          cd package-root
+          zip -qry ../TriInferCode-Qwen38-iOS27-${GITHUB_SHA:0:12}.zip TriInferCode-Qwen38-iOS27
+          cd ..
+          unzip -tq TriInferCode-Qwen38-iOS27-${GITHUB_SHA:0:12}.zip
+          sha256sum TriInferCode-Qwen38-iOS27-${GITHUB_SHA:0:12}.zip | tee package-sha256.txt
+          echo "archive=TriInferCode-Qwen38-iOS27-${GITHUB_SHA:0:12}.zip" >> "$GITHUB_ENV"
+      - name: Publish package receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p QA
+          SHA256=$(cut -d' ' -f1 package-sha256.txt)
+          cat > QA/qwen38-package-latest.json <<JSON
+          {
+            "status": "PACKAGED",
+            "runId": "${GITHUB_RUN_ID}",
+            "runAttempt": "${GITHUB_RUN_ATTEMPT}",
+            "sourceSha": "${GITHUB_SHA}",
+            "artifactName": "TriInferCode-Qwen38-iOS27-${GITHUB_RUN_ID}",
+            "archive": "${archive}",
+            "sha256": "${SHA256}"
+          }
+          JSON
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add QA/qwen38-package-latest.json
+          git commit -m "QA: record packaged Qwen 3.8 iOS app ${GITHUB_RUN_ID}" || exit 0
+          git fetch origin feature/qwen38-forge-ios27
+          git rebase origin/feature/qwen38-forge-ios27
+          git push origin HEAD:feature/qwen38-forge-ios27
+      - uses: actions/upload-artifact@v7
+        with:
+          name: TriInferCode-Qwen38-iOS27-${{ github.run_id }}
+          path: |
+            ${{ env.archive }}
+            package-sha256.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

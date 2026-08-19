@@ -1,0 +1,40 @@
+name: Apply stable simulator readiness
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_simulator_boot_fix_v2.py'
+      - '.github/workflows/apply-simulator-boot-fix-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply bounded stable-Booted readiness repair
+        run: python3 ci/apply_simulator_boot_fix_v2.py
+      - name: Validate zsh and diff
+        run: |
+          set -euo pipefail
+          zsh -n scripts/codex-test.sh
+          git diff --check
+          grep -n 'three consecutive polls' scripts/codex-test.sh
+          if grep -q 'simctl spawn.*usr/bin/true' scripts/codex-test.sh; then exit 1; fi
+          if grep -q 'simctl bootstatus.*-b' scripts/codex-test.sh; then exit 1; fi
+      - name: Commit readiness repair
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- scripts/codex-test.sh; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/codex-test.sh
+          git commit -m 'Use stable Booted state for Xcode 27 simulator readiness'
+          git push origin HEAD:feature/qwen38-forge-ios27

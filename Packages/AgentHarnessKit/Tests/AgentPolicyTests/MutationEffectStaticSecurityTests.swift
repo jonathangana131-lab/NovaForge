@@ -297,7 +297,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             "-swift-version",
             "6",
             "-I",
-            packageRoot.appendingPathComponent(".build/debug/Modules").path,
+            try builtModulesDirectory(packageRoot: packageRoot).path,
             "-o",
             "/dev/null",
             sourceURL.path,
@@ -310,6 +310,56 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
         return (
             process.terminationStatus,
             String(decoding: data, as: UTF8.self)
+        )
+    }
+
+    private func builtModulesDirectory(packageRoot: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let buildRoot = packageRoot.appendingPathComponent(".build", isDirectory: true)
+        let requiredModules = ["AgentPolicy", "AgentDomain", "AgentTools"]
+
+        func containsRequiredModules(_ directory: URL) -> Bool {
+            requiredModules.allSatisfy { module in
+                fileManager.fileExists(
+                    atPath: directory.appendingPathComponent("\(module).swiftmodule").path
+                )
+            }
+        }
+
+        let legacy = buildRoot.appendingPathComponent("debug/Modules", isDirectory: true)
+        if containsRequiredModules(legacy) {
+            return legacy
+        }
+
+        guard let enumerator = fileManager.enumerator(
+            at: buildRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw NSError(
+                domain: "MutationEffectStaticSecurityTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to enumerate SwiftPM build directory"]
+            )
+        }
+
+        var inspectedParents = Set<String>()
+        for case let candidate as URL in enumerator {
+            guard candidate.pathExtension == "swiftmodule" else { continue }
+            let parent = candidate.deletingLastPathComponent()
+            guard inspectedParents.insert(parent.path).inserted else { continue }
+            if containsRequiredModules(parent) {
+                return parent
+            }
+        }
+
+        throw NSError(
+            domain: "MutationEffectStaticSecurityTests",
+            code: 2,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Unable to locate a SwiftPM Modules directory containing \(requiredModules.joined(separator: ", ")) beneath \(buildRoot.path)"
+            ]
         )
     }
 }

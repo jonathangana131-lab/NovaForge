@@ -54,7 +54,11 @@ public final class LlamaSampler {
         llama_sampler_chain_add(samplerPointer, topPSampler)
 
         if let penaltyConfig = config.repetitionPenaltyConfig, penaltyConfig.lastN > 0 {
+            // llama.cpp b10456 added n_vocab as the leading penalties argument.
+            // Supplying the model vocabulary size keeps the sampler ABI aligned with
+            // the currently linked XCFramework while preserving the existing policy.
             let penaltiesSampler = llama_sampler_init_penalties(
+                model.vocabularySize(),
                 penaltyConfig.lastN,
                 penaltyConfig.repeatPenalty,
                 penaltyConfig.freqPenalty,

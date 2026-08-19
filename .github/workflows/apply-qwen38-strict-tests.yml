@@ -1,0 +1,37 @@
+name: Apply strict Qwen 3.8 target regression tests
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_strict_tests.py'
+      - '.github/workflows/apply-qwen38-strict-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - run: python3 ci/apply_qwen38_strict_tests.py
+      - name: Verify staged tests
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq 'final class Qwen38StrictTargetTests: XCTestCase' AgentPadTests/AgentRuntimeLifecycleTests.swift
+          grep -Fq 'will not substitute another model' AgentPadTests/AgentRuntimeLifecycleTests.swift
+      - name: Commit tests
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- AgentPadTests/AgentRuntimeLifecycleTests.swift; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPadTests/AgentRuntimeLifecycleTests.swift
+          git commit -m 'Test strict Qwen 3.8-only target selection'
+          git push origin HEAD:feature/qwen38-forge-ios27

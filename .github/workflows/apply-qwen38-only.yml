@@ -1,0 +1,45 @@
+name: Apply strict Qwen 3.8 product path
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_qwen38_only.py'
+      - '.github/workflows/apply-qwen38-only.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply fail-closed exact-model transform
+        run: python3 ci/apply_qwen38_only.py
+      - name: Verify source transform
+        run: |
+          set -euo pipefail
+          git diff --check
+          if grep -En 'Qwen3\.6 27B|Qwen3\.6-27B' AgentPad/Services/LocalModelRuntime.swift AgentPad/Views/SettingsView.swift AgentPad/Services/AIProvider.swift; then
+            echo 'Forbidden Qwen 3.6 user target remains' >&2
+            exit 1
+          fi
+          grep -En 'Qwen 3\.8 27B only|Qwen38ReleaseDiscovery|exactQwen38Variant' AgentPad/Services/LocalModelRuntime.swift AgentPad/Views/SettingsView.swift
+          git diff -- AgentPad/Services/LocalModelRuntime.swift AgentPad/Views/SettingsView.swift AgentPad/Services/AIProvider.swift
+      - name: Commit strict 3.8 product path
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No source change required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add AgentPad/Services/LocalModelRuntime.swift AgentPad/Views/SettingsView.swift AgentPad/Services/AIProvider.swift
+          git commit -m 'Make local product path Qwen 3.8 27B only'
+          git push origin HEAD:feature/qwen38-forge-ios27

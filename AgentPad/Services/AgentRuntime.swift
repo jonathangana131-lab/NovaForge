@@ -1087,11 +1087,17 @@ final class AgentRuntime {
 
         let finished = Date()
         let first = probe.firstBatchAt ?? finished
+        let exact = await localModelClient.performanceSnapshot(modelID: variant.id)
         return .success(LocalModelBenchmarkResult(
             modelName: variant.shortName,
-            timeToFirstToken: first.timeIntervalSince(started),
+            timeToFirstToken: exact?.timeToFirstToken ?? first.timeIntervalSince(started),
             totalDuration: finished.timeIntervalSince(started),
-            generatedCharacters: probe.characters
+            generatedCharacters: probe.characters,
+            prefillDuration: exact?.prefillDuration,
+            decodeDuration: exact?.decodeDuration,
+            generatedTokens: exact?.generatedTokens,
+            exactTokensPerSecond: exact?.decodeTokensPerSecond,
+            runtimeProfile: exact?.runtimeProfile
         ))
     }
 

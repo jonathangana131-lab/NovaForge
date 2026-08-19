@@ -1734,17 +1734,17 @@ final class AgentPadUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(app.staticTexts["On-Device Models"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Qwen Coder 1.5B — iPhone 12"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Qwen 3.8 27B — Awaiting Open Weights"].waitForExistence(timeout: 5))
 
         let picker = app.buttons["modelPickerButton"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         picker.tap()
         XCTAssertTrue(app.staticTexts["Choose On-Device Model"].waitForExistence(timeout: 5))
         XCTAssertTrue(identifiedElement("localModelSafetyCard", in: app).waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Atlas 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Qwen 3.8 27B — Awaiting Open Weights"].waitForExistence(timeout: 5))
         XCTAssertTrue(
-            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Jul 20, 2026")).firstMatch.waitForExistence(timeout: 5),
-            "The primary local-model picker should show the release date before selection."
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Not released")).firstMatch.waitForExistence(timeout: 5),
+            "The exact Qwen 3.8 target should show its verified release state before selection."
         )
         capture("18-local-model-settings", app: app)
     }
@@ -1989,7 +1989,7 @@ final class AgentPadUITests: XCTestCase {
         XCTAssertTrue(app.buttons["composerProvider-local"].waitForExistence(timeout: 5), "Local should be a readable provider row, not a raw menu item.")
         XCTAssertTrue(app.buttons["composerProvider-openAI"].waitForExistence(timeout: 5), "OpenAI should remain available in the provider section.")
         app.buttons["composerProvider-local"].tap()
-        XCTAssertTrue(app.buttons["composerModel-Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"].waitForExistence(timeout: 5), "The local provider should reveal iPhone-safe local models in the same chooser.")
+        XCTAssertTrue(app.buttons["composerModel-qwen3.8-27b-awaiting-verified-open-weights"].waitForExistence(timeout: 5), "The local provider should reveal only the exact Qwen 3.8 27B target in the same chooser.")
         XCTAssertTrue(app.staticTexts["On-device model"].waitForExistence(timeout: 5), "Local download readiness belongs directly beside local model selection.")
         XCTAssertFalse(app.buttons["composerModelSearchClearButton"].exists, "Search belongs in Settings; the composer menu should stay compact.")
         XCTAssertFalse(app.buttons["Refresh provider models"].exists, "Live model refresh belongs in Settings; the composer menu should stay focused on choosing.")
@@ -2027,7 +2027,7 @@ final class AgentPadUITests: XCTestCase {
         let localProvider = app.buttons["composerProvider-local"].firstMatch
         XCTAssertTrue(localProvider.waitForExistence(timeout: 5))
         localProvider.tap()
-        XCTAssertTrue(app.buttons["composerModel-Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composerModel-qwen3.8-27b-awaiting-verified-open-weights"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
         XCTAssertTrue(composerModelButton.waitForExistence(timeout: 5))
         XCTAssertTrue(composerModelButton.label.contains("Local"), "Local should be selectable from the compact composer menu.")

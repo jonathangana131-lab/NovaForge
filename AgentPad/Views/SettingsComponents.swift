@@ -762,6 +762,7 @@ struct LocalModelVariantRow: View {
         case .deviceProven: AgentPalette.cyan
         case .ultraLight: AgentPalette.cyan
         case .memorySaver: AgentPalette.lilac
+        case .extreme: AgentPalette.rose
         }
     }
 

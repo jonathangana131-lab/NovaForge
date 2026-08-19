@@ -1,0 +1,41 @@
+name: Apply Xcode 27 simulator boot repair
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - 'ci/apply_simulator_boot_fix.py'
+      - '.github/workflows/apply-simulator-boot-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply fail-closed simulator repair
+        run: python3 ci/apply_simulator_boot_fix.py
+      - name: Validate zsh and source diff
+        run: |
+          set -euo pipefail
+          zsh -n scripts/codex-test.sh
+          git diff --check
+          grep -n 'resolve_simulator_id' scripts/codex-test.sh
+          grep -n 'simctl spawn' scripts/codex-test.sh
+      - name: Commit repair
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- scripts/codex-test.sh; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/codex-test.sh
+          git commit -m 'Resolve Xcode 27 simulator dynamically'
+          git push origin HEAD:feature/qwen38-forge-ios27

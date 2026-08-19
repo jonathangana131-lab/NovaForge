@@ -2,6 +2,9 @@ import AgentDomain
 import AgentProviders
 import AgentTools
 import XCTest
+#if canImport(SwiftLlama)
+import SwiftLlama
+#endif
 @testable import NovaForge
 
 final class AgentLocalModelProviderTransportTests: XCTestCase {
@@ -941,38 +944,39 @@ final class AgentLocalModelProviderTransportTests: XCTestCase {
     }
 
     func testStaticCatalogDoesNotSelfAwardDeviceQualification() {
-        let defaultVariant = LocalModelCatalog.defaultVariant
-        XCTAssertTrue(defaultVariant.isIPhone12SafeDefault)
-        XCTAssertEqual(defaultVariant.deviceFit.title, "Qualification pending")
-        XCTAssertEqual(defaultVariant.deviceFit.symbol, "iphone")
-        XCTAssertTrue(
-            defaultVariant.benchmarkSummary.localizedCaseInsensitiveContains(
-                "exact-device qualification pending"
-            )
-        )
-        XCTAssertTrue(
-            defaultVariant.details.localizedCaseInsensitiveContains(
-                "exact-device qualification remains pending"
-            )
-        )
+        let target = LocalModelCatalog.defaultVariant
+        XCTAssertEqual(LocalModelCatalog.all.count, 1)
+        XCTAssertEqual(LocalModelCatalog.presentationOrder.count, 1)
+        XCTAssertEqual(LocalModelCatalog.all.first?.id, target.id)
+        XCTAssertFalse(target.isIPhone12SafeDefault)
+        XCTAssertEqual(target.deviceFit, .extreme)
+        XCTAssertTrue(target.parameterLabel.localizedCaseInsensitiveContains("27B"))
 
-        let forbiddenStaticClaims = [
+        let identity = [
+            target.id, target.displayName, target.shortName, target.parameterLabel,
+        ].joined(separator: " ")
+        XCTAssertTrue(identity.localizedCaseInsensitiveContains("3.8"))
+        XCTAssertTrue(identity.localizedCaseInsensitiveContains("27B"))
+        XCTAssertFalse(identity.localizedCaseInsensitiveContains("3.6"))
+        XCTAssertFalse(identity.localizedCaseInsensitiveContains("3.5"))
+
+        // Product copy may explicitly explain that older models are NOT
+        // substitutes. Reject false qualification claims, not that explanation.
+        let forbiddenQualificationClaims = [
             "Device proven",
             "physical-device canary proven",
             "The proven iPhone 12 default",
         ]
-        for variant in LocalModelCatalog.all {
-            let staticPresentation = [
-                variant.deviceFit.title,
-                variant.benchmarkSummary,
-                variant.details,
-            ].joined(separator: " ")
-            for claim in forbiddenStaticClaims {
-                XCTAssertFalse(
-                    staticPresentation.localizedCaseInsensitiveContains(claim),
-                    "Static catalog metadata must not self-award device qualification: \(claim)"
-                )
-            }
+        let staticPresentation = [
+            target.deviceFit.title,
+            target.benchmarkSummary,
+            target.details,
+        ].joined(separator: " ")
+        for claim in forbiddenQualificationClaims {
+            XCTAssertFalse(
+                staticPresentation.localizedCaseInsensitiveContains(claim),
+                "Qwen 3.8 product metadata must not self-award qualification: \(claim)"
+            )
         }
     }
 
@@ -1384,3 +1388,288 @@ private func unsignedInteger(_ value: JSONValue) -> UInt64? {
     case .integer, .floatingPoint: return nil
     }
 }
+
+
+extension AgentLocalModelProviderTransportTests {
+    func testLocalInferenceProjectionBoundsLongHistoryAndPreservesActiveTail() throws {
+        let stableSystem = AgentLocalModelInferenceMessage(
+            role: .system,
+            content: "stable-system-v1"
+        )
+        let stableDeveloper = AgentLocalModelInferenceMessage(
+            role: .developer,
+            content: "stable-developer-v1"
+        )
+        var messages = [stableSystem, stableDeveloper]
+        for index in 0..<12 {
+            messages.append(.init(
+                role: .user,
+                content: "older-user-\(index)-" + String(repeating: "x", count: 90)
+            ))
+            messages.append(.init(
+                role: .assistant,
+                content: "older-assistant-\(index)-" + String(repeating: "y", count: 90)
+            ))
+        }
+        let activeUser = AgentLocalModelInferenceMessage(
+            role: .user,
+            content: "ACTIVE USER REQUEST"
+        )
+        let activeToolSummary = AgentLocalModelInferenceMessage(
+            role: .assistant,
+            content: "ACTIVE TOOL RESULT"
+        )
+        messages.append(activeUser)
+        messages.append(activeToolSummary)
+
+        let projected = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 64,
+            contextWindowTokens: 640
+        )
+
+        XCTAssertLessThan(projected.count, messages.count)
+        XCTAssertEqual(projected[0], stableSystem)
+        XCTAssertEqual(projected[1], stableDeveloper)
+        XCTAssertTrue(projected.contains(where: {
+            $0.content.contains("older canonical turns were omitted")
+        }))
+        XCTAssertEqual(Array(projected.suffix(2)), [activeUser, activeToolSummary])
+        XCTAssertLessThanOrEqual(
+            try AgentLocalModelProviderTransport.conservativeInputTokenUpperBound(
+                for: projected
+            ) + 64,
+            640
+        )
+    }
+
+    func testLocalInferenceProjectionIsDeterministic() throws {
+        var messages: [AgentLocalModelInferenceMessage] = [
+            .init(role: .system, content: "stable"),
+        ]
+        for index in 0..<16 {
+            messages.append(.init(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "history-\(index)-" + String(repeating: "z", count: 72)
+            ))
+        }
+        messages.append(.init(role: .user, content: "latest"))
+
+        let first = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 48,
+            contextWindowTokens: 512
+        )
+        let second = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 48,
+            contextWindowTokens: 512
+        )
+        XCTAssertEqual(first, second)
+    }
+
+    func testLocalInferenceProjectionFailsRatherThanTruncatingActiveTail() {
+        let messages: [AgentLocalModelInferenceMessage] = [
+            .init(role: .system, content: "stable"),
+            .init(
+                role: .user,
+                content: "active-" + String(repeating: "q", count: 2_000)
+            ),
+        ]
+
+        XCTAssertThrowsError(
+            try AgentLocalModelProviderTransport.projectedInferenceMessages(
+                messages,
+                maximumOutputTokens: 64,
+                contextWindowTokens: 256
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? AgentLocalModelProviderTransportError,
+                .inputLimitExceeded
+            )
+        }
+    }
+}
+
+
+extension AgentLocalModelProviderTransportTests {
+    func testLocalCanonicalAdmissionMatchesCanonicalAuthorityLimits() {
+        XCTAssertEqual(
+            AgentLocalModelProviderTransport.maximumMessages,
+            AgentCanonicalContextLimits.production.maximumProviderMessages
+        )
+        XCTAssertEqual(AgentLocalModelProviderTransport.maximumMessages, 512)
+        XCTAssertEqual(
+            AgentLocalModelProviderTransport.maximumRequestUTF8Bytes,
+            8 * 1_024 * 1_024
+        )
+        XCTAssertEqual(
+            AgentLocalModelProviderTransport.maximumTextPartUTF8Bytes,
+            1 * 1_024 * 1_024
+        )
+    }
+
+    func testProjectionHandlesHistoryBeyondFormerSixtyFourMessageCeiling() throws {
+        var messages: [AgentLocalModelInferenceMessage] = [
+            .init(role: .system, content: "stable-system"),
+            .init(role: .developer, content: "stable-developer"),
+        ]
+        for index in 0..<80 {
+            messages.append(.init(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "history-\(index)-" + String(repeating: "h", count: 32)
+            ))
+        }
+        messages.append(.init(role: .user, content: "LATEST USER"))
+
+        XCTAssertGreaterThan(messages.count, 64)
+        XCTAssertLessThan(messages.count, AgentLocalModelProviderTransport.maximumMessages)
+
+        let projected = try AgentLocalModelProviderTransport.projectedInferenceMessages(
+            messages,
+            maximumOutputTokens: 64,
+            contextWindowTokens: 768
+        )
+        XCTAssertLessThan(projected.count, messages.count)
+        XCTAssertEqual(projected.first?.content, "stable-system")
+        XCTAssertEqual(projected.last?.content, "LATEST USER")
+        XCTAssertLessThanOrEqual(
+            try AgentLocalModelProviderTransport.conservativeInputTokenUpperBound(
+                for: projected
+            ) + 64,
+            768
+        )
+    }
+}
+
+
+extension AgentLocalModelProviderTransportTests {
+    func testQwen38QuantizationDetectionPrefersSpecificQ1G128Marker() {
+        XCTAssertEqual(
+            Qwen38ReleaseDiscovery.quantization(
+                from: "Qwen3.8-27B-Q1_0_G128.gguf"
+            ),
+            "Q1_0_G128"
+        )
+        XCTAssertEqual(
+            Qwen38ReleaseDiscovery.quantization(
+                from: "Qwen3.8-27B-Q1_0.gguf"
+            ),
+            "Q1_0"
+        )
+    }
+}
+
+
+extension AgentLocalModelProviderTransportTests {
+    func testLocalModelBenchmarkPrefersExactTokenTelemetry() {
+        let result = LocalModelBenchmarkResult(
+            modelName: "Qwen 27B Extreme",
+            timeToFirstToken: 1.2,
+            totalDuration: 5.0,
+            generatedCharacters: 999,
+            prefillDuration: 0.9,
+            decodeDuration: 3.7,
+            generatedTokens: 44,
+            exactTokensPerSecond: 11.89,
+            runtimeProfile: "Extreme storage-backed profile"
+        )
+
+        XCTAssertTrue(result.hasExactTokenTelemetry)
+        XCTAssertEqual(result.displayedTokenCount, 44)
+        XCTAssertEqual(result.tokensPerSecond, 11.89, accuracy: 0.0001)
+        XCTAssertEqual(result.prefillDuration, 0.9)
+        XCTAssertEqual(result.decodeDuration, 3.7)
+        XCTAssertEqual(result.runtimeProfile, "Extreme storage-backed profile")
+    }
+
+    func testLocalModelBenchmarkLabelsEstimatedFallbackWithoutRuntimeTelemetry() {
+        let result = LocalModelBenchmarkResult(
+            modelName: "Fallback",
+            timeToFirstToken: 1.0,
+            totalDuration: 2.0,
+            generatedCharacters: 38
+        )
+
+        XCTAssertFalse(result.hasExactTokenTelemetry)
+        XCTAssertEqual(result.estimatedTokens, 10)
+        XCTAssertEqual(result.displayedTokenCount, 10)
+        XCTAssertEqual(result.tokensPerSecond, 10.0, accuracy: 0.0001)
+        XCTAssertNil(result.prefillDuration)
+        XCTAssertNil(result.generatedTokens)
+        XCTAssertNil(result.runtimeProfile)
+    }
+
+    func testLocalModelBenchmarkClampsInvalidNegativeMeasurements() {
+        let result = LocalModelBenchmarkResult(
+            modelName: "Clamp",
+            timeToFirstToken: -1,
+            totalDuration: -2,
+            generatedCharacters: -3,
+            prefillDuration: -4,
+            decodeDuration: -5,
+            generatedTokens: -6,
+            exactTokensPerSecond: -7,
+            runtimeProfile: "test"
+        )
+
+        XCTAssertEqual(result.timeToFirstToken, 0)
+        XCTAssertEqual(result.totalDuration, 0)
+        XCTAssertEqual(result.generatedCharacters, 0)
+        XCTAssertEqual(result.prefillDuration, 0)
+        XCTAssertEqual(result.decodeDuration, 0)
+        XCTAssertEqual(result.generatedTokens, 0)
+        XCTAssertEqual(result.exactTokensPerSecond, 0)
+        XCTAssertTrue(result.hasExactTokenTelemetry)
+    }
+}
+
+#if canImport(SwiftLlama)
+extension AgentLocalModelProviderTransportTests {
+    func testQwen38IdentityPolicyAcceptsExact27BClass() {
+        let identity = LlamaModelIdentitySnapshot(
+            name: "Qwen 3.8 27B",
+            basename: "Qwen3.8-27B",
+            architecture: "qwen3.8",
+            sizeLabel: "27B",
+            description: "Qwen 3.8 27B Q1_0",
+            parameterCount: 27_400_000_000,
+            modelBytes: 3_900_000_000,
+            vocabularySize: 250_000,
+            layerCount: 64
+        )
+        XCTAssertNil(Qwen38ModelIdentityPolicy.validationError(for: identity))
+    }
+
+    func testQwen38IdentityPolicyRejectsRenamedQwen36() {
+        let identity = LlamaModelIdentitySnapshot(
+            name: "Qwen 3.6 27B",
+            basename: "Qwen3.6-27B",
+            architecture: "qwen3.6",
+            sizeLabel: "27B",
+            description: "Qwen 3.6 27B renamed file",
+            parameterCount: 27_000_000_000,
+            modelBytes: 3_900_000_000,
+            vocabularySize: 250_000,
+            layerCount: 64
+        )
+        XCTAssertNotNil(Qwen38ModelIdentityPolicy.validationError(for: identity))
+    }
+
+    func testQwen38IdentityPolicyRejectsWrongParameterClass() {
+        let identity = LlamaModelIdentitySnapshot(
+            name: "Qwen 3.8",
+            basename: "Qwen3.8-7B",
+            architecture: "qwen3.8",
+            sizeLabel: "7B",
+            description: "Qwen 3.8 7B",
+            parameterCount: 7_600_000_000,
+            modelBytes: 1_200_000_000,
+            vocabularySize: 250_000,
+            layerCount: 32
+        )
+        XCTAssertNotNil(Qwen38ModelIdentityPolicy.validationError(for: identity))
+    }
+}
+#endif

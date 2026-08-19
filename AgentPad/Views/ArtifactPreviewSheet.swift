@@ -764,15 +764,11 @@ private struct ArtifactPreviewStudio: View {
     }
 
     private var previewHintTitle: String {
-        if artifact.isWebPage {
-            switch previewLoadState {
-            case .loading: return "Loading preview"
-            case .failed: return "Preview unavailable"
-            case .ready: break
-            }
-        }
-        if artifact.isSwiftGameArtifact { return "Native game ready" }
+        // This is the preview *mode*, not its transient network/render state.
+        // Keep it stable while WebKit moves through loading/ready/failed so the
+        // user always knows they are in the normal embedded preview surface.
         if artifact.isWebPage { return "Normal preview" }
+        if artifact.isSwiftGameArtifact { return "Native game ready" }
         if artifact.isImageArtifact { return artifact.path.lowercased().contains("screenshot") ? "Screenshot evidence" : "Image artifact" }
         if artifact.isPDFArtifact { return "Report artifact" }
         if artifact.isLogArtifact { return "Log evidence" }
@@ -2365,6 +2361,27 @@ private struct WebArtifactView: UIViewRepresentable {
             let sizeChanged = !viewportMatches(currentViewportSize, size)
             currentViewportSize = size
 
+            // Normal portrait previews do not need the expensive two-frame
+            // compositor proof used to guard fullscreen rotation. Requiring that
+            // handshake for every workspace HTML artifact can strand an otherwise
+            // loaded page behind the loading cover on newer WebKit builds. Keep
+            // normal previews responsive: resize them immediately and publish
+            // readiness once main-frame navigation has completed. Full-bleed game
+            // mode retains the strict viewport-keyed compositor handshake below.
+            if !fullBleedGameMode {
+                dispatchViewportResize(in: webView, explicitSize: size)
+                if navigationFinished,
+                   activeReloadToken != nil,
+                   onLoadStateChange != nil {
+                    renderAttempt = nil
+                    failedViewportSize = nil
+                    readyViewportSize = size
+                    loadingPublication = nil
+                    onLoadStateChange?(.ready)
+                }
+                return
+            }
+
             guard sizeChanged else {
                 if navigationFinished,
                    renderAttempt == nil,
@@ -2453,13 +2470,54 @@ private struct WebArtifactView: UIViewRepresentable {
             loadingPublication = nil
 
             guard let reloadToken = activeReloadToken,
-                  let viewportSize,
-                  viewportSize.width > 1,
-                  viewportSize.height > 1,
                   onLoadStateChange != nil else {
                 dispatchViewportResize(in: webView, explicitSize: viewportSize)
                 return
             }
+
+            if !fullBleedGameMode {
+                // For a normal embedded local-file preview, main-frame navigation
+                // completion is the authoritative readiness boundary. Do not keep
+                // a visibly loaded page hidden behind "Loading preview" while
+                // waiting for evaluateJavaScript's completion callback: WebKit on
+                // iOS 27 can defer that callback even though didFinish has fired.
+                // Viewport adjustment is presentation-only here, so publish ready
+                // first and apply the authoritative size best-effort afterward.
+                renderAttempt = nil
+                failedViewportSize = nil
+                loadingPublication = nil
+                if let viewportSize,
+                   viewportSize.width > 1,
+                   viewportSize.height > 1 {
+                    readyViewportSize = viewportSize
+                } else {
+                    readyViewportSize = nil
+                }
+                onLoadStateChange?(.ready)
+
+                dispatchViewportResize(in: webView, explicitSize: viewportSize) { [weak self] error in
+                    guard let self,
+                          self.activeReloadToken == reloadToken,
+                          self.isActive(navigation)
+                    else { return }
+                    #if DEBUG
+                    if let error {
+                        print("NF_ARTIFACT_NORMAL_VIEWPORT_RESIZE_WARNING \(error.localizedDescription)")
+                    }
+                    #endif
+                }
+                return
+            }
+
+            guard let viewportSize,
+                  viewportSize.width > 1,
+                  viewportSize.height > 1 else {
+                // Full-bleed game mode still requires an authoritative viewport
+                // before its compositor proof can begin.
+                dispatchViewportResize(in: webView, explicitSize: viewportSize)
+                return
+            }
+
             startRenderHandshake(
                 in: webView,
                 navigation: navigation,

@@ -2,8 +2,8 @@
 //  ModelManagerPanels.swift
 //  NovaForge
 //
-//  Model manager 2.0 surfaces: on-device storage ledger for every catalog
-//  variant, and a one-tap throughput benchmark for the selected model.
+//  Qwen 3.8 27B model-manager surfaces: exact-target storage state and a
+//  one-tap throughput benchmark once verified public weights are installed.
 //
 
 import SwiftUI
@@ -27,8 +27,11 @@ struct ModelStoragePanel: View {
         let expectedBytes: Int64
         let isSelected: Bool
 
-        var isDownloaded: Bool { onDiskBytes >= Int64(Double(expectedBytes) * 0.98) }
-        var isPartial: Bool { onDiskBytes > 0 && !isDownloaded }
+        var releaseAvailable: Bool { expectedBytes > 0 }
+        var isDownloaded: Bool {
+            releaseAvailable && onDiskBytes >= max(1, Int64(Double(expectedBytes) * 0.98))
+        }
+        var isPartial: Bool { releaseAvailable && onDiskBytes > 0 && !isDownloaded }
     }
 
     var body: some View {
@@ -37,7 +40,7 @@ struct ModelStoragePanel: View {
                 Image(systemName: "internaldrive.fill")
                     .font(.system(size: 12, weight: .black))
                     .foregroundStyle(AgentPalette.storageAccent)
-                Text("On-Device Storage")
+                Text("Qwen 3.8 27B Storage")
                     .font(.system(size: 12, weight: .black, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.ink)
                 Spacer(minLength: 0)
@@ -57,7 +60,7 @@ struct ModelStoragePanel: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("modelStoragePanel")
         .confirmationDialog(
-            "Delete the downloaded model file?",
+            "Delete the downloaded Qwen 3.8 27B model file?",
             isPresented: $confirmingDelete,
             titleVisibility: .visible
         ) {
@@ -67,7 +70,7 @@ struct ModelStoragePanel: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The model can be downloaded again at any time.")
+            Text("The exact verified release can be downloaded again later.")
         }
     }
 
@@ -97,7 +100,7 @@ struct ModelStoragePanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if entry.isSelected {
-                Text("SELECTED")
+                Text(entry.releaseAvailable ? "SELECTED" : "WATCHING")
                     .font(.system(size: 8, weight: .black, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.cyan)
                     .padding(.horizontal, 6)
@@ -105,7 +108,7 @@ struct ModelStoragePanel: View {
                     .agentControlSurface(radius: 6, tint: AgentPalette.cyan.opacity(0.12), selected: true)
             }
 
-            if entry.isSelected, entry.onDiskBytes > 0 {
+            if entry.isSelected, entry.isDownloaded {
                 Button {
                     confirmingDelete = true
                 } label: {
@@ -125,6 +128,9 @@ struct ModelStoragePanel: View {
     }
 
     private func storageDetail(_ entry: VariantStorage) -> String {
+        guard entry.releaseAvailable else {
+            return "Waiting for verified public Qwen 3.8 27B weights · no substitute model"
+        }
         let expected = Self.gigabytes(entry.expectedBytes)
         if entry.isDownloaded { return "Downloaded · \(Self.gigabytes(entry.onDiskBytes))" }
         if entry.isPartial { return "Partial · \(Self.gigabytes(entry.onDiskBytes)) of \(expected)" }
@@ -134,7 +140,10 @@ struct ModelStoragePanel: View {
     private func refresh() {
         var entries: [VariantStorage] = []
         var total: Int64 = 0
-        for variant in LocalModelCatalog.all {
+        // Only the exact Qwen 3.8 27B release watcher/verified release is a
+        // product model. Legacy tiny models may remain compiled for tests but
+        // must never leak into this Qwen-3.8-only storage surface.
+        for variant in LocalModelCatalog.presentationOrder {
             let url = try? LocalModelCatalog.fileURL(for: variant)
             let size = url.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int64 } ?? 0
             total += size
@@ -144,7 +153,7 @@ struct ModelStoragePanel: View {
                 quantization: variant.quantization,
                 onDiskBytes: size,
                 expectedBytes: variant.expectedBytes,
-                isSelected: settings.modelID == variant.id
+                isSelected: settings.modelID == variant.id || variant.id == runtime.localModels.selectedVariant.id
             ))
         }
         report = entries
@@ -222,23 +231,33 @@ struct ModelBenchmarkPanel: View {
             switch phase {
             case .idle:
                 Text(runtime.localModels.isDownloaded
-                     ? "Run a local timing sample on this device. Results are session diagnostics, not qualification evidence."
-                     : "Download the local model to benchmark it.")
+                     ? "Run a local timing sample on this iPhone. Results are session diagnostics, not qualification evidence."
+                     : "A verified Qwen 3.8 27B install is required before benchmarking.")
                     .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.secondaryText)
             case .running:
-                Text("Generating a capped sample with \(LocalModelCatalog.variant(for: settings.modelID)?.shortName ?? "the local model")…")
+                Text("Generating a capped sample with Qwen 3.8 27B…")
                     .font(.system(size: 10.5, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.secondaryText)
             case .finished(let result):
                 HStack(spacing: 8) {
-                    benchmarkMetric(value: String(format: "%.0f", endToEndCharactersPerSecond(result)), unit: "e2e chars/s", tint: AgentPalette.green)
-                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "first output", tint: AgentPalette.cyan)
-                    benchmarkMetric(value: String(format: "%.1fs", result.totalDuration), unit: "total", tint: AgentPalette.lilac)
+                    benchmarkMetric(
+                        value: String(format: result.hasExactTokenTelemetry ? "%.2f" : "≈%.2f", result.tokensPerSecond),
+                        unit: result.hasExactTokenTelemetry ? "decode tok/s" : "estimated tok/s",
+                        tint: AgentPalette.green
+                    )
+                    benchmarkMetric(value: String(format: "%.2fs", result.timeToFirstToken), unit: "TTFT", tint: AgentPalette.cyan)
+                    benchmarkMetric(
+                        value: result.prefillDuration.map { String(format: "%.2fs", $0) } ?? String(format: "%.1fs", result.totalDuration),
+                        unit: result.prefillDuration == nil ? "total" : "prefill",
+                        tint: AgentPalette.lilac
+                    )
                 }
-                Text("\(result.modelName) · \(result.generatedCharacters) observed characters · not qualification evidence")
+                Text(benchmarkDetail(result))
                     .font(.system(size: 9, weight: .semibold, design: AgentPalette.interfaceFontDesign))
                     .foregroundStyle(AgentPalette.tertiaryText)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 10.5, weight: .bold, design: AgentPalette.interfaceFontDesign))
@@ -268,9 +287,22 @@ struct ModelBenchmarkPanel: View {
         .agentControlSurface(radius: 11, tint: tint.opacity(0.08), selected: false)
     }
 
-    private func endToEndCharactersPerSecond(_ result: LocalModelBenchmarkResult) -> Double {
-        guard result.totalDuration > 0 else { return 0 }
-        return Double(result.generatedCharacters) / result.totalDuration
+    private func benchmarkDetail(_ result: LocalModelBenchmarkResult) -> String {
+        let tokenLabel = result.hasExactTokenTelemetry
+            ? "\(result.displayedTokenCount) exact tokens"
+            : "≈\(result.displayedTokenCount) tokens from \(result.generatedCharacters) characters"
+        let decodeLabel = result.decodeDuration.map { String(format: "decode %.2fs", $0) }
+        let profile = result.runtimeProfile?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [
+            result.modelName,
+            tokenLabel,
+            decodeLabel,
+            profile,
+            "session diagnostic · not qualification evidence",
+        ]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+        .joined(separator: " · ")
     }
 
     private func runBenchmark() {

@@ -1,0 +1,45 @@
+name: Apply Local Context Projection
+
+on:
+  push:
+    branches: [feature/qwen38-forge-ios27]
+    paths:
+      - ci/apply_local_context_projection.py
+      - .github/workflows/apply-local-context-projection.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-local-context-projection-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/qwen38-forge-ios27
+          fetch-depth: 1
+      - name: Apply fail-closed projection transform
+        run: python3 ci/apply_local_context_projection.py
+      - name: Validate transformed source
+        run: |
+          git diff --check
+          grep -F 'static func projectedInferenceMessages(' AgentPad/Services/AgentLocalModelProviderTransport.swift
+          grep -F 'messages: projectedMessages,' AgentPad/Services/AgentLocalModelProviderTransport.swift
+          grep -F 'testLocalInferenceProjectionBoundsLongHistoryAndPreservesActiveTail' AgentPadTests/AgentLocalModelProviderTransportTests.swift
+      - name: Commit context virtualization
+        run: |
+          if git diff --quiet; then
+            echo 'Local context projection already integrated.'
+            exit 0
+          fi
+          git config user.name 'NovaForge Context Projection Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add AgentPad/Services/AgentLocalModelProviderTransport.swift AgentPadTests/AgentLocalModelProviderTransportTests.swift
+          git commit -m 'Virtualize long local inference context'
+          git push origin HEAD:feature/qwen38-forge-ios27

@@ -36,6 +36,9 @@ struct SettingsView: View {
     @State private var hasLoadedProviderModels = false
     @State private var loadingProviderModels = false
     @State private var providerModelError: String? = nil
+    @State private var qwen38DiscoveryTask: Task<Void, Never>?
+    @State private var checkingQwen38Release = false
+    @State private var qwen38DiscoveryMessage: String?
     @State private var settingsSaveError: String? = nil
     @State private var draftTemperature = 0.2
     @State private var draftSystemPrompt = ""
@@ -125,6 +128,7 @@ struct SettingsView: View {
             toastHideTask?.cancel()
             providerModelTask?.cancel()
             connectionTestTask?.cancel()
+            qwen38DiscoveryTask?.cancel()
             workspaceResetTask?.cancel()
             workspaceResetTask = nil
             workspaceResetOperationID = nil
@@ -304,6 +308,9 @@ struct SettingsView: View {
 
     private var settingsReadinessTitle: String {
         if settings.provider == .local {
+            guard LocalModelCatalog.exactQwen38Variant != nil else {
+                return "Qwen 3.8 27B unavailable"
+            }
             switch runtime.localModels.status {
             case .ready:
                 return "Ready to run"
@@ -376,6 +383,7 @@ struct SettingsView: View {
 
     private var settingsReadinessSymbol: String {
         if settings.provider == .local {
+            guard LocalModelCatalog.exactQwen38Variant != nil else { return "externaldrive.badge.questionmark" }
             switch runtime.localModels.status {
             case .ready:
                 return "checkmark.seal.fill"
@@ -402,6 +410,7 @@ struct SettingsView: View {
 
     private var settingsReadinessTint: Color {
         if settings.provider == .local {
+            guard LocalModelCatalog.exactQwen38Variant != nil else { return AgentPalette.warning }
             switch runtime.localModels.status {
             case .ready:
                 return AgentPalette.green
@@ -434,6 +443,9 @@ struct SettingsView: View {
     }
 
     private var modelReadinessDetail: String {
+        if settings.provider == .local, LocalModelCatalog.exactQwen38Variant == nil {
+            return "No verified open-weight Qwen 3.8 27B GGUF is published yet · NovaForge will not substitute 3.6"
+        }
         if let variant = LocalModelCatalog.variant(for: settings.modelID) {
             return "\(variant.quantization) · \(variant.expectedSizeLabel) · \(runtime.localModels.status.title)"
         }
@@ -449,7 +461,10 @@ struct SettingsView: View {
     }
 
     private var localModelStatusDetail: String {
-        let variant = runtime.localModels.selectedVariant
+        guard let target = LocalModelCatalog.exactQwen38Variant else {
+            return qwen38DiscoveryMessage ?? "Check Hugging Face for an exact Qwen 3.8 27B GGUF. Download stays locked until revision, size, and SHA-256 are verified."
+        }
+        let variant = target
         switch runtime.localModels.status {
         case .ready:
             return "\(variant.shortName) is installed and runs on-device."
@@ -504,16 +519,18 @@ struct SettingsView: View {
                     stats: modelReadinessStats
                 )
 
-                SettingsModelPickerButton(
-                    provider: settings.provider,
-                    model: modelDisplayName(settings.modelID),
-                    count: modelChoices.count,
-                    isLoading: loadingProviderModels
-                ) {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showingModelPicker = true
-                    if providerModels.isEmpty && !loadingProviderModels {
-                        loadProviderModels()
+                if settings.provider != .local {
+                    SettingsModelPickerButton(
+                        provider: settings.provider,
+                        model: modelDisplayName(settings.modelID),
+                        count: modelChoices.count,
+                        isLoading: loadingProviderModels
+                    ) {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showingModelPicker = true
+                        if providerModels.isEmpty && !loadingProviderModels {
+                            loadProviderModels()
+                        }
                     }
                 }
 
@@ -790,49 +807,69 @@ struct SettingsView: View {
 
     private var localModelSection: some View {
         SettingsSection(
-            title: "On-Device Models",
-            subtitle: "Fresh coding models, pinned provenance, and fail-closed iPhone memory gates"
+            title: "Qwen 3.8 27B",
+            subtitle: "One exact on-device target · immutable provenance · no model substitution"
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 7) {
-                    Label("Built for iPhone 12—not a desktop model list", systemImage: "iphone.gen3.radiowaves.left.and.right")
+                    Label("Qwen 3.8 27B only", systemImage: "externaldrive.badge.timemachine")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(AgentPalette.ink)
-
-                    Text("NovaForge loads one model at a time, unloads it in the background or under memory pressure, and refuses first-prompt allocation when iOS headroom is unsafe.")
+                    Text("NovaForge searches for an exact Qwen 3.8 27B GGUF, pins its immutable revision and SHA-256, then uses the existing resumable downloader. Qwen 3.6 and smaller models are never offered as replacements.")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AgentPalette.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    Label("Release date, benchmark source, license, artifact size, context cap, and estimated peak are visible on every card.", systemImage: "checkmark.shield.fill")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(AgentPalette.green)
                 }
                 .padding(12)
                 .agentSurface(radius: 16, tint: AgentPalette.cyan.opacity(0.07))
 
-                ForEach(LocalModelCatalog.presentationOrder) { variant in
+                if let target = LocalModelCatalog.exactQwen38Variant {
                     LocalModelVariantRow(
-                        variant: variant,
-                        selected: settings.modelID == variant.id,
-                        status: runtime.localModels.selectedVariantID == variant.id ? runtime.localModels.status : nil
+                        variant: target,
+                        selected: settings.modelID == target.id,
+                        status: runtime.localModels.selectedVariantID == target.id ? runtime.localModels.status : nil
                     ) {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        let previousVariantID = runtime.localModels.selectedVariantID
-                        guard runtime.localModels.select(variant) else {
-                            return
-                        }
-                        persistSettingsChange(
-                            rollbackUI: {
-                                runtime.localModels.selectedVariantID = previousVariantID
-                            }
-                        ) {
-                            $0.modelID = variant.id
+                        selectExactQwen38Target(target)
+                    }
+                    if runtime.localModels.selectedVariantID == target.id {
+                        LocalModelDownloadPanel(manager: runtime.localModels)
+                    } else {
+                        SettingsActionButton(title: "Use Qwen 3.8 27B", symbol: "checkmark.circle.fill", tint: AgentPalette.green, prominent: true) {
+                            selectExactQwen38Target(target)
                         }
                     }
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "externaldrive.badge.questionmark")
+                                .font(.system(size: 18, weight: .black))
+                                .foregroundStyle(AgentPalette.warning)
+                                .frame(width: 40, height: 40)
+                                .agentControlSurface(radius: 12, tint: AgentPalette.warning.opacity(0.12), selected: true)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Verified open weights not found")
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(AgentPalette.ink)
+                                Text(qwen38DiscoveryMessage ?? "Download remains locked until an exact 3.8 27B single-file GGUF has a pinned revision, byte size, and LFS SHA-256.")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(AgentPalette.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        SettingsActionButton(
+                            title: checkingQwen38Release ? "Checking…" : "Check for Qwen 3.8 27B",
+                            symbol: checkingQwen38Release ? "hourglass" : "arrow.clockwise",
+                            tint: AgentPalette.cyan,
+                            prominent: true
+                        ) {
+                            refreshQwen38Release()
+                        }
+                        .disabled(checkingQwen38Release)
+                    }
+                    .padding(12)
+                    .agentSurface(radius: 16, tint: AgentPalette.warning.opacity(0.06))
+                    .accessibilityIdentifier("settingsQwen38Unavailable")
                 }
-
-                LocalModelDownloadPanel(manager: runtime.localModels)
             }
         }
     }
@@ -1071,6 +1108,20 @@ struct SettingsView: View {
     }
 
     private var modelReadinessStats: [SettingsMiniStat] {
+        if settings.provider == .local, let variant = LocalModelCatalog.exactQwen38Variant {
+            return [
+                SettingsMiniStat(label: "Context", value: "\(variant.contextTokens)"),
+                SettingsMiniStat(label: "Size", value: variant.expectedSizeLabel),
+                SettingsMiniStat(label: "Engine", value: "mmap + Metal")
+            ]
+        }
+        if settings.provider == .local {
+            return [
+                SettingsMiniStat(label: "Target", value: "27B"),
+                SettingsMiniStat(label: "Weights", value: "Waiting"),
+                SettingsMiniStat(label: "Policy", value: "Exact only")
+            ]
+        }
         if let variant = LocalModelCatalog.variant(for: settings.modelID) {
             return [
                 SettingsMiniStat(label: "Context", value: "\(variant.contextTokens)"),
@@ -1162,6 +1213,12 @@ struct SettingsView: View {
 
     private func providerReadiness(for provider: AIProvider) -> (title: String, tint: Color) {
         if provider == .local {
+            guard let target = LocalModelCatalog.exactQwen38Variant else {
+                return ("3.8 waiting", AgentPalette.warning)
+            }
+            guard runtime.localModels.selectedVariantID == target.id else {
+                return ("Select 3.8", AgentPalette.cyan)
+            }
             switch runtime.localModels.status {
             case .ready:
                 return ("Ready", AgentPalette.green)
@@ -1198,6 +1255,43 @@ struct SettingsView: View {
             return ("URL needed", AgentPalette.warning)
         }
         return hasKey ? ("Key saved", AgentPalette.green) : ("Needs key", AgentPalette.warning)
+    }
+
+    private func selectExactQwen38Target(_ target: LocalModelVariant) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let previousVariantID = runtime.localModels.selectedVariantID
+        guard runtime.localModels.select(target) else { return }
+        persistSettingsChange(
+            rollbackUI: { runtime.localModels.selectedVariantID = previousVariantID }
+        ) { $0.modelID = target.id }
+    }
+
+    private func refreshQwen38Release() {
+        guard !checkingQwen38Release else { return }
+        checkingQwen38Release = true
+        qwen38DiscoveryMessage = nil
+        qwen38DiscoveryTask?.cancel()
+        qwen38DiscoveryTask = Task { @MainActor in
+            defer {
+                checkingQwen38Release = false
+                qwen38DiscoveryTask = nil
+            }
+            do {
+                let target = try await Qwen38ReleaseDiscovery.refresh()
+                try Task.checkCancellation()
+                guard let target else {
+                    qwen38DiscoveryMessage = "No exact Qwen 3.8 27B single-file GGUF with immutable revision + SHA-256 was found. NovaForge did not substitute another model."
+                    return
+                }
+                qwen38DiscoveryMessage = "Verified \(target.quantization) · \(target.expectedSizeLabel) · revision pinned."
+                selectExactQwen38Target(target)
+                runtime.localModels.refreshStatus()
+            } catch is CancellationError {
+                return
+            } catch {
+                qwen38DiscoveryMessage = "Could not verify the Qwen 3.8 release catalog: \(error.localizedDescription)"
+            }
+        }
     }
 
     private var keyPlaceholder: String {
@@ -1250,7 +1344,13 @@ struct SettingsView: View {
         draftTemperature = settings.temperature
         draftSystemPrompt = settings.customSystemPrompt ?? ""
         lastRecordedSettingsSnapshot = AgentSettingsPersistence.snapshot(settings)
-        if let variant = LocalModelCatalog.variant(for: settings.modelID) {
+        if settings.provider == .local, let target = LocalModelCatalog.exactQwen38Variant {
+            runtime.localModels.select(target)
+            if settings.modelID != target.id {
+                _ = persistSettingsChange { $0.modelID = target.id }
+            }
+        } else if settings.provider != .local,
+                  let variant = LocalModelCatalog.variant(for: settings.modelID) {
             runtime.localModels.select(variant)
         }
 
@@ -1269,7 +1369,10 @@ struct SettingsView: View {
     }
 
     private func modelDisplayName(_ model: String) -> String {
-        LocalModelCatalog.variant(for: model)?.shortName
+        if settings.provider == .local {
+            return LocalModelCatalog.exactQwen38Variant?.shortName ?? "Qwen 3.8 27B"
+        }
+        return LocalModelCatalog.variant(for: model)?.shortName
             ?? ProviderModelCatalogStore.shared.displayName(
                 for: settings.provider,
                 modelID: model
