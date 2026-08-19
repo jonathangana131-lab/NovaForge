@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "Benchmarks/LocalAI/**"
+      - "Packages/LocalAIBenchmarkCore/Tests/LocalAIBenchmarkCoreTests/LocalAIBenchmarkFixtureBridgeTests.swift"
       - "scripts/validate-v14-local-ai-benchmark-fixtures.py"
       - "scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py"
       - ".github/workflows/local-ai-benchmark-fixtures.yml"
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - "Benchmarks/LocalAI/**"
+      - "Packages/LocalAIBenchmarkCore/Tests/LocalAIBenchmarkCoreTests/LocalAIBenchmarkFixtureBridgeTests.swift"
       - "scripts/validate-v14-local-ai-benchmark-fixtures.py"
       - "scripts/tests/test_validate_v14_local_ai_benchmark_fixtures.py"
       - ".github/workflows/local-ai-benchmark-fixtures.yml"
@@ -35,6 +37,8 @@ jobs:
           python3 scripts/validate-v14-local-ai-benchmark-fixtures.py Benchmarks/LocalAI/v1
           python3 scripts/validate-v14-local-ai-benchmark-fixtures.py Benchmarks/LocalAI/v1 --suite-json > /tmp/novaforge-local-ai-suite.json
           python3 -m json.tool /tmp/novaforge-local-ai-suite.json > /dev/null
+      - name: Prove exported suite decodes in accepted Swift domain
+        run: swift test --package-path Packages/LocalAIBenchmarkCore --filter LocalAIBenchmarkFixtureBridgeTests -Xswiftc -warnings-as-errors
       - name: Run adversarial validator tests
         run: python3 -m unittest scripts.tests.test_validate_v14_local_ai_benchmark_fixtures
       - name: Compile validator sources
