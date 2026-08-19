@@ -1,0 +1,34 @@
+name: V14 Preview five-theme tour tooling
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/App/AgentPadApp.swift'
+      - 'AgentPad/Design/AgentTheme.swift'
+      - 'scripts/codex-fast-screenshot.sh'
+      - 'scripts/codex-preview-theme-tour.sh'
+      - 'scripts/codex-preview-theme-tour-verify.sh'
+      - 'scripts/verify_v14_preview_theme_tour_contract.sh'
+      - '.github/workflows/v14-preview-theme-tour-tooling.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/App/AgentPadApp.swift'
+      - 'AgentPad/Design/AgentTheme.swift'
+      - 'scripts/codex-fast-screenshot.sh'
+      - 'scripts/codex-preview-theme-tour.sh'
+      - 'scripts/codex-preview-theme-tour-verify.sh'
+      - 'scripts/verify_v14_preview_theme_tour_contract.sh'
+      - '.github/workflows/v14-preview-theme-tour-tooling.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  theme-tour-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify five-theme release-candidate tour contract
+        run: bash scripts/verify_v14_preview_theme_tour_contract.sh
