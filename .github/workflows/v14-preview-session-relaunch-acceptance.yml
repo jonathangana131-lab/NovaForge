@@ -1,0 +1,240 @@
+name: V14 Preview session relaunch acceptance
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/v14-preview-session-relaunch-acceptance.yml'
+      - 'scripts/v14-preview-ios27-runtime-selector.jq'
+      - 'scripts/verify_v14_preview_ios27_runtime_selector.sh'
+      - 'docs/reviews/NOVAFORGE_V14_PREVIEW_SESSION_RELAUNCH_ACCEPTANCE_2026-08-10.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-session-relaunch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  relaunch-acceptance:
+    name: Session + relaunch acceptance
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      NOVAFORGE_ACCEPTANCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Capture relaunch host preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf artifacts/preview-session-relaunch
+          mkdir -p artifacts/preview-session-relaunch
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          if [ "$ACTUAL_SHA" != "$NOVAFORGE_ACCEPTANCE_SHA" ]; then
+            echo "Preview relaunch acceptance checked out $ACTUAL_SHA instead of exact candidate $NOVAFORGE_ACCEPTANCE_SHA" >&2
+            exit 69
+          fi
+          {
+            echo "source_sha=$ACTUAL_SHA"
+            echo "runner_os=$RUNNER_OS"
+            sw_vers
+            echo "available_xcode_candidates_begin"
+            while IFS= read -r candidate; do
+              [ -d "$candidate/Contents/Developer" ] || continue
+              candidate_version=$(DEVELOPER_DIR="$candidate/Contents/Developer" xcodebuild -version 2>/dev/null | sed -n '1p' || true)
+              printf '%s|%s\n' "$candidate" "$candidate_version"
+            done < <(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -r)
+            echo "available_xcode_candidates_end"
+          } | tee artifacts/preview-session-relaunch/preflight.txt
+
+      - name: Verify iOS 27 runtime selection contract
+        shell: bash
+        run: bash scripts/verify_v14_preview_ios27_runtime_selector.sh
+
+      - name: Bind Xcode 27 and iPhone 12 on iOS 27
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/preview-session-relaunch
+
+          SELECTED_XCODE=""
+          while IFS= read -r candidate; do
+            [ -d "$candidate/Contents/Developer" ] || continue
+            candidate_version=$(DEVELOPER_DIR="$candidate/Contents/Developer" xcodebuild -version 2>/dev/null | sed -n '1p' || true)
+            if printf '%s\n' "$candidate_version" | grep -Eq '^Xcode 27([. ]|$)'; then
+              SELECTED_XCODE="$candidate"
+              break
+            fi
+          done < <(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort -r)
+
+          if [ -z "$SELECTED_XCODE" ]; then
+            echo "Preview relaunch acceptance requires an installed Xcode 27 toolchain" >&2
+            exit 69
+          fi
+
+          sudo xcode-select -s "$SELECTED_XCODE/Contents/Developer"
+          XCODE_VERSION_LINE=$(xcodebuild -version | sed -n '1p')
+          XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ { print $3; exit }')
+          printf '%s\n' "$XCODE_VERSION_LINE"
+          printf 'Build version %s\n' "$XCODE_BUILD"
+
+          RUNTIMES_JSON=$(xcrun simctl list -j runtimes)
+          RUNTIME_ID=$(printf '%s' "$RUNTIMES_JSON" | jq -rf scripts/v14-preview-ios27-runtime-selector.jq)
+          if [ -z "$RUNTIME_ID" ]; then
+            echo "Preview relaunch acceptance requires an available iOS 27 Simulator runtime" >&2
+            exit 69
+          fi
+          RUNTIME_NAME=$(printf '%s' "$RUNTIMES_JSON" | jq -r --arg id "$RUNTIME_ID" \
+            '.runtimes[] | select(.identifier == $id) | .name')
+          RUNTIME_VERSION=$(printf '%s' "$RUNTIMES_JSON" | jq -r --arg id "$RUNTIME_ID" \
+            '.runtimes[] | select(.identifier == $id) | .version')
+          RUNTIME_BUILD=$(printf '%s' "$RUNTIMES_JSON" | jq -r --arg id "$RUNTIME_ID" \
+            '.runtimes[] | select(.identifier == $id) | .buildversion')
+
+          DEVICE_TYPE_ID=$(xcrun simctl list -j devicetypes | jq -r '
+            first(.devicetypes[] | select(.name == "iPhone 12") | .identifier) // empty
+          ')
+          if [ -z "$DEVICE_TYPE_ID" ]; then
+            echo "Preview relaunch acceptance requires the iPhone 12 Simulator device type" >&2
+            exit 69
+          fi
+
+          DEVICES_JSON=$(xcrun simctl list -j devices available)
+          UDID=$(printf '%s' "$DEVICES_JSON" | jq -r \
+            --arg runtime "$RUNTIME_ID" \
+            --arg type "$DEVICE_TYPE_ID" '
+              first(
+                .devices[$runtime][]?
+                | select(.isAvailable == true)
+                | select(.name == "iPhone 12")
+                | select(.deviceTypeIdentifier == $type)
+                | .udid
+              ) // empty
+            ')
+          CREATED_SIMULATOR=false
+          if [ -z "$UDID" ]; then
+            UDID=$(xcrun simctl create "iPhone 12" "$DEVICE_TYPE_ID" "$RUNTIME_ID")
+            CREATED_SIMULATOR=true
+          fi
+
+          DEVICES_JSON=$(xcrun simctl list -j devices available)
+          if ! printf '%s' "$DEVICES_JSON" | jq -e \
+            --arg runtime "$RUNTIME_ID" \
+            --arg udid "$UDID" \
+            --arg type "$DEVICE_TYPE_ID" '
+              any(
+                .devices[$runtime][]?;
+                .udid == $udid
+                and .isAvailable == true
+                and .name == "iPhone 12"
+                and .deviceTypeIdentifier == $type
+              )
+            ' >/dev/null; then
+            echo "Resolved Simulator does not match exact iPhone 12 + iOS 27 binding" >&2
+            exit 69
+          fi
+
+          {
+            echo "source_sha=$(git rev-parse HEAD)"
+            echo "xcode_app=$SELECTED_XCODE"
+            echo "xcode_version=$XCODE_VERSION_LINE"
+            echo "xcode_build=$XCODE_BUILD"
+            echo "simulator_udid=$UDID"
+            echo "simulator_device_name=iPhone 12"
+            echo "simulator_device_type=$DEVICE_TYPE_ID"
+            echo "simulator_runtime_name=$RUNTIME_NAME"
+            echo "simulator_runtime_identifier=$RUNTIME_ID"
+            echo "simulator_runtime_version=$RUNTIME_VERSION"
+            echo "simulator_runtime_build=$RUNTIME_BUILD"
+            echo "simulator_created_for_run=$CREATED_SIMULATOR"
+            echo "runner_os=$RUNNER_OS"
+            sw_vers
+          } | tee artifacts/preview-session-relaunch/environment.txt
+
+          echo "SIMULATOR_ID=$UDID" >> "$GITHUB_ENV"
+          echo "SIMULATOR_RUNTIME_ID=$RUNTIME_ID" >> "$GITHUB_ENV"
+          echo "SIMULATOR_DEVICE_TYPE_ID=$DEVICE_TYPE_ID" >> "$GITHUB_ENV"
+
+      - name: Build Preview test bundle once
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf DerivedData/PreviewSession
+          mkdir -p artifacts/preview-session-relaunch
+          xcrun simctl list -j devices available | jq -e \
+            --arg runtime "$SIMULATOR_RUNTIME_ID" \
+            --arg udid "$SIMULATOR_ID" \
+            --arg type "$SIMULATOR_DEVICE_TYPE_ID" '
+              any(
+                .devices[$runtime][]?;
+                .udid == $udid
+                and .isAvailable == true
+                and .name == "iPhone 12"
+                and .deviceTypeIdentifier == $type
+              )
+            ' >/dev/null
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath DerivedData/PreviewSession \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing \
+            | tee artifacts/preview-session-relaunch/build.log
+
+      - name: Prove atomic persisted state and cold-launch safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl list -j devices available | jq -e \
+            --arg runtime "$SIMULATOR_RUNTIME_ID" \
+            --arg udid "$SIMULATOR_ID" \
+            --arg type "$SIMULATOR_DEVICE_TYPE_ID" '
+              any(
+                .devices[$runtime][]?;
+                .udid == $udid
+                and .isAvailable == true
+                and .name == "iPhone 12"
+                and .deviceTypeIdentifier == $type
+              )
+            ' >/dev/null
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath DerivedData/PreviewSession \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            -resultBundlePath artifacts/preview-session-relaunch/PreviewSessionRelaunch.xcresult \
+            -only-testing:AgentPadTests/FilesWorkspacePersistenceTests \
+            -only-testing:AgentPadUITests/AgentPadUITests/testLaunchStartsOnFreshReadyChatInsteadOfOldChat \
+            -only-testing:AgentPadUITests/AgentPadUITests/testLaunchRestoresCompletedSelectedChatButNotInterruptedDraft \
+            test-without-building \
+            | tee artifacts/preview-session-relaunch/test.log
+
+      - name: Upload relaunch evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-session-relaunch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/preview-session-relaunch
+          if-no-files-found: warn
+          retention-days: 14
