@@ -1,0 +1,1 @@
+{"category":"intentRouting","expected":{"route":"createInteractiveGame"},"instructions":"Classify the user request into the single NovaForge creation route that materially determines the next planning step.","revision":1,"schema_version":1,"task_id":"v14.intent-route.create-game","workspace":[]}
