@@ -91,21 +91,27 @@ final class ForgeHistoryQualityStaticTrustBoundaryTests: XCTestCase {
     }
 
     private func activeModulesURL() throws -> URL {
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0])
-            .deletingLastPathComponent()
+        let anchors = [
+            Bundle(for: ForgeHistoryQualityStaticTrustBoundaryTests.self).bundleURL,
+            URL(fileURLWithPath: CommandLine.arguments[0]),
+        ]
 
-        for _ in 0..<10 {
-            let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
-            let moduleURL = modulesURL.appendingPathComponent("ForgeHistoryCore.swiftmodule")
-            if FileManager.default.fileExists(atPath: moduleURL.path) {
-                return modulesURL
-            }
+        for anchor in anchors {
+            var directory = anchor.deletingLastPathComponent()
 
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path {
-                break
+            for _ in 0..<10 {
+                let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+                let moduleURL = modulesURL.appendingPathComponent("ForgeHistoryCore.swiftmodule")
+                if FileManager.default.fileExists(atPath: moduleURL.path) {
+                    return modulesURL
+                }
+
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path {
+                    break
+                }
+                directory = parent
             }
-            directory = parent
         }
 
         throw NSError(
@@ -113,7 +119,7 @@ final class ForgeHistoryQualityStaticTrustBoundaryTests: XCTestCase {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "ForgeHistoryCore module is missing from the active SwiftPM test executable ancestry"
+                    "ForgeHistoryCore module is missing from the active SwiftPM test bundle/executable ancestry"
             ]
         )
     }
