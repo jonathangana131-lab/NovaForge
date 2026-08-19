@@ -1,0 +1,44 @@
+name: LlamaService concurrency exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/llama-service-concurrency-exact-product-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  exact-product:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "b77341814ba5c3487cfe5ff929ee09b304dccfda"
+          git diff --check HEAD^
+
+      - name: Debug LlamaService concurrency contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Vendor/swift-llama-cpp \
+            --filter LlamaServiceConcurrencyTests \
+            -Xswiftc -warnings-as-errors
+
+      - name: Release LlamaService concurrency contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Vendor/swift-llama-cpp \
+            -c release \
+            --filter LlamaServiceConcurrencyTests \
+            -Xswiftc -warnings-as-errors
