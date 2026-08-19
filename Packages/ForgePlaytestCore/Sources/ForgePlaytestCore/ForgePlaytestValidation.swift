@@ -4,7 +4,7 @@ enum ForgePlaytestValidation {
     static func stableValue(_ value: String, field: String, maximum: Int) throws -> String {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { throw ForgePlaytestError.blankValue(field: field) }
-        guard normalized.count <= maximum else {
+        guard normalized.utf8.count <= maximum else {
             throw ForgePlaytestError.valueTooLong(field: field, maximum: maximum)
         }
         guard !normalized.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
