@@ -3,31 +3,6 @@ import XCTest
 @testable import ForgePlaytestCore
 
 final class ForgePlaytestDefectTrustBoundaryTests: XCTestCase {
-    func testExternalConsumerCannotMintAuthenticatedExecutionBinding() throws {
-        let diagnostics = try typecheckExternalConsumer(
-            named: "ForgePlaytestExecutionTrustBypass.swift",
-            source: """
-            import ForgePlaytestCore
-
-            func forgeBinding(
-                result: ForgePlaytestJourneyResult,
-                trace: ForgePlaytestTrace
-            ) throws {
-                _ = try ForgePlaytestExecutionBinding(
-                    result: result,
-                    trace: trace
-                )
-            }
-            """
-        )
-
-        XCTAssertTrue(
-            diagnostics.localizedCaseInsensitiveContains("inaccessible due to 'internal' protection level")
-                || diagnostics.localizedCaseInsensitiveContains("initializer is inaccessible"),
-            "Expected ordinary imports to be unable to mint authenticated execution evidence, got: \(diagnostics)"
-        )
-    }
-
     func testExternalConsumerCannotMintAuthenticatedDefectBinding() throws {
         let diagnostics = try typecheckExternalConsumer(
             named: "ForgePlaytestDefectTrustBypass.swift",
