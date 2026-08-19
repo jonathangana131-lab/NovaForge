@@ -509,6 +509,9 @@ private final class AuthCredentialMemory {
     }
 }
 
+private let authTestTimeout: Duration = .seconds(2)
+private let authTestPollInterval: Duration = .milliseconds(1)
+
 private actor AuthExchangeGate {
     private var continuations: [
         String: CheckedContinuation<OpenAICodexOAuthTokens, Error>
@@ -525,11 +528,13 @@ private actor AuthExchangeGate {
     }
 
     func waitForCallCount(_ expectedCount: Int) async -> Bool {
-        for _ in 0 ..< 10_000 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: authTestTimeout)
+        while clock.now < deadline {
             if callCount >= expectedCount { return true }
-            await Task.yield()
+            try? await Task.sleep(for: authTestPollInterval)
         }
-        return false
+        return callCount >= expectedCount
     }
 
     func complete(
@@ -561,11 +566,13 @@ private actor AuthRefreshGate {
     }
 
     func waitUntilStarted() async -> Bool {
-        for _ in 0 ..< 10_000 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: authTestTimeout)
+        while clock.now < deadline {
             if started { return true }
-            await Task.yield()
+            try? await Task.sleep(for: authTestPollInterval)
         }
-        return false
+        return started
     }
 
     func complete(_ tokens: OpenAICodexOAuthTokens) {
@@ -584,11 +591,13 @@ private enum AuthFixtureError: Error, Sendable {
 
 @MainActor
 private func authEventually(_ condition: () -> Bool) async -> Bool {
-    for _ in 0 ..< 10_000 {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: authTestTimeout)
+    while clock.now < deadline {
         if condition() { return true }
-        await Task.yield()
+        try? await Task.sleep(for: authTestPollInterval)
     }
-    return false
+    return condition()
 }
 
 private func expiredJWT(expiration: Int) -> String {
