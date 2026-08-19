@@ -3,7 +3,6 @@ import Foundation
 
 public enum LocalModelArtifactIntegrityProducerError: Error, Equatable, Sendable {
     case artifactNotRegularFile
-    case artifactChangedDuringVerification
 }
 
 /// One independently measured artifact-integrity result plus its transient host-trust binding.
@@ -38,8 +37,12 @@ public enum LocalModelArtifactIntegrityProducer {
         subject: LocalModelQualificationSubject,
         artifactURL: URL
     ) throws -> LocalModelArtifactIntegrityVerification {
-        let before = try fingerprint(artifactURL)
-        guard before.isRegularFile, !before.isSymbolicLink else {
+        let values = try artifactURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ])
+        guard values.isRegularFile == true,
+              values.isSymbolicLink != true else {
             throw LocalModelArtifactIntegrityProducerError.artifactNotRegularFile
         }
 
@@ -51,11 +54,6 @@ public enum LocalModelArtifactIntegrityProducer {
             let chunk = try handle.read(upToCount: readChunkBytes) ?? Data()
             if chunk.isEmpty { break }
             hasher.update(data: chunk)
-        }
-
-        let after = try fingerprint(artifactURL)
-        guard before == after else {
-            throw LocalModelArtifactIntegrityProducerError.artifactChangedDuringVerification
         }
 
         let actualDigest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -75,31 +73,5 @@ public enum LocalModelArtifactIntegrityProducer {
             authenticatedEvidence: evidence
         )
         return .init(evidence: evidence, trustedReceipt: trustedReceipt)
-    }
-
-    private struct FileFingerprint: Equatable {
-        let isRegularFile: Bool
-        let isSymbolicLink: Bool
-        let byteCount: Int
-        let modificationDate: Date
-    }
-
-    private static func fingerprint(_ url: URL) throws -> FileFingerprint {
-        let values = try url.resourceValues(forKeys: [
-            .isRegularFileKey,
-            .isSymbolicLinkKey,
-            .fileSizeKey,
-            .contentModificationDateKey,
-        ])
-        guard let byteCount = values.fileSize,
-              let modificationDate = values.contentModificationDate else {
-            throw LocalModelArtifactIntegrityProducerError.artifactNotRegularFile
-        }
-        return .init(
-            isRegularFile: values.isRegularFile == true,
-            isSymbolicLink: values.isSymbolicLink == true,
-            byteCount: byteCount,
-            modificationDate: modificationDate
-        )
     }
 }
