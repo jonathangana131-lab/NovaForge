@@ -1,0 +1,51 @@
+name: Forge Compact collection bounds final exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/forge-compact-collection-bounds-validation-v2.yml"
+      - "Packages/ForgeCompactCore/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forge-compact-collection-bounds-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: ForgeCompactCore ${{ matrix.configuration }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    steps:
+      - name: Check out exact validation head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      - name: Bind child to PR 348 product head
+        env:
+          EXPECTED_PRODUCT_HEAD: bb197ddc0d5809a7ef108ef183dda7c1d3cec5ae
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD..HEAD"
+          changed="$(git diff --name-only "$EXPECTED_PRODUCT_HEAD..HEAD")"
+          test "$changed" = ".github/workflows/forge-compact-collection-bounds-validation-v2.yml"
+
+      - name: Run ForgeCompactCore contracts
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/ForgeCompactCore \
+            --configuration "$CONFIGURATION" \
+            -Xswiftc -warnings-as-errors
