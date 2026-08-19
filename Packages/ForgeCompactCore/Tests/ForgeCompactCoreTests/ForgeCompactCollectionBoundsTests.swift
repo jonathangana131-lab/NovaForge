@@ -27,6 +27,33 @@ final class ForgeCompactCollectionBoundsTests: XCTestCase {
         }
     }
 
+    func testCapsuleDecodeRejectsOversizedSelectedArrayBeforeDuplicateValidation() throws {
+        let capsule = try ProjectCapsuleBuilder.build(
+            authority: authority(capsuleRevision: 1),
+            items: [try item(id: "candidate")],
+            budgetBytes: 2_000_000
+        )
+        var object = try jsonObject(for: capsule)
+        let selectedItems = try XCTUnwrap(object["selectedItems"] as? [Any])
+        let selectedItem = try XCTUnwrap(selectedItems.first)
+        object["selectedItems"] = Array(
+            repeating: selectedItem,
+            count: ProjectCapsule.maximumSourceItems + 1
+        )
+        object["sourceItemCount"] = ProjectCapsule.maximumSourceItems + 1
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        XCTAssertThrowsError(try JSONDecoder().decode(ProjectCapsule.self, from: data)) { error in
+            XCTAssertEqual(
+                error as? ForgeCompactError,
+                .collectionTooLarge(
+                    field: "capsule.sourceItems",
+                    maximum: ProjectCapsule.maximumSourceItems
+                )
+            )
+        }
+    }
+
     func testCapsuleSourceCountBoundaryAndOverflowFailClosed() throws {
         XCTAssertEqual(
             try ProjectCapsule.checkedSourceItemCount(
@@ -85,6 +112,37 @@ final class ForgeCompactCollectionBoundsTests: XCTestCase {
                 capsules: oversized
             )
         ) { error in
+            XCTAssertEqual(
+                error as? ForgeCompactError,
+                .collectionTooLarge(
+                    field: "archive.capsules",
+                    maximum: ProjectCapsuleArchive.maximumCapsules
+                )
+            )
+        }
+    }
+
+    func testArchiveDecodeRejectsOversizedCapsuleArrayBeforeRevisionValidation() throws {
+        let capsule = try ProjectCapsuleBuilder.build(
+            authority: authority(capsuleRevision: 1),
+            items: [try item(id: "candidate")],
+            budgetBytes: 2_000_000
+        )
+        let archive = try ProjectCapsuleArchive(
+            projectID: "project-1",
+            missionID: "mission-1",
+            capsules: [capsule]
+        )
+        var object = try jsonObject(for: archive)
+        let capsules = try XCTUnwrap(object["capsules"] as? [Any])
+        let encodedCapsule = try XCTUnwrap(capsules.first)
+        object["capsules"] = Array(
+            repeating: encodedCapsule,
+            count: ProjectCapsuleArchive.maximumCapsules + 1
+        )
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        XCTAssertThrowsError(try JSONDecoder().decode(ProjectCapsuleArchive.self, from: data)) { error in
             XCTAssertEqual(
                 error as? ForgeCompactError,
                 .collectionTooLarge(
@@ -193,6 +251,13 @@ final class ForgeCompactCollectionBoundsTests: XCTestCase {
             content: "candidate context",
             provenance: ForgeCompactProvenance(kind: .source, reference: "ref-\(id)"),
             isAuthoritative: false
+        )
+    }
+
+    private func jsonObject<T: Encodable>(for value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        return try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
         )
     }
 }
