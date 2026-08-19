@@ -3,13 +3,17 @@ name: Swift package contracts
 on:
   pull_request:
     paths:
-      - "Packages/**"
+      - "**/Package.swift"
+      - "**/Sources/**"
+      - "**/Tests/**"
       - "scripts/verify-swift-packages.sh"
       - ".github/workflows/swift-package-contracts.yml"
   push:
     branches: [main]
     paths:
-      - "Packages/**"
+      - "**/Package.swift"
+      - "**/Sources/**"
+      - "**/Tests/**"
       - "scripts/verify-swift-packages.sh"
       - ".github/workflows/swift-package-contracts.yml"
   workflow_dispatch:
@@ -34,7 +38,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Show discovered packages
         run: bash scripts/verify-swift-packages.sh --list
-      - name: Test every checked-in Swift package
+      - name: Verify every tracked Swift package
         env:
           NOVAFORGE_SWIFT_PACKAGE_CONFIGURATION: ${{ matrix.configuration }}
         run: bash scripts/verify-swift-packages.sh
