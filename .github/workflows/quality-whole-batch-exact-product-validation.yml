@@ -1,0 +1,42 @@
+name: Quality whole-batch exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/quality-whole-batch-exact-product-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  exact-product:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "35f9cbd05c5f1e21b8bef78db583836c1fa453d1"
+          git diff --check HEAD^
+
+      - name: Debug quality contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/ForgeQualityCore \
+            -Xswiftc -warnings-as-errors
+
+      - name: Release quality contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/ForgeQualityCore \
+            -c release \
+            -Xswiftc -warnings-as-errors
