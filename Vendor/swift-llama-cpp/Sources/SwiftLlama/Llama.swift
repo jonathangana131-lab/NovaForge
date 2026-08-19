@@ -1,6 +1,21 @@
 import Foundation
 import llama
 
+/// llama.cpp's backend lifecycle is process-global. Its b10456 public contract
+/// requires one initialization at program start and one free at program end.
+/// Swift static initialization is thread-safe, so all model/service instances
+/// share this single process-lifetime initialization instead of racing global
+/// backend teardown against another live context.
+private enum LlamaBackendLifetime {
+    private static let initialization: Void = {
+        llama_backend_init()
+    }()
+
+    static func ensureInitialized() {
+        _ = initialization
+    }
+}
+
 enum NextToken {
     case token(String)
     case endOfString
@@ -23,7 +38,7 @@ final actor Llama {
 
     init(modelPath: String, config: LlamaConfig) throws {
         self.config = config
-        llama_backend_init()
+        LlamaBackendLifetime.ensureInitialized()
         var modelParams = llama_model_default_params()
 
         modelParams.n_gpu_layers = config.useGPU ? config.gpuLayerCount : 0
@@ -142,10 +157,6 @@ final actor Llama {
         self.model = context.model
         self.context = context
         self.batch = .init(initialSize: Int32(effectiveBatchSize))
-    }
-
-    deinit {
-        llama_backend_free()
     }
 
     // Expose some backend/system utilities for convenience
