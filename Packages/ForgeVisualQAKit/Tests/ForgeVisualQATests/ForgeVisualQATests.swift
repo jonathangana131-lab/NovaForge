@@ -3,6 +3,7 @@ import XCTest
 
 final class ForgeVisualQATests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
+    private let artifactDigest = String(repeating: "a", count: 64)
 
     func testCaptureRejectsBlankProjectRevisionSessionAndInvalidViewport() throws {
         XCTAssertThrowsError(try capture(projectID: "", revision: "r1"))
@@ -18,27 +19,55 @@ final class ForgeVisualQATests: XCTestCase {
         XCTAssertThrowsError(try capture(viewport: badViewport))
     }
 
-    func testSourceInspectionIsNeverRuntimeVisualProof() throws {
-        XCTAssertFalse(try capture(kind: .sourceInspection).isRuntimeVisualProof)
-        XCTAssertTrue(try capture(kind: .runtimeScreenshot).isRuntimeVisualProof)
-        XCTAssertTrue(try capture(kind: .runtimeFrameSequence).isRuntimeVisualProof)
+    func testCandidateRuntimeKindIsOnlyStructuralMetadata() throws {
+        XCTAssertFalse(try capture(kind: .sourceInspection).claimsRuntimeVisualEvidence)
+        XCTAssertTrue(try capture(kind: .runtimeScreenshot).claimsRuntimeVisualEvidence)
+        XCTAssertTrue(try capture(kind: .runtimeFrameSequence).claimsRuntimeVisualEvidence)
+    }
+
+    func testTrustedCaptureRejectsSourceInspectionAndMalformedArtifactDigest() throws {
+        XCTAssertThrowsError(
+            try VisualTrustedCapture(
+                authenticatedCapture: capture(kind: .sourceInspection),
+                artifactSHA256: artifactDigest
+            )
+        ) { error in
+            XCTAssertEqual(error as? VisualQAInvariantError, .nonRuntimeCaptureCannotBeTrusted)
+        }
+
+        for digest in ["", String(repeating: "a", count: 63), String(repeating: "A", count: 64), String(repeating: "g", count: 64)] {
+            XCTAssertThrowsError(
+                try VisualTrustedCapture(
+                    authenticatedCapture: capture(),
+                    artifactSHA256: digest
+                )
+            ) { error in
+                XCTAssertEqual(error as? VisualQAInvariantError, .invalidArtifactDigest)
+            }
+        }
     }
 
     func testRegressionComparisonAllowsDifferentRevisionsForSameControlledViewport() throws {
-        let baseline = try capture(revision: "before")
-        let candidate = try capture(revision: "after", session: "session-2")
+        let baseline = try trustedCapture(revision: "before")
+        let candidate = try trustedCapture(revision: "after", session: "session-2", digestByte: "b")
         XCTAssertEqual(VisualRegressionComparator.compare(baseline: baseline, candidate: candidate), .comparable)
     }
 
-    func testRegressionComparisonRejectsSourceOnlyDifferentProjectViewportAndAccessibility() throws {
-        let baseline = try capture()
+    func testRegressionComparisonRejectsDifferentProjectKindViewportAndAccessibility() throws {
+        let baseline = try trustedCapture()
         XCTAssertEqual(
-            VisualRegressionComparator.compare(baseline: baseline, candidate: try capture(kind: .sourceInspection)),
-            .notComparable(.insufficientVisualEvidence)
+            VisualRegressionComparator.compare(
+                baseline: baseline,
+                candidate: try trustedCapture(projectID: "other", digestByte: "b")
+            ),
+            .notComparable(.differentProject)
         )
         XCTAssertEqual(
-            VisualRegressionComparator.compare(baseline: baseline, candidate: try capture(projectID: "other")),
-            .notComparable(.differentProject)
+            VisualRegressionComparator.compare(
+                baseline: baseline,
+                candidate: try trustedCapture(kind: .runtimeFrameSequence, digestByte: "b")
+            ),
+            .notComparable(.differentEvidenceKind)
         )
         let landscape = VisualViewport(
             width: 844,
@@ -48,7 +77,10 @@ final class ForgeVisualQATests: XCTestCase {
             safeArea: .init(top: 0, leading: 47, bottom: 21, trailing: 47)
         )
         XCTAssertEqual(
-            VisualRegressionComparator.compare(baseline: baseline, candidate: try capture(viewport: landscape)),
+            VisualRegressionComparator.compare(
+                baseline: baseline,
+                candidate: try trustedCapture(viewport: landscape, digestByte: "b")
+            ),
             .notComparable(.differentViewport)
         )
         let contrast = VisualAccessibilityState(
@@ -59,13 +91,16 @@ final class ForgeVisualQATests: XCTestCase {
             dynamicTypeCategory: "large"
         )
         XCTAssertEqual(
-            VisualRegressionComparator.compare(baseline: baseline, candidate: try capture(accessibility: contrast)),
+            VisualRegressionComparator.compare(
+                baseline: baseline,
+                candidate: try trustedCapture(accessibility: contrast, digestByte: "b")
+            ),
             .notComparable(.differentAccessibilityState)
         )
     }
 
-    func testFirstMinuteAssessmentRequiresEveryCriterionAndCurrentRuntimeCaptureForVisualChecks() throws {
-        let currentCapture = try capture()
+    func testFirstMinuteAssessmentRequiresEveryCriterionAndCurrentTrustedCaptureForVisualChecks() throws {
+        let currentCapture = try trustedCapture()
         var observations = FirstMinuteCriterion.allCases.map {
             FirstMinuteObservation(criterion: $0, passed: true, captureID: currentCapture.id)
         }
@@ -81,16 +116,8 @@ final class ForgeVisualQATests: XCTestCase {
         XCTAssertFalse(FirstMinuteAssessment(capture: currentCapture, observations: stale).passes)
     }
 
-    func testFirstMinuteAssessmentRejectsSourceOnlyVisualClaims() throws {
-        let sourceOnly = try capture(kind: .sourceInspection)
-        let observations = FirstMinuteCriterion.allCases.map { criterion in
-            FirstMinuteObservation(criterion: criterion, passed: true, captureID: sourceOnly.id)
-        }
-        XCTAssertFalse(FirstMinuteAssessment(capture: sourceOnly, observations: observations).passes)
-    }
-
     func testFirstMinuteAssessmentFailsOnAnyFailedCriterion() throws {
-        let currentCapture = try capture()
+        let currentCapture = try trustedCapture()
         let observations = FirstMinuteCriterion.allCases.map { criterion in
             FirstMinuteObservation(
                 criterion: criterion,
@@ -103,8 +130,8 @@ final class ForgeVisualQATests: XCTestCase {
         XCTAssertEqual(assessment.failedCriteria, [.primaryActionIsDiscoverable])
     }
 
-    func testSelectionIdentityRequiresExactRuntimeProjectRevisionAndSession() throws {
-        let capture = try capture(revision: "r2", session: "session-2")
+    func testSelectionIdentityRequiresExactTrustedRuntimeProjectRevisionAndSession() throws {
+        let capture = try trustedCapture(revision: "r2", session: "session-2")
         let selection = try VisualSelectionIdentity(
             kind: .domElement,
             project: .init(projectID: "project-1", sourceRevision: "r2"),
@@ -113,8 +140,8 @@ final class ForgeVisualQATests: XCTestCase {
             source: .init(path: "src/App.js", symbol: "startButton")
         )
         XCTAssertTrue(selection.isValid(for: capture))
-        XCTAssertFalse(selection.isValid(for: try self.capture(revision: "r3", session: "session-2")))
-        XCTAssertFalse(selection.isValid(for: try self.capture(revision: "r2", session: "other")))
+        XCTAssertFalse(selection.isValid(for: try trustedCapture(revision: "r3", session: "session-2", digestByte: "b")))
+        XCTAssertFalse(selection.isValid(for: try trustedCapture(revision: "r2", session: "other", digestByte: "b")))
     }
 
     func testSelectionRejectsBlankNodeOrSourcePath() {
@@ -139,7 +166,7 @@ final class ForgeVisualQATests: XCTestCase {
     }
 
     func testAutoPolishRefusesToPolishPastFunctionalBlocker() throws {
-        let currentCapture = try capture()
+        let currentCapture = try trustedCapture()
         let crash = finding(kind: .runtimeCrash, severity: .blocker, captureID: currentCapture.id)
         let spacing = finding(kind: .awkwardSpacing, severity: .minor, captureID: currentCapture.id)
         let pass = AutoPolishPass(capture: currentCapture, findings: [spacing, crash], improvementScore: 0.5)
@@ -150,7 +177,7 @@ final class ForgeVisualQATests: XCTestCase {
     }
 
     func testAutoPolishRejectsUnevidencedOrStaleFindings() throws {
-        let currentCapture = try capture()
+        let currentCapture = try trustedCapture()
         let unsupported = finding(kind: .clipping, severity: .major, captureID: nil)
         let stale = finding(kind: .overlap, severity: .major, captureID: UUID())
         XCTAssertEqual(
@@ -168,7 +195,7 @@ final class ForgeVisualQATests: XCTestCase {
     }
 
     func testAutoPolishPrioritizesSeverityThenMeaningfulKind() throws {
-        let currentCapture = try capture()
+        let currentCapture = try trustedCapture()
         let overlap = finding(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
             kind: .overlap,
@@ -185,14 +212,14 @@ final class ForgeVisualQATests: XCTestCase {
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass]), .fixVisualFinding(clipping))
     }
 
-    func testAutoPolishStopsWhenAccepted() throws {
-        let pass = AutoPolishPass(capture: try capture(), findings: [], improvementScore: 0.3)
+    func testAutoPolishStopsWhenAcceptedOnlyWithTrustedCapture() throws {
+        let pass = AutoPolishPass(capture: try trustedCapture(), findings: [], improvementScore: 0.3)
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass]), .stop(.acceptancePassed))
     }
 
     func testAutoPolishStopsAtMaxPassesBeforeChoosingCosmeticWork() throws {
-        let passes = (0..<3).map { index -> AutoPolishPass in
-            let currentCapture = try! capture(frame: UInt64(index))
+        let passes = try (0..<3).map { index -> AutoPolishPass in
+            let currentCapture = try trustedCapture(frame: UInt64(index), digestByte: String(index + 1))
             let issue = finding(kind: .cosmeticPolish, severity: .cosmetic, captureID: currentCapture.id)
             return AutoPolishPass(capture: currentCapture, findings: [issue], improvementScore: 0.2)
         }
@@ -203,8 +230,8 @@ final class ForgeVisualQATests: XCTestCase {
     }
 
     func testAutoPolishStopsOnImprovementPlateau() throws {
-        let firstCapture = try capture(frame: 1)
-        let secondCapture = try capture(frame: 2)
+        let firstCapture = try trustedCapture(frame: 1, digestByte: "1")
+        let secondCapture = try trustedCapture(frame: 2, digestByte: "2")
         let passes = [
             AutoPolishPass(
                 capture: firstCapture,
@@ -227,22 +254,15 @@ final class ForgeVisualQATests: XCTestCase {
     }
 
     func testAutoPolishHonorsUserAndDependencyStops() throws {
-        let currentCapture = try capture()
+        let currentCapture = try trustedCapture()
         let issue = finding(kind: .clipping, severity: .major, captureID: currentCapture.id)
         let pass = AutoPolishPass(capture: currentCapture, findings: [issue], improvementScore: 0.5)
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass], userPaused: true), .stop(.userPaused))
         XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass], dependencyBlocked: true), .stop(.dependencyBlocked))
     }
 
-    func testAutoPolishRequiresRuntimeVisualEvidence() throws {
-        let sourceOnly = try capture(kind: .sourceInspection)
-        let issue = finding(kind: .clipping, severity: .major, captureID: sourceOnly.id)
-        let pass = AutoPolishPass(capture: sourceOnly, findings: [issue], improvementScore: 0.5)
-        XCTAssertEqual(AutoPolishPlanner.decide(passes: [pass]), .stop(.insufficientVisualEvidence))
-    }
-
     func testAutoPolishPassClampsImprovementScore() throws {
-        let currentCapture = try capture()
+        let currentCapture = try trustedCapture()
         XCTAssertEqual(
             AutoPolishPass(capture: currentCapture, findings: [], improvementScore: 4).improvementScore,
             1
@@ -305,6 +325,31 @@ final class ForgeVisualQATests: XCTestCase {
             ),
             evidenceKind: kind,
             capturedAt: now
+        )
+    }
+
+    private func trustedCapture(
+        projectID: String = "project-1",
+        revision: String = "r1",
+        session: String = "session-1",
+        frame: UInt64 = 0,
+        viewport: VisualViewport? = nil,
+        accessibility: VisualAccessibilityState? = nil,
+        kind: VisualEvidenceKind = .runtimeScreenshot,
+        digestByte: String = "a"
+    ) throws -> VisualTrustedCapture {
+        let receipt = try capture(
+            projectID: projectID,
+            revision: revision,
+            session: session,
+            frame: frame,
+            viewport: viewport,
+            accessibility: accessibility,
+            kind: kind
+        )
+        return try VisualTrustedCapture(
+            authenticatedCapture: receipt,
+            artifactSHA256: String(repeating: digestByte, count: 64)
         )
     }
 
