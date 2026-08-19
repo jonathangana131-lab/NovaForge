@@ -3,7 +3,58 @@ import Foundation
 @testable import SwiftLlama
 
 struct LlamaModelTests {
-    @Test("Tokenize of empty string is empty and chat template returns something")
+    @Test("Token piece buffer growth accepts only larger bounded requests")
+    func testTokenPieceBufferGrowthBounds() {
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -128, currentSize: 64) == 128)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -65, currentSize: 64) == 65)
+
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: 0, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: 12, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -64, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -32, currentSize: 64) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: -128, currentSize: 0) == nil)
+        #expect(LlamaModel.nextTokenPieceBufferSize(for: Int32.min, currentSize: 64) == nil)
+    }
+
+    @Test("Tokenizer buffer growth accepts only larger bounded requests")
+    func testTokenizerBufferGrowthBounds() {
+        #expect(LlamaModel.nextTokenizationBufferSize(for: -256, currentSize: 128) == 256)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: -129, currentSize: 128) == 129)
+
+        #expect(LlamaModel.nextTokenizationBufferSize(for: 0, currentSize: 128) == nil)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: 12, currentSize: 128) == nil)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: -128, currentSize: 128) == nil)
+        #expect(LlamaModel.nextTokenizationBufferSize(for: Int32.min, currentSize: 128) == nil)
+    }
+
+    @Test("Detokenizer buffer growth accepts only larger bounded requests")
+    func testDetokenizerBufferGrowthBounds() {
+        #expect(LlamaModel.initialDetokenizationBufferSize(tokenCount: 1) == 20)
+        #expect(LlamaModel.initialDetokenizationBufferSize(tokenCount: 128) == 528)
+        #expect(LlamaModel.initialDetokenizationBufferSize(tokenCount: 0) == nil)
+        #expect(LlamaModel.initialDetokenizationBufferSize(tokenCount: Int(Int32.max)) == nil)
+
+        #expect(LlamaModel.nextDetokenizationBufferSize(for: -1_024, currentSize: 528) == 1_024)
+        #expect(LlamaModel.nextDetokenizationBufferSize(for: -529, currentSize: 528) == 529)
+        #expect(LlamaModel.nextDetokenizationBufferSize(for: 0, currentSize: 528) == nil)
+        #expect(LlamaModel.nextDetokenizationBufferSize(for: 128, currentSize: 528) == nil)
+        #expect(LlamaModel.nextDetokenizationBufferSize(for: -528, currentSize: 528) == nil)
+        #expect(LlamaModel.nextDetokenizationBufferSize(for: Int32.min, currentSize: 528) == nil)
+    }
+
+    @Test("Chat template buffer growth accepts only a larger exact requirement")
+    func testChatTemplateBufferGrowthBounds() {
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 1_024, currentSize: 512) == 1_024)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 513, currentSize: 512) == 513)
+
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 512, currentSize: 512) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 128, currentSize: 512) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: -1, currentSize: 512) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: Int32.max, currentSize: Int32.max) == nil)
+        #expect(LlamaModel.nextChatTemplateBufferSize(for: 1, currentSize: -1) == nil)
+    }
+
+    @Test("Tokenize of empty string is empty and default chat template preserves user content")
     func testTokenizeEmptyAndChatTemplate() throws {
         let model = try #require(LlamaModel(path: URL.llama1B.path))
         let empty = model.tokenize(text: "", addBos: model.shouldAddBos(), special: true)
@@ -15,13 +66,7 @@ struct LlamaModelTests {
         ]
         let prompt = model.applyChatTemplate(to: messages)
         #expect(!prompt.isEmpty)
-    }
-
-    @Test("Built-in chat templates accessible")
-    func testBuiltinTemplates() throws {
-        let model = try #require(LlamaModel(path: URL.llama1B.path))
-        let templates = model.builtinChatTemplates()
-        #expect(templates.count >= 0) // may be empty depending on model
+        #expect(prompt.contains("Say hi"))
     }
 
     @Test("Detokenize round-trip: simple ASCII")

@@ -7,12 +7,37 @@
 
 import Foundation
 
+/// Internal generation surface used by `LlamaService`.
+///
+/// Keeping the service dependent on this narrow actor-safe contract makes request ownership
+/// deterministic to test without loading a GGUF while the production implementation remains `Llama`.
+protocol LlamaServiceEngine: Sendable {
+    func initializeCompletion(messages: [LlamaChatMessage], addAssistant: Bool?) async throws
+    func updateSamplingConfig(_ config: LlamaSamplingConfig) async throws
+    func hasGenerationCapacity() async -> Bool
+    func generateNextToken() async throws -> NextToken
+}
+
+extension Llama: LlamaServiceEngine {
+    func hasGenerationCapacity() -> Bool {
+        guard currentTokenPosition >= 0 else { return false }
+        return UInt64(currentTokenPosition) < UInt64(maxTokenCount)
+    }
+}
+
 public final actor LlamaService {
 
+    private struct ActiveGeneration {
+        let requestID: UUID
+        let task: Task<Void, Error>
+    }
+
     // MARK: Properties
-    private var llama: Llama?
-    private var currentTask: Task<(), Error>?
-    private let modelUrl: URL
+    private var engine: (any LlamaServiceEngine)?
+    private var activeGeneration: ActiveGeneration?
+    private var latestRequestID: UUID?
+    private var requestStartCount: UInt64 = 0
+    private let modelUrl: URL?
     private let config: LlamaConfig
     private let tokenBufferSize = 1
 
@@ -23,12 +48,21 @@ public final actor LlamaService {
         self.config = config
     }
 
+    /// Internal deterministic test seam. Product callers cannot substitute the local inference engine.
+    init(engine: any LlamaServiceEngine, config: LlamaConfig) {
+        self.engine = engine
+        self.modelUrl = nil
+        self.config = config
+    }
+
     // MARK: Methods
 
     public func processMessages(_ messages: [LlamaChatMessage]) async throws {
-        let llama = try initializeLlamaIfNecessary()
-        await stopCompletion()
-        try await llama.initializeCompletion(messages: messages, addAssistant: false)
+        let requestID = beginRequest()
+        let engine = try initializeEngineIfNecessary()
+        try await cancelActiveGeneration(for: requestID)
+        try await engine.initializeCompletion(messages: messages, addAssistant: false)
+        try requireCurrentRequest(requestID)
     }
 
     /// Generate a typed response constrained by a JSON grammar inferred from `T` and decode it.
@@ -114,17 +148,32 @@ public final actor LlamaService {
 
     public func streamCompletion(of messages: [LlamaChatMessage], samplingConfig: LlamaSamplingConfig) async throws -> AsyncThrowingStream<String, Error> {
         guard !messages.isEmpty else { throw LlamaError.emptyMessageArray }
-        let llama = try initializeLlamaIfNecessary()
-        await stopCompletion()
-        try await  llama.initializeCompletion(messages: messages)
-        try await llama.updateSamplingConfig(samplingConfig)
+
+        let requestID = beginRequest()
+        let engine = try initializeEngineIfNecessary()
+
+        // Every replacement waits for the exact generation that was active when setup began.
+        // Actor reentrancy while waiting is expected: a newer request may supersede this one.
+        // The request-ID checks below make the older setup fail closed before its next mutation.
+        try await cancelActiveGeneration(for: requestID)
+        try await engine.initializeCompletion(messages: messages, addAssistant: nil)
+        try requireCurrentRequest(requestID)
+        try await engine.updateSamplingConfig(samplingConfig)
+        try requireCurrentRequest(requestID)
 
         return AsyncThrowingStream { continuation in
-            currentTask = Task {
+            guard latestRequestID == requestID else {
+                continuation.finish(throwing: CancellationError())
+                return
+            }
+
+            // Keep the producer task owned by this exact request/stream. If the consumer
+            // drops the stream, cancel this task rather than whatever generation is newer.
+            let generationTask = Task<Void, Error> {
                 do {
                     var tokenBuffer: [String] = []
                     var generatedTokenCount = 0
-                    generationLoop: while await (llama.currentTokenPosition < llama.maxTokenCount) {
+                    generationLoop: while await engine.hasGenerationCapacity() {
                         guard !Task.isCancelled else {
                             if !tokenBuffer.isEmpty {
                                 continuation.yield(tokenBuffer.joined())
@@ -132,7 +181,7 @@ public final actor LlamaService {
                             }
                             break
                         }
-                        let result = try await llama.generateNextToken()
+                        let result = try await engine.generateNextToken()
                         switch result {
                         case .token(let token):
                             generatedTokenCount += 1
@@ -145,27 +194,84 @@ public final actor LlamaService {
                                 await Task.yield()
                             }
                         case .endOfString:
-                            continuation.yield(tokenBuffer.joined())
+                            if !tokenBuffer.isEmpty {
+                                continuation.yield(tokenBuffer.joined())
+                            }
                             break generationLoop
                         }
                     }
+                    continuation.finish()
+                } catch is CancellationError {
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
+            activeGeneration = ActiveGeneration(requestID: requestID, task: generationTask)
+            continuation.onTermination = { @Sendable _ in
+                generationTask.cancel()
+            }
         }
     }
 
     public func stopCompletion() async {
-        await currentTask?.cancelAndWait()
+        // Stop is itself a request boundary: pending setup work becomes stale even when no
+        // producer task exists yet. A request that starts after Stop remains independent.
+        let stopRequestID = beginRequest()
+        let capturedGeneration = activeGeneration
+        capturedGeneration?.task.cancel()
+        if let capturedGeneration {
+            await capturedGeneration.task.cancelAndWait()
+        }
+
+        guard latestRequestID == stopRequestID else { return }
+        if let capturedGeneration,
+           activeGeneration?.requestID == capturedGeneration.requestID {
+            activeGeneration = nil
+        }
     }
 
-    private func initializeLlamaIfNecessary() throws -> Llama {
-        guard let llama else {
-            llama = try Llama(modelPath: modelUrl.path(percentEncoded: false), config: config)
-            return llama!
+    /// Deterministic package-test observation only; no product behavior depends on this counter.
+    var requestStartCountForTesting: UInt64 { requestStartCount }
+
+    private func beginRequest() -> UUID {
+        requestStartCount &+= 1
+        let requestID = UUID()
+        latestRequestID = requestID
+        return requestID
+    }
+
+    private func requireCurrentRequest(_ requestID: UUID) throws {
+        guard latestRequestID == requestID else {
+            throw CancellationError()
         }
-        return llama
+    }
+
+    private func cancelActiveGeneration(for requestID: UUID) async throws {
+        let capturedGeneration = activeGeneration
+        capturedGeneration?.task.cancel()
+        if let capturedGeneration {
+            await capturedGeneration.task.cancelAndWait()
+        }
+
+        // A newer request may have entered while this actor was suspended waiting for the
+        // captured task. Check freshness *before* clearing shared ownership or mutating Llama.
+        try requireCurrentRequest(requestID)
+        if let capturedGeneration,
+           activeGeneration?.requestID == capturedGeneration.requestID {
+            activeGeneration = nil
+        }
+    }
+
+    private func initializeEngineIfNecessary() throws -> any LlamaServiceEngine {
+        if let engine {
+            return engine
+        }
+        guard let modelUrl else {
+            throw LlamaError.couldNotInitializeContext
+        }
+        let engine = try Llama(modelPath: modelUrl.path(percentEncoded: false), config: config)
+        self.engine = engine
+        return engine
     }
 }

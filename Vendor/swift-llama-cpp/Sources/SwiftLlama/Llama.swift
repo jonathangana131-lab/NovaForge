@@ -15,6 +15,7 @@ final actor Llama {
     // Configuration
 
     private let config: LlamaConfig
+    private let effectiveBatchSize: UInt32
     let maxTokenCount: UInt32
     /// Tracks the current position in the token sequence during decoding.
     var currentTokenPosition: Int32 = 0
@@ -22,47 +23,124 @@ final actor Llama {
 
     init(modelPath: String, config: LlamaConfig) throws {
         self.config = config
-        llama_backend_init()
-        var model_params = llama_model_default_params()
+        var modelParams = llama_model_default_params()
 
-        model_params.n_gpu_layers = config.useGPU ? config.gpuLayerCount : 0
+        modelParams.n_gpu_layers = config.useGPU ? config.gpuLayerCount : 0
+        switch config.modelLoadMode {
+        case .automatic:
+            modelParams.load_mode = LLAMA_LOAD_MODE_AUTO
+        case .mmap:
+            modelParams.load_mode = LLAMA_LOAD_MODE_MMAP
+        }
 
         #if targetEnvironment(simulator)
-                model_params.n_gpu_layers = 0
-                print("Running on simulator, force use n_gpu_layers = 0")
+        modelParams.n_gpu_layers = 0
+        print("Running on simulator, force use n_gpu_layers = 0")
         #endif
 
-        let model = LlamaModel(path: modelPath, parameters: model_params)
+        let model = LlamaModel(path: modelPath, parameters: modelParams)
         guard let model else {
             print("Could not load model at \(modelPath)")
             throw LlamaError.couldNotInitializeContext
         }
 
-        print("Using \(config.generationThreadCount) generation threads, \(config.batchThreadCount) batch threads, \(model_params.n_gpu_layers) GPU layers")
+        print("Using \(config.generationThreadCount) generation threads, \(config.batchThreadCount) batch threads, \(modelParams.n_gpu_layers) GPU layers")
 
-        var contextParam = llama_context_default_params()
-        contextParam.n_ctx = config.maxTokenCount
-        contextParam.n_threads = config.generationThreadCount
-        contextParam.n_threads_batch = config.batchThreadCount
-        contextParam.n_batch = config.batchSize
-        contextParam.n_ubatch = config.batchSize
-        contextParam.offload_kqv = true
+        func cacheType(_ type: LlamaKVCacheType) -> ggml_type {
+            switch type {
+            case .f16: GGML_TYPE_F16
+            case .q8_0: GGML_TYPE_Q8_0
+            case .q4_0: GGML_TYPE_Q4_0
+            }
+        }
 
-        let context = LlamaContext(model: model, parameters: contextParam)
-        guard let context else {
-            print("Could not load context!")
+        func contextParameters(for profile: LlamaContextAllocationProfile) -> llama_context_params {
+            var params = llama_context_default_params()
+            params.n_ctx = profile.contextTokens
+            params.n_threads = config.generationThreadCount
+            params.n_threads_batch = config.batchThreadCount
+            params.n_batch = profile.batchTokens
+            params.n_ubatch = profile.batchTokens
+            params.offload_kqv = config.offloadKQV
+            params.type_k = cacheType(profile.keyCacheType)
+            params.type_v = cacheType(profile.valueCacheType)
+
+            switch config.flashAttentionMode {
+            case .automatic:
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO
+            case .disabled:
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED
+            case .enabled:
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED
+            }
+            return params
+        }
+
+        func makeContext(for profile: LlamaContextAllocationProfile) -> LlamaContext? {
+            LlamaContext(model: model, parameters: contextParameters(for: profile))
+        }
+
+        let requestedProfile = config.requestedAllocationProfile
+        let fastRescueProfile = config.fastLowMemoryAllocationProfile
+        let deepRescueProfile = config.deepLowMemoryAllocationProfile
+
+        var selectedProfile = requestedProfile
+        var selectedProfileName = "requested"
+        var selectedContext = makeContext(for: requestedProfile)
+
+        if selectedContext == nil, config.allowLowMemoryFallback {
+            // The first rescue tier is an explicit F16 compatibility profile,
+            // not merely a smaller copy of a caller-requested Q4/Q8 profile.
+            // That matters when allocation failed because a backend/cache-type
+            // combination is unsupported rather than because only size is high.
+            if fastRescueProfile != requestedProfile {
+                print("Context allocation failed; retrying fast low-memory profile (ctx=\(fastRescueProfile.contextTokens), batch=\(fastRescueProfile.batchTokens), F16 KV)")
+                selectedContext = makeContext(for: fastRescueProfile)
+                if selectedContext != nil {
+                    selectedProfile = fastRescueProfile
+                    selectedProfileName = "fast-memory-rescue"
+                }
+            }
+
+            // Deep rescue only runs after both requested and distinct fast
+            // allocations fail. Avoid repeating an allocation profile that has
+            // already failed, while retaining Q8 as the final compact KV tier.
+            if selectedContext == nil,
+               deepRescueProfile != requestedProfile,
+               deepRescueProfile != fastRescueProfile {
+                print("Fast context allocation still failed; retrying deep low-memory profile (ctx=\(deepRescueProfile.contextTokens), batch=\(deepRescueProfile.batchTokens), Q8 KV)")
+                selectedContext = makeContext(for: deepRescueProfile)
+                if selectedContext != nil {
+                    selectedProfile = deepRescueProfile
+                    selectedProfileName = "quantized-memory-rescue"
+                }
+            }
+        }
+
+        guard let context = selectedContext else {
+            print("Could not load context after all distinct configured allocation tiers")
+            throw LlamaError.couldNotInitializeContext
+        }
+        guard let effectiveContextSize = selectedProfile.reconciledContextTokens(
+            actualContextTokens: context.contextSize(),
+            trainedContextTokens: model.trainedContextSize()
+        ) else {
+            print("llama.cpp returned an invalid effective context size")
+            throw LlamaError.couldNotInitializeContext
+        }
+        guard let effectiveBatchSize = selectedProfile.reconciledBatchTokens(
+            actualContextBatch: context.batchSize()
+        ) else {
+            print("llama.cpp returned an invalid effective batch size")
             throw LlamaError.couldNotInitializeContext
         }
 
-
-        self.maxTokenCount = min(UInt32(model.trainedContextSize()), config.maxTokenCount)
+        print("Selected llama context profile: \(selectedProfileName), requestedCtx=\(selectedProfile.contextTokens), actualCtx=\(context.contextSize()), effectiveCtx=\(effectiveContextSize), requestedBatch=\(selectedProfile.batchTokens), actualBatch=\(context.batchSize()), effectiveBatch=\(effectiveBatchSize), keyKV=\(selectedProfile.keyCacheType.rawValue), valueKV=\(selectedProfile.valueCacheType.rawValue)")
+        self.maxTokenCount = effectiveContextSize
+        self.effectiveBatchSize = effectiveBatchSize
         self.model = context.model
         self.context = context
-        self.batch = .init(initialSize: Int32(config.batchSize))
-    }
-
-    deinit {
-        llama_backend_free()
+        self.batch = .init(initialSize: Int32(effectiveBatchSize))
     }
 
     // Expose some backend/system utilities for convenience
@@ -111,7 +189,7 @@ final actor Llama {
         } else {
             // Check if we can optimize by only clearing from the divergence point
             let divergenceIndex = findDivergenceIndex(newTokenList: tokenList, processedTokens: processedTokens)
-            
+
             if divergenceIndex > 0 && shouldUsePartialOptimization(divergenceIndex: divergenceIndex, totalProcessed: processedTokens.count) {
                 print("### Using partial optimization from position \(divergenceIndex)")
                 do {
@@ -139,36 +217,24 @@ final actor Llama {
         }
         return minLength
     }
-    
+
     /// Decide whether to use partial optimization based on the divergence point
     private func shouldUsePartialOptimization(divergenceIndex: Int, totalProcessed: Int) -> Bool {
-        // Only use partial optimization if:
-        // 1. We have a significant amount of processed tokens (at least 10)
-        // 2. The divergence is not too early (at least 50% of tokens match)
-        // 3. The divergence is not at the very beginning
-        
         guard divergenceIndex > 0 && totalProcessed >= 10 else { return false }
-        
         let matchPercentage = Double(divergenceIndex) / Double(totalProcessed)
-        return matchPercentage >= 0.5 // At least 50% of tokens match
+        return matchPercentage >= 0.5
     }
-    
-    /// Optimized reprocessing that only clears cache from the divergence point
+
+    /// Optimized reprocessing that only clears cache from the divergence point onward
     private func optimizedReprocessing(newTokenList: [llama_token], divergenceIndex: Int) throws {
-        // Clear KV cache from the divergence point onward
         context.clearKVCacheFromPosition(Int32(divergenceIndex))
-        
-        // Update our internal state
         processedTokens = Array(processedTokens[0..<divergenceIndex])
         currentTokenPosition = Int32(divergenceIndex)
-        
-        // Process only the tokens from the divergence point onward
         let tokensToProcess = Array(newTokenList[divergenceIndex...])
         try processPrompt(tokens: tokensToProcess, startIndex: divergenceIndex)
     }
 
     func generateNextToken() throws -> NextToken {
-        // Stop before sampling if we've reached the context limit to avoid mutating sampler state
         if currentTokenPosition >= Int32(maxTokenCount) {
             return .endOfString
         }
@@ -195,7 +261,7 @@ final actor Llama {
     private func clear() {
         context.clearKVCache()
         processedTokens = []
-        batch = .init(initialSize: Int32(config.batchSize))
+        batch = .init(initialSize: Int32(effectiveBatchSize))
     }
 
     private func processBatch() throws {
@@ -215,17 +281,20 @@ final actor Llama {
             let tokenPosition = startIndex + i
             let tokenId = tokens[i]
             batch.addToken(tokenId, at: Int32(tokenPosition), logits: false)
-            processedTokens.append(tokenId)
-            if batch.size == config.batchSize {
+            if LlamaBatch.shouldFlushPromptBatch(
+                currentSize: batch.size,
+                capacity: effectiveBatchSize,
+                tokenIndex: i,
+                tokenCount: tokens.count
+            ) {
                 try processBatch()
                 batch.reset()
             }
+            processedTokens.append(tokenId)
         }
 
         batch.setLastTokenLogits(true)
         try processBatch()
-
         currentTokenPosition = Int32(processedTokens.count)
-
     }
 }

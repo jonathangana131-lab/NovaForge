@@ -25,6 +25,7 @@ public final class LlamaContext {
     }
     let contextPointer: OpaquePointer
     private var abortBox: Unmanaged<AbortBox>?
+    private var loraBindings: [(adapter: LlamaLoraAdapter, scale: Float)] = []
 
     // MARK: - Lifecycle
 
@@ -59,12 +60,10 @@ public final class LlamaContext {
         UInt32(llama_max_parallel_sequences())
     }
 
-    /// Get the configured maximum number of sequences (n_seq_max).
     public func maxSequences() -> UInt32 {
         llama_n_seq_max(contextPointer)
     }
 
-    /// Get the context's pooling type.
     public func poolingType() -> llama_pooling_type {
         llama_pooling_type(contextPointer)
     }
@@ -74,8 +73,6 @@ public final class LlamaContext {
     }
 
     public func clearKVCacheFromPosition(_ position: Int32) {
-        // Remove KV cache entries from the given position to the end
-        // seq_id = -1 means all sequences, p0 = position, p1 = -1 means to the end
         memory.remove(sequenceId: 0, from: position, to: -1)
     }
 
@@ -87,7 +84,6 @@ public final class LlamaContext {
         synchronize()
     }
 
-    /// Run encoder-only pass for encoder-decoder models or preprocess inputs.
     public func encode(batch: LlamaBatch) throws {
         let rc = llama_encode(contextPointer, batch.rawBatch)
         guard rc >= 0 else { throw LlamaContextError.decodingError }
@@ -96,9 +92,6 @@ public final class LlamaContext {
 
     // MARK: - Safe logits & embeddings access
 
-    /// Return the logits for the i-th token from the last decode call.
-    /// - Parameter index: Use -1 for the last token.
-    /// - Returns: A copy of logits as `[Float]` with size equal to `model.vocabularySize()`, or `nil` if unavailable.
     public func logits(at index: Int32) -> [Float]? {
         guard let ptr = llama_get_logits_ith(contextPointer, index) else { return nil }
         let n = Int(model.vocabularySize())
@@ -109,12 +102,8 @@ public final class LlamaContext {
         return out
     }
 
-    /// Return the logits for the last token.
     public func lastLogits() -> [Float]? { logits(at: -1) }
 
-    /// Return the embeddings for the i-th token from the last decode/encode call.
-    /// - Parameter index: Use -1 for the last embedding.
-    /// - Returns: A copy of the embedding vector.
     public func embeddings(at index: Int32) -> [Float]? {
         guard let ptr = llama_get_embeddings_ith(contextPointer, index) else { return nil }
         let n = Int(model.nEmbed())
@@ -125,8 +114,6 @@ public final class LlamaContext {
         return out
     }
 
-    /// Return the pooled embeddings for a sequence id, if pooling is enabled.
-    /// - Returns: A copy of the pooled embeddings: size `n_cls_out` when pooling is RANK, otherwise `n_embd`.
     public func pooledEmbeddings(for sequenceId: llama_seq_id) -> [Float]? {
         guard let ptr = llama_get_embeddings_seq(contextPointer, sequenceId) else { return nil }
         let pooling = llama_pooling_type(contextPointer)
@@ -160,9 +147,7 @@ public final class LlamaContext {
     public func setCausalAttention(_ enabled: Bool) { llama_set_causal_attn(contextPointer, enabled) }
     public func setWarmup(_ enabled: Bool) { llama_set_warmup(contextPointer, enabled) }
 
-    // Abort callback bridging
     public func setAbortCallback(_ callback: @escaping () -> Bool) {
-        // release previous
         if let box = abortBox { box.release(); abortBox = nil }
         let newBox = Unmanaged.passRetained(AbortBox(cb: callback))
         abortBox = newBox
@@ -171,46 +156,79 @@ public final class LlamaContext {
 
     // MARK: - Adapters
 
-    /// Applies a LoRA adapter to the context.
-    /// - Parameters:
-    ///   - adapter: The `LlamaLoraAdapter` to apply.
-    ///   - scale: The scaling factor for the adapter's influence.
-    /// - Throws: `LlamaContextError.loraAdapterFailed` if the operation fails.
-    public func apply(loraAdapter: LlamaLoraAdapter, scale: Float = 1.0) throws {
-        let result = llama_set_adapter_lora(contextPointer, loraAdapter.adapterPointer, scale)
-        if result != 0 {
-            throw LlamaContextError.loraAdapterFailed("Failed to apply LoRA adapter.")
+    private func synchronizeLoraBindings() throws {
+        var pointers: [OpaquePointer?] = loraBindings.map { $0.adapter.adapterPointer }
+        var scales = loraBindings.map(\.scale)
+
+        let result: Int32
+        if pointers.isEmpty {
+            result = llama_set_adapters_lora(contextPointer, nil, 0, nil)
+        } else {
+            result = pointers.withUnsafeMutableBufferPointer { pointerBuffer in
+                scales.withUnsafeMutableBufferPointer { scaleBuffer in
+                    llama_set_adapters_lora(
+                        contextPointer,
+                        pointerBuffer.baseAddress,
+                        size_t(pointerBuffer.count),
+                        scaleBuffer.baseAddress
+                    )
+                }
+            }
+        }
+
+        guard result == 0 else {
+            throw LlamaContextError.loraAdapterFailed("Failed to synchronize LoRA adapters.")
         }
     }
 
-    /// Removes a specific LoRA adapter from the context.
-    /// - Parameter adapter: The `LlamaLoraAdapter` to remove.
-    /// - Throws: `LlamaContextError.loraAdapterFailed` if the adapter is not found or cannot be removed.
+    public func apply(loraAdapter: LlamaLoraAdapter, scale: Float = 1.0) throws {
+        if let index = loraBindings.firstIndex(where: { $0.adapter === loraAdapter }) {
+            let previousBinding = loraBindings[index]
+            loraBindings[index].scale = scale
+            do {
+                try synchronizeLoraBindings()
+            } catch {
+                loraBindings[index] = previousBinding
+                throw error
+            }
+            return
+        }
+
+        loraBindings.append((loraAdapter, scale))
+        do {
+            try synchronizeLoraBindings()
+        } catch {
+            loraBindings.removeLast()
+            throw error
+        }
+    }
+
     public func remove(loraAdapter: LlamaLoraAdapter) throws {
-        let result = llama_rm_adapter_lora(contextPointer, loraAdapter.adapterPointer)
-        if result == -1 {
+        guard let index = loraBindings.firstIndex(where: { $0.adapter === loraAdapter }) else {
             throw LlamaContextError.loraAdapterFailed("LoRA adapter not found in context.")
         }
+        let removed = loraBindings.remove(at: index)
+        do {
+            try synchronizeLoraBindings()
+        } catch {
+            loraBindings.insert(removed, at: index)
+            throw error
+        }
     }
 
-    /// Removes all LoRA adapters from the context.
     public func removeAllLoraAdapters() {
-        llama_clear_adapter_lora(contextPointer)
+        let previous = loraBindings
+        loraBindings.removeAll(keepingCapacity: true)
+        do {
+            try synchronizeLoraBindings()
+        } catch {
+            loraBindings = previous
+        }
     }
 
-    /// Applies a control vector to the context.
-    ///
-    /// This can be used to apply adjustments to the model's behavior.
-    ///
-    /// - Parameters:
-    ///   - data: A buffer of floats representing the control vector data. Should be `n_embd * n_layers`.
-    ///   - n_embd: The size of a single layer's control vector.
-    ///   - startLayer: The starting layer index for applying the vector (inclusive).
-    ///   - endLayer: The ending layer index for applying the vector (inclusive).
-    /// - Throws: `LlamaContextError.loraAdapterFailed` if applying the control vector fails.
     public func apply(controlVector data: [Float], n_embd: Int32, startLayer: Int32, endLayer: Int32) throws {
         let result = data.withUnsafeBufferPointer { bufferPointer in
-            llama_apply_adapter_cvec(
+            llama_set_adapter_cvec(
                 contextPointer,
                 bufferPointer.baseAddress,
                 size_t(bufferPointer.count),
@@ -224,10 +242,8 @@ public final class LlamaContext {
         }
     }
 
-    /// Clears the currently applied control vector.
-    /// - Throws: `LlamaContextError.loraAdapterFailed` if clearing fails.
     public func clearControlVector() throws {
-        let result = llama_apply_adapter_cvec(contextPointer, nil, 0, 0, 0, 0)
+        let result = llama_set_adapter_cvec(contextPointer, nil, 0, 0, 0, 0)
         if result != 0 {
             throw LlamaContextError.loraAdapterFailed("Failed to clear control vector.")
         }
@@ -304,8 +320,6 @@ public final class LlamaContext {
 
     // MARK: - Per-sequence state files
 
-    /// Save a single sequence state to a file along with token history.
-    /// - Returns: Number of bytes written.
     @discardableResult
     public func saveSequenceState(to filepath: String, seqId: llama_seq_id, tokens: [llama_token]) -> Int {
         tokens.withUnsafeBufferPointer { ptr in
@@ -313,8 +327,6 @@ public final class LlamaContext {
         }
     }
 
-    /// Load a single sequence state from file into the specified destination sequence id.
-    /// - Returns: Loaded tokens and count if successful, otherwise nil.
     public func loadSequenceState(from filepath: String, destSeqId: llama_seq_id, capacity: Int) -> (tokens: [llama_token], count: Int)? {
         var tokens = [llama_token](repeating: 0, count: capacity)
         var outCount: size_t = 0
@@ -327,10 +339,7 @@ public final class LlamaContext {
 
     // MARK: - Threadpool
 
-    /// Attach the default ggml auto threadpool to this context.
     public func attachAutoThreadpool() { llama_attach_threadpool(contextPointer, nil, nil) }
-
-    /// Detach any threadpools from this context.
     public func detachThreadpool() { llama_detach_threadpool(contextPointer) }
 }
 

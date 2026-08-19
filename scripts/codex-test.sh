@@ -277,6 +277,14 @@ run_package_tests() {
   TIMEOUT_RUNNER_LABEL="AgentHarnessKit" \
     "$TIMEOUT_RUNNER" "$PACKAGE_TIMEOUT" "$LOG_DIR/agent-harness-package-tests.log" \
     swift test --package-path "$ROOT_DIR/Packages/AgentHarnessKit"
+
+  # Local-model runtime changes carry package-local regression tests that are
+  # not part of AgentPadTests. Run them explicitly so Critical/Unit/Release CI
+  # proves those contracts instead of only compiling SwiftLlama via the app.
+  echo "==> SwiftLlama contracts"
+  TIMEOUT_RUNNER_LABEL="SwiftLlama" \
+    "$TIMEOUT_RUNNER" "$PACKAGE_TIMEOUT" "$LOG_DIR/swift-llama-package-tests.log" \
+    swift test --package-path "$ROOT_DIR/Vendor/swift-llama-cpp"
 }
 
 project_xcodebuild() {

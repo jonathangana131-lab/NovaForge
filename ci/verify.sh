@@ -41,7 +41,25 @@ if [ -z "$UDID" ]; then
   UDID=$(xcrun simctl create "NovaForge CI" "$DEVICE_TYPE")
 fi
 
+surface_failure_annotations() {
+  local status="$1"
+  local log="$ARTIFACT_DIR/build-for-testing.log"
+  [ "$status" -ne 0 ] || return 0
+  [ -f "$log" ] || return 0
+
+  echo "::group::NovaForge build failure summary"
+  # Keep annotations compact enough for GitHub Checks while surfacing the
+  # actual compiler/package-resolution cause to API-only debugging clients.
+  grep -E '(^|[[:space:]])(error:|fatal error:)|checksum|binary target|artifact|XCFramework|BUILD FAILED|The following build commands failed' "$log" \
+    | tail -n 40 \
+    | while IFS= read -r line; do
+        printf '%s\n' "::error title=NovaForge Xcode build::$line"
+      done || true
+  echo "::endgroup::"
+}
+
 echo "==> Running NovaForge $TEST_LANE lane"
+set +e
 SIMULATOR_ID="$UDID" \
 DERIVED_DATA_PATH="$DERIVED_DATA" \
 LOG_DIR="$ARTIFACT_DIR" \
@@ -49,5 +67,10 @@ RESULT_BUNDLE_PATH="$ARTIFACT_DIR/$TEST_LANE.xcresult" \
 TEST_TIMEOUT="$((XCODEBUILD_CAP_MINUTES * 60))" \
 SHUTDOWN_SIMULATOR_AFTER_TESTS=1 \
 zsh scripts/codex-test.sh "$TEST_LANE"
+STATUS=$?
+set -e
+
+surface_failure_annotations "$STATUS"
+[ "$STATUS" -eq 0 ] || exit "$STATUS"
 
 echo "==> NovaForge $TEST_LANE verification passed"

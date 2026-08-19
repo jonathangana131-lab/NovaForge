@@ -21,10 +21,10 @@ public final class LlamaLoraAdapter {
     /// - Parameters:
     ///   - model: The base `LlamaModel` to load the adapter against.
     ///   - path: The file path to the LoRA adapter.
-    /// - Throws: `LlamaLoraError.couldNotLoadAdapter` if the adapter cannot be loaded.
-    public init(model: LlamaModel, path: String) throws {
+    /// - Returns: `nil` if llama.cpp cannot load the adapter.
+    public init?(model: LlamaModel, path: String) {
         guard let adapterPointer = llama_adapter_lora_init(model.modelPointer, path) else {
-            throw LlamaLoraError.couldNotLoadAdapter
+            return nil
         }
         self.adapterPointer = adapterPointer
     }
@@ -32,4 +32,4 @@ public final class LlamaLoraAdapter {
     deinit {
         llama_adapter_lora_free(adapterPointer)
     }
-} 
+}
