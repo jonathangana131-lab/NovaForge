@@ -137,6 +137,7 @@ struct FirstRunProjectLauncher: View {
                 .foregroundStyle(setupTint)
                 .frame(width: 26, height: 26)
                 .agentControlSurface(radius: AgentDesign.chipRadius, tint: setupTint, selected: false)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(setupTitle)
@@ -148,6 +149,8 @@ struct FirstRunProjectLauncher: View {
                     .lineLimit(2)
                     .minimumScaleFactor(0.86)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(setupTitle). \(setupDetail)")
 
             Spacer(minLength: 0)
 
@@ -170,8 +173,7 @@ struct FirstRunProjectLauncher: View {
         }
         .padding(9)
         .agentRowSurface(radius: AgentDesign.rowRadius, tint: setupTint.opacity(0.07), selected: setupBlocksStarters)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(setupTitle). \(setupDetail)")
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("firstRunSetupHonesty")
     }
 
