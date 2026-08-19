@@ -401,6 +401,16 @@ public struct ForgeCompletionConstitution: Codable, Equatable, Sendable {
     }
 }
 
+fileprivate struct ForgeCompletionEvidenceSlot: Hashable, Sendable {
+    let criterionID: String
+    let evidenceClass: ForgeCompletionEvidenceClass
+    let journeyID: String?
+
+    var diagnosticKey: String {
+        "\(criterionID)|\(evidenceClass.rawValue)|\(journeyID ?? "-")"
+    }
+}
+
 public struct ForgeCompletionEvidence: Codable, Equatable, Sendable {
     public let id: String
     public let target: ForgeCompletionTarget
@@ -455,8 +465,12 @@ public struct ForgeCompletionEvidence: Codable, Equatable, Sendable {
         self.outcome = outcome
     }
 
-    fileprivate var slotKey: String {
-        "\(criterionID)|\(evidenceClass.rawValue)|\(journeyID ?? "-")"
+    fileprivate var slot: ForgeCompletionEvidenceSlot {
+        .init(
+            criterionID: criterionID,
+            evidenceClass: evidenceClass,
+            journeyID: journeyID
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -744,8 +758,8 @@ enum ForgeCompletionEvaluator {
 
         var evidenceIDs = Set<String>()
         var authorityReceiptIDs = Set<String>()
-        var evidenceSlots = Set<String>()
-        var evidenceBySlot: [String: ForgeCompletionEvidence] = [:]
+        var evidenceSlots = Set<ForgeCompletionEvidenceSlot>()
+        var evidenceBySlot: [ForgeCompletionEvidenceSlot: ForgeCompletionEvidence] = [:]
 
         for item in evidence {
             guard item.target == target else {
@@ -776,10 +790,10 @@ enum ForgeCompletionEvaluator {
                     throw ForgeCompletionError.unexpectedJourney(item.id)
                 }
             }
-            guard evidenceSlots.insert(item.slotKey).inserted else {
-                throw ForgeCompletionError.duplicateEvidenceSlot(item.slotKey)
+            guard evidenceSlots.insert(item.slot).inserted else {
+                throw ForgeCompletionError.duplicateEvidenceSlot(item.slot.diagnosticKey)
             }
-            evidenceBySlot[item.slotKey] = item
+            evidenceBySlot[item.slot] = item
         }
 
         var limitationIDs = Set<String>()
@@ -809,7 +823,11 @@ enum ForgeCompletionEvaluator {
 
             for evidenceClass in criterion.requiredEvidenceClasses {
                 for journeyID in journeys {
-                    let slot = "\(criterion.id)|\(evidenceClass.rawValue)|\(journeyID ?? "-")"
+                    let slot = ForgeCompletionEvidenceSlot(
+                        criterionID: criterion.id,
+                        evidenceClass: evidenceClass,
+                        journeyID: journeyID
+                    )
                     guard let item = evidenceBySlot[slot] else {
                         blockers.append(.missingEvidence(
                             criterionID: criterion.id,
