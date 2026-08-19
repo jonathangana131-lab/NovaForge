@@ -1,0 +1,22 @@
+name: V14 Autonomy Candidate Final E4 Validation
+on:
+  pull_request:
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Record toolchain
+        run: swift --version
+      - name: Verify exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "cf17a511c156a60af016a7be0488adf955317342"
+          git diff --check HEAD^
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeAutonomyCore -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgeAutonomyCore -c release -Xswiftc -warnings-as-errors
