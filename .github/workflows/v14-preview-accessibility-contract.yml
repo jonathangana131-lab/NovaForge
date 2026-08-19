@@ -1,0 +1,28 @@
+name: V14 Preview accessibility contract
+
+on:
+  pull_request:
+    paths:
+      - 'AgentPad/Views/ChatComposer.swift'
+      - 'AgentPad/Views/ChatDrawerView.swift'
+      - 'scripts/verify_v14_preview_accessibility_contract.sh'
+      - '.github/workflows/v14-preview-accessibility-contract.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'AgentPad/Views/ChatComposer.swift'
+      - 'AgentPad/Views/ChatDrawerView.swift'
+      - 'scripts/verify_v14_preview_accessibility_contract.sh'
+      - '.github/workflows/v14-preview-accessibility-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preview-accessibility-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify VoiceOver, touch-target and motion fallbacks
+        run: bash scripts/verify_v14_preview_accessibility_contract.sh
