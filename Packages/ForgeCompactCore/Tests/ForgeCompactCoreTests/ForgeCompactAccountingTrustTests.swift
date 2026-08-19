@@ -15,6 +15,44 @@ final class ForgeCompactAccountingTrustTests: XCTestCase {
         )
     }
 
+    func testEquivalentRoundTrippedReceiptProducesEquivalentTrustBinding() throws {
+        let receipt = try makeReceipt(provenance: .runtimeTokenizer)
+        let roundTripped = try JSONDecoder().decode(
+            ForgeCompactAccountingReceipt.self,
+            from: JSONEncoder().encode(receipt)
+        )
+
+        XCTAssertEqual(
+            ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt),
+            ForgeCompactAccountingTrustBinding(authenticatedReceipt: roundTripped)
+        )
+    }
+
+    func testSameIDDistinctWholeReceiptSubjectsRemainDistinctSetBindings() throws {
+        let receipt = try makeReceipt(provenance: .runtimeTokenizer)
+        let tampered = try tamperedReceipt(receipt) { object in
+            var baseline = try XCTUnwrap(object["baselineIdentity"] as? [String: Any])
+            baseline["contextRevision"] = "history-r2"
+            object["baselineIdentity"] = baseline
+        }
+        let originalBinding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
+        let tamperedBinding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: tampered)
+        let trustedMeasurements: Set<ForgeCompactAccountingTrustBinding> = [
+            originalBinding,
+            tamperedBinding,
+        ]
+
+        XCTAssertEqual(receipt.measurementReceiptID, tampered.measurementReceiptID)
+        XCTAssertNotEqual(originalBinding, tamperedBinding)
+        XCTAssertEqual(trustedMeasurements.count, 2)
+        XCTAssertTrue(
+            receipt.canSupportExactTokenCountClaim(trustedMeasurements: trustedMeasurements)
+        )
+        XCTAssertTrue(
+            tampered.canSupportExactTokenCountClaim(trustedMeasurements: trustedMeasurements)
+        )
+    }
+
     func testSameTrustedReceiptIDCannotAuthorizeTamperedTokenCounts() throws {
         let receipt = try makeReceipt(provenance: .runtimeTokenizer)
         let binding = ForgeCompactAccountingTrustBinding(authenticatedReceipt: receipt)
