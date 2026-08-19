@@ -1,0 +1,23 @@
+name: V14 Forge Compact Trust Exact Validation
+
+on:
+  pull_request:
+
+jobs:
+  exact-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Verify exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "e524b2f51b958d10a917359dfa6ac2491c129ba3"
+          git diff --check HEAD^
+      - name: Record Swift toolchain
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgeCompactCore -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgeCompactCore -c release -Xswiftc -warnings-as-errors
