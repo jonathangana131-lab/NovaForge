@@ -122,6 +122,13 @@ final actor Llama {
             print("Could not load context after all distinct configured allocation tiers")
             throw LlamaError.couldNotInitializeContext
         }
+        guard let effectiveContextSize = selectedProfile.reconciledContextTokens(
+            actualContextTokens: context.contextSize(),
+            trainedContextTokens: model.trainedContextSize()
+        ) else {
+            print("llama.cpp returned an invalid effective context size")
+            throw LlamaError.couldNotInitializeContext
+        }
         guard let effectiveBatchSize = selectedProfile.reconciledBatchTokens(
             actualContextBatch: context.batchSize()
         ) else {
@@ -129,8 +136,8 @@ final actor Llama {
             throw LlamaError.couldNotInitializeContext
         }
 
-        print("Selected llama context profile: \(selectedProfileName), requestedCtx=\(selectedProfile.contextTokens), actualCtx=\(context.contextSize()), requestedBatch=\(selectedProfile.batchTokens), actualBatch=\(context.batchSize()), effectiveBatch=\(effectiveBatchSize), keyKV=\(selectedProfile.keyCacheType.rawValue), valueKV=\(selectedProfile.valueCacheType.rawValue)")
-        self.maxTokenCount = min(UInt32(model.trainedContextSize()), selectedProfile.contextTokens)
+        print("Selected llama context profile: \(selectedProfileName), requestedCtx=\(selectedProfile.contextTokens), actualCtx=\(context.contextSize()), effectiveCtx=\(effectiveContextSize), requestedBatch=\(selectedProfile.batchTokens), actualBatch=\(context.batchSize()), effectiveBatch=\(effectiveBatchSize), keyKV=\(selectedProfile.keyCacheType.rawValue), valueKV=\(selectedProfile.valueCacheType.rawValue)")
+        self.maxTokenCount = effectiveContextSize
         self.effectiveBatchSize = effectiveBatchSize
         self.model = context.model
         self.context = context
