@@ -1,0 +1,42 @@
+name: Speculative trust exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/speculative-trust-exact-product-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  exact-product:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "0d86a7c9891425f73e42c53f03be4558fdb924f2"
+          git diff --check HEAD^
+
+      - name: Debug speculative trust contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/LocalAISpeculativeCore \
+            -Xswiftc -warnings-as-errors
+
+      - name: Release speculative trust contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/LocalAISpeculativeCore \
+            -c release \
+            -Xswiftc -warnings-as-errors
