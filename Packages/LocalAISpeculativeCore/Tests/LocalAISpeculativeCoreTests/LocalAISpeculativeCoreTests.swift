@@ -74,6 +74,7 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
             mechanismID: "ngram-simple",
             kind: .ngram,
             maximumDraftTokens: 8,
+            maximumContextTokens: 8_192,
             declarationRevision: "source-rev-1"
         )
 
@@ -93,6 +94,7 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
             mechanismID: "draft-simple",
             kind: .draftModel,
             maximumDraftTokens: 8,
+            maximumContextTokens: 8_192,
             declarationRevision: "source-rev-1"
         )
 
@@ -152,6 +154,26 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
 
         XCTAssertFalse(result.isEligible)
         XCTAssertEqual(result.rejections, [.draftLimitExceeded])
+    }
+
+    func testContextCannotExceedRuntimeDeclaration() {
+        let result = SpeculativeTrialValidator.evaluate(
+            configuration: configuration(contextTokens: UInt64.max),
+            declaration: declaration(maximumContextTokens: 8_192)
+        )
+
+        XCTAssertFalse(result.isEligible)
+        XCTAssertEqual(result.rejections, [.contextLimitExceeded])
+    }
+
+    func testZeroRuntimeContextBudgetFailsClosed() {
+        let result = SpeculativeTrialValidator.evaluate(
+            configuration: configuration(contextTokens: 4_096),
+            declaration: declaration(maximumContextTokens: 0)
+        )
+
+        XCTAssertFalse(result.isEligible)
+        XCTAssertEqual(result.rejections, [.invalidContext])
     }
 
     func testPromotionRejectsReceiptFromDifferentConfiguration() {
@@ -292,7 +314,8 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
     }
 
     private func declaration(
-        maximumDraftTokens: UInt16 = 8
+        maximumDraftTokens: UInt16 = 8,
+        maximumContextTokens: UInt64 = 8_192
     ) -> SpeculativeRuntimeCapabilityDeclaration {
         SpeculativeRuntimeCapabilityDeclaration(
             runtimeID: "llama.cpp",
@@ -300,6 +323,7 @@ final class SpeculativeDecodingTruthTests: XCTestCase {
             mechanismID: "draft-simple",
             kind: .draftModel,
             maximumDraftTokens: maximumDraftTokens,
+            maximumContextTokens: maximumContextTokens,
             declarationRevision: "source-rev-1"
         )
     }
