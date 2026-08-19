@@ -1,0 +1,42 @@
+name: Forge Repair authority exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/forge-repair-authority-exact-product-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  exact-product:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Assert exact product parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "4d6b6a0db98774bac44df27b8d47a27e740c2421"
+          git diff --check HEAD^
+
+      - name: Debug Forge Repair contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/ForgeRepairCore \
+            -Xswiftc -warnings-as-errors
+
+      - name: Release Forge Repair contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --package-path Packages/ForgeRepairCore \
+            -c release \
+            -Xswiftc -warnings-as-errors
