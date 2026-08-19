@@ -37,6 +37,16 @@ struct LlamaContextAllocationProfile: Equatable, Sendable {
     let batchTokens: UInt32
     let keyCacheType: LlamaKVCacheType
     let valueCacheType: LlamaKVCacheType
+
+    /// llama.cpp may normalize context parameters after construction. Execution
+    /// must never use a larger logical batch than either the selected policy or
+    /// the actual context reports, and Swift's batch wrapper requires Int32.
+    func reconciledBatchTokens(actualContextBatch: UInt32) -> UInt32? {
+        guard actualContextBatch > 0 else { return nil }
+        let effective = min(batchTokens, actualContextBatch)
+        guard effective > 0, effective <= UInt32(Int32.max) else { return nil }
+        return effective
+    }
 }
 
 public struct LlamaConfig: Equatable, Sendable {
