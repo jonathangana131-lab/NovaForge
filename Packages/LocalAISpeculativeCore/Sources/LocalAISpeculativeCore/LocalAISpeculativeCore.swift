@@ -297,6 +297,26 @@ public struct SpeculativeComparisonReceipt: Codable, Equatable, Sendable {
     }
 }
 
+/// Promotion evidence is intentionally not Codable and has no public initializer.
+/// A future canonical benchmark/runtime adapter in this module must authenticate the
+/// comparison subject before it can construct this value. Caller-shaped or persisted
+/// comparison receipts therefore remain candidate data only.
+public struct SpeculativeTrustedPromotionEvidence: Equatable, Sendable {
+    public let configuration: SpeculativeDecodingConfiguration
+    public let declaration: SpeculativeRuntimeCapabilityDeclaration
+    public let receipt: SpeculativeComparisonReceipt
+
+    init(
+        configuration: SpeculativeDecodingConfiguration,
+        declaration: SpeculativeRuntimeCapabilityDeclaration,
+        receipt: SpeculativeComparisonReceipt
+    ) {
+        self.configuration = configuration
+        self.declaration = declaration
+        self.receipt = receipt
+    }
+}
+
 public struct SpeculativePromotionPolicy: Codable, Equatable, Sendable {
     public let minimumSuccessfulCases: UInt32
     public let maximumFailedCases: UInt32
@@ -338,12 +358,13 @@ public enum SpeculativePromotionRejection: String, Codable, CaseIterable, Hashab
     case insufficientSpeedup
 }
 
-public struct SpeculativePromotionResult: Codable, Equatable, Sendable {
+/// Promotion output is readable outside the module but cannot be decoded or directly minted.
+public struct SpeculativePromotionResult: Equatable, Sendable {
     public let isPromotable: Bool
     public let rejections: [SpeculativePromotionRejection]
     public let measuredSpeedupRatio: Double?
 
-    public init(
+    init(
         isPromotable: Bool,
         rejections: [SpeculativePromotionRejection],
         measuredSpeedupRatio: Double?
@@ -355,7 +376,24 @@ public struct SpeculativePromotionResult: Codable, Equatable, Sendable {
 }
 
 public enum SpeculativePromotionEvaluator {
+    /// Public promotion authority consumes only module-owned trusted evidence and uses the
+    /// package-owned conservative policy. Ordinary callers cannot lower the threshold or
+    /// turn a Codable comparison receipt into promotion evidence.
     public static func evaluate(
+        evidence: SpeculativeTrustedPromotionEvidence
+    ) -> SpeculativePromotionResult {
+        evaluate(
+            configuration: evidence.configuration,
+            declaration: evidence.declaration,
+            receipt: evidence.receipt,
+            policy: .conservativeV1
+        )
+    }
+
+    /// Package-internal structural evaluator retained for exhaustive contract tests and for
+    /// the future canonical evidence producer. It is deliberately unavailable to ordinary
+    /// package consumers because all of its inputs are caller-shaped candidate values.
+    static func evaluate(
         configuration: SpeculativeDecodingConfiguration,
         declaration: SpeculativeRuntimeCapabilityDeclaration,
         receipt: SpeculativeComparisonReceipt,
