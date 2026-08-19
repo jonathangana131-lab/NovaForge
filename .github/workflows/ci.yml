@@ -50,6 +50,28 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  visual-qa-authority:
+    name: Visual QA authority contracts
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent
+        env:
+          EXPECTED_PRODUCT_HEAD: f7c4c959570dfca071461361360e81e15d0006cb
+        run: |
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD"
+      - name: Debug Visual QA contracts
+        run: swift test --package-path Packages/ForgeVisualQAKit -Xswiftc -warnings-as-errors
+      - name: Release Visual QA contracts
+        run: swift test --package-path Packages/ForgeVisualQAKit -c release -Xswiftc -warnings-as-errors
+      - name: External authority compiler regressions
+        run: swift test --package-path Packages/ForgeVisualQAKit --filter ForgeVisualQAStaticTrustBoundaryTests -Xswiftc -warnings-as-errors
+
   screenshot-tour:
     name: Synchronized visual proof
     needs: verify
