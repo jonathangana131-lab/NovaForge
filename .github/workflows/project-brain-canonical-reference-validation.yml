@@ -1,0 +1,58 @@
+name: Project Brain canonical reference exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/project-brain-canonical-reference-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Project Brain canonical reference exact product
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent and validation-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_product="c993c60faadbe8b18ca12579a48c835c56a1f969"
+          test "$(git rev-parse HEAD^)" = "$expected_product"
+          changed="$(git diff --name-only "$expected_product"..HEAD)"
+          test "$changed" = ".github/workflows/project-brain-canonical-reference-validation.yml"
+          git diff --check "$expected_product"..HEAD
+      - name: Build isolated AgentDomain validation package
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/project-brain-validation"
+          mkdir -p "$root/Sources/AgentDomain" "$root/Tests/AgentDomainTests"
+          cp -R Packages/AgentHarnessKit/Sources/AgentDomain/. "$root/Sources/AgentDomain/"
+          cp Packages/AgentHarnessKit/Tests/AgentDomainTests/MissionProjectBrainDomainTests.swift "$root/Tests/AgentDomainTests/"
+          cat > "$root/Package.swift" <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+          let package = Package(
+              name: "ProjectBrainCanonicalReferenceValidation",
+              products: [.library(name: "AgentDomain", targets: ["AgentDomain"])],
+              targets: [
+                  .target(name: "AgentDomain"),
+                  .testTarget(name: "AgentDomainTests", dependencies: ["AgentDomain"]),
+              ]
+          )
+          SWIFT
+      - name: Test AgentDomain Debug
+        shell: bash
+        run: |
+          swift test --package-path "$RUNNER_TEMP/project-brain-validation" -Xswiftc -warnings-as-errors
+      - name: Test AgentDomain Release
+        shell: bash
+        run: |
+          swift test --package-path "$RUNNER_TEMP/project-brain-validation" -c release -Xswiftc -warnings-as-errors
