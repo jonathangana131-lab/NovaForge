@@ -13,6 +13,15 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
         )
     }
 
+    func testDifferentSourceRevisionsAreNotComparableRegressionEvidence() throws {
+        let baseline = try trustedCapture(sourceRevision: "r1", digestByte: "a")
+        let candidate = try trustedCapture(sourceRevision: "r2", digestByte: "b")
+        XCTAssertEqual(
+            VisualRegressionComparator.compare(baseline: baseline, candidate: candidate),
+            .notComparable(.differentProject)
+        )
+    }
+
     func testAutoPolishRejectsMixedViewportHistory() throws {
         let portrait = try trustedCapture(frame: 1, digestByte: "a")
         let landscape = try trustedCapture(
@@ -45,10 +54,11 @@ final class ForgeVisualQAComparabilityTests: XCTestCase {
         frame: UInt64 = 0,
         viewport: VisualViewport? = nil,
         kind: VisualEvidenceKind = .runtimeScreenshot,
+        sourceRevision: String = "r1",
         digestByte: String
     ) throws -> VisualTrustedCapture {
         let capture = try VisualCaptureReceipt(
-            project: .init(projectID: "project-1", sourceRevision: "r1"),
+            project: .init(projectID: "project-1", sourceRevision: sourceRevision),
             runtimeSessionID: "session-1",
             frameOrdinal: frame,
             viewport: viewport ?? VisualViewport(
