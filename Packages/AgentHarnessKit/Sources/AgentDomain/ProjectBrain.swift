@@ -38,13 +38,20 @@ public struct ProjectBrainScope: Codable, Equatable, Sendable {
     public var validationError: ProjectBrainValidationError? {
         switch kind {
         case .project:
-            if let reference, !reference.hasProjectBrainContent {
+            guard let reference else { return nil }
+            guard reference.hasProjectBrainContent else {
                 return .blankScopeReference
+            }
+            guard reference.isCanonicalProjectBrainReference else {
+                return .nonCanonicalScopeReference
             }
             return nil
         case .mission, .file, .symbol, .runtime:
-            guard reference?.hasProjectBrainContent == true else {
+            guard let reference, reference.hasProjectBrainContent else {
                 return .missingScopeReference
+            }
+            guard reference.isCanonicalProjectBrainReference else {
+                return .nonCanonicalScopeReference
             }
             return nil
         }
@@ -92,6 +99,9 @@ public struct ProjectBrainProvenance: Codable, Equatable, Sendable {
 
     public var validationError: ProjectBrainValidationError? {
         guard reference.hasProjectBrainContent else { return .blankProvenanceReference }
+        guard reference.isCanonicalProjectBrainReference else {
+            return .nonCanonicalProvenanceReference
+        }
         if let contentDigest, !contentDigest.hasProjectBrainContent {
             return .blankContentDigest
         }
@@ -213,8 +223,10 @@ public enum ProjectBrainValidationError: String, Error, Codable, Equatable, Send
     case blankStatement
     case blankScopeReference
     case missingScopeReference
+    case nonCanonicalScopeReference
     case missingProvenance
     case blankProvenanceReference
+    case nonCanonicalProvenanceReference
     case blankContentDigest
     case derivedOnlyProvenance
     case unexpectedStaleReason
@@ -225,5 +237,14 @@ public enum ProjectBrainValidationError: String, Error, Codable, Equatable, Send
 private extension String {
     var hasProjectBrainContent: Bool {
         !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Identity-bearing references are exact-match keys for retrieval/provenance.
+    /// Reject aliases rather than silently trimming or normalizing authority IDs.
+    var isCanonicalProjectBrainReference: Bool {
+        guard hasProjectBrainContent else { return false }
+        guard self == trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        let forbiddenScalars = CharacterSet.controlCharacters.union(.newlines)
+        return !unicodeScalars.contains { forbiddenScalars.contains($0) }
     }
 }
