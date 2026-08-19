@@ -1,0 +1,279 @@
+name: V14 Preview Accessibility Acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/v14-preview-accessibility-acceptance.yml
+      - QA/v14-preview-accessibility-acceptance.md
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact NovaForge commit SHA to qualify (defaults to dispatched workflow SHA)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-preview-a11y-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-accessibility:
+    name: iPhone 12 iOS 27 accessibility proof
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      SIMULATOR_ID: 4B9AB34A-404C-485F-B0BC-964F24D0AE83
+      DERIVED_DATA_PATH: QA/DerivedData/v14-preview-accessibility
+      ARTIFACT_DIR: artifacts/v14-preview-accessibility
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Bind exact source and Simulator identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Accessibility acceptance requires an exact 40-character commit SHA, got: $SOURCE_SHA" >&2
+            exit 2
+          fi
+
+          actual_sha="$(git rev-parse HEAD)"
+          expected_sha="$(printf '%s' "$SOURCE_SHA" | tr '[:upper:]' '[:lower:]')"
+          actual_sha="$(printf '%s' "$actual_sha" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            echo "Checked-out source $actual_sha does not match requested source $expected_sha" >&2
+            exit 1
+          fi
+          SOURCE_SHA="$actual_sha"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+          /usr/bin/python3 - "$SIMULATOR_ID" "$ARTIFACT_DIR/simulator-identity.txt" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          udid, receipt_path = sys.argv[1:]
+          payload = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "-j"]))
+          match = None
+          for runtime, devices in payload.get("devices", {}).items():
+              for device in devices:
+                  if device.get("udid") == udid:
+                      match = (runtime, device)
+                      break
+              if match:
+                  break
+
+          if match is None:
+              raise SystemExit(f"Required Simulator {udid} is not installed")
+
+          runtime, device = match
+          name = device.get("name", "")
+          available = bool(device.get("isAvailable", False))
+          if name != "iPhone 12":
+              raise SystemExit(f"Expected iPhone 12 for {udid}, found {name!r}")
+          if ".iOS-27-" not in runtime:
+              raise SystemExit(f"Expected an iOS 27 runtime, found {runtime!r}")
+          if not available:
+              raise SystemExit(f"Required Simulator {udid} is unavailable")
+
+          with open(receipt_path, "w", encoding="utf-8") as handle:
+              handle.write(f"simulatorUDID={udid}\n")
+              handle.write(f"simulatorName={name}\n")
+              handle.write(f"runtime={runtime}\n")
+              handle.write(f"state={device.get('state', '')}\n")
+          PY
+
+          {
+            echo "sourceSHA=$SOURCE_SHA"
+            xcodebuild -version
+            xcrun swift --version
+          } > "$ARTIFACT_DIR/toolchain.txt"
+
+      - name: Boot clean qualification Simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl terminate "$SIMULATOR_ID" com.joey.NovaForge >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          xcrun simctl boot "$SIMULATOR_ID"
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+
+      - name: Build exact source for testing
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$DERIVED_DATA_PATH"
+          xcodebuild \
+            -project AgentPad.xcodeproj \
+            -scheme AgentPad \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            -skipPackageUpdates \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            NOVAFORGE_SOURCE_COMMIT="$SOURCE_SHA" \
+            build-for-testing \
+            2>&1 | tee "$ARTIFACT_DIR/build-for-testing.log"
+
+          xctestrun="$(find "$DERIVED_DATA_PATH/Build/Products" -name 'AgentPad_*.xctestrun' -type f -print | sed -n '1p')"
+          if [[ -z "$xctestrun" ]]; then
+            echo "No AgentPad .xctestrun was produced" >&2
+            exit 1
+          fi
+          printf '%s\n' "$xctestrun" > "$ARTIFACT_DIR/xctestrun.path"
+
+          app="$(find "$DERIVED_DATA_PATH/Build/Products" -path '*Debug-iphonesimulator/NovaForge.app' -type d -print | sed -n '1p')"
+          if [[ -z "$app" ]]; then
+            echo "NovaForge.app was not produced" >&2
+            exit 1
+          fi
+          embedded_sha="$(/usr/libexec/PlistBuddy -c 'Print :NovaForgeSourceCommit' "$app/Info.plist")"
+          embedded_sha="$(printf '%s' "$embedded_sha" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$embedded_sha" != "$SOURCE_SHA" ]]; then
+            echo "Built app source marker $embedded_sha does not match $SOURCE_SHA" >&2
+            exit 1
+          fi
+          printf 'app=%s\nsourceMarker=%s\n' "$app" "$embedded_sha" > "$ARTIFACT_DIR/app-source-binding.txt"
+
+      - name: Run focused Preview accessibility journeys
+        shell: bash
+        run: |
+          set -euo pipefail
+          xctestrun="$(cat "$ARTIFACT_DIR/xctestrun.path")"
+          screenshot_dir="$ARTIFACT_DIR/screenshots"
+          mkdir -p "$screenshot_dir"
+
+          env \
+            NOVAFORGE_CAPTURE_MODE=all \
+            TEST_RUNNER_NOVAFORGE_CAPTURE_MODE=all \
+            NOVAFORGE_SCREENSHOT_DIR="$PWD/$screenshot_dir" \
+            TEST_RUNNER_NOVAFORGE_SCREENSHOT_DIR="$PWD/$screenshot_dir" \
+            xcodebuild \
+              -xctestrun "$xctestrun" \
+              -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+              -destination-timeout 120 \
+              -parallel-testing-enabled NO \
+              -maximum-concurrent-test-simulator-destinations 1 \
+              test-without-building \
+              -only-testing:AgentPadUITests/AgentPadUITests/testCanonicalActivityApprovalIsAccessibleCompactAndLegacyFree \
+              -only-testing:AgentPadUITests/AgentPadUITests/testAccessibilityLayoutTouchTargetsAndCompactLabels \
+              -only-testing:AgentPadUITests/AgentPadUITests/testGoalMatrixChatReadabilityAndThemeSwitchingScreenshots \
+              2>&1 | tee "$ARTIFACT_DIR/accessibility-xctest.log"
+
+          grep -Fq '** TEST SUCCEEDED **' "$ARTIFACT_DIR/accessibility-xctest.log"
+          screenshot_count="$(find "$screenshot_dir" -type f -name '*.png' | wc -l | tr -d ' ')"
+          if [[ "$screenshot_count" -lt 4 ]]; then
+            echo "Expected at least 4 accessibility/readability screenshots, found $screenshot_count" >&2
+            exit 1
+          fi
+          printf 'xctest=PASS\nscreenshotCount=%s\nminimumScreenshotCount=4\n' "$screenshot_count" > "$ARTIFACT_DIR/verdict.txt"
+
+      - name: Capture all five Preview theme worlds
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(sed -n 's/^app=//p' "$ARTIFACT_DIR/app-source-binding.txt")"
+          if [[ -z "$app_path" || ! -d "$app_path" ]]; then
+            echo "Exact-source NovaForge.app path is unavailable for theme capture" >&2
+            exit 1
+          fi
+
+          theme_dir="$ARTIFACT_DIR/theme-screenshots"
+          theme_log_dir="$ARTIFACT_DIR/theme-capture-logs"
+          mkdir -p "$theme_dir" "$theme_log_dir"
+          : > "$ARTIFACT_DIR/theme-manifest.txt"
+
+          themes=(matrixRain midnightBlack whiteGold arcticGlass emberCore)
+          for theme in "${themes[@]}"; do
+            screenshot_path="$PWD/$theme_dir/${theme}.png"
+            echo "Capturing exact-source theme world: $theme"
+            env \
+              APP_PATH="$app_path" \
+              CONFIGURATION=Debug \
+              SIMULATOR_ID="$SIMULATOR_ID" \
+              INSTALL_APP=1 \
+              INSTALL_IF_NEWER=0 \
+              BOOT_SIMULATOR=0 \
+              SHUTDOWN_SIMULATOR_AFTER_CAPTURE=0 \
+              TERMINATE_AFTER_CAPTURE=1 \
+              WAIT_SECONDS=1 \
+              MIN_SCREENSHOT_BYTES=120000 \
+              SCREENSHOT_DIR="$PWD/$theme_dir" \
+              SCREENSHOT_PATH="$screenshot_path" \
+              LOG_DIR="$PWD/$theme_log_dir/$theme" \
+              zsh scripts/codex-fast-screenshot.sh \
+                --reset-ui \
+                "--theme-world=$theme" \
+                --canonical-activity-a11y-demo \
+                --open-chat \
+                > "$ARTIFACT_DIR/theme-${theme}.log" 2>&1
+
+            [[ -s "$screenshot_path" ]]
+            bytes="$(wc -c < "$screenshot_path" | tr -d '[:space:]')"
+            digest="$(shasum -a 256 "$screenshot_path" | awk '{print $1}')"
+            printf 'theme=%s\nfile=%s\nbytes=%s\nsha256=%s\n---\n' \
+              "$theme" "${theme}.png" "$bytes" "$digest" >> "$ARTIFACT_DIR/theme-manifest.txt"
+          done
+
+          theme_count="$(find "$theme_dir" -type f -name '*.png' | wc -l | tr -d ' ')"
+          if [[ "$theme_count" -ne 5 ]]; then
+            echo "Expected exactly 5 theme screenshots, found $theme_count" >&2
+            exit 1
+          fi
+          printf 'themeCapture=PASS\nthemeScreenshotCount=%s\n' "$theme_count" > "$ARTIFACT_DIR/theme-verdict.txt"
+
+      - name: Publish exact-head receipt summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## V14 Preview accessibility acceptance'
+            echo
+            echo "- Source: \`$SOURCE_SHA\`"
+            if [[ -f "$ARTIFACT_DIR/simulator-identity.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/simulator-identity.txt"
+            fi
+            if [[ -f "$ARTIFACT_DIR/verdict.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/verdict.txt"
+            else
+              echo '- verdict=INCOMPLETE_OR_FAILED'
+            fi
+            if [[ -f "$ARTIFACT_DIR/theme-verdict.txt" ]]; then
+              sed 's/^/- /' "$ARTIFACT_DIR/theme-verdict.txt"
+            else
+              echo '- themeCapture=INCOMPLETE_OR_FAILED'
+            fi
+            echo '- Five-theme PNGs are evidence inputs for human/screenshot critique; successful capture alone is not visual acceptance.'
+            echo '- Scope: Simulator accessibility/layout/readability evidence only; no physical-device, Local AI, provider, thermal, memory, or energy claim.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload accessibility evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: v14-preview-accessibility-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Shut down qualification Simulator
+        if: always()
+        shell: bash
+        run: |
+          xcrun simctl terminate "$SIMULATOR_ID" com.joey.NovaForge >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
