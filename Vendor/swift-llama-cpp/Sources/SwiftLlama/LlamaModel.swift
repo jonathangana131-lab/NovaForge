@@ -334,24 +334,6 @@ public final class LlamaModel {
     }
     public func modelSizeBytes() -> UInt64 { llama_model_size(modelPointer) }
 
-    /// Return up to `maxCount` built-in chat-template names exposed by llama.cpp.
-    /// This preserves the existing SwiftLlama public wrapper surface across the
-    /// pinned b10456 migration without inventing model-specific support claims.
-    public func builtinChatTemplates(maxCount: Int = 64) -> [String] {
-        guard maxCount > 0 else { return [] }
-        var pointers = Array<UnsafePointer<CChar>?>(repeating: nil, count: maxCount)
-        let totalCount = pointers.withUnsafeMutableBufferPointer { buffer in
-            llama_chat_builtin_templates(buffer.baseAddress, size_t(buffer.count))
-        }
-        guard totalCount > 0 else { return [] }
-
-        return pointers
-            .prefix(min(Int(totalCount), maxCount))
-            .compactMap { pointer in
-                pointer.map { String(cString: $0) }
-            }
-    }
-
     // MARK: - Adapter Factories
 
     public func loadLoraAdapter(path: String) -> LlamaLoraAdapter? {
