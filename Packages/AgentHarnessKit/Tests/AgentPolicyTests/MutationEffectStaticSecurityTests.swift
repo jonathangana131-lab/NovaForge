@@ -4,7 +4,7 @@ import XCTest
 
 final class MutationEffectStaticSecurityTests: XCTestCase {
     func testMoveOnlyAuthoritiesRejectCopyEscapeAtCompileTime() throws {
-        let packageRoot = packageRootURL()
+        let modulesURL = try activeModulesURL()
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "novaforge-move-only-compile-\(UUID().uuidString)",
@@ -68,7 +68,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
         for misuse in cases {
             let result = try compileMisuse(
                 misuse,
-                packageRoot: packageRoot,
+                modulesURL: modulesURL,
                 temporaryDirectory: temporaryDirectory
             )
             XCTAssertNotEqual(
@@ -176,7 +176,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
     func testOriginSpecificOperationTypesRejectCrossSurfaceCasesAtCompileTime()
         throws
     {
-        let packageRoot = packageRootURL()
+        let modulesURL = try activeModulesURL()
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "novaforge-origin-contract-compile-\(UUID().uuidString)",
@@ -250,7 +250,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
         for misuse in cases {
             let result = try compileMisuse(
                 misuse,
-                packageRoot: packageRoot,
+                modulesURL: modulesURL,
                 temporaryDirectory: temporaryDirectory
             )
             XCTAssertNotEqual(
@@ -275,31 +275,9 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             .deletingLastPathComponent()
     }
 
-    private func activeModulesPath() throws -> String {
-        let modulesURL = Bundle(for: MutationEffectStaticSecurityTests.self)
-            .bundleURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("Modules", isDirectory: true)
-        let agentPolicyModule = modulesURL.appendingPathComponent(
-            "AgentPolicy.swiftmodule",
-            isDirectory: true
-        )
-        guard FileManager.default.fileExists(atPath: agentPolicyModule.path) else {
-            throw NSError(
-                domain: "MutationEffectStaticSecurityTests",
-                code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "AgentPolicy module is missing from active SwiftPM build at \(modulesURL.path)"
-                ]
-            )
-        }
-        return modulesURL.path
-    }
-
     private func compileMisuse(
         _ misuse: (name: String, source: String),
-        packageRoot: URL,
+        modulesURL: URL,
         temporaryDirectory: URL
     ) throws -> (status: Int32, diagnostics: String) {
         let sourceURL = temporaryDirectory.appendingPathComponent(
@@ -319,7 +297,7 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
             "-swift-version",
             "6",
             "-I",
-            try activeModulesPath(),
+            modulesURL.path,
             "-o",
             "/dev/null",
             sourceURL.path,
@@ -332,6 +310,40 @@ final class MutationEffectStaticSecurityTests: XCTestCase {
         return (
             process.terminationStatus,
             String(decoding: data, as: UTF8.self)
+        )
+    }
+
+    private func activeModulesURL() throws -> URL {
+        let anchors = [
+            Bundle(for: MutationEffectStaticSecurityTests.self).bundleURL,
+            URL(fileURLWithPath: CommandLine.arguments[0]),
+        ]
+
+        for anchor in anchors {
+            var directory = anchor.deletingLastPathComponent()
+
+            for _ in 0..<10 {
+                let modulesURL = directory.appendingPathComponent("Modules", isDirectory: true)
+                let moduleURL = modulesURL.appendingPathComponent("AgentPolicy.swiftmodule")
+                if FileManager.default.fileExists(atPath: moduleURL.path) {
+                    return modulesURL
+                }
+
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path {
+                    break
+                }
+                directory = parent
+            }
+        }
+
+        throw NSError(
+            domain: "MutationEffectStaticSecurityTests",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "AgentPolicy module is missing from the active SwiftPM test bundle/executable ancestry"
+            ]
         )
     }
 }
