@@ -2,6 +2,13 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${1:-}" == "--root" ]]; then
+  [[ -n "${2:-}" ]] || { echo "Preview theme contract: --root requires a path" >&2; exit 2; }
+  repo_root="$(cd "$2" && pwd)"
+  shift 2
+fi
+[[ $# -eq 0 ]] || { echo "Preview theme contract: unexpected arguments: $*" >&2; exit 2; }
+
 theme="$repo_root/AgentPad/Design/AgentTheme.swift"
 settings="$repo_root/AgentPad/Views/SettingsView.swift"
 components="$repo_root/AgentPad/Views/SettingsComponents.swift"
@@ -70,15 +77,37 @@ if '.accessibilityIdentifier("settingsThemeStudioCard-\\(theme.rawValue)")' not 
 
 required_app = [
     '@AppStorage(AgentTheme.storageKey) private var selectedThemeRawValue = AgentTheme.defaultTheme.rawValue',
-    'if let launchTheme = AgentTheme.launchOverride(from: arguments)',
-    'UserDefaults.standard.set(launchTheme.rawValue, forKey: AgentTheme.storageKey)',
-    'AgentPalette.refreshThemeCache(AgentTheme.normalizeStoredTheme())',
-    'AgentThemeUIKit.apply(AgentTheme.current)',
     '.preferredColorScheme(selectedTheme.preferredColorScheme)',
+    'private var selectedTheme: AgentTheme {',
+    'storedRawValue: selectedThemeRawValue,',
+    'arguments: ProcessInfo.processInfo.arguments',
 ]
 for needle in required_app:
     if needle not in app:
         raise SystemExit(f"missing app launch/relaunch theme contract: {needle}")
+
+# A launch-only screenshot/UI-test override is active-process presentation state,
+# not a durable user preference. It must remain usable while never rewriting
+# novaForgeTheme. Accept either the direct legacy launchOverride application or
+# the durability helper shape so this contract protects semantics, not one
+# implementation spelling.
+if 'AgentTheme.launchOverride(from: arguments)' not in app and 'AgentTheme.resolvedForLaunch(' not in app:
+    raise SystemExit('missing active launch theme override resolution')
+if 'AgentPalette.refreshThemeCache(' not in app or 'AgentThemeUIKit.apply(' not in app:
+    raise SystemExit('missing active launch theme application')
+
+bad_persistence_patterns = [
+    re.compile(
+        r'UserDefaults\.standard\.set\s*\(\s*launchTheme\.rawValue\s*,\s*'
+        r'forKey\s*:\s*AgentTheme\.storageKey\s*\)',
+        flags=re.MULTILINE,
+    ),
+]
+for pattern in bad_persistence_patterns:
+    if pattern.search(app):
+        raise SystemExit(
+            'launch-only theme override must not overwrite durable novaForgeTheme selection'
+        )
 
 required_ui_proof = [
     'func testGoalMatrixChatReadabilityAndThemeSwitchingScreenshots() throws',
@@ -91,5 +120,5 @@ for needle in required_ui_proof:
     if needle not in ui_tests:
         raise SystemExit(f"missing existing interactive theme proof hook: {needle}")
 
-print('Preview theme contract: five canonical worlds + persisted Settings/app wiring + existing Matrix/Midnight interactive proof hook')
+print('Preview theme contract: five canonical worlds + durable Settings selection + non-persisting launch override + existing Matrix/Midnight proof hook')
 PY
