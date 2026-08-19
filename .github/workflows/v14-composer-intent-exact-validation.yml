@@ -1,0 +1,41 @@
+name: V14 Composer Intent Exact Package Validation
+
+on:
+  pull_request:
+
+jobs:
+  portable:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Verify exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "42509bee552c81cdd266f64e49c6d72b8c5a00ba"
+          git diff --check HEAD^
+      - name: Record Swift toolchain
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanCore -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanCore -c release -Xswiftc -warnings-as-errors
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Verify exact product parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "42509bee552c81cdd266f64e49c6d72b8c5a00ba"
+          git diff --check HEAD^
+      - name: Record Swift toolchain
+        run: swift --version
+      - name: Debug tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanCore -Xswiftc -warnings-as-errors
+      - name: Release tests with warnings as errors
+        run: swift test --package-path Packages/ForgePlanCore -c release -Xswiftc -warnings-as-errors
