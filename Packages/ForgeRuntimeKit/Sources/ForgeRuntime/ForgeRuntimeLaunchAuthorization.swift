@@ -6,6 +6,9 @@ import Foundation
 /// snapshot so optional unsupported requests disappear rather than becoming ambient authority.
 public struct ForgeRuntimeLaunchAuthorization: Equatable, Sendable {
     public let projectID: String
+    /// Canonical validated manifest project version retained so downstream host-owned capabilities
+    /// can bind to the exact source revision selected by the host rather than a caller-supplied alias.
+    public let projectVersion: String
     public let runtimeVersion: ForgeRuntimeVersion
     public let entryPoint: String
     public let presentation: ForgePresentationPolicy
@@ -16,6 +19,7 @@ public struct ForgeRuntimeLaunchAuthorization: Equatable, Sendable {
 
     init(
         projectID: String,
+        projectVersion: String,
         runtimeVersion: ForgeRuntimeVersion,
         entryPoint: String,
         presentation: ForgePresentationPolicy,
@@ -25,6 +29,7 @@ public struct ForgeRuntimeLaunchAuthorization: Equatable, Sendable {
         modules: [ForgeAuthorizedModule]
     ) {
         self.projectID = projectID
+        self.projectVersion = projectVersion
         self.runtimeVersion = runtimeVersion
         self.entryPoint = entryPoint
         self.presentation = presentation
@@ -93,6 +98,7 @@ public extension ForgeRuntimeManifestValidator {
 
         return ForgeRuntimeLaunchAuthorization(
             projectID: manifest.projectID,
+            projectVersion: manifest.projectVersion.trimmingCharacters(in: .whitespacesAndNewlines),
             runtimeVersion: manifest.runtimeVersion,
             entryPoint: manifest.entryPoint,
             presentation: manifest.presentation,
