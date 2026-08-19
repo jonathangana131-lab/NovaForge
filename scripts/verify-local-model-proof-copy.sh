@@ -4,8 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime="$repo_root/AgentPad/Services/LocalModelRuntime.swift"
 settings="$repo_root/AgentPad/Views/SettingsComponents.swift"
+benchmark="$repo_root/AgentPad/Views/ModelManagerPanels.swift"
+presentation_sources=("$runtime" "$settings")
+expected_sources=("${presentation_sources[@]}" "$benchmark")
 
-for path in "$runtime" "$settings"; do
+for path in "${expected_sources[@]}"; do
   if [[ ! -f "$path" ]]; then
     echo "missing expected source file: ${path#$repo_root/}" >&2
     exit 1
@@ -30,7 +33,7 @@ forbidden=(
 
 failed=0
 for needle in "${forbidden[@]}"; do
-  if grep -nF "$needle" "$runtime" "$settings"; then
+  if grep -nF "$needle" "${presentation_sources[@]}"; then
     echo "unearned or stale local-model presentation found: $needle" >&2
     failed=1
   fi
@@ -53,8 +56,34 @@ required=(
 )
 
 for needle in "${required[@]}"; do
-  if ! grep -Fq "$needle" "$runtime" "$settings"; then
+  if ! grep -Fq "$needle" "${presentation_sources[@]}"; then
     echo "expected truthful local-model presentation missing: $needle" >&2
+    failed=1
+  fi
+done
+
+benchmark_forbidden=(
+  'unit: "tok/s"'
+  'unit: "first token"'
+  'Measure real generation speed on this device'
+)
+
+for needle in "${benchmark_forbidden[@]}"; do
+  if grep -nF "$needle" "$benchmark"; then
+    echo "superseded benchmark presentation found: $needle" >&2
+    failed=1
+  fi
+done
+
+benchmark_required=(
+  'unit: "e2e chars/s"'
+  'unit: "first output"'
+  'not qualification evidence'
+)
+
+for needle in "${benchmark_required[@]}"; do
+  if ! grep -Fq "$needle" "$benchmark"; then
+    echo "expected truthful benchmark presentation missing: $needle" >&2
     failed=1
   fi
 done
