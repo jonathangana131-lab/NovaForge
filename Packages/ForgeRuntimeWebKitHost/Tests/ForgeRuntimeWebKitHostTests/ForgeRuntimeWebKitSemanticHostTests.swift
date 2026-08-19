@@ -138,7 +138,8 @@ final class ForgeRuntimeWebKitSemanticHostTests: XCTestCase {
         XCTAssertEqual(observation.loadSubject.sourceRevision, "rev-123")
         XCTAssertEqual(observation.loadSubject.runtimeVersion, fixture.launchRequest.authorization.runtimeVersion)
         XCTAssertEqual(observation.loadSubject.entryPointURL, fixture.launchRequest.entryPointURL)
-        XCTAssertEqual(observation.authorizationReceipt.sourceRevision, "rev-123")
+        XCTAssertEqual(observation.authorizationReceipt.authorization.sourceRevision, "rev-123")
+        XCTAssertEqual(observation.authorizationReceipt.runtimeVersion, session.runtimeVersion)
 
         let clicked = try await webView.evaluateJavaScript("document.body.dataset.clicked") as? String
         XCTAssertEqual(clicked, "yes")
@@ -173,6 +174,43 @@ final class ForgeRuntimeWebKitSemanticHostTests: XCTestCase {
         do {
             _ = try await host.execute(makeAuthorizedControl(session: authorizedSession))
             XCTFail("Expected cross-artifact semantic replay to fail closed")
+        } catch let error as ForgeRuntimeWebKitSemanticHostError {
+            XCTAssertEqual(error, .artifactIdentityMismatch)
+        }
+        withExtendedLifetime(delegate) {}
+    }
+
+    func testAuthorizedInteractionCannotReplayAcrossRuntimeVersions() async throws {
+        let fixture = try makeProjectFixture(projectID: "project-a", revision: "rev-123")
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let loadedSession = try makeSession(for: fixture.launchRequest, sessionID: "shared-session")
+        let otherRuntime = ForgeRuntimeVersion(
+            major: loadedSession.runtimeVersion.major + 1,
+            minor: loadedSession.runtimeVersion.minor
+        )
+        let authorizedSession = ForgeRuntimeAutomationSession(
+            sessionID: loadedSession.sessionID,
+            projectID: loadedSession.projectID,
+            sourceRevision: loadedSession.sourceRevision,
+            runtimeVersion: otherRuntime,
+            grantedCapabilities: loadedSession.grantedCapabilities,
+            maximumTextUTF8Bytes: loadedSession.maximumTextUTF8Bytes,
+            maximumGestureDurationMilliseconds: loadedSession.maximumGestureDurationMilliseconds,
+            maximumInteractions: loadedSession.maximumInteractions
+        )
+
+        let webView = WKWebView(frame: .zero, configuration: .init())
+        let host = ForgeRuntimeWebKitSemanticHost(webView: webView)
+        let delegate = ForwardingNavigationDelegate(host: host)
+        let didFinish = expectation(description: "validated navigation finished")
+        delegate.didFinishExpectation = didFinish
+        webView.navigationDelegate = delegate
+        _ = try host.load(fixture.launchRequest, for: loadedSession)
+        await fulfillment(of: [didFinish], timeout: 8)
+
+        do {
+            _ = try await host.execute(makeAuthorizedControl(session: authorizedSession))
+            XCTFail("Expected cross-runtime semantic replay to fail closed")
         } catch let error as ForgeRuntimeWebKitSemanticHostError {
             XCTAssertEqual(error, .artifactIdentityMismatch)
         }
@@ -303,7 +341,7 @@ final class ForgeRuntimeWebKitSemanticHostTests: XCTestCase {
 
     private func makeAuthorizedControl(
         session: ForgeRuntimeAutomationSession
-    ) throws -> ForgeRuntimeAuthorizedSemanticInteraction {
+    ) throws -> ForgeRuntimeSessionBoundAuthorizedSemanticInteraction {
         let envelope = ForgeRuntimeSemanticInteractionEnvelope(
             requestID: "request-1",
             sessionID: session.sessionID,
@@ -314,6 +352,6 @@ final class ForgeRuntimeWebKitSemanticHostTests: XCTestCase {
             targetID: "play"
         )
         var gate = try ForgeRuntimeSemanticInteractionGate(session: session)
-        return try gate.authorize(JSONEncoder().encode(envelope))
+        return try gate.authorizeSessionBound(JSONEncoder().encode(envelope))
     }
 }
