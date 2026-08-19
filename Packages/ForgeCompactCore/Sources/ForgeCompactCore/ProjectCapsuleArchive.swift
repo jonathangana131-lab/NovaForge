@@ -115,11 +115,48 @@ public struct ProjectCapsuleArchive: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        let projectID = try c.decode(String.self, forKey: .projectID)
+        let missionID = try c.decode(String.self, forKey: .missionID)
+
+        var capsuleContainer = try c.nestedUnkeyedContainer(forKey: .capsules)
+        if let count = capsuleContainer.count {
+            try ForgeCompactValidation.maximumCount(
+                count,
+                field: "archive.capsules",
+                maximum: Self.maximumCapsules
+            )
+        }
+        var capsules: [ProjectCapsule] = []
+        capsules.reserveCapacity(min(capsuleContainer.count ?? 0, Self.maximumCapsules))
+        var totalSourceItems = 0
+        var totalRenderedUTF8Bytes = 0
+
+        while !capsuleContainer.isAtEnd {
+            guard capsules.count < Self.maximumCapsules else {
+                throw ForgeCompactError.collectionTooLarge(
+                    field: "archive.capsules",
+                    maximum: Self.maximumCapsules
+                )
+            }
+
+            let capsule = try capsuleContainer.decode(ProjectCapsule.self)
+            let totals = try Self.checkedArchiveTotals(
+                currentSourceItems: totalSourceItems,
+                addingSourceItems: capsule.sourceItemCount,
+                currentRenderedUTF8Bytes: totalRenderedUTF8Bytes,
+                addingRenderedUTF8Bytes: capsule.renderedUTF8Bytes
+            )
+            totalSourceItems = totals.sourceItems
+            totalRenderedUTF8Bytes = totals.renderedUTF8Bytes
+            capsules.append(capsule)
+        }
+
         try self.init(
-            schemaVersion: c.decode(Int.self, forKey: .schemaVersion),
-            projectID: c.decode(String.self, forKey: .projectID),
-            missionID: c.decode(String.self, forKey: .missionID),
-            capsules: c.decode([ProjectCapsule].self, forKey: .capsules)
+            schemaVersion: schemaVersion,
+            projectID: projectID,
+            missionID: missionID,
+            capsules: capsules
         )
     }
 }
