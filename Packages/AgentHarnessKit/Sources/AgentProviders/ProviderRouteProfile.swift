@@ -188,7 +188,7 @@ public enum ProviderRouteProfileValidationError: Error, Equatable, Sendable {
     case emptyDataHandlingSourceID
     case emptyDataHandlingVerifiedAt
     case descriptorPathMismatch(descriptorPath: String, profilePath: String)
-    case unsafeEndpointRelativePath(String)
+    case unsafeEndpointRelativePath
     case cancellationCapabilityMismatch
     case supportedRouteHasUnverifiedAuthentication
     case supportedRouteHasUnverifiedDataHandling
@@ -256,9 +256,7 @@ public struct ProviderRouteProfile: Equatable, Sendable {
             )
         }
         guard isSafeProviderAuthorityRelativePath(endpoint.relativePath) else {
-            throw ProviderRouteProfileValidationError.unsafeEndpointRelativePath(
-                endpoint.relativePath
-            )
+            throw ProviderRouteProfileValidationError.unsafeEndpointRelativePath
         }
         if cancellationBehavior != .unavailable,
            !descriptor.route.capabilities.features.contains(.cancellation) {
