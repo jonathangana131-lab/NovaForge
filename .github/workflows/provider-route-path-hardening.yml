@@ -1,0 +1,185 @@
+name: Provider route path hardening
+
+on:
+  push:
+    branches:
+      - gpt56-sol-preview-provider-route-authority-0814
+    paths:
+      - .github/workflows/provider-route-path-hardening.yml
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Assert trigger ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "8159ed5581df93ba43a14415361af91dad4cdb09"
+          git diff --check HEAD^
+
+      - name: Reconcile current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge --no-edit origin/main
+
+      - name: Apply fail-closed route path contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift")
+          text = source.read_text()
+
+          old = """    case descriptorPathMismatch(descriptorPath: String, profilePath: String)\n    case cancellationCapabilityMismatch\n"""
+          new = """    case descriptorPathMismatch(descriptorPath: String, profilePath: String)\n    case unsafeEndpointRelativePath(String)\n    case cancellationCapabilityMismatch\n"""
+          if text.count(old) != 1:
+              raise SystemExit("expected validation-error insertion point exactly once")
+          text = text.replace(old, new, 1)
+
+          old = """        guard descriptor.requestPath == endpoint.relativePath else {\n            throw ProviderRouteProfileValidationError.descriptorPathMismatch(\n                descriptorPath: descriptor.requestPath,\n                profilePath: endpoint.relativePath\n            )\n        }\n        if cancellationBehavior != .unavailable,\n"""
+          new = """        guard descriptor.requestPath == endpoint.relativePath else {\n            throw ProviderRouteProfileValidationError.descriptorPathMismatch(\n                descriptorPath: descriptor.requestPath,\n                profilePath: endpoint.relativePath\n            )\n        }\n        guard ProviderRoutePathContract.isSafeRelativePath(endpoint.relativePath) else {\n            throw ProviderRouteProfileValidationError.unsafeEndpointRelativePath(\n                endpoint.relativePath\n            )\n        }\n        if cancellationBehavior != .unavailable,\n"""
+          if text.count(old) != 1:
+              raise SystemExit("expected endpoint-validation insertion point exactly once")
+          text = text.replace(old, new, 1)
+          source.write_text(text)
+
+          contract = Path("Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRoutePathContract.swift")
+          if contract.exists():
+              raise SystemExit("shared route path contract unexpectedly already exists")
+          contract.write_text(r'''import Foundation
+
+/// Package-owned relative-path contract shared by route authority. It mirrors
+/// the executable compatible-adapter boundary: a selectable route may name only
+/// a bounded provider-relative path, never an origin, query, fragment, or
+/// backslash-bearing path that dispatch will reject later.
+enum ProviderRoutePathContract {
+    static func isSafeRelativePath(_ value: String) -> Bool {
+        guard value.hasPrefix("/"), !value.hasPrefix("//"),
+              !value.contains("://"), !value.contains("?"),
+              !value.contains("#"), !value.contains("\\"),
+              value.utf8.count <= 2_048
+        else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            !CharacterSet.whitespacesAndNewlines.contains(scalar) &&
+                !CharacterSet.controlCharacters.contains(scalar) &&
+                scalar.properties.generalCategory != .format
+        }
+    }
+}
+''')
+
+          tests = Path("Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift")
+          test_text = tests.read_text()
+          marker = "    private func makeProfile(\n"
+          if test_text.count(marker) != 1:
+              raise SystemExit("expected test helper insertion point exactly once")
+          addition = r'''    func testRouteProfileRejectsEveryAdapterUnsafeRelativePath() throws {
+        let unsafePaths = [
+            "https://example.com/v1/chat/completions",
+            "//example.com/v1/chat/completions",
+            "/v1/chat/completions?debug=1",
+            "/v1/chat/completions#fragment",
+            "/v1\\chat\\completions",
+            "/v1/chat completions",
+            "/v1/\tchat",
+            "/" + String(repeating: "a", count: 2_048),
+        ]
+
+        for path in unsafePaths {
+            XCTAssertThrowsError(try makeCallerManagedProfile(requestPath: path), path) { error in
+                XCTAssertEqual(
+                    error as? ProviderRouteProfileValidationError,
+                    .unsafeEndpointRelativePath(path)
+                )
+            }
+        }
+    }
+
+    func testRouteProfileAcceptsMaximumBoundedRelativePath() throws {
+        let path = "/" + String(repeating: "a", count: 2_047)
+        let profile = try makeCallerManagedProfile(requestPath: path)
+
+        XCTAssertEqual(profile.endpoint.relativePath, path)
+        XCTAssertTrue(profile.isSelectable())
+    }
+
+    private func makeCallerManagedProfile(requestPath: String) throws -> ProviderRouteProfile {
+        let descriptor = OpenAICompatibleAdapter(
+            configuration: OpenAICompatibleAdapterConfiguration(
+                providerID: ProviderID(rawValue: "fixture-compatible-provider"),
+                adapterID: ProviderAdapterID(rawValue: "fixture-compatible-adapter"),
+                modelID: ProviderModelID(rawValue: "fixture-compatible-model"),
+                requestPath: requestPath
+            )
+        ).descriptor
+        return try ProviderRouteProfile(
+            descriptor: descriptor,
+            endpoint: ProviderEndpointAuthority(
+                authorityID: "fixture-compatible-origin",
+                relativePath: descriptor.requestPath
+            ),
+            authenticationMode: .callerManaged,
+            dataHandling: ProviderDataHandlingPolicy(
+                policyID: "fixture-compatible-policy",
+                classification: .standardHosted,
+                requiresPreUseDisclosure: false,
+                sourceID: "fixture-compatible-privacy-source",
+                verifiedAtISO8601: "2026-08-19T00:00:00Z"
+            ),
+            replayPolicy: .none,
+            retryBehavior: .never,
+            cancellationBehavior: .unavailable,
+            supportState: .supported,
+            evidence: ProviderRouteEvidence(
+                catalogSourceID: "fixture-compatible-catalog",
+                healthSourceID: "fixture-compatible-health",
+                revision: "review-path-r1"
+            )
+        )
+    }
+
+'''
+          test_text = test_text.replace(marker, addition + marker, 1)
+          tests.write_text(test_text)
+          PY
+          git diff --check
+          git diff --stat
+
+      - name: Focused Debug contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path Packages/AgentHarnessKit --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
+
+      - name: Focused Release contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path Packages/AgentHarnessKit -c release --filter ProviderRouteProfile -Xswiftc -warnings-as-errors
+
+      - name: Publish hardened product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "NovaForge automation"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/provider-route-path-hardening.yml
+          git add Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRouteProfile.swift
+          git add Packages/AgentHarnessKit/Sources/AgentProviders/ProviderRoutePathContract.swift
+          git add Packages/AgentHarnessKit/Tests/AgentProviderContractTests/ProviderRouteProfileReviewRegressionTests.swift
+          git diff --cached --check
+          git commit -m "Harden provider route endpoint path authority"
+          git push origin HEAD:gpt56-sol-preview-provider-route-authority-0814
