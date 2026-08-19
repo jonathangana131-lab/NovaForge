@@ -3,8 +3,8 @@ import Foundation
 /// Exact subject the host authenticated for one accounting measurement.
 ///
 /// This type is intentionally non-Codable. Durable `ForgeCompactAccountingReceipt` bytes remain
-/// evidence candidates, not trusted state. A host should create/store a binding only after it has
-/// authenticated the external measurement that produced the receipt.
+/// evidence candidates, not trusted state. Only a canonical producer inside ForgeCompactCore may
+/// construct a binding after authenticating the complete external measurement subject.
 public struct ForgeCompactAccountingTrustBinding: Hashable, Sendable {
     /// Keep the complete validated receipt as the authenticated subject so future receipt fields
     /// automatically participate in equality/matching instead of depending on a hand-maintained
@@ -25,9 +25,9 @@ public struct ForgeCompactAccountingTrustBinding: Hashable, Sendable {
     public var baselineUnits: UInt64 { authenticatedReceipt.baselineUnits }
     public var capsuleUnits: UInt64 { authenticatedReceipt.capsuleUnits }
 
-    /// Captures the complete subject of a receipt the host has already authenticated.
-    /// Constructing this value does not itself authenticate the receipt.
-    public init(authenticatedReceipt receipt: ForgeCompactAccountingReceipt) {
+    /// Package-owned producer seam. Constructing this value is intentionally unavailable to ordinary
+    /// imports because caller-shaped/Codable accounting receipts are candidate data, not authentication.
+    init(authenticatedReceipt receipt: ForgeCompactAccountingReceipt) {
         authenticatedReceipt = receipt
     }
 
