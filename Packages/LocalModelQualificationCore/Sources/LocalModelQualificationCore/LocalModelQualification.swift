@@ -56,12 +56,10 @@ public enum LocalModelEvidenceSource: String, Codable, Hashable, Sendable {
     case staticAnalysis
 }
 
+/// Candidate producer metadata. This label is persisted/model-shaped data and is never trust authority by itself.
 public enum LocalModelEvidenceAuthority: String, Codable, Hashable, Sendable {
-    /// Produced by a deterministic NovaForge or independently controlled qualification harness.
     case deterministicHarness
-    /// Useful research evidence that remains non-promoting until reproduced by a deterministic harness.
     case manualObservation
-    /// Model/provider-authored prose or self-report. Never qualifies a product support claim.
     case modelReported
 }
 
@@ -352,6 +350,7 @@ public enum LocalModelEvidencePayload: Codable, Hashable, Sendable {
     }
 }
 
+/// Persistable candidate evidence. Authority/status fields describe the producer claim but cannot authenticate it.
 public struct LocalModelQualificationEvidence: Codable, Hashable, Sendable {
     public let evidenceID: String
     public let subject: LocalModelQualificationSubject
@@ -421,28 +420,37 @@ public struct LocalModelQualificationEvidence: Codable, Hashable, Sendable {
     }
 }
 
+/// Transient proof that one complete candidate-evidence value was authenticated by the canonical host boundary.
+/// The initializer is intentionally module-internal and the receipt is intentionally non-Codable so persisted or
+/// ordinary-import caller data cannot mint trusted qualification authority.
+public struct LocalModelTrustedEvidenceReceipt: Hashable, Sendable {
+    fileprivate let evidence: LocalModelQualificationEvidence
+
+    init(authenticatedEvidence: LocalModelQualificationEvidence) {
+        self.evidence = authenticatedEvidence
+    }
+}
+
 public enum LocalModelQualificationClaim: String, Codable, Hashable, Sendable {
-    /// Exact artifact bytes/revision/tokenizer identity were deterministically verified.
     case artifactVerified
-    /// This exact runtime/profile/device/OS combination has deterministic physical-device runtime evidence.
     case deviceRuntimeQualified
-    /// Device runtime qualification plus a deterministic local-only network audit.
     case localOnlyDeviceQualified
 }
 
-public struct LocalModelQualificationReadiness: Codable, Equatable, Sendable {
+/// Transient derived qualification result. Ordinary consumers can inspect it but cannot construct or decode one.
+public struct LocalModelQualificationReadiness: Equatable, Sendable {
     public let claim: LocalModelQualificationClaim
     public let isQualified: Bool
     public let blockingReasons: [String]
 
-    public init(claim: LocalModelQualificationClaim, blockingReasons: [String]) {
+    init(claim: LocalModelQualificationClaim, blockingReasons: [String]) {
         self.claim = claim
         self.blockingReasons = blockingReasons
         self.isQualified = blockingReasons.isEmpty
     }
 }
 
-/// Current evidence snapshot for one exact qualification subject.
+/// Current candidate-evidence snapshot for one exact qualification subject.
 /// Only one receipt per evidence class is accepted, so an older failed result cannot be hidden behind a second pass.
 public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
     public let revision: Int
@@ -487,13 +495,39 @@ public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
         }
     }
 
-    /// Evaluates a claim only against receipt IDs independently trusted by the host qualification boundary.
-    /// Persisted/model-authored JSON cannot promote itself merely by spelling `deterministicHarness`.
+    /// Compatibility boundary for older callers that still pass caller-shaped evidence as "trust".
+    /// This overload is deliberately fail-closed: public/Codable evidence can never authorize a qualification claim.
     public func readiness(
         for claim: LocalModelQualificationClaim,
-        trustedEvidence: Set<LocalModelQualificationEvidence>
+        trustedEvidence _: Set<LocalModelQualificationEvidence>
     ) -> LocalModelQualificationReadiness {
-        var reasons: [String] = []
+        evaluateReadiness(
+            for: claim,
+            initialReasons: ["Caller-shaped evidence cannot authorize qualification."],
+            isTrusted: { _ in false }
+        )
+    }
+
+    /// Evaluates a claim only against complete evidence values authenticated by the canonical host boundary.
+    public func readiness(
+        for claim: LocalModelQualificationClaim,
+        trustedReceipts: Set<LocalModelTrustedEvidenceReceipt>
+    ) -> LocalModelQualificationReadiness {
+        evaluateReadiness(
+            for: claim,
+            initialReasons: [],
+            isTrusted: { item in
+                trustedReceipts.contains { $0.evidence == item }
+            }
+        )
+    }
+
+    private func evaluateReadiness(
+        for claim: LocalModelQualificationClaim,
+        initialReasons: [String],
+        isTrusted: (LocalModelQualificationEvidence) -> Bool
+    ) -> LocalModelQualificationReadiness {
+        var reasons = initialReasons
 
         func receipt(for evidenceClass: LocalModelEvidenceClass) -> LocalModelQualificationEvidence? {
             evidence.first { $0.evidenceClass == evidenceClass }
@@ -508,7 +542,7 @@ public struct LocalModelQualificationRecord: Codable, Hashable, Sendable {
                 reasons.append("Missing \(evidenceClass.rawValue) evidence.")
                 return
             }
-            if !trustedEvidence.contains(item) {
+            if !isTrusted(item) {
                 reasons.append("\(evidenceClass.rawValue) evidence is not trusted by the host qualification boundary.")
             }
             if item.status != .passed {
