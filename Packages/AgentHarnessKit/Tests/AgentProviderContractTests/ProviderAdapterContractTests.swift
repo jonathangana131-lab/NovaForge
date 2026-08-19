@@ -4,6 +4,35 @@ import Foundation
 import XCTest
 
 final class ProviderAdapterContractTests: XCTestCase {
+    func testProviderFailuresExposeActionableLocalizedDescriptions() {
+        let providerID = ProviderID(rawValue: "fixture-provider")
+        let adapterID = ProviderAdapterID(rawValue: "fixture-adapter")
+
+        let unavailableModel = ProviderFailureMapper.httpFailure(
+            statusCode: 404,
+            providerID: providerID,
+            adapterID: adapterID
+        )
+        XCTAssertEqual(
+            unavailableModel.localizedDescription,
+            unavailableModel.publicMessage
+        )
+        XCTAssertTrue(unavailableModel.publicMessage.contains("another model"))
+
+        let rejectedCredential = ProviderFailureMapper.httpFailure(
+            statusCode: 401,
+            providerID: providerID,
+            adapterID: adapterID
+        )
+        XCTAssertTrue(rejectedCredential.publicMessage.contains("Reconnect"))
+
+        let billing = ProviderFailureMapper.httpFailure(
+            statusCode: 402,
+            providerID: providerID,
+            adapterID: adapterID
+        )
+        XCTAssertTrue(billing.publicMessage.contains("billing"))
+    }
     func testGoldenChatAndResponsesRequestsPreserveMultiRoundTranscript() throws {
         let request = canonicalRequest()
 
