@@ -32,7 +32,7 @@ private enum ForgeCrashLimits {
         guard !normalized.isEmpty else {
             throw ForgeCrashValidationError.blankField(field)
         }
-        guard normalized.count <= maximum else {
+        guard normalized.utf8.count <= maximum else {
             throw ForgeCrashValidationError.fieldTooLong(field: field, maximum: maximum)
         }
         return normalized
@@ -41,6 +41,20 @@ private enum ForgeCrashLimits {
     static func optional(_ value: String?, field: String, maximum: Int) throws -> String? {
         guard let value else { return nil }
         return try required(value, field: field, maximum: maximum)
+    }
+
+    static func prefixUTF8(_ value: String, maximumBytes: Int) -> String {
+        guard maximumBytes > 0 else { return "" }
+        var result = ""
+        var usedBytes = 0
+        for scalar in value.unicodeScalars {
+            let scalarText = String(scalar)
+            let scalarBytes = scalarText.utf8.count
+            guard usedBytes + scalarBytes <= maximumBytes else { break }
+            result.append(contentsOf: scalarText)
+            usedBytes += scalarBytes
+        }
+        return result
     }
 
     static func monotonic(_ values: [Int], field: String) throws {
@@ -350,7 +364,10 @@ public struct ForgeCrashRepeatKey: Codable, Hashable, Sendable {
             .lowercased()
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
-        return String(collapsed.prefix(ForgeCrashLimits.repeatFallbackMessage))
+        return ForgeCrashLimits.prefixUTF8(
+            collapsed,
+            maximumBytes: ForgeCrashLimits.repeatFallbackMessage
+        )
     }
 }
 
