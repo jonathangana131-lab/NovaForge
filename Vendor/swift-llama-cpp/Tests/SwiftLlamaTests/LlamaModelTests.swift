@@ -54,7 +54,7 @@ struct LlamaModelTests {
         #expect(LlamaModel.nextChatTemplateBufferSize(for: 1, currentSize: -1) == nil)
     }
 
-    @Test("Tokenize of empty string is empty and chat template returns something")
+    @Test("Tokenize of empty string is empty and default chat template preserves user content")
     func testTokenizeEmptyAndChatTemplate() throws {
         let model = try #require(LlamaModel(path: URL.llama1B.path))
         let empty = model.tokenize(text: "", addBos: model.shouldAddBos(), special: true)
@@ -66,13 +66,7 @@ struct LlamaModelTests {
         ]
         let prompt = model.applyChatTemplate(to: messages)
         #expect(!prompt.isEmpty)
-    }
-
-    @Test("Built-in chat templates accessible")
-    func testBuiltinTemplates() throws {
-        let model = try #require(LlamaModel(path: URL.llama1B.path))
-        let templates = model.builtinChatTemplates()
-        #expect(templates.count >= 0) // may be empty depending on model
+        #expect(prompt.contains("Say hi"))
     }
 
     @Test("Detokenize round-trip: simple ASCII")
