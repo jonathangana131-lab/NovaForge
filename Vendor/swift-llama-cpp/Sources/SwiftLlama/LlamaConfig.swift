@@ -47,6 +47,17 @@ struct LlamaContextAllocationProfile: Equatable, Sendable {
         guard effective > 0, effective <= UInt32(Int32.max) else { return nil }
         return effective
     }
+
+    /// The executable token ceiling must obey the selected policy, llama.cpp's
+    /// actual post-construction context, and the model's positive training
+    /// context. The latter also keeps later Int32 token positions representable.
+    func reconciledContextTokens(actualContextTokens: UInt32, trainedContextTokens: Int32) -> UInt32? {
+        guard actualContextTokens > 0, trainedContextTokens > 0 else { return nil }
+        let trained = UInt32(trainedContextTokens)
+        let effective = min(contextTokens, min(actualContextTokens, trained))
+        guard effective > 4 else { return nil }
+        return effective
+    }
 }
 
 public struct LlamaConfig: Equatable, Sendable {
