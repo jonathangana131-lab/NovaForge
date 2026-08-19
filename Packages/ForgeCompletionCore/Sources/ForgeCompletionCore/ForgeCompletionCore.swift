@@ -43,7 +43,7 @@ private enum ForgeCompletionValidation {
     }
 
     static func revision(_ value: Int, field: String) throws -> Int {
-        guard value >= 0 else {
+        guard value > 0 else {
             throw ForgeCompletionError.invalidRevision(field)
         }
         return value
