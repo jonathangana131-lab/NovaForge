@@ -6,6 +6,7 @@ public enum ForgeCompactError: Error, Equatable, Sendable {
     case invalidPriority(Int)
     case invalidRevision(field: String, value: Int)
     case invalidBudget(Int)
+    case collectionTooLarge(field: String, maximum: Int)
     case duplicateItemID(String)
     case sourceRevisionMismatch(itemID: String)
     case modelSummaryCannotBeAuthoritative(itemID: String)
@@ -41,6 +42,12 @@ enum ForgeCompactValidation {
             throw ForgeCompactError.invalidContent
         }
         return trimmed
+    }
+
+    static func maximumCount(_ count: Int, field: String, maximum: Int) throws {
+        guard count >= 0, count <= maximum else {
+            throw ForgeCompactError.collectionTooLarge(field: field, maximum: maximum)
+        }
     }
 }
 
