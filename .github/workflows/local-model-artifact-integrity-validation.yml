@@ -1,0 +1,35 @@
+name: Local Model artifact integrity exact-product validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/local-model-artifact-integrity-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Local Model artifact integrity exact product
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent and validation-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_product="0bf8cfae81e940bed481e069a4e2ef5084b880d9"
+          actual_parent="$(git rev-parse HEAD^)"
+          test "$actual_parent" = "$expected_product"
+          changed="$(git diff --name-only "$expected_product"..HEAD)"
+          test "$changed" = ".github/workflows/local-model-artifact-integrity-validation.yml"
+          git diff --check "$expected_product"..HEAD
+      - name: Test LocalModelQualificationCore Debug
+        run: swift test --package-path Packages/LocalModelQualificationCore -Xswiftc -warnings-as-errors
+      - name: Test LocalModelQualificationCore Release
+        run: swift test --package-path Packages/LocalModelQualificationCore -c release -Xswiftc -warnings-as-errors
