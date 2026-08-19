@@ -69,7 +69,8 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     }
 
     var executionLabel: String {
-        useGPU ? "Metal \(gpuLayerCount)L" : "CPU-only"
+        if usesMLX { return "MLX · Metal" }
+        return useGPU ? "Metal \(gpuLayerCount)L" : "CPU-only"
     }
 
     var estimatedPeakMemoryLabel: String {
@@ -82,6 +83,27 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     var isNewRelease: Bool {
         releaseDateISO8601 >= "2026-07-01"
     }
+
+    var usesMLX: Bool {
+        #if canImport(SwiftLlama)
+        return mlxProfile != nil
+        #else
+        return false
+        #endif
+    }
+
+    #if canImport(SwiftLlama)
+    var mlxProfile: NovaForgeMLXProfile? {
+        switch id {
+        case "MercuriusDream/Nanbeige4.2-3B-mlx-3bit":
+            return .nanbeige42Coder3Bit
+        case "MercuriusDream/Nanbeige4.2-3B-mlx-2bit":
+            return .nanbeige42Coder2Bit
+        default:
+            return nil
+        }
+    }
+    #endif
 }
 
 enum LocalModelCatalog {
@@ -92,6 +114,70 @@ enum LocalModelCatalog {
     static let verifiedRevision = "f86cb2c1fa58255f8052cc32aeede1b7482d4361"
 
     static let all: [LocalModelVariant] = [
+        .init(
+            id: "MercuriusDream/Nanbeige4.2-3B-mlx-3bit",
+            displayName: "Nanbeige 4.2 3B — MLX 3-bit",
+            shortName: "Nanbeige 4.2 3B",
+            quantization: "MLX 3-bit",
+            filename: "nanbeige4.2-3b-mlx-3bit.snapshot",
+            downloadURL: URL(string: "https://huggingface.co/MercuriusDream/Nanbeige4.2-3B-mlx-3bit")!,
+            expectedBytes: 1_825_000_000,
+            expectedSHA256: String(repeating: "0", count: 64),
+            minimumPhysicalMemoryBytes: 3_500_000_000,
+            recommendedFreeDiskBytes: 2_400_000_000,
+            contextTokens: 2_048,
+            batchTokens: 32,
+            maxNewTokens: 384,
+            maxGenerationSeconds: 60,
+            useGPU: true,
+            gpuLayerCount: 0,
+            generationThreadCount: 1,
+            batchThreadCount: 1,
+            isIPhone12SafeDefault: false,
+            releaseDateISO8601: "2026-08-01",
+            releaseDateLabel: "Aug 2026",
+            parameterLabel: "3B",
+            licenseLabel: "Apache 2.0",
+            benchmarkSummary: "MLX quality candidate · qualification pending",
+            capabilitySummary: "Code generation · editing · local agent routing",
+            deviceFit: .deviceProven,
+            estimatedPeakMemoryBytes: 2_050_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 2_000_000_000,
+            sourceURL: URL(string: "https://huggingface.co/MercuriusDream/Nanbeige4.2-3B-mlx-3bit")!,
+            details: "Pre-2.0 MLX quality candidate with a 2,048-token sliding cache and TurboQuant. Physical iPhone 12 load, speed, memory, thermal, cancellation, and relaunch qualification are still required."
+        ),
+        .init(
+            id: "MercuriusDream/Nanbeige4.2-3B-mlx-2bit",
+            displayName: "Nanbeige 4.2 3B — MLX 2-bit",
+            shortName: "Nanbeige 4.2 3B Low Memory",
+            quantization: "MLX 2-bit",
+            filename: "nanbeige4.2-3b-mlx-2bit.snapshot",
+            downloadURL: URL(string: "https://huggingface.co/MercuriusDream/Nanbeige4.2-3B-mlx-2bit")!,
+            expectedBytes: 1_300_000_000,
+            expectedSHA256: String(repeating: "0", count: 64),
+            minimumPhysicalMemoryBytes: 3_500_000_000,
+            recommendedFreeDiskBytes: 1_850_000_000,
+            contextTokens: 2_048,
+            batchTokens: 32,
+            maxNewTokens: 320,
+            maxGenerationSeconds: 60,
+            useGPU: true,
+            gpuLayerCount: 0,
+            generationThreadCount: 1,
+            batchThreadCount: 1,
+            isIPhone12SafeDefault: false,
+            releaseDateISO8601: "2026-08-01",
+            releaseDateLabel: "Aug 2026",
+            parameterLabel: "3B",
+            licenseLabel: "Apache 2.0",
+            benchmarkSummary: "MLX low-memory candidate · qualification pending",
+            capabilitySummary: "Code generation · editing · local agent routing",
+            deviceFit: .memorySaver,
+            estimatedPeakMemoryBytes: 1_650_000_000,
+            minimumAvailableMemoryBeforeLoadBytes: 1_700_000_000,
+            sourceURL: URL(string: "https://huggingface.co/MercuriusDream/Nanbeige4.2-3B-mlx-2bit")!,
+            details: "Lower-memory MLX fallback for the same Nanbeige family. It stays qualification-pending until the physical-device fallback path is measured."
+        ),
         .init(
             id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M",
             displayName: "Qwen Coder 1.5B — iPhone 12",
@@ -524,6 +610,14 @@ final class LocalModelManager {
         #if DEBUG || targetEnvironment(simulator)
         debugStatusOverride = nil
         #endif
+
+        #if canImport(SwiftLlama)
+        if let profile = variant.mlxProfile {
+            installSelectedMLX(variant: variant, profile: profile)
+            return
+        }
+        #endif
+
         status = .downloading
         let existingBytes = (try? LocalModelCatalog.fileURL(for: variant))
             .flatMap { fileSize(at: LocalModelDownloader.temporaryURL(for: $0)) }
@@ -568,6 +662,47 @@ final class LocalModelManager {
         }
     }
 
+    #if canImport(SwiftLlama)
+    private func installSelectedMLX(
+        variant: LocalModelVariant,
+        profile: NovaForgeMLXProfile
+    ) {
+        status = .downloading
+        downloadedBytes = 0
+        progress = .init(receivedBytes: 0, totalBytes: variant.expectedBytes)
+        downloadTask?.cancel()
+        downloadTask = Task(priority: .utility) { [weak self, variant, profile] in
+            do {
+                try await NovaForgeMLXRuntime.shared.warm(profile: profile)
+                await NovaForgeMLXRuntime.shared.unload()
+                await MainActor.run {
+                    guard self?.selectedVariantID == variant.id else {
+                        self?.downloadTask = nil
+                        return
+                    }
+                    self?.downloadedBytes = variant.expectedBytes
+                    self?.progress = .init(
+                        receivedBytes: variant.expectedBytes,
+                        totalBytes: variant.expectedBytes
+                    )
+                    self?.status = .ready
+                    self?.downloadTask = nil
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self?.downloadTask = nil
+                    self?.refreshStatus()
+                }
+            } catch {
+                await MainActor.run {
+                    self?.downloadTask = nil
+                    self?.status = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+    #endif
+
     func cancelDownload() {
         downloadTask?.cancel()
         downloadTask = nil
@@ -607,6 +742,26 @@ final class LocalModelManager {
         status = .checking
         Task(priority: .utility) { [weak self, variant] in
             await LocalModelClient.shared.unload(modelID: variant.id)
+
+        #if canImport(SwiftLlama)
+        if let profile = variant.mlxProfile {
+            do {
+                try await NovaForgeMLXRuntime.shared.removeCached(profile: profile)
+            } catch {
+                await MainActor.run {
+                    guard self?.selectedVariantID == variant.id else { return }
+                    self?.status = .failed("Could not delete \(variant.shortName): \(error.localizedDescription)")
+                }
+                return
+            }
+            await MainActor.run {
+                guard self?.selectedVariantID == variant.id else { return }
+                self?.refreshStatus()
+            }
+            return
+        }
+        #endif
+
             let deleteError = await Task.detached(priority: .utility) { () -> String? in
                 do {
                     let url = try LocalModelCatalog.fileURL(for: variant)
@@ -640,6 +795,15 @@ final class LocalModelManager {
         for variant: LocalModelVariant? = nil
     ) async throws -> URL {
         let variant = variant ?? selectedVariant
+        #if canImport(SwiftLlama)
+        if let profile = variant.mlxProfile,
+           let cached = await NovaForgeMLXRuntime.shared.cachedSnapshotURL(profile: profile) {
+            return cached
+        }
+        if variant.mlxProfile != nil {
+            throw LocalModelRuntimeError.modelNotDownloaded(variant.displayName)
+        }
+        #endif
         return try await LocalModelArtifactVerifier.shared.verifiedURL(
             for: variant
         )
@@ -688,6 +852,20 @@ private enum LocalModelStatusProbe {
         if let message = compatibilityMessage(for: variant) {
             return .init(status: .incompatible(message), progress: emptyProgress, downloadedBytes: 0)
         }
+
+        #if canImport(SwiftLlama)
+        if let profile = variant.mlxProfile {
+            let cached = await NovaForgeMLXRuntime.shared.isCached(profile: profile)
+            return .init(
+                status: cached ? .ready : .missing,
+                progress: .init(
+                    receivedBytes: cached ? variant.expectedBytes : 0,
+                    totalBytes: variant.expectedBytes
+                ),
+                downloadedBytes: cached ? variant.expectedBytes : 0
+            )
+        }
+        #endif
 
         do {
             let url = try LocalModelCatalog.fileURL(for: variant)
@@ -1261,6 +1439,18 @@ private final class LocalModelDownloadTransfer: NSObject, URLSessionDataDelegate
 /// A single process-wide generation lease prevents two workspaces from
 /// loading or driving llama.cpp concurrently on memory-constrained phones.
 /// Waiting is cancellation-aware and does not cancel the current owner's run.
+private actor LocalMLXTextAccumulator {
+    private var text = ""
+    private let maximumCharacters = 32_768
+
+    func append(_ chunk: String) {
+        guard text.count < maximumCharacters else { return }
+        text += String(chunk.prefix(maximumCharacters - text.count))
+    }
+
+    func value() -> String { text }
+}
+
 private actor LocalModelInferenceGate {
     static let shared = LocalModelInferenceGate()
     private var isHeld = false
@@ -1300,10 +1490,14 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
 
     func unload(modelID: String? = nil) async {
         #if canImport(SwiftLlama)
-        guard let loadedService,
-              modelID == nil || loadedService.variantID == modelID else { return }
-        await loadedService.service.stopCompletion()
-        self.loadedService = nil
+        if let loadedService,
+           modelID == nil || loadedService.variantID == modelID {
+            await loadedService.service.stopCompletion()
+            self.loadedService = nil
+        }
+        if modelID == nil || LocalModelCatalog.variant(for: modelID ?? "")?.mlxProfile != nil {
+            await NovaForgeMLXRuntime.shared.unload()
+        }
         #endif
     }
 
@@ -1350,6 +1544,14 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         guard let variant = LocalModelCatalog.variant(for: modelID) else {
             throw LocalModelRuntimeError.modelNotDownloaded(modelID)
         }
+        #if canImport(SwiftLlama)
+        if let profile = variant.mlxProfile {
+            guard await NovaForgeMLXRuntime.shared.isCached(profile: profile) else {
+                throw LocalModelRuntimeError.modelNotDownloaded(variant.displayName)
+            }
+            return
+        }
+        #endif
         _ = try await LocalModelArtifactVerifier.shared.verifiedURL(
             for: variant
         )
@@ -1389,6 +1591,16 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         if let message = LocalModelCatalog.compatibilityMessage(for: variant) {
             throw LocalModelRuntimeError.incompatibleDevice(message)
         }
+
+        #if canImport(SwiftLlama)
+        if let profile = variant.mlxProfile {
+            return try await performMLXAgentDecision(
+                request: request,
+                completedToolCallCount: completedToolCallCount,
+                profile: profile
+            )
+        }
+        #endif
 
         let modelURL = try await LocalModelArtifactVerifier.shared
             .verifiedURL(for: variant)
@@ -1484,6 +1696,68 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         #endif
     }
 
+    #if canImport(SwiftLlama)
+    private func performMLXAgentDecision(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int,
+        profile: NovaForgeMLXProfile
+    ) async throws -> LocalAgentModelDecision {
+        let latestUserIndex = request.messages.lastIndex(where: { $0.role == .user })
+        let latestUser = latestUserIndex.map { request.messages[$0].content } ?? ""
+        let recentContext = latestUserIndex.map { index in
+            Self.boundedPlannerTranscript(Array(request.messages.dropFirst(index + 1)))
+        } ?? ""
+        let contextLine = recentContext.isEmpty
+            ? ""
+            : "\nRecent validated actions and results:\n\(recentContext)"
+        let prompt = "Request: \(Self.boundedPlannerText(latestUser, limit: 900))\(contextLine)\nCompleted actions: \(completedToolCallCount)\nReturn only the JSON decision object."
+        let accumulator = LocalMLXTextAccumulator()
+        _ = try await NovaForgeMLXRuntime.shared.generate(
+            profile: profile,
+            instructions: LocalAgentModelGrammar.routerPrompt,
+            prompt: prompt,
+            options: .init(maximumTokens: 192, temperature: 0, topP: 1)
+        ) { chunk in
+            await accumulator.append(chunk)
+        }
+        let output = await accumulator.value()
+        guard let json = Self.firstJSONObject(in: output),
+              let data = json.data(using: .utf8),
+              let decision = try? JSONDecoder().decode(LocalAgentModelDecision.self, from: data)
+        else {
+            throw LocalModelRuntimeError.invalidAgentDecisionOutput(
+                Self.boundedPlannerText(output, limit: 1_500)
+            )
+        }
+        return decision
+    }
+    #endif
+
+    private static func firstJSONObject(in text: String) -> String? {
+        guard let start = text.firstIndex(of: "{"),
+              let end = text.lastIndex(of: "}"),
+              start <= end else { return nil }
+        return String(text[start ... end])
+    }
+
+    private static func mlxPrompt(
+        messages: [AgentLocalModelInferenceMessage]
+    ) -> String {
+        var remaining = 12_000
+        var lines: [String] = []
+        for message in messages.suffix(16) {
+            guard remaining > 0 else { break }
+            let role = message.role.rawValue
+            let allowed = max(0, min(1_500, remaining - role.count - 2))
+            guard allowed > 0 else { break }
+            let content = boundedPlannerText(message.content, limit: allowed)
+            let line = "\(role): \(content)"
+            lines.append(line)
+            remaining -= line.count + 1
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private static func boundedPlannerText(
         _ value: String,
         limit: Int
@@ -1546,6 +1820,34 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         if let message = LocalModelCatalog.compatibilityMessage(for: variant) {
             throw LocalModelRuntimeError.incompatibleDevice(message)
         }
+
+        #if canImport(SwiftLlama)
+        if let profile = variant.mlxProfile {
+            let metrics = try await NovaForgeMLXRuntime.shared.generate(
+                profile: profile,
+                instructions: NovaForgeMLXRuntime.defaultCoderInstructions,
+                prompt: Self.mlxPrompt(messages: request.messages),
+                options: .init(
+                    maximumTokens: Int(request.maximumOutputTokens),
+                    temperature: Float(request.temperature),
+                    topP: 0.9
+                )
+            ) { chunk in
+                if !chunk.isEmpty {
+                    try await onEvent(.text(chunk))
+                }
+            }
+            try Task.checkCancellation()
+            try await onEvent(.usage(
+                generatedTokenCount: UInt64(max(0, metrics.generatedTokenCount))
+            ))
+            let reason: AgentLocalModelInferenceFinishReason =
+                metrics.generatedTokenCount >= Int(request.maximumOutputTokens)
+                ? .length : .completed
+            try await onEvent(.completed(reason: reason))
+            return
+        }
+        #endif
 
         let modelURL = try await LocalModelArtifactVerifier.shared
             .verifiedURL(for: variant)
