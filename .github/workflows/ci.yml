@@ -50,6 +50,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  fabric-opaque-trust:
+    name: Local Model Fabric opaque trust
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Assert exact product parent
+        env:
+          EXPECTED_PRODUCT_HEAD: b825e792393cfa7e9871d9a0ab0ea184259591bf
+        run: |
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PRODUCT_HEAD"
+          git diff --check "$EXPECTED_PRODUCT_HEAD"
+          ! grep -R "Set<LocalModelQualificationEvidence>" Packages/LocalModelFabricCore
+          ! grep -R "LocalModelQualificationReadiness(" Packages/LocalModelFabricCore/Tests
+      - name: Debug Fabric contracts
+        run: swift test --package-path Packages/LocalModelFabricCore -Xswiftc -warnings-as-errors
+      - name: Release Fabric contracts
+        run: swift test --package-path Packages/LocalModelFabricCore -c release -Xswiftc -warnings-as-errors
+      - name: Public trust boundary regression
+        run: swift test --package-path Packages/LocalModelFabricCore --filter testPublicMissionWithoutOpaqueQualificationEvidenceFailsClosed -Xswiftc -warnings-as-errors
+
   screenshot-tour:
     name: Synchronized visual proof
     needs: verify
