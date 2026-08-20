@@ -1,0 +1,56 @@
+name: Voltline Simulation Core
+
+on:
+  push:
+    branches:
+      - codex/voltline-ios-foundation
+    paths:
+      - "Voltline/**"
+      - ".github/workflows/voltline-sim-core.yml"
+  pull_request:
+    paths:
+      - "Voltline/**"
+      - ".github/workflows/voltline-sim-core.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulation-tests:
+    name: Deterministic physics tests
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Build simulation core
+        working-directory: Voltline
+        run: swift build --configuration debug
+
+      - name: Run deterministic tests
+        working-directory: Voltline
+        run: swift test --parallel
+
+      - name: Save test metadata
+        if: always()
+        run: |
+          mkdir -p Voltline/Artifacts
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "runner=${RUNNER_OS}"
+            swift --version
+          } > Voltline/Artifacts/build-info.txt
+
+      - name: Upload test metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voltline-sim-build-info
+          path: Voltline/Artifacts
+          if-no-files-found: error
