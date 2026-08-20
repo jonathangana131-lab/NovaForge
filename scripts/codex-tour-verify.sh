@@ -8,7 +8,72 @@ ROOT_DIR="${0:A:h:h}"
 MIN_SCREENSHOT_BYTES="${MIN_SCREENSHOT_BYTES:-120000}"
 ALLOW_EXTRA_TOUR_SCREENSHOTS="${ALLOW_EXTRA_TOUR_SCREENSHOTS:-0}"
 VERIFY_UNIQUE_TOUR_SCREENSHOTS="${VERIFY_UNIQUE_TOUR_SCREENSHOTS:-1}"
+TOUR_MANIFEST_CHECK="${TOUR_MANIFEST_CHECK:-0}"
+TOUR_SCRIPT="${TOUR_SCRIPT:-$ROOT_DIR/scripts/codex-sim-tour.sh}"
 VERIFY_TOUR_SEMANTICS="${VERIFY_TOUR_SEMANTICS:-1}"
+
+expected=(
+  "01-chat-default-clean.png"
+  "02-mission-dossier-idle.png"
+  "03-mission-dossier-running.png"
+  "04-mission-dossier-approval.png"
+  "05-mission-dossier-waiting.png"
+  "06-mission-dossier-blocked.png"
+  "07-mission-dossier-proof.png"
+  "08-mission-dossier-resume.png"
+  "09-mission-dossier-auto-continue-countdown.png"
+  "10-runs-proof.png"
+  "11-files-proof.png"
+  "12-terminal-live-record.png"
+  "13-settings-local-ready.png"
+  "14-chat-pending-approval.png"
+  "15-theme-matrix-mission-dossier-running.png"
+  "16-theme-midnight-chat-general.png"
+  "17-theme-whitegold-settings.png"
+  "18-theme-arctic-runs-proof.png"
+  "19-theme-ember-terminal-proof.png"
+  "20-mission-dossier-intake-brief.png"
+)
+
+check_tour_manifest() {
+  if [[ ! -f "$TOUR_SCRIPT" ]]; then
+    echo "Tour runner not found: $TOUR_SCRIPT" >&2
+    exit 1
+  fi
+
+  local runner_names
+  local verifier_names
+  runner_names="$(grep -E 'run_step "[0-9]{2}-[^" ]+"' "$TOUR_SCRIPT" | sed -E 's/.*run_step "([0-9]{2}-[^"]+)".*/\1.png/' || true)"
+  verifier_names="$(printf '%s\n' "${expected[@]}")"
+
+  local mismatch=0
+  local missing
+  missing="$(comm -23 <(printf '%s\n' "$runner_names" | sort) <(printf '%s\n' "$verifier_names" | sort))"
+  if [[ -n "$missing" ]]; then
+    echo "Tour verifier is missing runner frames:" >&2
+    print -r -- "$missing" >&2
+    mismatch=1
+  fi
+
+  local extra
+  extra="$(comm -13 <(printf '%s\n' "$runner_names" | sort) <(printf '%s\n' "$verifier_names" | sort))"
+  if [[ -n "$extra" ]]; then
+    echo "Tour verifier expects frames not produced by runner:" >&2
+    print -r -- "$extra" >&2
+    mismatch=1
+  fi
+
+  if (( mismatch != 0 )); then
+    exit 1
+  fi
+
+  echo "Tour manifest check passed (${#expected[@]} frames)."
+}
+
+check_tour_manifest
+if [[ "$TOUR_MANIFEST_CHECK" == "1" ]]; then
+  exit 0
+fi
 
 TOUR_DIR="${1:-${TOUR_DIR:-}}"
 if [[ -z "$TOUR_DIR" ]]; then
@@ -111,29 +176,6 @@ assert_semantic_tokens() {
   echo "semantic ok $name tokens=$token_list"
   echo "semantic ok $name tokens=$token_list" >> "$TOUR_VERIFY_SUMMARY_PATH"
 }
-
-expected=(
-  "01-chat-default-clean.png"
-  "02-mission-dossier-idle.png"
-  "03-mission-dossier-running.png"
-  "04-mission-dossier-approval.png"
-  "05-mission-dossier-waiting.png"
-  "06-mission-dossier-blocked.png"
-  "07-mission-dossier-proof.png"
-  "08-mission-dossier-resume.png"
-  "09-mission-dossier-auto-continue-countdown.png"
-  "10-runs-proof.png"
-  "11-files-proof.png"
-  "12-terminal-live-record.png"
-  "13-settings-local-ready.png"
-  "14-chat-pending-approval.png"
-  "15-theme-matrix-mission-dossier-running.png"
-  "16-theme-midnight-chat-general.png"
-  "17-theme-whitegold-settings.png"
-  "18-theme-arctic-runs-proof.png"
-  "19-theme-ember-terminal-proof.png"
-  "20-mission-dossier-intake-brief.png"
-)
 
 typeset -A semantic_checks
 semantic_checks["01-chat-default-clean.png"]="NovaForge;Forge;Workspace;History;Control"
