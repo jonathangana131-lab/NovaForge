@@ -6,6 +6,7 @@
 //  keyboard state, jump-to-latest, quick delegate rail, banners, status dot.
 //
 
+import Foundation
 import SwiftData
 import SwiftUI
 import UIKit
@@ -29,9 +30,11 @@ struct CleanChatEmptyState: View {
         let tint: Color
     }
 
+    @Query private var projects: [Project]
+
     var readiness = Readiness(
-        title: "Ready for a real mission",
-        detail: "Tell NovaForge what to build, fix, or inspect. It will plan, use safe tools, and bring proof back here.",
+        title: "Ready to create",
+        detail: "Describe what you want to make. NovaForge will plan the work, ask before risky changes, and bring back proof.",
         symbol: "checkmark.seal.fill",
         tint: AgentPalette.green,
         actionTitle: nil,
@@ -42,44 +45,62 @@ struct CleanChatEmptyState: View {
 
     private static let starters: [Starter] = [
         Starter(
-            id: "prototype",
-            symbol: "hammer.fill",
-            title: "Build a prototype",
-            detail: "Create one working artifact and show how to open it.",
-            prompt: "Build a small polished prototype in this workspace. Create the working file, validate it, and tell me exactly how to open the result.",
+            id: "app",
+            symbol: "app.badge.fill",
+            title: "Make an app",
+            detail: "Start a useful, touch-first creation for iPhone.",
+            prompt: "Make a polished small app I can use on my iPhone. Pick a useful concept, build the strongest working version this environment can truthfully support, verify it, and show me the result.",
             tint: AgentPalette.blue
         ),
         Starter(
-            id: "audit",
-            symbol: "doc.text.magnifyingglass",
-            title: "Audit the workspace",
-            detail: "Find the important files, risks, and next moves first.",
-            prompt: "Audit this workspace like a senior developer. Show the important files, risks, and best next actions before changing anything risky.",
+            id: "game",
+            symbol: "gamecontroller.fill",
+            title: "Make a game",
+            detail: "Build a focused game around touch and quick play.",
+            prompt: "Make an original touch-friendly mini game for iPhone. Build a working version in a format NovaForge can actually run or preview here, test the main interaction, and show me the result.",
             tint: AgentPalette.cyan
         ),
         Starter(
-            id: "ship",
-            symbol: "checklist.checked",
-            title: "Prepare to ship",
-            detail: "Pick a focused polish pass, verify it, and report proof.",
-            prompt: "Do a focused ship-readiness pass: choose the highest-impact safe improvement, verify it, and give me the final proof plus any remaining risks.",
-            tint: AgentPalette.green
+            id: "surprise",
+            symbol: "sparkles",
+            title: "Surprise me",
+            detail: "Create one small, original thing worth trying.",
+            prompt: "Create something small and impressive for me: an original useful or playful software experience. Keep it focused, build a working version, verify it, and show me what to try first.",
+            tint: AgentPalette.lilac
         )
     ]
 
+    private var recentProjects: [Project] {
+        Array(
+            projects
+                .sorted { lhs, rhs in
+                    if lhs.lastActivityAt != rhs.lastActivityAt {
+                        return lhs.lastActivityAt > rhs.lastActivityAt
+                    }
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+                .prefix(4)
+        )
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                NovaReticleGlyph(symbol: "sparkles", tint: AgentPalette.primaryAccent, size: 48, isActive: true)
+                NovaReticleGlyph(
+                    symbol: "sparkles",
+                    tint: AgentPalette.primaryAccent,
+                    size: 48,
+                    isActive: true
+                )
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("FIRST MISSION")
+                    Text("MAKE SOMETHING")
                         .novaLabel(AgentPalette.tertiaryText)
-                    Text("Start with one clear task")
+                    Text("What do you want to make?")
                         .font(NovaType.display)
                         .foregroundStyle(AgentPalette.ink)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Pick a starter or write your own. NovaForge will plan, ask before risky writes, work in the workspace, and return proof.")
+                    Text("Describe it in your own words below, or start with an idea. Choosing one only fills the draft — nothing starts until you send it.")
                         .font(NovaType.body)
                         .foregroundStyle(AgentPalette.secondaryText)
                         .lineSpacing(2)
@@ -98,14 +119,45 @@ struct CleanChatEmptyState: View {
                     }
                 }
             }
+
+            if !recentProjects.isEmpty {
+                NovaGlassDivider(tint: AgentPalette.primaryAccent)
+                myAppsSection
+            }
         }
         .padding(16)
         .agentSurface(radius: 24, tint: AgentPalette.primaryAccent.opacity(0.04))
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.top, 10)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("First mission ready. \(readiness.title). \(readiness.detail)")
+        .accessibilityLabel("Create with NovaForge. \(readiness.title). \(readiness.detail)")
         .accessibilityIdentifier("cleanChatEmptyState")
+    }
+
+    private var myAppsSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("MY APPS")
+                    .novaLabel(AgentPalette.tertiaryText)
+                Spacer(minLength: 0)
+                Text(projects.count == 1 ? "1 creation" : "\(projects.count) creations")
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+            }
+
+            VStack(spacing: 6) {
+                ForEach(recentProjects) { project in
+                    HomeProjectRow(project: project)
+                }
+            }
+
+            Text("Recent creations come from your project library. More controls appear here only when NovaForge can verify them.")
+                .font(NovaType.caption)
+                .foregroundStyle(AgentPalette.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("homeMyAppsSection")
     }
 
     private var firstMissionReadinessCard: some View {
@@ -120,13 +172,11 @@ struct CleanChatEmptyState: View {
                 Text(readiness.title)
                     .font(NovaType.headline)
                     .foregroundStyle(AgentPalette.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.84)
+                    .lineLimit(2)
                 Text(readiness.detail)
                     .font(NovaType.caption)
                     .foregroundStyle(AgentPalette.secondaryText)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.84)
+                    .lineLimit(3)
             }
 
             Spacer(minLength: 0)
@@ -163,6 +213,53 @@ struct CleanChatEmptyState: View {
     }
 }
 
+private struct HomeProjectRow: View {
+    let project: Project
+
+    private var projectName: String {
+        let value = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "Untitled creation" : value
+    }
+
+    private var changedText: String {
+        "Changed " + project.lastActivityAt.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 12, weight: .black))
+                .foregroundStyle(AgentPalette.primaryAccent)
+                .frame(width: 32, height: 32)
+                .agentControlSurface(
+                    radius: 11,
+                    tint: AgentPalette.primaryAccent.opacity(0.09),
+                    selected: false
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(projectName)
+                    .font(NovaType.headline)
+                    .foregroundStyle(AgentPalette.ink)
+                    .lineLimit(1)
+                Text(changedText)
+                    .font(NovaType.caption)
+                    .foregroundStyle(AgentPalette.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .agentRowSurface(radius: 15, tint: AgentPalette.primaryAccent.opacity(0.05), selected: false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(projectName). \(changedText).")
+        .accessibilityIdentifier("homeProjectRow-\(project.id.uuidString)")
+    }
+}
+
 private struct FirstMissionStarterButton: View {
     let starter: CleanChatEmptyState.Starter
     let apply: () -> Void
@@ -188,12 +285,11 @@ private struct FirstMissionStarterButton: View {
                         .font(NovaType.caption)
                         .foregroundStyle(AgentPalette.secondaryText)
                         .lineLimit(2)
-                        .minimumScaleFactor(0.84)
                 }
 
                 Spacer(minLength: 0)
 
-                Image(systemName: "arrow.up.right")
+                Image(systemName: "arrow.down.right")
                     .font(.system(size: 10, weight: .black))
                     .foregroundStyle(starter.tint)
                     .frame(width: 22, height: 22)
@@ -205,7 +301,8 @@ private struct FirstMissionStarterButton: View {
         }
         .buttonStyle(.plain)
         .agentRowSurface(radius: 15, tint: starter.tint.opacity(0.08), selected: false)
-        .accessibilityLabel(starter.title)
+        .accessibilityLabel("\(starter.title). Fill the Forge draft.")
+        .accessibilityHint("Nothing starts until you send the draft.")
         .accessibilityIdentifier("firstMissionStarter-\(starter.id)")
     }
 }
