@@ -153,7 +153,11 @@ final class ForgeRuntimeResourcePolicyTests: XCTestCase {
         let authorization = try ForgeRuntimeManifestValidator().authorize(
             manifest,
             expectedProjectID: "neon-racer",
-            host: .init()
+            host: .init(),
+            projectGrant: .init(
+                projectID: "neon-racer",
+                allowedHTTPSHosts: Set(network.allowedHosts)
+            )
         )
         return ForgeRuntimeResourcePolicy(
             authorization: authorization,
