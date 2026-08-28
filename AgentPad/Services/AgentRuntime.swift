@@ -4304,6 +4304,18 @@ final class AgentRuntime {
         // safely typed. The rollback can then restore scalar mutations without
         // making the long-lived Project/Conversation instances unreadable.
         var affectedConversations: [ObjectIdentifier: Conversation] = [:]
+        var affectedProjects: [ObjectIdentifier: Project] = [:]
+        var affectedProjectRuns: [ObjectIdentifier: ProjectOSRun] = [:]
+
+        for model in context.changedModelsArray {
+            if let conversation = model as? Conversation {
+                affectedConversations[ObjectIdentifier(conversation)] = conversation
+            } else if let project = model as? Project {
+                affectedProjects[ObjectIdentifier(project)] = project
+            } else if let run = model as? ProjectOSRun {
+                affectedProjectRuns[ObjectIdentifier(run)] = run
+            }
+        }
 
         for model in context.insertedModelsArray {
             switch model {
@@ -4316,48 +4328,58 @@ final class AgentRuntime {
 
             case let event as ProjectEvent:
                 if let project = event.project {
+                    affectedProjects[ObjectIdentifier(project)] = project
                     project.events.removeAll { $0.id == event.id }
                 }
                 event.project = nil
 
             case let artifact as ProjectArtifact:
                 if let project = artifact.project {
+                    affectedProjects[ObjectIdentifier(project)] = project
                     project.artifacts.removeAll { $0.id == artifact.id }
                 }
                 artifact.project = nil
 
             case let command as TerminalCommandRecord:
                 if let project = command.project {
+                    affectedProjects[ObjectIdentifier(project)] = project
                     project.terminalCommands.removeAll { $0.id == command.id }
                 }
                 command.project = nil
 
             case let change as ProjectFileChange:
                 if let project = change.project {
+                    affectedProjects[ObjectIdentifier(project)] = project
                     project.fileChanges.removeAll { $0.id == change.id }
                 }
                 change.project = nil
 
             case let run as ToolRun:
                 if let project = run.project {
+                    affectedProjects[ObjectIdentifier(project)] = project
                     project.toolRuns.removeAll { $0.id == run.id }
                 }
                 run.project = nil
 
             case let run as ProjectOSRun:
+                affectedProjectRuns[ObjectIdentifier(run)] = run
                 if let project = run.project {
+                    affectedProjects[ObjectIdentifier(project)] = project
                     project.projectOSRuns.removeAll { $0.id == run.id }
                 }
                 run.project = nil
 
             case let step as ProjectOSStep:
                 if let run = step.run {
+                    affectedProjectRuns[ObjectIdentifier(run)] = run
                     run.steps.removeAll { $0.id == step.id }
                 }
                 step.run = nil
 
             case let conversation as Conversation:
+                affectedConversations[ObjectIdentifier(conversation)] = conversation
                 if let project = conversation.project {
+                    affectedProjects[ObjectIdentifier(project)] = project
                     project.conversations.removeAll { $0.id == conversation.id }
                 }
                 conversation.project = nil
@@ -4371,6 +4393,46 @@ final class AgentRuntime {
             conversation.refreshMessageMetadata()
         }
         context.rollback()
+
+        // `rollback()` restores the rows but iOS 27 can leave the long-lived
+        // parent's relationship storage in the private tuple form. Rebuild
+        // those arrays from inverse rows without reading the invalidated
+        // collection first. This is intentionally limited to parents touched
+        // by the failed transaction.
+        if !affectedConversations.isEmpty,
+           let messages = try? context.fetch(FetchDescriptor<ChatMessage>()) {
+            for conversation in affectedConversations.values {
+                conversation.messages = messages.filter { $0.conversation?.id == conversation.id }
+                conversation.refreshMessageMetadata()
+            }
+        }
+
+        if !affectedProjects.isEmpty {
+            let conversations = (try? context.fetch(FetchDescriptor<Conversation>())) ?? []
+            let toolRuns = (try? context.fetch(FetchDescriptor<ToolRun>())) ?? []
+            let events = (try? context.fetch(FetchDescriptor<ProjectEvent>())) ?? []
+            let artifacts = (try? context.fetch(FetchDescriptor<ProjectArtifact>())) ?? []
+            let terminalCommands = (try? context.fetch(FetchDescriptor<TerminalCommandRecord>())) ?? []
+            let fileChanges = (try? context.fetch(FetchDescriptor<ProjectFileChange>())) ?? []
+            let projectRuns = (try? context.fetch(FetchDescriptor<ProjectOSRun>())) ?? []
+
+            for project in affectedProjects.values {
+                project.conversations = conversations.filter { $0.project?.id == project.id }
+                project.toolRuns = toolRuns.filter { $0.project?.id == project.id }
+                project.events = events.filter { $0.project?.id == project.id }
+                project.artifacts = artifacts.filter { $0.project?.id == project.id }
+                project.terminalCommands = terminalCommands.filter { $0.project?.id == project.id }
+                project.fileChanges = fileChanges.filter { $0.project?.id == project.id }
+                project.projectOSRuns = projectRuns.filter { $0.project?.id == project.id }
+            }
+        }
+
+        if !affectedProjectRuns.isEmpty,
+           let steps = try? context.fetch(FetchDescriptor<ProjectOSStep>()) {
+            for run in affectedProjectRuns.values {
+                run.steps = steps.filter { $0.run?.id == run.id }
+            }
+        }
     }
 
     private func detachUnsavedMessages<S: Sequence>(
