@@ -18,6 +18,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_local_ai_xcode27:
+        description: Run the Xcode 27 Local AI build, focused tests, smoke, tour, and semantic evidence lane
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -27,8 +32,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  local-ai-xcode27:
+    name: Xcode 27 Local AI evidence
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_local_ai_xcode27 }}
+    uses: ./.github/workflows/local-ai-xcode27.yml
+
   verify:
     name: Critical verification
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.run_local_ai_xcode27) }}
     runs-on: macos-26
     # The critical lane now builds once and exercises the expanded harness,
     # provider-contract, persistence, and Simulator journey matrix. Recent

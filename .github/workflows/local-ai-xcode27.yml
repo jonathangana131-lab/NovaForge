@@ -1,6 +1,13 @@
 name: Local AI Xcode 27 proof
 
 on:
+  workflow_call:
+    inputs:
+      export_coreai_asset:
+        description: Export and AOT-compile the pinned Qwen3 0.6B recipe in a separate job
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       export_coreai_asset:
