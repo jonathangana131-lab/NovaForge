@@ -44,6 +44,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install source-search dependency
+        run: command -v rg >/dev/null 2>&1 || brew install ripgrep
+
       - name: Allocate bounded evidence paths
         shell: zsh {0}
         run: |
