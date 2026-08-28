@@ -2362,6 +2362,7 @@ final class AgentRuntime {
         beginWorkingSession()
         lastError = nil
         var shouldDrainQueuedFollowUps = false
+        var modelRepairSaveFailed = false
 
         do {
             do {
@@ -2378,7 +2379,7 @@ final class AgentRuntime {
                 // error transcript after the repaired settings snapshot was
                 // restored field-by-field, leaving the misleading
                 // "Error Not Saved" state for a failure that was recoverable.
-                rollbackPendingChanges(context)
+                modelRepairSaveFailed = true
                 throw error
             }
             let runProvider = settings.provider
@@ -2908,47 +2909,61 @@ final class AgentRuntime {
                 lastFailedPrompt = latestUserPrompt(in: conversation)
                 setActivity("Something needs attention", detail: message)
                 pushTrace("Run failed", detail: message, status: .failed)
-                ProjectEventRecorder.record(
-                    project: activeProject,
-                    kind: .runFailed,
-                    title: "Run failed",
-                    detail: message,
-                    severity: .failure,
-                    sourceType: .conversation,
-                    sourceID: conversation.id,
-                    context: context
-                )
                 runState = .failed(message)
                 discardQueuedPrompts(context: context)
-                let assistant = ChatMessage(
-                    role: .assistant,
-                    content: "I hit an error: \(message)",
-                    conversation: conversation,
-                    runID: activeRunRecord?.id ?? activeRunID,
-                    runStatus: .failed
-                )
-                conversation.appendMessage(assistant)
-                context.insert(assistant)
-                do {
-                    try saveCompacted(context)
-                } catch {
-                    rollbackTranscriptTransaction(
-                        messages: [assistant],
-                        from: conversation,
+                if modelRepairSaveFailed {
+                    // This context has just rejected the model-repair
+                    // transaction. iOS 27 can continue rejecting newly
+                    // inserted relationship rows even after its durable
+                    // backing data is restored. Keep the original error
+                    // visible and let canonical run settlement persist on its
+                    // narrow boundary; do not manufacture a second, misleading
+                    // "Error Not Saved" failure by retrying this transaction.
+                    presentToast(
+                        "NovaForge could not save the model selection repair: \(message)",
+                        tone: .error
+                    )
+                } else {
+                    ProjectEventRecorder.record(
+                        project: activeProject,
+                        kind: .runFailed,
+                        title: "Run failed",
+                        detail: message,
+                        severity: .failure,
+                        sourceType: .conversation,
+                        sourceID: conversation.id,
                         context: context
                     )
-                    let saveMessage = friendlyError(error)
-                    // Keep the original run failure actionable. A second
-                    // persistence failure can explain why the visible error
-                    // bubble was not saved, but it must not erase the cause
-                    // that actually stopped the run.
-                    lastError = message
-                    setActivity(
-                        "Error Not Saved",
-                        detail: "\(message) NovaForge could not save the error transcript either: \(saveMessage)"
+                    let assistant = ChatMessage(
+                        role: .assistant,
+                        content: "I hit an error: \(message)",
+                        conversation: conversation,
+                        runID: activeRunRecord?.id ?? activeRunID,
+                        runStatus: .failed
                     )
-                    pushTrace("Error transcript not saved", detail: "\(message) · \(saveMessage)", status: .failed)
-                    runState = .failed(message)
+                    conversation.appendMessage(assistant)
+                    context.insert(assistant)
+                    do {
+                        try saveCompacted(context)
+                    } catch {
+                        rollbackTranscriptTransaction(
+                            messages: [assistant],
+                            from: conversation,
+                            context: context
+                        )
+                        let saveMessage = friendlyError(error)
+                        // Keep the original run failure actionable. A second
+                        // persistence failure can explain why the visible error
+                        // bubble was not saved, but it must not erase the cause
+                        // that actually stopped the run.
+                        lastError = message
+                        setActivity(
+                            "Error Not Saved",
+                            detail: "\(message) NovaForge could not save the error transcript either: \(saveMessage)"
+                        )
+                        pushTrace("Error transcript not saved", detail: "\(message) · \(saveMessage)", status: .failed)
+                        runState = .failed(message)
+                    }
                 }
             }
         }
