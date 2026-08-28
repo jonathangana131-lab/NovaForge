@@ -4298,139 +4298,65 @@ final class AgentRuntime {
     }
 
     private func rollbackPendingChanges(_ context: ModelContext) {
-        // SwiftData 27 can leave a to-many property backed by its private
-        // relationship-cache tuple after `rollback()`. Cancel every inverse
-        // link created by an inserted model while those collections are still
-        // safely typed. The rollback can then restore scalar mutations without
-        // making the long-lived Project/Conversation instances unreadable.
-        var affectedConversations: [ObjectIdentifier: Conversation] = [:]
-        var affectedProjects: [ObjectIdentifier: Project] = [:]
-        var affectedProjectRuns: [ObjectIdentifier: ProjectOSRun] = [:]
+        // `ModelContext.rollback()` traps on iOS 27 when a long-lived model
+        // owns a to-many relationship touched by the failed transaction. A
+        // fresh context still sees the last durable snapshot, and assigning
+        // that snapshot's backing data restores both scalars and relationships
+        // without invoking the broken rollback path. Insertions are cancelled
+        // first so they cannot hitch a ride on the recovery save.
+        let insertedModels = context.insertedModelsArray
+        let insertedObjects = Set(insertedModels.map { ObjectIdentifier($0) })
+        let changedModels = context.changedModelsArray.filter {
+            !insertedObjects.contains(ObjectIdentifier($0))
+        }
+        let durableContext = ModelContext(context.container)
 
-        for model in context.changedModelsArray {
-            if let conversation = model as? Conversation {
-                affectedConversations[ObjectIdentifier(conversation)] = conversation
-            } else if let project = model as? Project {
-                affectedProjects[ObjectIdentifier(project)] = project
-            } else if let run = model as? ProjectOSRun {
-                affectedProjectRuns[ObjectIdentifier(run)] = run
-            }
+        func discard<T: PersistentModel>(_ model: T) {
+            context.delete(model)
         }
 
-        for model in context.insertedModelsArray {
+        for model in insertedModels {
             switch model {
-            case let message as ChatMessage:
-                if let conversation = message.conversation {
-                    affectedConversations[ObjectIdentifier(conversation)] = conversation
-                    conversation.messages.removeAll { $0.id == message.id }
-                }
-                message.conversation = nil
-
-            case let event as ProjectEvent:
-                if let project = event.project {
-                    affectedProjects[ObjectIdentifier(project)] = project
-                    project.events.removeAll { $0.id == event.id }
-                }
-                event.project = nil
-
-            case let artifact as ProjectArtifact:
-                if let project = artifact.project {
-                    affectedProjects[ObjectIdentifier(project)] = project
-                    project.artifacts.removeAll { $0.id == artifact.id }
-                }
-                artifact.project = nil
-
-            case let command as TerminalCommandRecord:
-                if let project = command.project {
-                    affectedProjects[ObjectIdentifier(project)] = project
-                    project.terminalCommands.removeAll { $0.id == command.id }
-                }
-                command.project = nil
-
-            case let change as ProjectFileChange:
-                if let project = change.project {
-                    affectedProjects[ObjectIdentifier(project)] = project
-                    project.fileChanges.removeAll { $0.id == change.id }
-                }
-                change.project = nil
-
-            case let run as ToolRun:
-                if let project = run.project {
-                    affectedProjects[ObjectIdentifier(project)] = project
-                    project.toolRuns.removeAll { $0.id == run.id }
-                }
-                run.project = nil
-
-            case let run as ProjectOSRun:
-                affectedProjectRuns[ObjectIdentifier(run)] = run
-                if let project = run.project {
-                    affectedProjects[ObjectIdentifier(project)] = project
-                    project.projectOSRuns.removeAll { $0.id == run.id }
-                }
-                run.project = nil
-
-            case let step as ProjectOSStep:
-                if let run = step.run {
-                    affectedProjectRuns[ObjectIdentifier(run)] = run
-                    run.steps.removeAll { $0.id == step.id }
-                }
-                step.run = nil
-
-            case let conversation as Conversation:
-                affectedConversations[ObjectIdentifier(conversation)] = conversation
-                if let project = conversation.project {
-                    affectedProjects[ObjectIdentifier(project)] = project
-                    project.conversations.removeAll { $0.id == conversation.id }
-                }
-                conversation.project = nil
-
-            default:
-                break
+            case let value as Project: discard(value)
+            case let value as ProjectEvent: discard(value)
+            case let value as ProjectArtifact: discard(value)
+            case let value as TerminalCommandRecord: discard(value)
+            case let value as ProjectFileChange: discard(value)
+            case let value as ProjectOSRun: discard(value)
+            case let value as ProjectOSStep: discard(value)
+            case let value as Conversation: discard(value)
+            case let value as ChatMessage: discard(value)
+            case let value as ToolRun: discard(value)
+            case let value as AgentRunRecord: discard(value)
+            case let value as ToolOperationRecord: discard(value)
+            case let value as AgentSettings: discard(value)
+            default: break
             }
         }
 
-        for conversation in affectedConversations.values {
-            conversation.refreshMessageMetadata()
-        }
-        context.rollback()
-
-        // `rollback()` restores the rows but iOS 27 can leave the long-lived
-        // parent's relationship storage in the private tuple form. Rebuild
-        // those arrays from inverse rows without reading the invalidated
-        // collection first. This is intentionally limited to parents touched
-        // by the failed transaction.
-        if !affectedConversations.isEmpty,
-           let messages = try? context.fetch(FetchDescriptor<ChatMessage>()) {
-            for conversation in affectedConversations.values {
-                conversation.messages = messages.filter { $0.conversation?.id == conversation.id }
-                conversation.refreshMessageMetadata()
+        func restore<T: PersistentModel>(_ model: T) {
+            guard let durable = durableContext.model(for: model.persistentModelID) as? T else {
+                return
             }
+            model.persistentBackingData = durable.persistentBackingData
         }
 
-        if !affectedProjects.isEmpty {
-            let conversations = (try? context.fetch(FetchDescriptor<Conversation>())) ?? []
-            let toolRuns = (try? context.fetch(FetchDescriptor<ToolRun>())) ?? []
-            let events = (try? context.fetch(FetchDescriptor<ProjectEvent>())) ?? []
-            let artifacts = (try? context.fetch(FetchDescriptor<ProjectArtifact>())) ?? []
-            let terminalCommands = (try? context.fetch(FetchDescriptor<TerminalCommandRecord>())) ?? []
-            let fileChanges = (try? context.fetch(FetchDescriptor<ProjectFileChange>())) ?? []
-            let projectRuns = (try? context.fetch(FetchDescriptor<ProjectOSRun>())) ?? []
-
-            for project in affectedProjects.values {
-                project.conversations = conversations.filter { $0.project?.id == project.id }
-                project.toolRuns = toolRuns.filter { $0.project?.id == project.id }
-                project.events = events.filter { $0.project?.id == project.id }
-                project.artifacts = artifacts.filter { $0.project?.id == project.id }
-                project.terminalCommands = terminalCommands.filter { $0.project?.id == project.id }
-                project.fileChanges = fileChanges.filter { $0.project?.id == project.id }
-                project.projectOSRuns = projectRuns.filter { $0.project?.id == project.id }
-            }
-        }
-
-        if !affectedProjectRuns.isEmpty,
-           let steps = try? context.fetch(FetchDescriptor<ProjectOSStep>()) {
-            for run in affectedProjectRuns.values {
-                run.steps = steps.filter { $0.run?.id == run.id }
+        for model in changedModels {
+            switch model {
+            case let value as Project: restore(value)
+            case let value as ProjectEvent: restore(value)
+            case let value as ProjectArtifact: restore(value)
+            case let value as TerminalCommandRecord: restore(value)
+            case let value as ProjectFileChange: restore(value)
+            case let value as ProjectOSRun: restore(value)
+            case let value as ProjectOSStep: restore(value)
+            case let value as Conversation: restore(value)
+            case let value as ChatMessage: restore(value)
+            case let value as ToolRun: restore(value)
+            case let value as AgentRunRecord: restore(value)
+            case let value as ToolOperationRecord: restore(value)
+            case let value as AgentSettings: restore(value)
+            default: break
             }
         }
     }
