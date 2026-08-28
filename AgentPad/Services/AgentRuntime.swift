@@ -2364,10 +2364,23 @@ final class AgentRuntime {
         var shouldDrainQueuedFollowUps = false
 
         do {
-            try AppRootPersistence.repairStaleModelSelection(
-                settings: settings,
-                save: { try saveCompacted(context) }
-            )
+            do {
+                try AppRootPersistence.repairStaleModelSelection(
+                    settings: settings,
+                    save: { try saveCompacted(context) }
+                )
+            } catch {
+                // The acceptance boundary is already durable, but project
+                // identity/prompt-queued bookkeeping is intentionally pending
+                // when model repair saves. If that save fails, clear the whole
+                // pending transaction before the ordinary error path tries to
+                // persist its visible failure. Otherwise iOS 27 can reject the
+                // error transcript after the repaired settings snapshot was
+                // restored field-by-field, leaving the misleading
+                // "Error Not Saved" state for a failure that was recoverable.
+                rollbackPendingChanges(context)
+                throw error
+            }
             let runProvider = settings.provider
             let runModelID = settings.modelID
             let runTemperature = settings.temperature
