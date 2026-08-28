@@ -2066,7 +2066,7 @@ final class AgentRuntime {
                 // field-by-field ToolRun restore is not enough: roll the
                 // entire decision transaction back so a later save cannot
                 // manufacture an "Approved" audit receipt.
-                context.rollback()
+                rollbackPendingChanges(context)
                 approvalRun.status = previousStatus
                 approvalRun.output = previousOutput
                 approvalRun.completedAt = previousCompletedAt
@@ -2136,7 +2136,10 @@ final class AgentRuntime {
                     // must be all-or-nothing. Roll back every unsaved event,
                     // ledger mutation, file record, and tool message before
                     // exposing the recovery state.
-                    context.rollback()
+                    if let toolMsg {
+                        detachUnsavedMessages([toolMsg], from: targetConversation, context: context)
+                    }
+                    rollbackPendingChanges(context)
                     if let approvalRun {
                         if let previousRunStatus {
                             approvalRun.status = previousRunStatus
@@ -2145,9 +2148,6 @@ final class AgentRuntime {
                             approvalRun.output = previousRunOutput
                         }
                         approvalRun.completedAt = previousRunCompletedAt
-                    }
-                    if let toolMsg {
-                        rollbackUnsavedMessage(toolMsg, from: targetConversation, context: context)
                     }
                     if let artifact = WorkspaceArtifact.fromToolOutput(output) {
                         currentArtifacts.removeAll { $0.id == artifact.id }
@@ -2281,7 +2281,10 @@ final class AgentRuntime {
                 // `finishApprovalRun` records project events and updates the
                 // ledger. Roll all of that back before restoring the pending
                 // decision so a later save cannot create a false rejection.
-                context.rollback()
+                if let rejectionToolMessage {
+                    detachUnsavedMessages([rejectionToolMessage], from: targetConversation, context: context)
+                }
+                rollbackPendingChanges(context)
                 if let approvalRun {
                     if let previousRunStatus {
                         approvalRun.status = previousRunStatus
@@ -2290,9 +2293,6 @@ final class AgentRuntime {
                         approvalRun.output = previousRunOutput
                     }
                     approvalRun.completedAt = previousRunCompletedAt
-                }
-                if let rejectionToolMessage {
-                    rollbackUnsavedMessage(rejectionToolMessage, from: targetConversation, context: context)
                 }
                 let message = friendlyError(error)
                 lastError = message
@@ -2428,7 +2428,16 @@ final class AgentRuntime {
                 discardQueuedPrompts(context: context)
                 runStartedAt = nil
                 currentPrompt = nil
-                try saveCompacted(context)
+                do {
+                    try saveCompacted(context)
+                } catch {
+                    rollbackTranscriptTransaction(
+                        messages: [assistant],
+                        from: conversation,
+                        context: context
+                    )
+                    throw error
+                }
                 return
             }
 
@@ -2496,8 +2505,11 @@ final class AgentRuntime {
                     // of the same persistence boundary as the assistant
                     // bubble. Do not let them hitch a ride on the later failed
                     // run receipt save.
-                    context.rollback()
-                    rollbackUnsavedMessage(assistant, from: conversation, context: context)
+                    rollbackTranscriptTransaction(
+                        messages: [assistant],
+                        from: conversation,
+                        context: context
+                    )
                     throw error
                 }
                 liveStream.finishHandoff(to: assistant.id)
@@ -2625,7 +2637,16 @@ final class AgentRuntime {
                         sourceID: assistant.id,
                         context: context
                     )
-                    try saveCompacted(context)
+                    do {
+                        try saveCompacted(context)
+                    } catch {
+                        rollbackTranscriptTransaction(
+                            messages: [assistant],
+                            from: conversation,
+                            context: context
+                        )
+                        throw error
+                    }
                     liveStream.finishHandoff(to: assistant.id)
 
                     var toolMessages: [ChatMessage] = []
@@ -2689,10 +2710,11 @@ final class AgentRuntime {
                         // context is still one transcript transaction and must
                         // disappear together before the failed run receipt is
                         // persisted below.
-                        context.rollback()
-                        for message in toolMessages.reversed() {
-                            rollbackUnsavedMessage(message, from: conversation, context: context)
-                        }
+                        rollbackTranscriptTransaction(
+                            messages: toolMessages.reversed(),
+                            from: conversation,
+                            context: context
+                        )
                         for artifact in rememberedArtifacts {
                             currentArtifacts.removeAll { $0.id == artifact.id }
                         }
@@ -2754,8 +2776,11 @@ final class AgentRuntime {
                     // The final response is not durable until its event and
                     // ledger update save too. Roll back all three before the
                     // outer failure path creates a truthful failed receipt.
-                    context.rollback()
-                    rollbackUnsavedMessage(assistant, from: conversation, context: context)
+                    rollbackTranscriptTransaction(
+                        messages: [assistant],
+                        from: conversation,
+                        context: context
+                    )
                     throw error
                 }
                 liveStream.finishHandoff(to: assistant.id)
@@ -2802,7 +2827,7 @@ final class AgentRuntime {
             // transcript save. Clear every pending model mutation before this
             // recovery path records its own failure event; otherwise a later
             // unrelated save could preserve false success evidence.
-            context.rollback()
+            rollbackPendingChanges(context)
             if error is CancellationError || ((error as? URLError)?.code == .cancelled && stopRequested) {
                 setActivity("Paused", detail: "The active run was paused.")
                 pushTrace("Run paused", detail: "No provider messages were added after pausing.", status: .paused)
@@ -2853,8 +2878,11 @@ final class AgentRuntime {
                 do {
                     try saveCompacted(context)
                 } catch {
-                    context.rollback()
-                    rollbackUnsavedMessage(assistant, from: conversation, context: context)
+                    rollbackTranscriptTransaction(
+                        messages: [assistant],
+                        from: conversation,
+                        context: context
+                    )
                     let saveMessage = friendlyError(error)
                     lastError = saveMessage
                     setActivity("Pause Not Saved", detail: saveMessage)
@@ -2891,8 +2919,11 @@ final class AgentRuntime {
                 do {
                     try saveCompacted(context)
                 } catch {
-                    context.rollback()
-                    rollbackUnsavedMessage(assistant, from: conversation, context: context)
+                    rollbackTranscriptTransaction(
+                        messages: [assistant],
+                        from: conversation,
+                        context: context
+                    )
                     let saveMessage = friendlyError(error)
                     // Keep the original run failure actionable. A second
                     // persistence failure can explain why the visible error
@@ -3657,9 +3688,19 @@ final class AgentRuntime {
             sourceID: assistant.id,
             context: context
         )
-        try saveCompacted(context)
+        do {
+            try saveCompacted(context)
+        } catch {
+            rollbackTranscriptTransaction(
+                messages: [assistant],
+                from: conversation,
+                context: context
+            )
+            throw error
+        }
 
         var failedToolSummaries: [String] = []
+        var stageToolMessages: [ChatMessage] = []
         for call in stageCalls {
             guard !Task.isCancelled, !stopRequested else { break }
             let request = ToolRequest(
@@ -3700,6 +3741,7 @@ final class AgentRuntime {
             )
             conversation.appendMessage(toolMessage)
             context.insert(toolMessage)
+            stageToolMessages.append(toolMessage)
         }
 
         guard isActiveRun(runID), !Task.isCancelled, !stopRequested else {
@@ -3726,7 +3768,16 @@ final class AgentRuntime {
             return false
         }
 
-        try saveCompacted(context)
+        do {
+            try saveCompacted(context)
+        } catch {
+            rollbackTranscriptTransaction(
+                messages: stageToolMessages.reversed(),
+                from: conversation,
+                context: context
+            )
+            throw error
+        }
         activeToolName = nil
         activeToolDetail = ""
         if !failedToolSummaries.isEmpty {
@@ -3779,7 +3830,16 @@ final class AgentRuntime {
                 sourceID: conversation.id,
                 context: context
             )
-            try saveCompacted(context)
+            do {
+                try saveCompacted(context)
+            } catch {
+                rollbackTranscriptTransaction(
+                    messages: [final],
+                    from: conversation,
+                    context: context
+                )
+                throw error
+            }
             pushTrace("Local run failed", detail: compactOutputSummary(failureSummary), status: .failed)
             lastError = compactOutputSummary(failureSummary)
             lastFailedPrompt = latestUserPrompt(in: conversation)
@@ -3855,7 +3915,16 @@ final class AgentRuntime {
             sourceID: conversation.id,
             context: context
         )
-        try saveCompacted(context)
+        do {
+            try saveCompacted(context)
+        } catch {
+            rollbackTranscriptTransaction(
+                messages: [final],
+                from: conversation,
+                context: context
+            )
+            throw error
+        }
         pushTrace("Local run complete", detail: completion, status: .success)
         runState = .completed
         finishWorkingSession(.succeeded)
@@ -3912,7 +3981,7 @@ final class AgentRuntime {
         } catch {
             // Do not let an unsaved ProjectEvent/ledger mutation leak into a
             // later unrelated save after reporting this failure.
-            context.rollback()
+            rollbackPendingChanges(context)
             let message = friendlyError(error)
             presentToast("NovaForge could not save the latest run state: \(message)", tone: .error)
             pushTrace("Run state save failed", detail: message, status: .failed)
@@ -3948,8 +4017,11 @@ final class AgentRuntime {
         do {
             try saveCompacted(context)
         } catch {
-            context.rollback()
-            rollbackUnsavedMessage(assistant, from: conversation, context: context)
+            rollbackTranscriptTransaction(
+                messages: [assistant],
+                from: conversation,
+                context: context
+            )
             presentToast("NovaForge could not save the error transcript: \(friendlyError(error))", tone: .error)
         }
     }
@@ -4087,7 +4159,7 @@ final class AgentRuntime {
             }
             return true
         } catch {
-            context.rollback()
+            rollbackPendingChanges(context)
             presentToast("NovaForge could not save the run receipt: \(friendlyError(error))", tone: .error)
             return false
         }
@@ -4225,11 +4297,115 @@ final class AgentRuntime {
         )
     }
 
-    private func rollbackUnsavedMessage(_ message: ChatMessage, from conversation: Conversation, context: ModelContext) {
-        conversation.messages.removeAll { $0.id == message.id }
-        message.conversation = nil
-        context.delete(message)
+    private func rollbackPendingChanges(_ context: ModelContext) {
+        // SwiftData 27 can leave a to-many property backed by its private
+        // relationship-cache tuple after `rollback()`. Cancel every inverse
+        // link created by an inserted model while those collections are still
+        // safely typed. The rollback can then restore scalar mutations without
+        // making the long-lived Project/Conversation instances unreadable.
+        var affectedConversations: [ObjectIdentifier: Conversation] = [:]
+
+        for model in context.insertedModelsArray {
+            switch model {
+            case let message as ChatMessage:
+                if let conversation = message.conversation {
+                    affectedConversations[ObjectIdentifier(conversation)] = conversation
+                    conversation.messages.removeAll { $0.id == message.id }
+                }
+                message.conversation = nil
+
+            case let event as ProjectEvent:
+                if let project = event.project {
+                    project.events.removeAll { $0.id == event.id }
+                }
+                event.project = nil
+
+            case let artifact as ProjectArtifact:
+                if let project = artifact.project {
+                    project.artifacts.removeAll { $0.id == artifact.id }
+                }
+                artifact.project = nil
+
+            case let command as TerminalCommandRecord:
+                if let project = command.project {
+                    project.terminalCommands.removeAll { $0.id == command.id }
+                }
+                command.project = nil
+
+            case let change as ProjectFileChange:
+                if let project = change.project {
+                    project.fileChanges.removeAll { $0.id == change.id }
+                }
+                change.project = nil
+
+            case let run as ToolRun:
+                if let project = run.project {
+                    project.toolRuns.removeAll { $0.id == run.id }
+                }
+                run.project = nil
+
+            case let run as ProjectOSRun:
+                if let project = run.project {
+                    project.projectOSRuns.removeAll { $0.id == run.id }
+                }
+                run.project = nil
+
+            case let step as ProjectOSStep:
+                if let run = step.run {
+                    run.steps.removeAll { $0.id == step.id }
+                }
+                step.run = nil
+
+            case let conversation as Conversation:
+                if let project = conversation.project {
+                    project.conversations.removeAll { $0.id == conversation.id }
+                }
+                conversation.project = nil
+
+            default:
+                break
+            }
+        }
+
+        for conversation in affectedConversations.values {
+            conversation.refreshMessageMetadata()
+        }
+        context.rollback()
+    }
+
+    private func detachUnsavedMessages<S: Sequence>(
+        _ messages: S,
+        from conversation: Conversation,
+        context: ModelContext
+    ) where S.Element == ChatMessage {
+        let detachedMessages = Array(messages)
+        guard !detachedMessages.isEmpty else { return }
+        let detachedIDs = Set(detachedMessages.map(\.id))
+
+        // iOS 27 invalidates SwiftData's to-many relationship cache during a
+        // rollback. Detach newly inserted transcript rows while the cache is
+        // still typed, then roll back the remaining event/ledger transaction.
+        // Reading `conversation.messages` after rollback can otherwise trap in
+        // SwiftData while casting its internal RelationshipCollection tuple.
+        conversation.messages.removeAll { detachedIDs.contains($0.id) }
+        for message in detachedMessages {
+            message.conversation = nil
+            context.delete(message)
+        }
         conversation.refreshMessageMetadata()
+    }
+
+    private func rollbackTranscriptTransaction<S: Sequence>(
+        messages: S,
+        from conversation: Conversation,
+        context: ModelContext
+    ) where S.Element == ChatMessage {
+        detachUnsavedMessages(messages, from: conversation, context: context)
+        rollbackPendingChanges(context)
+    }
+
+    private func rollbackUnsavedMessage(_ message: ChatMessage, from conversation: Conversation, context: ModelContext) {
+        detachUnsavedMessages([message], from: conversation, context: context)
     }
 
     private func queueFollowUp(
