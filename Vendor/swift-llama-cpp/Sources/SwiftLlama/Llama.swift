@@ -32,7 +32,13 @@ final actor Llama {
             residentBudgetBytes: config.outOfCoreResidentBudgetBytes
         )
         if outOfCoreCoordinator != nil {
+            #if targetEnvironment(simulator)
+            // The pinned Intel-compatible simulator archive predates the
+            // load_mode enum but exposes the equivalent mmap switch.
+            model_params.use_mmap = true
+            #else
             model_params.load_mode = LLAMA_LOAD_MODE_MMAP
+            #endif
         }
         let selection = LlamaBackend.select(
             config.computeMode,
