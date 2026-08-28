@@ -443,7 +443,11 @@ struct ChatView: View {
     @State private var selectedArtifact: WorkspaceArtifact?
     @State private var chatSaveError: String?
     @State private var showingChatDrawer = false
+    #if DEBUG
+    @State private var showingRunDetails = ProcessInfo.processInfo.arguments.contains("--pending-approval-demo")
+    #else
     @State private var showingRunDetails = false
+    #endif
     @State private var messageRenderLimit = 80
     @State private var codexAuth = OpenAICodexAuthManager.shared
     #if DEBUG

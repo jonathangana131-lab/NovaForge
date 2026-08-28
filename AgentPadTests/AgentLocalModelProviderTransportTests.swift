@@ -547,6 +547,40 @@ final class AgentLocalModelProviderTransportTests: XCTestCase {
         XCTAssertEqual(callCount, 0)
     }
 
+    func testLANCatalogModelCannotEnterOnDeviceTransport() async throws {
+        let fixture = try makeLocalTransportFixture(requestID: "lan-boundary")
+        let inference = ScriptedLocalModelInference(scripts: [])
+        let transport = AgentLocalModelProviderTransport(inference: inference)
+        let lanModelID = try XCTUnwrap(
+            LocalModelCatalog.all.first {
+                $0.executionLocation == .lan
+            }?.id
+        )
+        let local = fixture.adapter.descriptor
+        let lanDescriptor = ProviderAdapterDescriptor(
+            route: .init(
+                providerID: local.route.providerID,
+                modelID: .init(rawValue: lanModelID),
+                adapterID: local.route.adapterID,
+                capabilities: local.route.capabilities,
+                deployment: local.route.deployment,
+                provenance: local.route.provenance
+            ),
+            dialect: local.dialect,
+            requestPath: local.requestPath
+        )
+
+        await assertStartRejected(
+            transport,
+            request: fixture.encoded,
+            descriptor: lanDescriptor,
+            scope: fixture.scope,
+            expected: .invalidDescriptor
+        )
+        let callCount = await inference.callCount()
+        XCTAssertEqual(callCount, 0)
+    }
+
     func testPathAndBodyModelMismatchFailBeforeInference() async throws {
         let fixture = try makeLocalTransportFixture(requestID: "path-model")
         let inference = ScriptedLocalModelInference(scripts: [])

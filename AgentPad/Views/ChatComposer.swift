@@ -744,6 +744,7 @@ struct ComposerModelMenu: View {
     @State private var selectionError: String?
     @State private var providerCatalog = ProviderModelCatalogStore.shared
     @State private var presentationStartedAt: TimeInterval?
+    @AppStorage(CompanionPrivacyStore.consentFingerprintKey) private var companionConsentFingerprint = ""
 
     var body: some View {
         Button {
@@ -796,6 +797,15 @@ struct ComposerModelMenu: View {
                 .truncationMode(.tail)
                 .minimumScaleFactor(0.76)
                 .layoutPriority(1)
+
+            if !compact {
+                Text(executionLocationLabel)
+                    .font(.system(size: 7.5, weight: .black, design: .rounded))
+                    .foregroundStyle(settings.provider.tint)
+                    .padding(.horizontal, 4)
+                    .frame(height: 15)
+                    .background(settings.provider.tint.opacity(0.10), in: Capsule())
+            }
 
             Image(systemName: "chevron.down")
                 .font(.system(size: compact ? 7 : 8, weight: .bold))
@@ -854,19 +864,20 @@ struct ComposerModelMenu: View {
     }
 
     private var compactProviderLabel: String {
+        executionLocationLabel
+    }
+
+    private var executionLocationLabel: String {
         switch settings.provider {
-        case .openCodeZen:
-            settings.modelID.localizedCaseInsensitiveContains("free") ? "Zen Free" : "Zen"
-        case .openAICodex:
-            "ChatGPT"
-        case .openAI:
-            "OpenAI"
         case .local:
-            "Local"
-        case .openRouter:
-            "Router"
-        case .custom:
-            "Custom"
+            guard let variant = LocalModelCatalog.variant(for: settings.modelID) else { return "Local" }
+            if variant.executionLocation == .lan {
+                let _ = companionConsentFingerprint
+                return CompanionPrivacyStore.isConsented() ? "LAN · consented" : "LAN · consent required"
+            }
+            return variant.executionLocation.title
+        case .openCodeZen, .openAICodex, .openAI, .openRouter, .custom:
+            return "Cloud"
         }
     }
 
@@ -949,6 +960,7 @@ struct ComposerModelMenu: View {
     private func selectProvider(_ provider: AIProvider) -> Bool {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         guard settings.provider != provider else { return true }
+        let previousProvider = settings.provider
         let targetModelID = AgentSettingsPersistence.coherentModelID(
             for: provider,
             currentModelID: settings.modelID
@@ -958,10 +970,14 @@ struct ComposerModelMenu: View {
             modelID: targetModelID,
             failureTitle: "Provider Not Saved"
         ) else { return false }
+        CompanionPrivacyStore.revoke()
         if provider == .local,
            let variant = LocalModelCatalog.variant(for: settings.modelID)
         {
             _ = localModels.select(variant)
+        }
+        if previousProvider == .local, provider != .local {
+            Task { await LocalModelClient.shared.unload() }
         }
         selectionError = nil
         return true
@@ -975,11 +991,15 @@ struct ComposerModelMenu: View {
         let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let selectionChanged = settings.provider != provider || settings.modelID != trimmed
         if persistProviderModelSelection(
             provider: provider,
             modelID: trimmed,
             failureTitle: "Model Not Saved"
         ) {
+            if selectionChanged {
+                CompanionPrivacyStore.revoke()
+            }
             if let variant = LocalModelCatalog.variant(for: trimmed) {
                 _ = localModels.select(variant)
             }
@@ -1055,6 +1075,14 @@ private struct ComposerModelChooserSheet: View {
                     // virtualized row to scroll on screen.
                     VStack(alignment: .leading, spacing: 18) {
                         chooserIntro
+                        if selectedProvider == .local,
+                           LocalModelCatalog.variant(for: settings.modelID)?.executionLocation == .lan {
+                            CompanionExecutionBadge(settings: settings, localModels: localModels)
+                            CompanionRequestDisclosure(
+                                categories: Set(CompanionPrivacyCategory.allCases),
+                                consented: CompanionPrivacyStore.isConsented()
+                            )
+                        }
                         providerSection
                         if selectedProvider == .local {
                             localDownloadSection

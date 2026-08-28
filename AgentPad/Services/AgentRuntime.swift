@@ -330,6 +330,7 @@ final class LiveStreamBuffer: ObservableObject {
 private final class LocalBenchmarkProbe {
     var firstBatchAt: Date?
     var characters = 0
+    var generatedTokens = 0
 }
 
 /// Side effects that accompany one logical run session. Keeping these behind a
@@ -473,6 +474,9 @@ final class AgentRuntime {
     private var pendingApprovalRun: ToolRun?
     private var pendingLocalPlanContinuation: PendingLocalPlanContinuation?
     private var activeLocalModelID: String?
+    /// Model ID is not unique generation ownership: cancelled cleanup can
+    /// resume after another generation of the same model has started.
+    private var activeLocalInferenceGeneration: UUID?
     private var workspaceMutationRevision: UInt64 = 0
     private var cachedWorkspaceSummary: (
         workspaceName: String,
@@ -1052,40 +1056,123 @@ final class AgentRuntime {
 
         let probe = LocalBenchmarkProbe()
         let started = Date()
+        let capabilities = LocalRuntimeCapabilities.current
+        let thermalBefore = LocalBenchmarkEvidence.thermalStateLabel()
+        let previousBatteryMonitoring = UIDevice.current.isBatteryMonitoringEnabled
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let batteryBefore = UIDevice.current.batteryLevel >= 0
+            ? UIDevice.current.batteryLevel
+            : nil
+        var peakFootprint = LocalBenchmarkEvidence.physicalFootprintBytes()
+        defer {
+            UIDevice.current.isBatteryMonitoringEnabled = previousBatteryMonitoring
+        }
 
-        let prompt = ProviderMessageInput(
-            id: UUID(),
-            role: .user,
-            content: "Write a two-line poem about forging stars. Reply with only the poem.",
-            createdAt: started,
-            toolCallID: nil,
-            toolCalls: []
+        let admissionExperiment = ProcessInfo.processInfo.arguments.contains(
+            "--local-power-admission-experiment"
+        )
+        let maximumOutputTokens = admissionExperiment
+            ? min(128, variant.maxNewTokens)
+            : variant.maxNewTokens
+        let prompt = admissionExperiment
+            ? "Write exactly 128 useful tokens of plain text explaining why memory admission must include weights, KV cache, scratch buffers, the app, and iOS. Do not use a title or list."
+            : "Write a two-line poem about forging stars. Reply with only the poem."
+        let requestID = "local-benchmark-\(UUID().uuidString)"
+        let request = AgentLocalModelInferenceRequest(
+            scope: ProviderAttemptScope(
+                requestID: requestID,
+                attemptID: .init(rawValue: "\(requestID):attempt:1")
+            ),
+            modelID: variant.id,
+            messages: [
+                .init(role: .system, content: "Reply directly in plain text."),
+                .init(role: .user, content: prompt),
+            ],
+            temperature: admissionExperiment ? 0 : 0.3,
+            maximumOutputTokens: UInt64(maximumOutputTokens)
         )
 
         do {
-            _ = try await localModelClient.streamingResponse(
-                messages: [prompt],
-                model: variant.id,
-                temperature: 0.3,
-                customSystemPrompt: "You are a concise poet.",
-                workspaceSummary: "",
-                onContentBatch: { chunk in
-                    if probe.firstBatchAt == nil { probe.firstBatchAt = Date() }
-                    probe.characters += chunk.count
+            try await LocalModelClient.shared.stream(request: request) { event in
+                await MainActor.run {
+                    switch event {
+                    case .text(let chunk):
+                        if probe.firstBatchAt == nil { probe.firstBatchAt = Date() }
+                        probe.characters += chunk.count
+                        if let current = LocalBenchmarkEvidence.physicalFootprintBytes() {
+                            peakFootprint = max(peakFootprint ?? 0, current)
+                        }
+                    case .usage(let generatedTokenCount):
+                        probe.generatedTokens = Int(clamping: generatedTokenCount)
+                    case .completed:
+                        break
+                    }
                 }
-            )
+            }
         } catch {
             return .failure(error)
         }
 
+        guard probe.characters > 0 else {
+            return .failure(
+                LocalModelRuntimeError.invalidAgentDecisionOutput(
+                    "The benchmark completed without generating any text."
+                )
+            )
+        }
+
         let finished = Date()
         let first = probe.firstBatchAt ?? finished
-        return .success(LocalModelBenchmarkResult(
+        let receiptID = UUID()
+        let result = LocalModelBenchmarkResult(
             modelName: variant.shortName,
             timeToFirstToken: first.timeIntervalSince(started),
             totalDuration: finished.timeIntervalSince(started),
-            generatedCharacters: probe.characters
-        ))
+            generatedCharacters: probe.characters,
+            generatedTokens: probe.generatedTokens,
+            receiptID: receiptID
+        )
+        #if targetEnvironment(simulator)
+        let isPhysicalDevice = false
+        #else
+        let isPhysicalDevice = true
+        #endif
+        let batteryAfter = UIDevice.current.batteryLevel >= 0
+            ? UIDevice.current.batteryLevel
+            : nil
+        let receipt = LocalBenchmarkReceipt(
+            id: receiptID,
+            recordedAt: finished,
+            modelID: variant.id,
+            immutableRevision: variant.immutableRevision,
+            engineType: variant.engineType,
+            executionLocation: variant.executionLocation,
+            deviceIdentifier: capabilities.deviceIdentifier,
+            operatingSystem: capabilities.osVersion,
+            isPhysicalDevice: isPhysicalDevice,
+            runtimeBuild: capabilities.llamaBuild,
+            executionConfiguration: LocalLlamaExecutionProfile.current.rawValue,
+            contextTokens: variant.contextTokens,
+            maximumOutputTokens: variant.maxNewTokens,
+            timeToFirstTokenSeconds: result.timeToFirstToken,
+            promptTokensPerSecond: nil,
+            decodeTokensPerSecond: result.tokensPerSecond,
+            totalDurationSeconds: result.totalDuration,
+            generatedCharacters: result.generatedCharacters,
+            estimatedGeneratedTokens: result.generatedTokens,
+            peakPhysicalFootprintBytes: peakFootprint,
+            thermalStateBefore: thermalBefore,
+            thermalStateAfter: LocalBenchmarkEvidence.thermalStateLabel(),
+            batteryLevelBefore: batteryBefore,
+            batteryLevelAfter: batteryAfter,
+            result: probe.characters > 0 ? "generated" : "empty"
+        )
+        do {
+            try await LocalBenchmarkReceiptStore.shared.save(receipt)
+        } catch {
+            return .failure(error)
+        }
+        return .success(result)
     }
 
     func testAPIKey(settings: AgentSettings) async -> Result<Void, Error> {
@@ -4530,6 +4617,8 @@ final class AgentRuntime {
             : min(45, max(18, variant.maxGenerationSeconds + 10))
         let timeout: Duration = .seconds(safetyTimeoutSeconds)
         activeLocalModelID = model
+        let generation = UUID()
+        activeLocalInferenceGeneration = generation
         let operation = Task.detached(priority: .utility) { [localModelClient] in
             try await localModelClient.streamingResponse(
                 messages: messages,
@@ -4557,8 +4646,11 @@ final class AgentRuntime {
         defer {
             heartbeat.cancel()
             operation.cancel()
-            if isActiveRun(runID), activeLocalModelID == model {
+            if isActiveRun(runID),
+               activeLocalInferenceGeneration == generation
+            {
                 activeLocalModelID = nil
+                activeLocalInferenceGeneration = nil
             }
         }
 
@@ -4603,6 +4695,7 @@ final class AgentRuntime {
     private func stopActiveLocalModel() {
         guard let modelID = activeLocalModelID else { return }
         activeLocalModelID = nil
+        activeLocalInferenceGeneration = nil
         Task.detached(priority: .userInitiated) { [localModelClient] in
             await localModelClient.stop(model: modelID)
         }

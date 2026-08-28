@@ -46,6 +46,15 @@ struct ForgeHeader: View {
         ForgeConversationTitle.displayTitle(conversation.title)
     }
 
+    private var sessionProofTitle: String {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--theme-proof-demo") {
+            return "\(AgentTheme.current.title) · \(sessionTitle)"
+        }
+        #endif
+        return sessionTitle
+    }
+
     private var sortedProjects: [Project] {
         projects.sorted { lhs, rhs in
             if lhs.id == scopedProject?.id { return true }
@@ -120,7 +129,7 @@ struct ForgeHeader: View {
                     HStack(spacing: 5) {
                         Image(systemName: "bubble.left.fill")
                             .font(.system(size: 9, weight: .bold))
-                        Text(sessionTitle)
+                        Text(sessionProofTitle)
                             .font(NovaType.caption)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -148,7 +157,7 @@ struct ForgeHeader: View {
         )
         .frame(maxWidth: .infinity)
         .layoutPriority(1)
-        .accessibilityLabel("Project scope \(scopeTitle), chat \(sessionTitle)")
+        .accessibilityLabel("Project scope \(scopeTitle), chat \(sessionProofTitle)")
         .accessibilityHint("Double tap to change project scope")
         .accessibilityIdentifier("chatProjectScopeMenu")
     }

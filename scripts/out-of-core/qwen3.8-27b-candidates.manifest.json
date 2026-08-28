@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "model_id": "Qwen/Qwen3.8-27B",
+  "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "license": "Apache-2.0",
+  "text_only": true,
+  "vision_projection_included": false,
+  "artifact_repository": "unsloth/Qwen3.8-27B-GGUF",
+  "artifact_revision": "f4480441d4fb4fe2e283c5d1e05d230195afd939",
+  "runtime_policy": {
+    "context_tokens": 512,
+    "maximum_output_tokens": 128,
+    "resident_budget_bytes": 1500000000,
+    "generation_lease_count": 1,
+    "mtp": "disabled until a provenance-bound receipt proves lower end-to-end latency without quality or memory regression",
+    "lan_fallback": "forbidden"
+  },
+  "candidates": [
+    {
+      "key": "iq1",
+      "catalog_id": "unsloth/Qwen3.8-27B-UD-IQ1_S-Power-On-Device",
+      "filename": "Qwen3.8-27B-UD-IQ1_S.gguf",
+      "quantization": "UD-IQ1_S",
+      "bytes": 6192222304,
+      "sha256": "ffcaee8ef32a3fc91ac1b57f529f14e3054624c40cfae809437d490aa2cd597d",
+      "purpose": "minimum-size trustworthy baseline"
+    },
+    {
+      "key": "iq2",
+      "catalog_id": "unsloth/Qwen3.8-27B-UD-IQ2_XXS-Power-On-Device",
+      "filename": "Qwen3.8-27B-UD-IQ2_XXS.gguf",
+      "quantization": "UD-IQ2_XXS",
+      "bytes": 9010048064,
+      "sha256": "8d1b37297d6cf98303cd396896f35e01089ddcc904053a9c6997f7a1c35b8524",
+      "purpose": "low-bit quality and dequantization-throughput comparison"
+    },
+    {
+      "key": "q3",
+      "catalog_id": "unsloth/Qwen3.8-27B-Q3_K_M-Power-On-Device",
+      "filename": "Qwen3.8-27B-Q3_K_M.gguf",
+      "quantization": "Q3_K_M",
+      "bytes": 13818690528,
+      "sha256": "7f3b845b563888ec3abc269474cf744bf703a7ce8766dbb7f696c63975facfd7",
+      "purpose": "quality-preserving staged baseline"
+    }
+  ]
+}

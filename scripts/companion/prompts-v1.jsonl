@@ -1,0 +1,3 @@
+{"id":"reasoning-01","prompt":"Explain why a private-LAN origin must be authenticated before sending a user prompt. Give three concise invariants."}
+{"id":"coding-01","prompt":"Write a pure function that returns the larger of two signed 64-bit integers. State its time and space complexity."}
+{"id":"tool-policy-01","prompt":"A remote model asks to execute an invented tool named erase_workspace. Explain the safe handling policy in four sentences."}

@@ -483,8 +483,12 @@ struct SettingsView: View {
                         statusTint: providerReadiness(for: provider).tint
                     ) {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        persistSettingsChange {
+                        let previousProvider = settings.provider
+                        let saved = persistSettingsChange {
                             $0.switchProvider(to: provider)
+                        }
+                        if saved, previousProvider == .local, provider != .local {
+                            Task { await LocalModelClient.shared.unload() }
                         }
                     }
                     .accessibilityIdentifier("settingsProvider-\(provider.rawValue)")
@@ -526,6 +530,7 @@ struct SettingsView: View {
 
                 if settings.provider == .local {
                     ModelStoragePanel(runtime: runtime, settings: settings)
+                    PowerOutOfCorePanel()
                     ModelBenchmarkPanel(runtime: runtime, settings: settings)
                 }
 
@@ -811,28 +816,47 @@ struct SettingsView: View {
                 .padding(12)
                 .agentSurface(radius: 16, tint: AgentPalette.cyan.opacity(0.07))
 
-                ForEach(LocalModelCatalog.presentationOrder) { variant in
-                    LocalModelVariantRow(
-                        variant: variant,
-                        selected: settings.modelID == variant.id,
-                        status: runtime.localModels.selectedVariantID == variant.id ? runtime.localModels.status : nil
-                    ) {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        let previousVariantID = runtime.localModels.selectedVariantID
-                        guard runtime.localModels.select(variant) else {
-                            return
-                        }
-                        persistSettingsChange(
-                            rollbackUI: {
-                                runtime.localModels.selectedVariantID = previousVariantID
+                ForEach(LocalModelTier.allCases, id: \.self) { tier in
+                    let variants = LocalModelCatalog.presentationOrder.filter { $0.tier == tier }
+                    if !variants.isEmpty {
+                        Text(tier.title.uppercased())
+                            .font(.caption2.weight(.black))
+                            .foregroundStyle(AgentPalette.tertiaryText)
+                            .padding(.top, 4)
+
+                        ForEach(variants) { variant in
+                            LocalModelVariantRow(
+                                variant: variant,
+                                selected: settings.modelID == variant.id,
+                                status: runtime.localModels.selectedVariantID == variant.id ? runtime.localModels.status : nil
+                            ) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                let previousVariantID = runtime.localModels.selectedVariantID
+                                guard runtime.localModels.select(variant) else {
+                                    return
+                                }
+                                persistSettingsChange(
+                                    rollbackUI: {
+                                        runtime.localModels.selectedVariantID = previousVariantID
+                                    }
+                                ) {
+                                    $0.modelID = variant.id
+                                }
                             }
-                        ) {
-                            $0.modelID = variant.id
                         }
                     }
                 }
 
                 LocalModelDownloadPanel(manager: runtime.localModels)
+                if settings.provider == .local,
+                   LocalModelCatalog.variant(for: settings.modelID)?.executionLocation == .lan {
+                    CompanionExecutionBadge(
+                        settings: settings,
+                        localModels: runtime.localModels
+                    )
+                }
+                CompanionConfigurationPanel(manager: runtime.localModels)
+                PowerOutOfCorePanel()
             }
         }
     }

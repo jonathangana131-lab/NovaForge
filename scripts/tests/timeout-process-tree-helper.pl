@@ -4,8 +4,8 @@ use warnings;
 use POSIX qw(setsid);
 
 my ($pid_path, $mode) = @ARGV;
-die "usage: timeout-process-tree-helper.pl <pid-path> <grouped|escaped>\n"
-    unless defined $pid_path && defined $mode && $mode =~ /\A(?:grouped|escaped)\z/;
+die "usage: timeout-process-tree-helper.pl <pid-path> <grouped|escaped|orphan>\n"
+    unless defined $pid_path && defined $mode && $mode =~ /\A(?:grouped|escaped|orphan)\z/;
 
 $| = 1;
 for my $signal_name (qw(HUP INT QUIT TERM)) {
@@ -42,5 +42,6 @@ if ($child_pid == 0) {
     exit 0;
 }
 
+exit 0 if $mode eq "orphan";
 sleep 300;
 exit 0;

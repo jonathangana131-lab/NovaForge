@@ -1187,6 +1187,17 @@ struct AppRootView: View {
                 settings: settings
             )
         }
+        if arguments.contains("--local-benchmark-proof"),
+           let settings {
+            await runLocalBenchmarkProof(settings: settings)
+        }
+        if arguments.contains("--local-out-of-core-storage-benchmark") {
+            await runOutOfCoreStorageBenchmark(arguments: arguments)
+        }
+        if arguments.contains("--local-evaluation-corpus"),
+           let settings {
+            await runLocalEvaluationCorpus(settings: settings)
+        }
         if hasDebugLaunchFlag("--local-agent-boundary-test", in: arguments),
            let conversation = selectedConversation,
            !runtime.isWorking,
@@ -1483,6 +1494,281 @@ struct AppRootView: View {
         try data.write(to: proofURL, options: .atomic)
     }
 
+    private func runLocalBenchmarkProof(settings: AgentSettings) async {
+        let arguments = ProcessInfo.processInfo.arguments
+        let modelPrefix = "--local-benchmark-model-id="
+        let requestedModelID = arguments
+            .first(where: { $0.hasPrefix(modelPrefix) })
+            .map { String($0.dropFirst(modelPrefix.count)) }
+        let variant = requestedModelID
+            .flatMap(LocalModelCatalog.variant(for:)) ??
+            LocalModelCatalog.defaultVariant
+        let profile = LocalLlamaExecutionProfile.current
+        let runIDPrefix = "--local-benchmark-run-id="
+        let runID = ProcessInfo.processInfo.arguments
+            .first(where: { $0.hasPrefix(runIDPrefix) })
+            .map { String($0.dropFirst(runIDPrefix.count)) } ?? UUID().uuidString
+        settings.provider = .local
+        settings.modelID = variant.id
+        settings.temperature = 0
+        settings.updatedAt = Date()
+        guard runtime.localModels.select(variant) else {
+            print("NOVAFORGE_LOCAL_BENCHMARK_FAIL incompatible-model=\(variant.id)")
+            return
+        }
+        saveRootLaunchState("local benchmark proof")
+        try? writeLocalBenchmarkProof([
+            "status": "running",
+            "run_id": runID,
+            "model_id": variant.id,
+            "execution_profile": profile.rawValue,
+        ], profile: profile)
+
+        do {
+            try await LocalModelClient.shared.verifyLocalModelArtifact(
+                modelID: variant.id
+            )
+            await LocalModelClient.shared.unload()
+
+            let cold = try await requireBenchmarkResult(settings: settings)
+            let coldReceipt = try await requireBenchmarkReceipt(id: cold.receiptID)
+            let warm = try await requireBenchmarkResult(settings: settings)
+            let warmReceipt = try await requireBenchmarkReceipt(id: warm.receiptID)
+
+            #if canImport(UIKit)
+            NotificationCenter.default.post(
+                name: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil
+            )
+            NotificationCenter.default.post(
+                name: UIApplication.didEnterBackgroundNotification,
+                object: nil
+            )
+            try await Task.sleep(for: .milliseconds(500))
+            NotificationCenter.default.post(
+                name: UIApplication.willEnterForegroundNotification,
+                object: nil
+            )
+            #endif
+
+            let arguments = ProcessInfo.processInfo.arguments
+            let iterationPrefix = "--local-thermal-iterations="
+            let requestedIterations = arguments
+                .first(where: { $0.hasPrefix(iterationPrefix) })
+                .flatMap { Int($0.dropFirst(iterationPrefix.count)) } ?? 1
+            let iterationCount = max(1, min(5, requestedIterations))
+            let soakDeadline = Date().addingTimeInterval(180)
+            var recoveryReceipts: [LocalBenchmarkReceipt] = []
+            for _ in 0..<iterationCount where Date() < soakDeadline {
+                let thermal = LocalBenchmarkEvidence.thermalStateLabel()
+                guard thermal != "serious", thermal != "critical" else { break }
+                let result = try await requireBenchmarkResult(settings: settings)
+                recoveryReceipts.append(
+                    try await requireBenchmarkReceipt(id: result.receiptID)
+                )
+            }
+            guard !recoveryReceipts.isEmpty else {
+                throw LocalAgentSmokeFailure.benchmarkDidNotComplete(
+                    "No lifecycle-recovery benchmark completed before the thermal stop."
+                )
+            }
+
+            try writeLocalBenchmarkProof([
+                "status": "passed",
+                "run_id": runID,
+                "model_id": variant.id,
+                "immutable_revision": variant.immutableRevision,
+                "model_sha256": variant.expectedSHA256,
+                "execution_profile": profile.rawValue,
+                "useful_tokens": min(
+                    coldReceipt.estimatedGeneratedTokens,
+                    warmReceipt.estimatedGeneratedTokens
+                ),
+                "cold": benchmarkEvidence(coldReceipt),
+                "warm": benchmarkEvidence(warmReceipt),
+                "lifecycle_recovery": recoveryReceipts.map(benchmarkEvidence),
+                "lifecycle_stimulus": "synthetic-memory-warning-and-background-notifications",
+                "soak_limit_seconds": 180,
+            ], profile: profile)
+            print("NOVAFORGE_LOCAL_BENCHMARK_PASS profile=\(profile.rawValue)")
+        } catch {
+            try? writeLocalBenchmarkProof([
+                "status": "failed",
+                "run_id": runID,
+                "model_id": variant.id,
+                "execution_profile": profile.rawValue,
+                "error": String(describing: error),
+            ], profile: profile)
+            print("NOVAFORGE_LOCAL_BENCHMARK_FAIL profile=\(profile.rawValue) \(String(describing: error))")
+        }
+    }
+
+    private func runOutOfCoreStorageBenchmark(arguments: [String]) async {
+        let modelPrefix = "--local-benchmark-model-id="
+        let modelID = arguments
+            .first(where: { $0.hasPrefix(modelPrefix) })
+            .map { String($0.dropFirst(modelPrefix.count)) } ??
+            LocalModelCatalog.powerOnDeviceExperimentID
+        guard let variant = LocalModelCatalog.variant(for: modelID) else {
+            print("NOVAFORGE_OUT_OF_CORE_STORAGE_FAIL unknown-model=\(modelID)")
+            return
+        }
+        do {
+            let url = try await LocalModelArtifactVerifier.shared.verifiedURL(
+                for: variant
+            )
+            let receipt = try await Task.detached(priority: .userInitiated) {
+                try OutOfCoreStorageBenchmark.run(
+                    modelID: modelID,
+                    url: url,
+                    storageLocation: "internal-app-container"
+                )
+            }.value
+            print(
+                "NOVAFORGE_OUT_OF_CORE_STORAGE_PASS model=\(modelID) uncached_mb_s=\(receipt.uncachedSequentialMBps) random_mb_s=\(receipt.randomMBps)"
+            )
+        } catch {
+            print(
+                "NOVAFORGE_OUT_OF_CORE_STORAGE_FAIL model=\(modelID) error=\(String(describing: error))"
+            )
+        }
+    }
+
+    private func requireBenchmarkResult(
+        settings: AgentSettings
+    ) async throws -> LocalModelBenchmarkResult {
+        switch await runtime.runLocalModelBenchmark(settings: settings) {
+        case .success(let result):
+            return result
+        case .failure(let error):
+            throw LocalAgentSmokeFailure.benchmarkDidNotComplete(
+                String(describing: error)
+            )
+        }
+    }
+
+    private func requireBenchmarkReceipt(
+        id: UUID
+    ) async throws -> LocalBenchmarkReceipt {
+        guard let receipt = try await LocalBenchmarkReceiptStore.shared.latest(),
+              receipt.id == id else {
+            throw LocalAgentSmokeFailure.benchmarkReceiptMissing
+        }
+        return receipt
+    }
+
+    private func benchmarkEvidence(
+        _ receipt: LocalBenchmarkReceipt
+    ) -> [String: Any] {
+        [
+            "receipt_id": receipt.id.uuidString,
+            "ttft_seconds": receipt.timeToFirstTokenSeconds,
+            "decode_tokens_per_second_estimate": receipt.decodeTokensPerSecond,
+            "total_seconds": receipt.totalDurationSeconds,
+            "generated_characters": receipt.generatedCharacters,
+            "generated_tokens": receipt.estimatedGeneratedTokens,
+            "peak_physical_footprint_bytes": receipt.peakPhysicalFootprintBytes
+                .map { NSNumber(value: $0) } ?? NSNull(),
+            "thermal_before": receipt.thermalStateBefore,
+            "thermal_after": receipt.thermalStateAfter,
+            "battery_before": receipt.batteryLevelBefore
+                .map { NSNumber(value: $0) } ?? NSNull(),
+            "battery_after": receipt.batteryLevelAfter
+                .map { NSNumber(value: $0) } ?? NSNull(),
+        ]
+    }
+
+    private func writeLocalBenchmarkProof(
+        _ values: [String: Any],
+        profile: LocalLlamaExecutionProfile
+    ) throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: values,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        let directory = base
+            .appendingPathComponent("LocalAI", isDirectory: true)
+            .appendingPathComponent("PhysicalProtocol", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try data.write(
+            to: directory.appendingPathComponent("\(profile.rawValue).json"),
+            options: .atomic
+        )
+    }
+
+    private func runLocalEvaluationCorpus(settings: AgentSettings) async {
+        let modelPrefix = "--local-evaluation-model-id="
+        let modelID = ProcessInfo.processInfo.arguments
+            .first(where: { $0.hasPrefix(modelPrefix) })
+            .map { String($0.dropFirst(modelPrefix.count)) } ??
+            LocalModelCatalog.defaultVariant.id
+        guard let variant = LocalModelCatalog.variant(for: modelID) else {
+            print("NOVAFORGE_LOCAL_EVALUATION_FAIL unknown-model=\(modelID)")
+            return
+        }
+        settings.provider = .local
+        settings.modelID = variant.id
+        settings.temperature = 0
+        settings.updatedAt = Date()
+        runtime.localModels.select(variant)
+        saveRootLaunchState("local evaluation corpus")
+
+        do {
+            let receipt = try await LocalAIEvaluationRunner.shared.run(
+                modelID: variant.id
+            )
+            print(
+                "NOVAFORGE_LOCAL_EVALUATION_PASS model=\(variant.id) score=\(receipt.passedCaseCount)/\(receipt.totalCaseCount) receipt=\(receipt.id.uuidString)"
+            )
+        } catch {
+            try? writeLocalEvaluationFailure(
+                modelID: variant.id,
+                error: error
+            )
+            print(
+                "NOVAFORGE_LOCAL_EVALUATION_FAIL model=\(variant.id) error=\(String(describing: error))"
+            )
+        }
+    }
+
+    private func writeLocalEvaluationFailure(
+        modelID: String,
+        error: any Error
+    ) throws {
+        let values: [String: Any] = [
+            "status": "failed",
+            "model_id": modelID,
+            "corpus_sha256": LocalAIEvaluationCorpus.expectedSHA256,
+            "error": String(describing: error),
+        ]
+        let data = try JSONSerialization.data(
+            withJSONObject: values,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        let directory = base
+            .appendingPathComponent("LocalAI", isDirectory: true)
+            .appendingPathComponent("EvaluationReceipts", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try data.write(
+            to: directory.appendingPathComponent("latest-error.json"),
+            options: .atomic
+        )
+    }
+
     private static func sha256(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map {
             String(format: "%02x", $0)
@@ -1496,6 +1782,8 @@ struct AppRootView: View {
         case toolRunDidNotComplete
         case toolOutputMissing
         case timedOut
+        case benchmarkDidNotComplete(String)
+        case benchmarkReceiptMissing
     }
     #endif
 
@@ -1581,6 +1869,10 @@ struct AppRootView: View {
                     preserveGeneralChatSelection()
                 }
                 saveRootLaunchState("project proof mission dossier fixture")
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(2_500))
+                    applyDebugLaunchTabArgument()
+                }
             } catch {
                 reportDebugWorkspaceFixtureFailure(
                     "project proof",
@@ -1637,12 +1929,23 @@ struct AppRootView: View {
     }
 
     private func scheduleDebugLaunchTaskRetryIfNeeded(arguments: [String]) {
-        // The local boundary fixture can wait on cold-store recovery. Keep retrying
-        // across the UI test's full 20-second readiness budget (134 * 150 ms), while
-        // preserving the short retry window for unrelated demo fixtures.
+        // Stateful tour fixtures can wait on cold-store recovery. Keep retrying
+        // across the tour's 30-second readiness budget instead of capturing a
+        // correctly routed but empty surface.
         let localBoundaryIsPending = hasDebugLaunchFlag("--local-agent-boundary-test", in: arguments) &&
             !debugLocalAgentBoundaryFixtureReady
-        let retryLimit = localBoundaryIsPending ? 134 : 8
+        let statefulTourFixtureIsPending = [
+            "--terminal-live-record-demo",
+            "--project-running-demo",
+            "--project-blocked-demo",
+            "--project-waiting-demo",
+            "--project-resume-demo",
+            "--runs-approval-demo",
+            "--project-proof-demo",
+            "--auto-continue-countdown-demo",
+            "--settings-local-model-ready",
+        ].contains { hasDebugLaunchFlag($0, in: arguments) }
+        let retryLimit = statefulTourFixtureIsPending ? 200 : (localBoundaryIsPending ? 134 : 8)
         guard debugLaunchTaskRetryCount < retryLimit,
               hasPendingDebugLaunchFixture(arguments) else { return }
         debugLaunchTaskRetryCount += 1
@@ -1668,6 +1971,14 @@ struct AppRootView: View {
         if hasDebugLaunchFlag("--local-agent-boundary-test", in: arguments),
            !debugLocalAgentBoundaryFixtureReady {
             return true
+        }
+        if hasDebugLaunchFlag("--settings-local-model-ready", in: arguments) {
+            let expectedVariant = LocalModelCatalog.defaultVariant
+            if settings?.modelID != expectedVariant.id ||
+                runtime.localModels.selectedVariantID != expectedVariant.id ||
+                !runtime.localModels.isDownloaded {
+                return true
+            }
         }
         if hasDebugLaunchFlag("--pending-approval-demo", in: arguments),
            !hasDebugLaunchFlag("--open-project", in: arguments),

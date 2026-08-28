@@ -1,5 +1,6 @@
 import AgentDomain
 import AgentPolicy
+import AgentProviders
 import Combine
 import CryptoKit
 import SwiftData
@@ -4540,42 +4541,42 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: finalURL.path))
     }
 
-    func testLocalCatalogPresentsNewestModelFirstButKeepsDeviceProvenDefault() throws {
-        let atlas = try XCTUnwrap(
+    func testLocalCatalogPresentsRecentInstantModelFirstButKeepsProvenDefault() throws {
+        let instant = try XCTUnwrap(
             LocalModelCatalog.variant(
-                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
+                for: "LiquidAI/LFM2.5-350M-QAD-Q4_0"
             )
         )
 
-        XCTAssertEqual(LocalModelCatalog.presentationOrder.first?.id, atlas.id)
-        XCTAssertEqual(atlas.releaseDateISO8601, "2026-07-20")
-        XCTAssertEqual(atlas.expectedBytes, 397_808_608)
+        XCTAssertEqual(LocalModelCatalog.presentationOrder.first?.id, instant.id)
+        XCTAssertEqual(instant.releaseDateISO8601, "2026-08-19")
+        XCTAssertEqual(instant.expectedBytes, 219_312_832)
         XCTAssertEqual(
-            atlas.expectedSHA256,
-            "3df10fa96ad19ddcda435506781308c9eeeedaab35f1a0a86ff198ad0e1ce871"
+            instant.expectedSHA256,
+            "3d10b6ab8fc91a919534b9558e266255aca0bbc7f6d015963599aa9e74e05b1d"
         )
-        XCTAssertEqual(atlas.deviceFit, .ultraLight)
+        XCTAssertEqual(instant.deviceFit, .ultraLight)
         XCTAssertTrue(LocalModelCatalog.defaultVariant.isIPhone12SafeDefault)
         XCTAssertEqual(LocalModelCatalog.defaultVariant.deviceFit, .deviceProven)
     }
 
     func testRuntimeMemoryAdmissionFailsClosedBeforeFirstAllocation() throws {
-        let atlas = try XCTUnwrap(
+        let instant = try XCTUnwrap(
             LocalModelCatalog.variant(
-                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
+                for: "LiquidAI/LFM2.5-350M-QAD-Q4_0"
             )
         )
 
         XCTAssertNil(
             LocalModelRuntimeMemoryPolicy.admissionMessage(
-                for: atlas,
-                availableMemory: atlas.minimumAvailableMemoryBeforeLoadBytes,
+                for: instant,
+                availableMemory: instant.minimumAvailableMemoryBeforeLoadBytes,
                 thermalState: .nominal
             )
         )
         let blocked = LocalModelRuntimeMemoryPolicy.admissionMessage(
-            for: atlas,
-            availableMemory: atlas.minimumAvailableMemoryBeforeLoadBytes - 1,
+            for: instant,
+            availableMemory: instant.minimumAvailableMemoryBeforeLoadBytes - 1,
             thermalState: .nominal
         )
         XCTAssertNotNil(blocked)
@@ -4584,9 +4585,9 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
 
     func testRuntimeMemoryAdmissionBlocksHotLargeModelButAllowsUltraLight() throws {
         let qwen = LocalModelCatalog.defaultVariant
-        let atlas = try XCTUnwrap(
+        let instant = try XCTUnwrap(
             LocalModelCatalog.variant(
-                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
+                for: "LiquidAI/LFM2.5-350M-QAD-Q4_0"
             )
         )
 
@@ -4599,14 +4600,14 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
         )
         XCTAssertNil(
             LocalModelRuntimeMemoryPolicy.admissionMessage(
-                for: atlas,
+                for: instant,
                 availableMemory: nil,
                 thermalState: .serious
             )
         )
         XCTAssertNotNil(
             LocalModelRuntimeMemoryPolicy.admissionMessage(
-                for: atlas,
+                for: instant,
                 availableMemory: nil,
                 thermalState: .critical
             )
@@ -4664,6 +4665,396 @@ final class LocalModelDownloadPreservationTests: XCTestCase {
             sourceURL: URL(string: "https://example.com/tiny-test")!,
             details: "Unit-test-only local model variant."
         )
+    }
+}
+
+private actor LocalAI2RoutingProbe: LocalInferenceEngine {
+    nonisolated let engineType: LocalInferenceEngineType
+    private(set) var verifiedModelIDs: [String] = []
+
+    init(engineType: LocalInferenceEngineType) {
+        self.engineType = engineType
+    }
+
+    func verifyLocalModelArtifact(modelID: String) async throws {
+        verifiedModelIDs.append(modelID)
+    }
+
+    func stream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        try await onEvent(.usage(generatedTokenCount: 1))
+        try await onEvent(.completed(reason: .completed))
+    }
+
+    func decideLocalAgentTurn(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int
+    ) async throws -> LocalAgentModelDecision {
+        throw LocalModelRuntimeError.invalidAgentDecision
+    }
+
+    func stop(request: AgentLocalModelInferenceRequest) async {}
+    func unload(modelID: String?) async {}
+}
+
+final class LocalAI2ArchitectureTests: XCTestCase {
+    func testPinnedManifestDecodesEveryEngineAndExecutionLocation() throws {
+        let resourceURL = try XCTUnwrap(
+            Bundle(for: Self.self).url(
+                forResource: "LocalModelCatalog.v2",
+                withExtension: "json"
+            )
+        )
+        let models = try LocalModelCatalog.validateManifestData(
+            Data(contentsOf: resourceURL)
+        )
+
+        XCTAssertEqual(Set(models.map(\.engineType)), [.llamaCpp, .coreAI, .companion])
+        XCTAssertEqual(Set(models.map(\.executionLocation)), [.local, .lan])
+        XCTAssertEqual(Set(models.map(\.tier)), Set(LocalModelTier.allCases))
+        XCTAssertTrue(models.allSatisfy { $0.immutableRevision.count == 40 })
+        XCTAssertTrue(models.filter(\.isDownloadable).allSatisfy {
+            $0.expectedBytes > 0 && $0.expectedSHA256.count == 64
+        })
+        let coreAI = try XCTUnwrap(models.first { $0.engineType == .coreAI })
+        XCTAssertEqual(coreAI.releaseDateISO8601, "2026-08-26")
+        XCTAssertEqual(
+            coreAI.immutableRevision,
+            "f43b6da728c6af5af15db345ffb2d8402d27013b"
+        )
+    }
+
+    func testManifestPinRejectsMutation() throws {
+        let resourceURL = try XCTUnwrap(
+            Bundle(for: Self.self).url(
+                forResource: "LocalModelCatalog.v2",
+                withExtension: "json"
+            )
+        )
+        var data = try Data(contentsOf: resourceURL)
+        data.append(0x20)
+        XCTAssertThrowsError(try LocalModelCatalog.validateManifestData(data))
+    }
+
+    func testLegacyModelIDsMigrateWithoutChangingProvenDefault() {
+        XCTAssertEqual(
+            LocalModelCatalog.migratedID(
+                for: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M"
+            ),
+            "LiquidAI/LFM2.5-350M-QAD-Q4_0"
+        )
+        XCTAssertEqual(
+            LocalModelCatalog.migratedID(
+                for: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q2_K"
+            ),
+            "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q3_K_M"
+        )
+        XCTAssertEqual(
+            LocalModelCatalog.defaultVariant.id,
+            "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"
+        )
+    }
+
+    func testRouterSelectsLlamaEngineFromDescriptor() async throws {
+        let llama = LocalAI2RoutingProbe(engineType: .llamaCpp)
+        let coreAI = LocalAI2RoutingProbe(engineType: .coreAI)
+        let companion = LocalAI2RoutingProbe(engineType: .companion)
+        let router = LocalInferenceRouter(
+            llama: llama,
+            coreAI: coreAI,
+            companion: companion
+        )
+        let modelID = "LiquidAI/LFM2.5-350M-QAD-Q4_0"
+
+        try await router.verifyLocalModelArtifact(modelID: modelID)
+
+        let llamaHits = await llama.verifiedModelIDs
+        let coreAIHits = await coreAI.verifiedModelIDs
+        let companionHits = await companion.verifiedModelIDs
+        XCTAssertEqual(llamaHits, [modelID])
+        XCTAssertEqual(coreAIHits, [])
+        XCTAssertEqual(companionHits, [])
+    }
+
+    func testRouterFailsClosedForUnknownModelWithoutTouchingAnyEngine()
+        async throws
+    {
+        let llama = LocalAI2RoutingProbe(engineType: .llamaCpp)
+        let coreAI = LocalAI2RoutingProbe(engineType: .coreAI)
+        let companion = LocalAI2RoutingProbe(engineType: .companion)
+        let router = LocalInferenceRouter(
+            llama: llama,
+            coreAI: coreAI,
+            companion: companion
+        )
+
+        do {
+            try await router.verifyLocalModelArtifact(
+                modelID: "NovaForge/unknown-pinned-model"
+            )
+            XCTFail("Unknown IDs must not fall back to a shipped engine")
+        } catch let error as LocalModelRuntimeError {
+            guard case .modelNotDownloaded = error else {
+                return XCTFail("Expected closed-catalog failure, got \(error)")
+            }
+        }
+
+        let llamaHits = await llama.verifiedModelIDs
+        let coreAIHits = await coreAI.verifiedModelIDs
+        let companionHits = await companion.verifiedModelIDs
+        XCTAssertEqual(llamaHits, [])
+        XCTAssertEqual(coreAIHits, [])
+        XCTAssertEqual(companionHits, [])
+    }
+
+    func testRuntimeCapabilitiesExposeConservativeCeiling() {
+        let capabilities = LocalRuntimeCapabilities.current
+        XCTAssertGreaterThan(capabilities.physicalMemoryBytes, 0)
+        XCTAssertEqual(
+            capabilities.safeProcessCeilingBytes,
+            capabilities.physicalMemoryBytes * 55 / 100
+        )
+        XCTAssertFalse(capabilities.deviceIdentifier.isEmpty)
+        XCTAssertFalse(capabilities.llamaBuild.isEmpty)
+        XCTAssertFalse(LocalRuntimeCapabilities.isCoreAIHardwareSupported(
+            deviceIdentifier: "iPhone13,2"
+        ))
+        XCTAssertTrue(LocalRuntimeCapabilities.isCoreAIHardwareSupported(
+            deviceIdentifier: "iPhone16,1"
+        ))
+    }
+
+    func testSimulatorDoesNotUseUnavailableIOSProcessMemorySignal() {
+        #if targetEnvironment(simulator)
+        XCTAssertNil(LocalModelRuntimeMemoryPolicy.availableMemoryBytes())
+        #endif
+    }
+
+    func testLlamaExecutionProfilesAreExplicitAndBounded() throws {
+        let variant = try XCTUnwrap(
+            LocalModelCatalog.variant(
+                for: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M"
+            )
+        )
+        XCTAssertEqual(
+            LocalLlamaExecutionProfile.resolve(
+                arguments: ["NovaForge", "--local-llama-profile=cpu"]
+            ),
+            .cpu
+        )
+        XCTAssertEqual(
+            LocalLlamaExecutionProfile.resolve(
+                arguments: ["NovaForge", "--local-llama-profile=partial-metal"]
+            ),
+            .partialMetal
+        )
+        XCTAssertEqual(
+            LocalLlamaExecutionProfile.resolve(arguments: ["NovaForge"]),
+            .catalog
+        )
+        XCTAssertEqual(
+            LocalLlamaExecutionProfile.cpu.configuration(for: variant).gpuLayerCount,
+            0
+        )
+        XCTAssertLessThanOrEqual(
+            LocalLlamaExecutionProfile.partialMetal
+                .configuration(for: variant).gpuLayerCount,
+            12
+        )
+        XCTAssertGreaterThanOrEqual(
+            LocalLlamaExecutionProfile.fullMetal
+                .configuration(for: variant).gpuLayerCount,
+            99
+        )
+    }
+
+    func testThermalAdmissionFailsClosed() throws {
+        let instant = try XCTUnwrap(
+            LocalModelCatalog.variant(for: "LiquidAI/LFM2.5-350M-QAD-Q4_0")
+        )
+        let fast = try XCTUnwrap(
+            LocalModelCatalog.variant(for: "LiquidAI/LFM2.5-1.2B-Instruct-QAD-Q4_0")
+        )
+        XCTAssertNil(LocalModelRuntimeMemoryPolicy.admissionMessage(
+            for: instant,
+            availableMemory: nil,
+            thermalState: .serious
+        ))
+        XCTAssertNotNil(LocalModelRuntimeMemoryPolicy.admissionMessage(
+            for: fast,
+            availableMemory: nil,
+            thermalState: .serious
+        ))
+        XCTAssertNotNil(LocalModelRuntimeMemoryPolicy.admissionMessage(
+            for: instant,
+            availableMemory: nil,
+            thermalState: .critical
+        ))
+    }
+
+    func testCompanionRequiresPrivateLANAndExplicitConfirmation() throws {
+        XCTAssertNil(CompanionEndpointPolicy.normalizedBaseURL(
+            from: "https://api.example.com/v1"
+        ))
+        XCTAssertNil(CompanionEndpointPolicy.normalizedBaseURL(
+            from: "https://user:secret@192.168.1.2:8080/v1"
+        ))
+        XCTAssertEqual(
+            CompanionEndpointPolicy.normalizedBaseURL(
+                from: "http://192.168.1.20:8080/v1/"
+            )?.absoluteString,
+            "http://192.168.1.20:8080/v1"
+        )
+
+        let suiteName = "LocalAI2ArchitectureTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertNil(CompanionModelConfigurationStore.snapshot(defaults: defaults))
+        let descriptor = try XCTUnwrap(
+            LocalModelCatalog.all.first { $0.engineType == .companion }
+        )
+        try CompanionModelConfigurationStore.saveConfirmed(
+            endpointText: "http://10.0.0.8:8080",
+            descriptor: descriptor,
+            defaults: defaults,
+            now: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let snapshot = try XCTUnwrap(
+            CompanionModelConfigurationStore.snapshot(defaults: defaults)
+        )
+        XCTAssertEqual(snapshot.remoteModelID, "Qwen/Qwen3.8-27B")
+        XCTAssertEqual(snapshot.immutableRevision, descriptor.immutableRevision)
+        CompanionModelConfigurationStore.revoke(defaults: defaults)
+        XCTAssertNil(CompanionModelConfigurationStore.snapshot(defaults: defaults))
+    }
+
+    func testQwenPowerTierSeparatesStreamedExperimentsFromLANCompanion() throws {
+        let powers = LocalModelCatalog.all.filter { $0.tier == .power }
+        let experiments = powers.filter { $0.executionLocation == .local }
+        XCTAssertEqual(experiments.count, 3)
+        XCTAssertEqual(
+            Set(experiments.map(\.quantization)),
+            Set(["UD-IQ1_S", "UD-IQ2_XXS", "Q3_K_M"])
+        )
+        for experiment in experiments {
+            XCTAssertEqual(experiment.engineType, .llamaCpp)
+            XCTAssertEqual(experiment.artifactKind, .downloadable)
+            XCTAssertEqual(experiment.physicalBenchmarkStatus, .pending)
+            XCTAssertFalse(experiment.isIPhone12SafeDefault)
+            XCTAssertNotNil(
+                LocalModelCatalog.compatibilityMessage(for: experiment)
+            )
+            XCTAssertTrue(
+                LocalModelCatalog.isPowerOnDeviceAdmissionExperiment(
+                    experiment,
+                    arguments: ["NovaForge", "--local-power-admission-experiment"]
+                )
+            )
+        }
+
+        let companion = try XCTUnwrap(
+            powers.first { $0.executionLocation == .lan }
+        )
+        XCTAssertEqual(companion.engineType, .companion)
+        XCTAssertEqual(companion.artifactKind, .endpointManaged)
+        XCTAssertEqual(companion.expectedBytes, 0)
+        XCTAssertEqual(companion.physicalBenchmarkStatus, .companionOnly)
+    }
+
+    func testBenchmarkReceiptRoundTripsAtomically() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocalAI2Receipts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalBenchmarkReceiptStore(directoryURL: directory)
+        let receipt = LocalBenchmarkReceipt(
+            id: UUID(),
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            modelID: "test/model",
+            immutableRevision: String(repeating: "a", count: 40),
+            engineType: .llamaCpp,
+            executionLocation: .local,
+            deviceIdentifier: "iPhone13,2",
+            operatingSystem: "27.0.0",
+            isPhysicalDevice: true,
+            runtimeBuild: "llama-b10630-device",
+            executionConfiguration: "cpu",
+            contextTokens: 2_048,
+            maximumOutputTokens: 128,
+            timeToFirstTokenSeconds: 1.25,
+            promptTokensPerSecond: nil,
+            decodeTokensPerSecond: 8.5,
+            totalDurationSeconds: 16.0,
+            generatedCharacters: 486,
+            estimatedGeneratedTokens: 128,
+            peakPhysicalFootprintBytes: 1_200_000_000,
+            thermalStateBefore: "nominal",
+            thermalStateAfter: "fair",
+            batteryLevelBefore: 0.8,
+            batteryLevelAfter: 0.78,
+            result: "generated"
+        )
+
+        try await store.save(receipt)
+
+        let restored = try await store.latest()
+        XCTAssertEqual(restored, receipt)
+    }
+
+    func testEvaluationCorpusIsPinnedAndComplete() throws {
+        let corpus = try LocalAIEvaluationCorpus.load(bundle: Bundle(for: Self.self))
+        XCTAssertEqual(corpus.schemaVersion, 1)
+        XCTAssertEqual(corpus.cases.count, 10)
+        XCTAssertEqual(Set(corpus.cases.map(\.id)).count, corpus.cases.count)
+        XCTAssertTrue(corpus.cases.contains { $0.category == "tool_refusal" })
+        XCTAssertTrue(corpus.cases.contains { $0.category == "performance" })
+    }
+
+    func testEvaluationReceiptRoundTripsAtomically() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocalAI2Evaluation-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalAIEvaluationReceiptStore(directoryURL: directory)
+        let caseReceipt = LocalAIEvaluationCaseReceipt(
+            id: "instruction",
+            category: "instruction_following",
+            passed: true,
+            failureReasons: [],
+            output: "READY",
+            selectedAction: nil,
+            generatedTokens: 1,
+            timeToFirstTokenSeconds: 0.2,
+            totalDurationSeconds: 0.3,
+            decodeTokensPerSecond: 10,
+            peakPhysicalFootprintBytes: 900_000_000,
+            thermalStateBefore: "nominal",
+            thermalStateAfter: "nominal",
+            batteryLevelBefore: 0.8,
+            batteryLevelAfter: 0.8
+        )
+        let receipt = LocalAIEvaluationReceipt(
+            id: UUID(),
+            runID: "test-run",
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            corpusSHA256: LocalAIEvaluationCorpus.expectedSHA256,
+            modelID: "test/model",
+            modelSHA256: String(repeating: "b", count: 64),
+            immutableRevision: String(repeating: "a", count: 40),
+            executionConfiguration: "cpu",
+            deviceIdentifier: "iPhone13,2",
+            operatingSystem: "27.0.0",
+            isPhysicalDevice: true,
+            passedCaseCount: 1,
+            totalCaseCount: 1,
+            score: 1,
+            cases: [caseReceipt]
+        )
+
+        try await store.save(receipt)
+
+        let persistedReceipt = try await store.latest()
+        XCTAssertEqual(persistedReceipt, receipt)
     }
 }
 

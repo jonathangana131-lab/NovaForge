@@ -1,0 +1,22 @@
+{
+  "model_id": "Qwen/Qwen3.8-27B",
+  "immutable_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "license": "Apache-2.0",
+  "license_url": "https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/LICENSE",
+  "text_only": true,
+  "vision_projection_included": false,
+  "artifact_repository": "unsloth/Qwen3.8-27B-GGUF",
+  "artifact_revision": "f4480441d4fb4fe2e283c5d1e05d230195afd939",
+  "artifact_filename": "Qwen3.8-27B-UD-IQ1_S.gguf",
+  "artifact_quantization": "UD-IQ1_S",
+  "artifact_bytes": 6192222304,
+  "artifact_sha256": "ffcaee8ef32a3fc91ac1b57f529f14e3054624c40cfae809437d490aa2cd597d",
+  "prompt_corpus": "scripts/companion/prompts-v1.jsonl",
+  "default_context": 1024,
+  "default_max_tokens": 128,
+  "kv_cache": "quantized only when the selected runtime attests support",
+  "weight_loading": "mmap required; zero-copy preferred; full resident-weight budget still required",
+  "generation_lease_count": 1,
+  "mtp_policy": "disabled unless a pinned runtime receipt proves lower end-to-end latency without quality or memory regression",
+  "sampling": { "temperature": 0.2, "top_p": 0.95, "seed": 42 }
+}

@@ -408,7 +408,24 @@ while (1) {
     }
 
     if (!defined $shutdown_reason) {
-        exit decoded_status($child_status) if $child_reaped;
+        if ($child_reaped) {
+            # A well-behaved command can still orphan a compiler/helper after
+            # its root exits. Treat that as a cleanup event instead of
+            # returning success while work remains alive. The session/group
+            # and recursive PPID scan also catches descendants that escaped
+            # into a new process group.
+            my $active = active_tree_processes(1);
+            if (keys %{$active}) {
+                $shutdown_reason = "root exited with descendants";
+                $shutdown_exit_status = decoded_status($child_status);
+                supervisor_message(
+                    "\n[timeout-runner] Root process $pid exited with descendants; "
+                    . "terminating the remaining process tree.\n"
+                );
+            } else {
+                exit decoded_status($child_status);
+            }
+        }
     } else {
         if (!defined $term_sent_at) {
             my $active = active_tree_processes(1);

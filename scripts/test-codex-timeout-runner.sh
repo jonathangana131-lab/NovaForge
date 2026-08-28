@@ -94,6 +94,21 @@ set -e
 assert_status 7 "$status" "nonzero command"
 grep -q '^nonzero-output$' "$nonzero_log" || fail "nonzero output was not captured"
 
+orphan_pid_file="$TMP_DIR/orphan.pids"
+PID_FILES+=("$orphan_pid_file")
+orphan_log="$TMP_DIR/orphan.log"
+set +e
+env "${runner_env[@]}" TIMEOUT_RUNNER_LABEL="clean-root-orphan" \
+  "$RUNNER" 5 "$orphan_log" "$TREE_HELPER" "$orphan_pid_file" orphan
+status=$?
+set -e
+assert_status 0 "$status" "root command with orphaned descendants"
+wait_for_pid_count "$orphan_pid_file" 3
+assert_processes_gone "$orphan_pid_file"
+grep -q 'Root process .* exited with descendants' "$orphan_log" \
+  || fail "clean root orphan diagnostic missing"
+grep -q 'fully drained' "$orphan_log" || fail "clean root orphan tree did not drain"
+
 timeout_pid_file="$TMP_DIR/timeout.pids"
 PID_FILES+=("$timeout_pid_file")
 timeout_log="$TMP_DIR/timeout.log"

@@ -7,6 +7,7 @@ enum NextToken {
 }
 
 final actor Llama {
+    private let backendLease: LlamaBackendLease
     private let model: LlamaModel
     let context: LlamaContext
     private var batch: LlamaBatch
@@ -16,21 +17,28 @@ final actor Llama {
 
     private let config: LlamaConfig
     let maxTokenCount: UInt32
+    let maxOutputTokenCount: UInt32
+    private var generationStartTokenPosition: Int32 = 0
     /// Tracks the current position in the token sequence during decoding.
     var currentTokenPosition: Int32 = 0
     var processedTokens: [llama_token] = []
 
     init(modelPath: String, config: LlamaConfig) throws {
         self.config = config
-        llama_backend_init()
+        let backendLease = LlamaBackend.acquire()
         var model_params = llama_model_default_params()
-
-        model_params.n_gpu_layers = config.useGPU ? config.gpuLayerCount : 0
-
-        #if targetEnvironment(simulator)
-                model_params.n_gpu_layers = 0
-                print("Running on simulator, force use n_gpu_layers = 0")
-        #endif
+        let outOfCoreCoordinator = LlamaOutOfCoreCoordinator.make(
+            modelPath: modelPath,
+            residentBudgetBytes: config.outOfCoreResidentBudgetBytes
+        )
+        if outOfCoreCoordinator != nil {
+            model_params.load_mode = LLAMA_LOAD_MODE_MMAP
+        }
+        let selection = LlamaBackend.select(
+            config.computeMode,
+            gpuLayerCount: config.gpuLayerCount
+        )
+        model_params.n_gpu_layers = selection.gpuLayerCount
 
         let model = LlamaModel(path: modelPath, parameters: model_params)
         guard let model else {
@@ -38,31 +46,53 @@ final actor Llama {
             throw LlamaError.couldNotInitializeContext
         }
 
-        print("Using \(config.generationThreadCount) generation threads, \(config.batchThreadCount) batch threads, \(model_params.n_gpu_layers) GPU layers")
+        print("Compute: \(selection.effective.rawValue), \(selection.reason), \(model_params.n_gpu_layers) GPU layers")
 
+        let contextCap: UInt32 = config.reducedMemoryMode ? 8_192 : 32_768
+        let effectiveContextCount = min(
+            UInt32(model.trainedContextSize()),
+            config.maxTokenCount,
+            contextCap
+        )
         var contextParam = llama_context_default_params()
-        contextParam.n_ctx = config.maxTokenCount
+        contextParam.n_ctx = effectiveContextCount
         contextParam.n_threads = config.generationThreadCount
         contextParam.n_threads_batch = config.batchThreadCount
         contextParam.n_batch = config.batchSize
         contextParam.n_ubatch = config.batchSize
-        contextParam.offload_kqv = true
+        contextParam.offload_kqv = selection.effective != .cpu
+        contextParam.type_k = config.kvCacheType.ggmlType
+        contextParam.type_v = config.kvCacheType.ggmlType
+        #if targetEnvironment(simulator)
+        contextParam.flash_attn = config.flashAttention &&
+            selection.effective != .cpu
+        #else
+        contextParam.flash_attn_type = config.flashAttention &&
+            selection.effective != .cpu
+            ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+            : LLAMA_FLASH_ATTN_TYPE_DISABLED
+        #endif
 
-        let context = LlamaContext(model: model, parameters: contextParam)
+        let context = LlamaContext(
+            model: model,
+            parameters: contextParam,
+            outOfCoreCoordinator: outOfCoreCoordinator
+        )
         guard let context else {
             print("Could not load context!")
             throw LlamaError.couldNotInitializeContext
         }
 
 
-        self.maxTokenCount = min(UInt32(model.trainedContextSize()), config.maxTokenCount)
+        self.maxTokenCount = effectiveContextCount
+        self.maxOutputTokenCount = min(
+            config.maxOutputTokenCount,
+            effectiveContextCount
+        )
+        self.backendLease = backendLease
         self.model = context.model
         self.context = context
         self.batch = .init(initialSize: Int32(config.batchSize))
-    }
-
-    deinit {
-        llama_backend_free()
     }
 
     // Expose some backend/system utilities for convenience
@@ -101,11 +131,12 @@ final actor Llama {
         print("attempting to complete \"\(text)\"")
 
         let tokenList = model.tokenize(text: text, addBos: model.shouldAddBos(), special: true)
-        guard tokenList.count < maxTokenCount - 4 else {
+        let promptLimit = maxTokenCount > 4 ? maxTokenCount - 4 : 1
+        guard UInt32(tokenList.count) < promptLimit else {
             throw LlamaError.contextSizeLimitExeeded
         }
 
-        if tokenList.starts(with: processedTokens) {
+        if config.reusePromptPrefix && tokenList.starts(with: processedTokens) {
             print("### Using cached processing")
             try processPrompt(tokens: Array(tokenList[processedTokens.count...]), startIndex: processedTokens.count)
         } else {
@@ -127,6 +158,7 @@ final actor Llama {
                 try processPrompt(tokens: tokenList, startIndex: 0)
             }
         }
+        generationStartTokenPosition = currentTokenPosition
     }
 
     /// Find the index where the two token lists diverge
@@ -155,21 +187,31 @@ final actor Llama {
     
     /// Optimized reprocessing that only clears cache from the divergence point
     private func optimizedReprocessing(newTokenList: [llama_token], divergenceIndex: Int) throws {
-        // Clear KV cache from the divergence point onward
-        context.clearKVCacheFromPosition(Int32(divergenceIndex))
-        
+        // If the new prompt exactly matches the prompt prefix of a previous
+        // completion, divergenceIndex is the end of newTokenList. Replaying an
+        // empty suffix leaves no prompt logits to sample from and can produce
+        // an immediate empty completion. Back up one prompt token so llama.cpp
+        // recomputes valid logits while retaining the rest of the KV prefix.
+        let replayIndex = min(
+            divergenceIndex,
+            max(0, newTokenList.count - 1)
+        )
+
+        // Clear KV cache from the replay point onward.
+        context.clearKVCacheFromPosition(Int32(replayIndex))
+
         // Update our internal state
-        processedTokens = Array(processedTokens[0..<divergenceIndex])
-        currentTokenPosition = Int32(divergenceIndex)
-        
-        // Process only the tokens from the divergence point onward
-        let tokensToProcess = Array(newTokenList[divergenceIndex...])
-        try processPrompt(tokens: tokensToProcess, startIndex: divergenceIndex)
+        processedTokens = Array(processedTokens[0..<replayIndex])
+        currentTokenPosition = Int32(replayIndex)
+
+        // Process only the tokens from the replay point onward.
+        let tokensToProcess = Array(newTokenList[replayIndex...])
+        try processPrompt(tokens: tokensToProcess, startIndex: replayIndex)
     }
 
     func generateNextToken() throws -> NextToken {
         // Stop before sampling if we've reached the context limit to avoid mutating sampler state
-        if currentTokenPosition >= Int32(maxTokenCount) {
+        if !canGenerateMore() {
             return .endOfString
         }
         let newTokenId = sampler.sample(context: context)
@@ -186,6 +228,12 @@ final actor Llama {
         try context.decode(batch: batch)
 
         return .token(model.piece(from: newTokenId))
+    }
+
+    func canGenerateMore() -> Bool {
+        currentTokenPosition < Int32(maxTokenCount) &&
+            currentTokenPosition - generationStartTokenPosition <
+            Int32(maxOutputTokenCount)
     }
 
     func updateSamplingConfig(_ config: LlamaSamplingConfig) throws {

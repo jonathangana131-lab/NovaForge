@@ -1,0 +1,11 @@
+{
+  "device": {
+    "tag": "b10630",
+    "sha256": "8dc244a161eb555e29a5427e7a2616a12d95e55a37fbdefdeede8230c3d21431"
+  },
+  "simulator": {
+    "tag": "b6102",
+    "sha256": "257b8ffbdda68b377e1b75cd23055b201b0e9a24e18d5a42f2960456776eab8a"
+  },
+  "reason": "Xcode 27 llama.cpp artifacts omit Intel iOS Simulator slices"
+}

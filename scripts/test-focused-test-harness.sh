@@ -50,5 +50,13 @@ fi
 rg -q 'swift test --package-path' "$RUNNER"
 rg -q 'test-focused-test-harness\.sh' "$RUNNER"
 rg -q 'MAX_HOST_LOAD_PER_CPU' "$ROOT_DIR/scripts/codex-performance-gate.sh"
+rg -q 'run-\$RUN_ID' "$ROOT_DIR/ci/verify.sh"
+rg -q 'run-\$RUN_ID' "$ROOT_DIR/ci/pipeline.sh"
+rg -q 'codex-ci-evidence-manifest\.sh' "$ROOT_DIR/ci/verify.sh" "$ROOT_DIR/ci/pipeline.sh"
+rg -q 'codex-ci-cleanup\.sh' "$ROOT_DIR/ci/verify.sh" "$ROOT_DIR/ci/pipeline.sh"
+rg -q '3600' "$ROOT_DIR/.github/workflows/local-ai-xcode27.yml"
+rg -q 'xcodebuild' "$ROOT_DIR/.github/workflows/local-ai-xcode27.yml"
+rg -q 'claimsAllowed.*False' "$ROOT_DIR/scripts/codex-ci-evidence-manifest.sh"
+rg -q 'executionClass.*physical' "$ROOT_DIR/scripts/validate-local-ai-receipts.py"
 
 echo "PASS: build-once test lanes are bounded, deterministic, screenshot-aware, and CI-wired."

@@ -75,7 +75,10 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 
     var defaultModel: String {
-        modelOptions.first ?? ""
+        if self == .local {
+            return LocalModelCatalog.defaultVariant.id
+        }
+        return modelOptions.first ?? ""
     }
 
     var apiKeyAccount: String {

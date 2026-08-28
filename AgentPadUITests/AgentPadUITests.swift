@@ -2596,6 +2596,36 @@ final class AgentPadUITests: XCTestCase {
         capture("52-canonical-activity-expanded-accessibility", app: app)
     }
 
+
+    func testApprovalAndWaitingFixturesRemainDistinctAcrossSurfaces() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-ui",
+            "--project-waiting-demo",
+            "--open-project",
+            "--open-mission-dossier-demo"
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["missionDossierHeader"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Approval Gate"].waitForExistence(timeout: 5), "Project waiting fixture should identify its approval-gated mission.")
+        XCTAssertTrue(app.staticTexts["Waiting for approval"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["projectOSApprovalActions"].waitForExistence(timeout: 5), "Project waiting fixture should expose inline dossier approval actions.")
+        XCTAssertTrue(app.buttons["projectApprovalRejectButton"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Review this action"].exists, "Project waiting fixture must remain distinct from the chat approval sheet.")
+        capture("tour-project-waiting-approval", app: app)
+
+        app.terminate()
+        app.launchArguments = ["--reset-ui", "--pending-approval-demo", "--open-chat"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Review this action"].waitForExistence(timeout: 8), "Chat approval fixture should present the human review sheet.")
+        XCTAssertTrue(app.staticTexts["approval-demo.html"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Approval needed: Write File"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.otherElements["projectOSApprovalActions"].exists, "Chat approval fixture must not masquerade as the Project dossier state.")
+        capture("tour-chat-pending-approval", app: app)
+    }
+
     func testCompletedArtifactHandoffKeepsForgeDockCompact() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui", "--artifact-dedupe-demo"]

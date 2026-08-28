@@ -3,9 +3,10 @@
 
 import PackageDescription
 
-let llamaVersion = "b6102"
-let llamaChecksum = "257b8ffbdda68b377e1b75cd23055b201b0e9a24e18d5a42f2960456776eab8a"
-
+// Pinned to the implementation-date xcframework. This build understands the
+// current LFM2.5 GGUF architecture. DSpark remains disabled because the
+// speculative implementation lives in llama.cpp's server/common layer rather
+// than the in-process C API exposed by this package.
 let package = Package(
     name: "swift-llama-cpp",
     platforms: [
@@ -28,8 +29,7 @@ let package = Package(
         ),
         .binaryTarget(
             name: "llama",
-            url: "https://github.com/ggml-org/llama.cpp/releases/download/\(llamaVersion)/llama-\(llamaVersion)-xcframework.zip",
-            checksum: llamaChecksum
+            path: "Artifacts/llama-hybrid.xcframework"
         ),
         .testTarget(
             name: "SwiftLlamaTests",

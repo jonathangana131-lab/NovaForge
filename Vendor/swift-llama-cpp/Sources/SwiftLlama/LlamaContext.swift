@@ -25,12 +25,39 @@ public final class LlamaContext {
     }
     let contextPointer: OpaquePointer
     private var abortBox: Unmanaged<AbortBox>?
+    private let outOfCoreCoordinator: LlamaOutOfCoreCoordinator?
 
     // MARK: - Lifecycle
 
-    public init?(model: LlamaModel, parameters: llama_context_params = llama_context_default_params()) {
+    public convenience init?(
+        model: LlamaModel,
+        parameters: llama_context_params = llama_context_default_params()
+    ) {
+        self.init(
+            model: model,
+            parameters: parameters,
+            outOfCoreCoordinator: nil
+        )
+    }
+
+    init?(
+        model: LlamaModel,
+        parameters: llama_context_params,
+        outOfCoreCoordinator: LlamaOutOfCoreCoordinator? = nil
+    ) {
         self.model = model
-        guard let contextPointer = llama_init_from_model(model.modelPointer, parameters) else {
+        self.outOfCoreCoordinator = outOfCoreCoordinator
+        var effectiveParameters = parameters
+        if let outOfCoreCoordinator {
+            effectiveParameters.cb_eval = llamaOutOfCoreEvalCallback
+            effectiveParameters.cb_eval_user_data = Unmanaged
+                .passUnretained(outOfCoreCoordinator)
+                .toOpaque()
+        }
+        guard let contextPointer = llama_init_from_model(
+            model.modelPointer,
+            effectiveParameters
+        ) else {
             return nil
         }
         self.contextPointer = contextPointer
@@ -80,11 +107,13 @@ public final class LlamaContext {
     }
 
     public func decode(batch: LlamaBatch) throws {
+        outOfCoreCoordinator?.beforeDecode()
         let returnCode = llama_decode(contextPointer, batch.rawBatch)
         guard returnCode >= 0 else {
             throw LlamaContextError.decodingError
         }
         synchronize()
+        outOfCoreCoordinator?.finishedDecode()
     }
 
     /// Run encoder-only pass for encoder-decoder models or preprocess inputs.
@@ -177,25 +206,24 @@ public final class LlamaContext {
     ///   - scale: The scaling factor for the adapter's influence.
     /// - Throws: `LlamaContextError.loraAdapterFailed` if the operation fails.
     public func apply(loraAdapter: LlamaLoraAdapter, scale: Float = 1.0) throws {
-        let result = llama_set_adapter_lora(contextPointer, loraAdapter.adapterPointer, scale)
-        if result != 0 {
-            throw LlamaContextError.loraAdapterFailed("Failed to apply LoRA adapter.")
-        }
+        throw LlamaContextError.loraAdapterFailed(
+            "LoRA adapters are not exposed by NovaForge's pinned cross-version wrapper."
+        )
     }
 
     /// Removes a specific LoRA adapter from the context.
     /// - Parameter adapter: The `LlamaLoraAdapter` to remove.
     /// - Throws: `LlamaContextError.loraAdapterFailed` if the adapter is not found or cannot be removed.
     public func remove(loraAdapter: LlamaLoraAdapter) throws {
-        let result = llama_rm_adapter_lora(contextPointer, loraAdapter.adapterPointer)
-        if result == -1 {
-            throw LlamaContextError.loraAdapterFailed("LoRA adapter not found in context.")
-        }
+        throw LlamaContextError.loraAdapterFailed(
+            "LoRA adapters are not exposed by NovaForge's pinned cross-version wrapper."
+        )
     }
 
     /// Removes all LoRA adapters from the context.
     public func removeAllLoraAdapters() {
-        llama_clear_adapter_lora(contextPointer)
+        // NovaForge never installs LoRA adapters. Keeping this source-level
+        // compatibility method is safe because there is nothing to clear.
     }
 
     /// Applies a control vector to the context.
@@ -209,28 +237,16 @@ public final class LlamaContext {
     ///   - endLayer: The ending layer index for applying the vector (inclusive).
     /// - Throws: `LlamaContextError.loraAdapterFailed` if applying the control vector fails.
     public func apply(controlVector data: [Float], n_embd: Int32, startLayer: Int32, endLayer: Int32) throws {
-        let result = data.withUnsafeBufferPointer { bufferPointer in
-            llama_apply_adapter_cvec(
-                contextPointer,
-                bufferPointer.baseAddress,
-                size_t(bufferPointer.count),
-                n_embd,
-                startLayer,
-                endLayer
-            )
-        }
-        if result != 0 {
-            throw LlamaContextError.loraAdapterFailed("Failed to apply control vector.")
-        }
+        throw LlamaContextError.loraAdapterFailed(
+            "Control vectors are not exposed by NovaForge's pinned cross-version wrapper."
+        )
     }
 
     /// Clears the currently applied control vector.
     /// - Throws: `LlamaContextError.loraAdapterFailed` if clearing fails.
     public func clearControlVector() throws {
-        let result = llama_apply_adapter_cvec(contextPointer, nil, 0, 0, 0, 0)
-        if result != 0 {
-            throw LlamaContextError.loraAdapterFailed("Failed to clear control vector.")
-        }
+        // NovaForge never installs a control vector, so there is no state to
+        // clear. This avoids binding to renamed optional llama.cpp APIs.
     }
 
     // MARK: - State / Sessions

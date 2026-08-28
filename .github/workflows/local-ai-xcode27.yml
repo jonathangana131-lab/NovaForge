@@ -1,0 +1,316 @@
+name: Local AI Xcode 27 proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_coreai_asset:
+        description: Export and AOT-compile the pinned Qwen3 0.6B recipe in a separate job
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - "AgentPad/**"
+      - "AgentPadTests/**"
+      - "AgentPadUITests/**"
+      - "AgentPad.xcodeproj/**"
+      - "Vendor/swift-llama-cpp/**"
+      - "scripts/**"
+      - "Docs/LocalAI2-*.md"
+      - ".github/workflows/local-ai-xcode27.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-ai-xcode27-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcode27-simulator-evidence:
+    # GitHub's public-preview xcode-27 label is an arm64 M1 runner with
+    # Xcode 27 and the iOS 27 SDK/simulator. It cannot access a USB iPhone.
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      NOVAFORGE_SOURCE_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Allocate bounded evidence paths
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          run_dir="$GITHUB_WORKSPACE/artifacts/local-ai/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          derived_data="$HOME/Library/Developer/Xcode/DerivedData"
+          mkdir -p "$run_dir" "$run_dir/toolchain" "$run_dir/tests" \
+            "$run_dir/smoke/logs" "$run_dir/smoke/screenshots" \
+            "$run_dir/tour/logs" "$run_dir/tour/screenshots"
+          {
+            echo "LOCAL_AI_EVIDENCE_DIR=$run_dir"
+            echo "LOCAL_AI_DERIVED_DATA=$derived_data"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify Xcode 27 and create deterministic iOS 27 simulator
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+
+          xcodebuild -version | tee "$LOCAL_AI_EVIDENCE_DIR/toolchain/xcode-version.log"
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / { split($2, version, "."); print version[1]; exit }')"
+          if [[ "$xcode_major" != "27" ]]; then
+            print -u2 "The xcode-27 runner did not select Xcode 27 (observed major: ${xcode_major:-unknown})."
+            exit 1
+          fi
+
+          {
+            sw_vers
+            uname -a
+            print "architecture=$(uname -m)"
+            print "developer_dir=$(xcode-select -p)"
+            print "iphoneos_sdk=$(xcrun --sdk iphoneos --show-sdk-version)"
+            print "iphonesimulator_sdk=$(xcrun --sdk iphonesimulator --show-sdk-version)"
+            df -h "$GITHUB_WORKSPACE"
+          } | tee "$LOCAL_AI_EVIDENCE_DIR/toolchain/host-manifest.txt"
+          xcrun simctl list runtimes --json > "$LOCAL_AI_EVIDENCE_DIR/toolchain/runtimes.json"
+          xcrun simctl list devicetypes --json > "$LOCAL_AI_EVIDENCE_DIR/toolchain/device-types.json"
+
+          runtime_id="$(jq -r '
+            [.runtimes[]
+              | select(.isAvailable == true)
+              | select(.platform == "iOS" or (.name | startswith("iOS")))
+              | select((.version | split(".")[0]) == "27")]
+            | sort_by(.version | split(".") | map(tonumber))
+            | last
+            | .identifier // empty
+          ' "$LOCAL_AI_EVIDENCE_DIR/toolchain/runtimes.json")"
+          if [[ -z "$runtime_id" ]]; then
+            print -u2 "No available iOS 27 simulator runtime is installed."
+            exit 1
+          fi
+
+          device_record="$(jq -c '
+            [.devicetypes[]
+              | select(.productFamily == "iPhone")
+              | . + {priority:
+                  (if .name == "iPhone 12" then 0
+                   elif .name == "iPhone 17" then 1
+                   elif .name == "iPhone 16" then 2
+                   else 100 end)}]
+            | sort_by(.priority, .name)
+            | first // empty
+          ' "$LOCAL_AI_EVIDENCE_DIR/toolchain/device-types.json")"
+          device_type_id="$(jq -r '.identifier // empty' <<< "$device_record")"
+          device_name="$(jq -r '.name // empty' <<< "$device_record")"
+          if [[ -z "$device_type_id" || -z "$device_name" ]]; then
+            print -u2 "No compatible iPhone simulator device type is installed."
+            exit 1
+          fi
+
+          simulator_name="NovaForge-Xcode27-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          simulator_id="$(xcrun simctl create "$simulator_name" "$device_type_id" "$runtime_id")"
+          {
+            echo "SIMULATOR_ID=$simulator_id"
+            echo "NOVAFORGE_SIMULATOR_NAME=$simulator_name"
+          } >> "$GITHUB_ENV"
+          jq -n \
+            --arg name "$simulator_name" \
+            --arg udid "$simulator_id" \
+            --arg deviceName "$device_name" \
+            --arg deviceType "$device_type_id" \
+            --arg runtime "$runtime_id" \
+            '{name:$name, udid:$udid, deviceName:$deviceName, deviceType:$deviceType, runtime:$runtime}' \
+            | tee "$LOCAL_AI_EVIDENCE_DIR/toolchain/selected-simulator.json"
+
+          xcrun simctl boot "$simulator_id"
+          scripts/codex-timeout-runner.pl 240 \
+            "$LOCAL_AI_EVIDENCE_DIR/toolchain/simulator-boot.log" \
+            xcrun simctl bootstatus "$simulator_id" -b
+
+      - name: Verify immutable catalog, source pins, and script self-tests
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          scripts/validate-local-ai-catalog.sh \
+            | tee "$LOCAL_AI_EVIDENCE_DIR/catalog-validation.log"
+          scripts/verify-local-ai-source-pins.sh \
+            | tee "$LOCAL_AI_EVIDENCE_DIR/source-pins.log"
+          bash scripts/test-local-ai-device-protocol.sh \
+            | tee "$LOCAL_AI_EVIDENCE_DIR/device-protocol-self-test.log"
+          bash -n scripts/run-qwen38-out-of-core-device-protocol.sh
+          /usr/bin/python3 scripts/test-local-ai-receipt-gate.py \
+            | tee "$LOCAL_AI_EVIDENCE_DIR/receipt-gate-self-test.log"
+          bash scripts/test-codex-timeout-runner.sh \
+            | tee "$LOCAL_AI_EVIDENCE_DIR/timeout-runner-self-test.log"
+
+      - name: Run focused Local AI tests on iOS 27
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          scripts/codex-timeout-runner.pl 2700 \
+            "$LOCAL_AI_EVIDENCE_DIR/tests/focused-tests.log" \
+            xcodebuild \
+              -project AgentPad.xcodeproj \
+              -scheme AgentPad \
+              -configuration Debug \
+              -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+              CODE_SIGNING_ALLOWED=NO \
+              ONLY_ACTIVE_ARCH=YES \
+              test \
+              -only-testing:AgentPadTests/AgentRuntimeLifecycleTests \
+              -only-testing:AgentPadTests/AgentLocalModelProviderTransportTests \
+              -only-testing:AgentPadTests/CompanionEndpointPolicyTests \
+              -only-testing:AgentPadTests/CompanionHostileEndpointTests
+          rg -Fq '** TEST SUCCEEDED **' "$LOCAL_AI_EVIDENCE_DIR/tests/focused-tests.log"
+
+      - name: Build, install, launch, and capture smoke proof
+        shell: zsh {0}
+        env:
+          BUILD_FIRST: "1"
+          CONFIGURATION: Debug
+          ENSURE_BOOTED: "1"
+          CHECK_SIMULATOR_HEALTH: "1"
+          BUILD_TIMEOUT: "1200"
+          SIMCTL_TIMEOUT: "180"
+          WAIT_SECONDS: "15"
+          MAX_WAIT_SECONDS: "30"
+          LOG_DIR: ${{ github.workspace }}/artifacts/local-ai/run-${{ github.run_id }}-${{ github.run_attempt }}/smoke/logs
+          SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/local-ai/run-${{ github.run_id }}-${{ github.run_attempt }}/smoke/screenshots
+          SCREENSHOT_NAME: forge-smoke.png
+        run: scripts/codex-sim-smoke.sh --reset-ui --settings-local-model-ready --open-chat
+
+      - name: Build and capture the deterministic 20-surface tour
+        shell: zsh {0}
+        env:
+          BUILD_FIRST: "1"
+          CONFIGURATION: Release
+          ENSURE_BOOTED: "1"
+          CHECK_SIMULATOR_HEALTH: "1"
+          BUILD_TIMEOUT: "1200"
+          SIMCTL_TIMEOUT: "180"
+          STEP_TIMEOUT: "180"
+          MAX_TOUR_SECONDS: "2400"
+          WAIT_SECONDS: "30"
+          MAX_WAIT_SECONDS: "30"
+          SHUTDOWN_SIMULATOR_AFTER_TOUR: "0"
+          TOUR_DIR: ${{ github.workspace }}/artifacts/local-ai/run-${{ github.run_id }}-${{ github.run_attempt }}/tour/screenshots
+          TOUR_LOG_DIR: ${{ github.workspace }}/artifacts/local-ai/run-${{ github.run_id }}-${{ github.run_attempt }}/tour/logs
+        run: scripts/codex-sim-tour.sh
+
+      - name: Require semantic OCR and fixture evidence for every tour surface
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          tour_dir="$LOCAL_AI_EVIDENCE_DIR/tour/screenshots"
+          summary="$tour_dir/tour-verification-summary.txt"
+          fixtures="$tour_dir/tour-fixtures.tsv"
+
+          scripts/codex-tour-verify.sh "$tour_dir"
+          semantic_count="$(rg -c '^semantic ok ' "$summary")"
+          fixture_count="$(tail -n +2 "$fixtures" | awk 'NF { count += 1 } END { print count + 0 }')"
+          screenshot_count="$(find "$tour_dir" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')"
+          if [[ "$semantic_count" != "20" || "$fixture_count" != "20" || "$screenshot_count" != "20" ]]; then
+            print -u2 "Incomplete tour proof: semantic=$semantic_count fixtures=$fixture_count screenshots=$screenshot_count"
+            exit 1
+          fi
+          rg -Fq '10-runs-proof.png' "$summary"
+          rg -Fq '11-files-proof.png' "$summary"
+          rg -Fq '13-settings-local-ready.png' "$summary"
+          rg -Fq '14-runs-pending-approval.png' "$summary"
+          rg -Fq '18-theme-arctic-runs-proof.png' "$summary"
+          rg -Fq '20-mission-dossier-intake-brief.png' "$summary"
+          print "semantic_count=$semantic_count" | tee "$LOCAL_AI_EVIDENCE_DIR/tour/acceptance-counts.txt"
+          print "fixture_count=$fixture_count" | tee -a "$LOCAL_AI_EVIDENCE_DIR/tour/acceptance-counts.txt"
+          print "screenshot_count=$screenshot_count" | tee -a "$LOCAL_AI_EVIDENCE_DIR/tour/acceptance-counts.txt"
+
+      - name: Record simulator state and process hygiene
+        if: always()
+        shell: zsh {0}
+        run: |
+          set +e
+          mkdir -p "$LOCAL_AI_EVIDENCE_DIR/toolchain"
+          xcrun simctl list devices > "$LOCAL_AI_EVIDENCE_DIR/toolchain/devices-final.txt" 2>&1
+          pgrep -alf 'xcodebuild|simctl|NovaForge|codex-fast-screenshot|codex-sim-' \
+            > "$LOCAL_AI_EVIDENCE_DIR/toolchain/processes-before-cleanup.txt" 2>&1
+          if [[ -n "${SIMULATOR_ID:-}" ]]; then
+            xcrun simctl terminate "$SIMULATOR_ID" com.joey.NovaForge >/dev/null 2>&1 || true
+            xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+            xcrun simctl delete "$SIMULATOR_ID" >/dev/null 2>&1 || true
+          fi
+          scripts/codex-ci-cleanup.sh \
+            > "$LOCAL_AI_EVIDENCE_DIR/toolchain/cleanup.log" 2>&1 || true
+
+      - name: Finalize Local AI evidence manifest
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          manifest_status=fail
+          [[ "$JOB_STATUS" == "success" ]] && manifest_status=pass
+          scripts/codex-ci-evidence-manifest.sh \
+            "$LOCAL_AI_EVIDENCE_DIR" local-ai-xcode27-simulator "$manifest_status" "$LOCAL_AI_DERIVED_DATA"
+
+      - name: Upload Xcode 27 simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-ai-xcode27-simulator-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/local-ai
+          if-no-files-found: error
+          retention-days: 14
+
+  coreai-export-optional:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.export_coreai_asset }}
+    # Kept separate so the 14 GB screenshot runner never downloads or exports
+    # model assets. This optional lane still does not constitute device proof.
+    runs-on: xcode-27-xlarge
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Allocate Core AI evidence path and verify Xcode 27
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          evidence_dir="$GITHUB_WORKSPACE/artifacts/coreai/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$evidence_dir"
+          echo "COREAI_EVIDENCE_DIR=$evidence_dir" >> "$GITHUB_ENV"
+          xcodebuild -version | tee "$evidence_dir/xcode-version.log"
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / { split($2, version, "."); print version[1]; exit }')"
+          [[ "$xcode_major" == "27" ]]
+          df -h "$GITHUB_WORKSPACE" | tee "$evidence_dir/disk-before.txt"
+
+      - name: Install uv
+        run: brew install uv
+
+      - name: Export the pinned small Core AI recipe
+        env:
+          LOCAL_AI_COREAI_WORK_DIR: ${{ github.workspace }}/artifacts/coreai/run-${{ github.run_id }}-${{ github.run_attempt }}/work
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          scripts/codex-timeout-runner.pl 4800 \
+            "$COREAI_EVIDENCE_DIR/coreai-export.log" \
+            scripts/export-coreai-qwen.sh
+
+      - name: Record Core AI checksums
+        if: always()
+        shell: zsh {0}
+        run: |
+          set +e
+          find "$COREAI_EVIDENCE_DIR" -type f -print0 \
+            | sort -z \
+            | xargs -0 shasum -a 256 \
+            > "$COREAI_EVIDENCE_DIR/SHA256SUMS"
+          df -h "$GITHUB_WORKSPACE" > "$COREAI_EVIDENCE_DIR/disk-after.txt"
+
+      - name: Upload optional Core AI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-ai-coreai-export-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/coreai
+          if-no-files-found: error
+          retention-days: 7

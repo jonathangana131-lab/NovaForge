@@ -66,6 +66,14 @@ jobs:
         run: command -v rg >/dev/null 2>&1 || brew install ripgrep
       - name: Run NovaForge visual census
         run: bash ci/pipeline.sh
+      - name: Upload visual evidence manifest and raw captures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: visual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/visual
+          if-no-files-found: warn
+          retention-days: 14
 
   release-suite:
     name: Exhaustive release verification

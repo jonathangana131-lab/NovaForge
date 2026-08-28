@@ -1,7 +1,9 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Observation
 import os
+import AgentProviders
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -10,7 +12,13 @@ import UIKit
 import SwiftLlama
 #endif
 
-enum LocalModelDeviceFit: String, Sendable, Hashable {
+#if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+import CoreAI
+import CoreAILanguageModels
+import FoundationModels
+#endif
+
+enum LocalModelDeviceFit: String, Codable, CaseIterable, Sendable, Hashable {
     case deviceProven
     case ultraLight
     case memorySaver
@@ -32,11 +40,75 @@ enum LocalModelDeviceFit: String, Sendable, Hashable {
     }
 }
 
-struct LocalModelVariant: Identifiable, Hashable, Sendable {
+enum LocalModelTier: String, Codable, CaseIterable, Sendable, Hashable {
+    case instant
+    case fast
+    case balanced
+    case power
+
+    var title: String { rawValue.capitalized }
+    var sortOrder: Int {
+        switch self {
+        case .instant: 0
+        case .fast: 1
+        case .balanced: 2
+        case .power: 3
+        }
+    }
+}
+
+enum LocalInferenceEngineType: String, Codable, CaseIterable, Sendable, Hashable {
+    case coreAI
+    case llamaCpp
+    case companion
+
+    var title: String {
+        switch self {
+        case .coreAI: "Core AI"
+        case .llamaCpp: "GGUF/Metal"
+        case .companion: "Companion"
+        }
+    }
+}
+
+enum LocalExecutionLocation: String, Codable, CaseIterable, Sendable, Hashable {
+    case local
+    case lan
+    case cloud
+
+    var title: String {
+        switch self {
+        case .local: "Local"
+        case .lan: "LAN"
+        case .cloud: "Cloud"
+        }
+    }
+}
+
+enum LocalModelArtifactKind: String, Codable, Sendable, Hashable {
+    case downloadable
+    case exportRequired
+    case endpointManaged
+}
+
+enum LocalPhysicalBenchmarkStatus: String, Codable, Sendable, Hashable {
+    case pending
+    case unsupported
+    case legacyProven
+    case companionOnly
+}
+
+struct LocalModelVariant: Identifiable, Codable, Hashable, Sendable {
     let id: String
     let displayName: String
     let shortName: String
+    let tier: LocalModelTier
+    let engineType: LocalInferenceEngineType
+    let executionLocation: LocalExecutionLocation
+    let artifactKind: LocalModelArtifactKind
+    let immutableRevision: String
     let quantization: String
+    let compressionDetails: String
     let filename: String
     let downloadURL: URL
     let expectedBytes: Int64
@@ -56,12 +128,21 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     let releaseDateLabel: String
     let parameterLabel: String
     let licenseLabel: String
+    let licenseURL: URL
+    let licenseNotes: String
     let benchmarkSummary: String
     let capabilitySummary: String
     let deviceFit: LocalModelDeviceFit
     let estimatedPeakMemoryBytes: UInt64
+    let measuredPeakMemoryBytes: UInt64?
     let minimumAvailableMemoryBeforeLoadBytes: UInt64
     let sourceURL: URL
+    let chatTemplate: String
+    let tokenizerRequirements: String
+    let supportedDeviceClasses: [String]
+    let toolCallingSupport: String
+    let speculativeDecoding: String
+    let physicalBenchmarkStatus: LocalPhysicalBenchmarkStatus
     let details: String
 
     var expectedSizeLabel: String {
@@ -69,7 +150,14 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     }
 
     var executionLabel: String {
-        useGPU ? "Metal \(gpuLayerCount)L" : "CPU-only"
+        switch engineType {
+        case .coreAI:
+            "Core AI"
+        case .llamaCpp:
+            useGPU ? "GGUF · Metal \(gpuLayerCount)L" : "GGUF · CPU"
+        case .companion:
+            "LAN companion"
+        }
     }
 
     var estimatedPeakMemoryLabel: String {
@@ -82,148 +170,133 @@ struct LocalModelVariant: Identifiable, Hashable, Sendable {
     var isNewRelease: Bool {
         releaseDateISO8601 >= "2026-07-01"
     }
+
+    var isDownloadable: Bool { artifactKind == .downloadable }
 }
 
+/// The Local AI 2.0 charter calls manifest-backed model records descriptors.
+/// Preserve the existing concrete name so saved IDs and older call sites stay
+/// source-compatible while exposing the architecture's intended vocabulary.
+typealias LocalModelDescriptor = LocalModelVariant
+
+extension LocalModelVariant {
+    /// Compatibility initializer for focused fixtures and the preserved V1
+    /// download tests. Production descriptors always come from the pinned
+    /// versioned manifest above this boundary.
+    init(
+        id: String,
+        displayName: String,
+        shortName: String,
+        quantization: String,
+        filename: String,
+        downloadURL: URL,
+        expectedBytes: Int64,
+        expectedSHA256: String,
+        minimumPhysicalMemoryBytes: UInt64,
+        recommendedFreeDiskBytes: Int64,
+        contextTokens: UInt32,
+        batchTokens: UInt32,
+        maxNewTokens: Int,
+        maxGenerationSeconds: Int,
+        useGPU: Bool,
+        gpuLayerCount: Int32,
+        generationThreadCount: Int32,
+        batchThreadCount: Int32,
+        isIPhone12SafeDefault: Bool,
+        releaseDateISO8601: String,
+        releaseDateLabel: String,
+        parameterLabel: String,
+        licenseLabel: String,
+        benchmarkSummary: String,
+        capabilitySummary: String,
+        deviceFit: LocalModelDeviceFit,
+        estimatedPeakMemoryBytes: UInt64,
+        minimumAvailableMemoryBeforeLoadBytes: UInt64,
+        sourceURL: URL,
+        details: String
+    ) {
+        self.init(
+            id: id,
+            displayName: displayName,
+            shortName: shortName,
+            tier: .fast,
+            engineType: .llamaCpp,
+            executionLocation: .local,
+            artifactKind: .downloadable,
+            immutableRevision: String(repeating: "0", count: 40),
+            quantization: quantization,
+            compressionDetails: quantization,
+            filename: filename,
+            downloadURL: downloadURL,
+            expectedBytes: expectedBytes,
+            expectedSHA256: expectedSHA256,
+            minimumPhysicalMemoryBytes: minimumPhysicalMemoryBytes,
+            recommendedFreeDiskBytes: recommendedFreeDiskBytes,
+            contextTokens: contextTokens,
+            batchTokens: batchTokens,
+            maxNewTokens: maxNewTokens,
+            maxGenerationSeconds: maxGenerationSeconds,
+            useGPU: useGPU,
+            gpuLayerCount: gpuLayerCount,
+            generationThreadCount: generationThreadCount,
+            batchThreadCount: batchThreadCount,
+            isIPhone12SafeDefault: isIPhone12SafeDefault,
+            releaseDateISO8601: releaseDateISO8601,
+            releaseDateLabel: releaseDateLabel,
+            parameterLabel: parameterLabel,
+            licenseLabel: licenseLabel,
+            licenseURL: sourceURL,
+            licenseNotes: "Unit-test fixture",
+            benchmarkSummary: benchmarkSummary,
+            capabilitySummary: capabilitySummary,
+            deviceFit: deviceFit,
+            estimatedPeakMemoryBytes: estimatedPeakMemoryBytes,
+            measuredPeakMemoryBytes: nil,
+            minimumAvailableMemoryBeforeLoadBytes: minimumAvailableMemoryBeforeLoadBytes,
+            sourceURL: sourceURL,
+            chatTemplate: "fixture",
+            tokenizerRequirements: "fixture",
+            supportedDeviceClasses: ["fixture"],
+            toolCallingSupport: "fixture",
+            speculativeDecoding: "disabled",
+            physicalBenchmarkStatus: .pending,
+            details: details
+        )
+    }
+}
+
+private struct LocalModelCatalogManifest: Decodable {
+    let schemaVersion: Int
+    let generatedAt: String
+    let models: [LocalModelVariant]
+}
+
+private final class LocalModelCatalogBundleMarker: NSObject {}
+
 enum LocalModelCatalog {
-    /// Official, tool-template-capable coding checkpoint. VibeThinker was
-    /// intentionally removed from the local-agent catalog because its own
-    /// model card says it was not trained for tool calling or agent work.
+    static let manifestSchemaVersion = 2
+    static let manifestSHA256 = "d46f4fdeebe03bf4da13ecfaeacd8da8b9ce02c91a8b710bb799a5abdc817e24"
+    static let powerOnDeviceExperimentID =
+        "unsloth/Qwen3.8-27B-UD-IQ1_S-Power-On-Device"
+    static let powerOnDeviceExperimentIDs: Set<String> = [
+        powerOnDeviceExperimentID,
+        "unsloth/Qwen3.8-27B-UD-IQ2_XXS-Power-On-Device",
+        "unsloth/Qwen3.8-27B-Q3_K_M-Power-On-Device",
+    ]
     static let repository = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
     static let verifiedRevision = "f86cb2c1fa58255f8052cc32aeede1b7482d4361"
-
-    static let all: [LocalModelVariant] = [
-        .init(
-            id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M",
-            displayName: "Qwen Coder 1.5B — iPhone 12",
-            shortName: "Qwen Coder Q4",
-            quantization: "Q4_K_M",
-            filename: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
-            downloadURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/\(verifiedRevision)/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf?download=true")!,
-            expectedBytes: 1_117_320_768,
-            expectedSHA256: "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
-            minimumPhysicalMemoryBytes: 3_000_000_000,
-            recommendedFreeDiskBytes: 1_800_000_000,
-            contextTokens: 2_048,
-            batchTokens: 64,
-            maxNewTokens: 256,
-            maxGenerationSeconds: 35,
-            useGPU: true,
-            gpuLayerCount: 4,
-            generationThreadCount: 1,
-            batchThreadCount: 1,
-            isIPhone12SafeDefault: true,
-            releaseDateISO8601: "2024-09-18",
-            releaseDateLabel: "Sep 18, 2024",
-            parameterLabel: "1.5B",
-            licenseLabel: "Apache 2.0",
-            benchmarkSummary: "Official Qwen coder baseline · physical-device canary proven",
-            capabilitySummary: "Code generation · editing · explanations",
-            deviceFit: .deviceProven,
-            estimatedPeakMemoryBytes: 1_900_000_000,
-            minimumAvailableMemoryBeforeLoadBytes: 2_150_000_000,
-            sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
-            details: "The proven iPhone 12 default. Conservative Metal offload, a 2,048-token context, and a 256-token answer cap protect first-prompt stability."
-        ),
-        .init(
-            id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q3_K_M",
-            displayName: "Qwen Coder 1.5B — Low Memory",
-            shortName: "Qwen Coder Q3",
-            quantization: "Q3_K_M",
-            filename: "qwen2.5-coder-1.5b-instruct-q3_k_m.gguf",
-            downloadURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/\(verifiedRevision)/qwen2.5-coder-1.5b-instruct-q3_k_m.gguf?download=true")!,
-            expectedBytes: 924_456_000,
-            expectedSHA256: "d281a3a0010df03c8a0e3ffebd7f9444a95244fb518f132c5475e4b48d9adb5e",
-            minimumPhysicalMemoryBytes: 2_800_000_000,
-            recommendedFreeDiskBytes: 1_500_000_000,
-            contextTokens: 1_536,
-            batchTokens: 48,
-            maxNewTokens: 224,
-            maxGenerationSeconds: 35,
-            useGPU: true,
-            gpuLayerCount: 3,
-            generationThreadCount: 1,
-            batchThreadCount: 1,
-            isIPhone12SafeDefault: false,
-            releaseDateISO8601: "2024-09-18",
-            releaseDateLabel: "Sep 18, 2024",
-            parameterLabel: "1.5B",
-            licenseLabel: "Apache 2.0",
-            benchmarkSummary: "Same Qwen coder checkpoint · lighter quantization",
-            capabilitySummary: "Code generation · editing · explanations",
-            deviceFit: .memorySaver,
-            estimatedPeakMemoryBytes: 1_600_000_000,
-            minimumAvailableMemoryBeforeLoadBytes: 1_850_000_000,
-            sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
-            details: "A smaller fallback for devices under memory pressure. It keeps the same constrained NovaForge agent boundary at a modest quality tradeoff."
-        ),
-        .init(
-            id: "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q2_K",
-            displayName: "Qwen Coder 1.5B — Minimum Memory",
-            shortName: "Qwen Coder Q2",
-            quantization: "Q2_K",
-            filename: "qwen2.5-coder-1.5b-instruct-q2_k.gguf",
-            downloadURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/\(verifiedRevision)/qwen2.5-coder-1.5b-instruct-q2_k.gguf?download=true")!,
-            expectedBytes: 752_880_192,
-            expectedSHA256: "3ec56d48cc5acdb93c4323f0d01a3b5db0c73c54fe71831199223720d37f6fcd",
-            minimumPhysicalMemoryBytes: 2_500_000_000,
-            recommendedFreeDiskBytes: 1_250_000_000,
-            contextTokens: 1_536,
-            batchTokens: 48,
-            maxNewTokens: 192,
-            maxGenerationSeconds: 35,
-            useGPU: true,
-            gpuLayerCount: 2,
-            generationThreadCount: 1,
-            batchThreadCount: 1,
-            isIPhone12SafeDefault: false,
-            releaseDateISO8601: "2024-09-18",
-            releaseDateLabel: "Sep 18, 2024",
-            parameterLabel: "1.5B",
-            licenseLabel: "Apache 2.0",
-            benchmarkSummary: "Same Qwen coder checkpoint · smallest stable footprint",
-            capabilitySummary: "Code generation · editing · explanations",
-            deviceFit: .memorySaver,
-            estimatedPeakMemoryBytes: 1_400_000_000,
-            minimumAvailableMemoryBeforeLoadBytes: 1_650_000_000,
-            sourceURL: URL(string: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")!,
-            details: "The smallest emergency fallback. Tool selection stays grammar constrained when first-prompt stability matters more than model quality."
-        ),
-        .init(
-            id: "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M",
-            displayName: "Atlas Coder 2 0.5B",
-            shortName: "Atlas 2",
-            quantization: "Q4_K_M",
-            filename: "Atlas-Coder-2-0.5B-Q4_K_M.gguf",
-            downloadURL: URL(string: "https://huggingface.co/Siddh07ETH/Atlas-Coder-2-0.5B-GGUF/resolve/91658df97464469db062115ecd29be281b1c5370/Atlas-Coder-2-0.5B-Q4_K_M.gguf?download=true")!,
-            expectedBytes: 397_808_608,
-            expectedSHA256: "3df10fa96ad19ddcda435506781308c9eeeedaab35f1a0a86ff198ad0e1ce871",
-            minimumPhysicalMemoryBytes: 3_000_000_000,
-            recommendedFreeDiskBytes: 900_000_000,
-            contextTokens: 2_048,
-            batchTokens: 32,
-            maxNewTokens: 256,
-            maxGenerationSeconds: 60,
-            useGPU: true,
-            gpuLayerCount: 4,
-            generationThreadCount: 1,
-            batchThreadCount: 1,
-            isIPhone12SafeDefault: false,
-            releaseDateISO8601: "2026-07-20",
-            releaseDateLabel: "Jul 20, 2026",
-            parameterLabel: "0.5B",
-            licenseLabel: "Apache 2.0",
-            benchmarkSummary: "HumanEval+ 36.6 · MBPP+ 43.9 (publisher-reported)",
-            capabilitySummary: "Python generation · debugging · code completion",
-            deviceFit: .ultraLight,
-            estimatedPeakMemoryBytes: 850_000_000,
-            minimumAvailableMemoryBeforeLoadBytes: 1_150_000_000,
-            sourceURL: URL(string: "https://huggingface.co/Siddh07ETH/Atlas-Coder-2-0.5B-GGUF")!,
-            details: "Released this week and built for low-memory coding. NovaForge pins the exact GGUF revision and checksum, then caps context and output for iPhone 12."
-        )
-    ]
+    static let all: [LocalModelVariant] = loadManifest().models
 
     static var presentationOrder: [LocalModelVariant] {
         all.sorted {
+            if $0.tier != $1.tier {
+                return $0.tier.sortOrder < $1.tier.sortOrder
+            }
+            let lhsIsCompatible = compatibilityMessage(for: $0) == nil
+            let rhsIsCompatible = compatibilityMessage(for: $1) == nil
+            if lhsIsCompatible != rhsIsCompatible {
+                return lhsIsCompatible
+            }
             if $0.releaseDateISO8601 == $1.releaseDateISO8601 {
                 return $0.expectedBytes > $1.expectedBytes
             }
@@ -236,7 +309,20 @@ enum LocalModelCatalog {
     }
 
     static func variant(for id: String) -> LocalModelVariant? {
-        all.first { $0.id == id }
+        let migrated = migratedID(for: id)
+        return all.first { $0.id == migrated }
+    }
+
+    static func migratedID(for persistedID: String) -> String {
+        let trimmed = persistedID.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch trimmed {
+        case "Siddh07ETH/Atlas-Coder-2-0.5B-Q4_K_M":
+            return "LiquidAI/LFM2.5-350M-QAD-Q4_0"
+        case "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q2_K":
+            return "Qwen/Qwen2.5-Coder-1.5B-Instruct-Q3_K_M"
+        default:
+            return trimmed
+        }
     }
 
     static func safestVariant(forPhysicalMemory physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> LocalModelVariant {
@@ -249,6 +335,32 @@ enum LocalModelCatalog {
         for variant: LocalModelVariant,
         physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory
     ) -> String? {
+        switch variant.engineType {
+        case .coreAI:
+            guard LocalRuntimeCapabilities.current.supportsCoreAI else {
+                return "Core AI requires an iOS 27 / Xcode 27 NovaForge build and a pinned AOT .aimodel asset. This build stays on the GGUF rollback route."
+            }
+            guard CoreAIModelAssetResolver.resourcesURL(for: variant) != nil else {
+                return "Prepare and pin the Core AI AOT asset before selecting this model. Specialization never starts inside chat."
+            }
+        case .companion:
+            return CompanionModelConfigurationStore.compatibilityMessage()
+        case .llamaCpp:
+            guard variant.isDownloadable else {
+                return "This GGUF route has no pinned downloadable artifact."
+            }
+        }
+
+        if powerOnDeviceExperimentIDs.contains(variant.id) {
+            // Launch-only escape hatch for the bounded Xcode 27 physical
+            // admission protocol. Normal UI selection remains fail-closed;
+            // every quant needs its own exact physical receipt.
+            if isPowerOnDeviceAdmissionExperiment(variant) {
+                return nil
+            }
+            return "Power — On-device streamed is experimental and has not passed the iPhone 12 admission matrix for \(variant.quantization). Downloading or selecting it never falls back to LAN."
+        }
+
         if physicalMemory < variant.minimumPhysicalMemoryBytes {
             let needed = ByteCountFormatter.string(fromByteCount: Int64(variant.minimumPhysicalMemoryBytes), countStyle: .memory)
             let current = ByteCountFormatter.string(fromByteCount: Int64(physicalMemory), countStyle: .memory)
@@ -263,6 +375,14 @@ enum LocalModelCatalog {
         return nil
     }
 
+    static func isPowerOnDeviceAdmissionExperiment(
+        _ variant: LocalModelVariant,
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        powerOnDeviceExperimentIDs.contains(variant.id) &&
+            arguments.contains("--local-power-admission-experiment")
+    }
+
     static func modelDirectory() throws -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -272,13 +392,538 @@ enum LocalModelCatalog {
     }
 
     static func fileURL(for variant: LocalModelVariant) throws -> URL {
-        try modelDirectory().appendingPathComponent(variant.filename)
+        guard variant.isDownloadable, !variant.filename.isEmpty else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return try modelDirectory().appendingPathComponent(variant.filename)
+    }
+
+    static func validateManifestData(_ data: Data) throws -> [LocalModelVariant] {
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard digest == manifestSHA256 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let manifest = try JSONDecoder().decode(LocalModelCatalogManifest.self, from: data)
+        let generatedDay = String(manifest.generatedAt.prefix(10))
+        guard manifest.schemaVersion == manifestSchemaVersion,
+              ISO8601DateFormatter().date(from: manifest.generatedAt) != nil,
+              isValidISODate(generatedDay),
+              !manifest.models.isEmpty,
+              Set(manifest.models.map(\.id)).count == manifest.models.count,
+              manifest.models.allSatisfy({
+                  !$0.id.isEmpty && !$0.displayName.isEmpty
+              }),
+              Set(manifest.models.filter(\.isDownloadable).map(\.filename))
+                .count == manifest.models.filter(\.isDownloadable).count,
+              manifest.models.filter(\.isIPhone12SafeDefault).count == 1
+        else { throw CocoaError(.fileReadCorruptFile) }
+
+        for model in manifest.models {
+            guard model.immutableRevision.count == 40,
+                  model.immutableRevision.allSatisfy({ $0.isHexDigit }),
+                  !model.immutableRevision.allSatisfy({ $0 == "0" }),
+                  model.downloadURL.scheme == "https",
+                  model.sourceURL.scheme == "https",
+                  model.licenseURL.scheme == "https",
+                  model.downloadURL.host == model.sourceURL.host,
+                  model.licenseURL.host == model.sourceURL.host,
+                  isPinnedURL(
+                      model.downloadURL,
+                      to: model.immutableRevision
+                  ),
+                  isPinnedURL(
+                      model.sourceURL,
+                      to: model.immutableRevision
+                  ),
+                  isPinnedURL(
+                      model.licenseURL,
+                      to: model.immutableRevision
+                  ),
+                  isValidISODate(model.releaseDateISO8601),
+                  model.releaseDateISO8601 <= generatedDay,
+                  model.contextTokens > 0,
+                  model.maxNewTokens > 0 else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            if model.isDownloadable {
+                guard model.expectedBytes > 0,
+                      model.expectedSHA256.count == 64,
+                      model.expectedSHA256.allSatisfy({ $0.isHexDigit }),
+                      !model.filename.isEmpty,
+                      isSafeFilename(model.filename) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+            } else {
+                guard model.expectedBytes == 0,
+                      model.expectedSHA256.isEmpty else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+            }
+        }
+        return manifest.models
+    }
+
+    private static func isValidISODate(_ value: String) -> Bool {
+        let components = value.split(separator: "-", omittingEmptySubsequences: false)
+        guard components.count == 3,
+              components[0].count == 4,
+              components[1].count == 2,
+              components[2].count == 2,
+              let year = Int(components[0]),
+              let month = Int(components[1]),
+              let day = Int(components[2]) else { return false }
+        var dateComponents = DateComponents()
+        dateComponents.calendar = Calendar(identifier: .gregorian)
+        dateComponents.timeZone = TimeZone(secondsFromGMT: 0)
+        dateComponents.year = year
+        dateComponents.month = month
+        dateComponents.day = day
+        return dateComponents.date != nil
+    }
+
+    private static func isSafeFilename(_ value: String) -> Bool {
+        let url = URL(fileURLWithPath: value)
+        return value == url.lastPathComponent &&
+            !value.isEmpty && value != "." && value != ".." &&
+            !value.contains("/") && !value.contains("\\")
+    }
+
+    private static func isPinnedURL(_ url: URL, to revision: String) -> Bool {
+        let segments = url.path.split(separator: "/")
+        return segments.indices.contains { index in
+            guard index > segments.startIndex else { return false }
+            let marker = String(segments[index - 1])
+            return ["resolve", "tree", "blob"].contains(marker) &&
+                String(segments[index]) == revision
+        }
+    }
+
+    private static func loadManifest() -> LocalModelCatalogManifest {
+        let bundles = [Bundle(for: LocalModelCatalogBundleMarker.self), .main]
+        for bundle in bundles {
+            guard let url = bundle.url(
+                forResource: "LocalModelCatalog.v2",
+                withExtension: "json"
+            ), let data = try? Data(contentsOf: url),
+              let models = try? validateManifestData(data),
+              let manifest = try? JSONDecoder().decode(
+                  LocalModelCatalogManifest.self,
+                  from: data
+              ) else { continue }
+            return LocalModelCatalogManifest(
+                schemaVersion: manifest.schemaVersion,
+                generatedAt: manifest.generatedAt,
+                models: models
+            )
+        }
+        preconditionFailure("Pinned LocalModelCatalog.v2.json is missing or invalid")
+    }
+}
+
+enum CoreAIModelAssetResolver {
+    static func resourcesURL(for descriptor: LocalModelVariant) -> URL? {
+        guard descriptor.engineType == .coreAI else { return nil }
+        let resourceName = URL(fileURLWithPath: descriptor.filename)
+            .deletingPathExtension()
+            .lastPathComponent
+        return Bundle.main.url(
+            forResource: resourceName,
+            withExtension: nil
+        )
+    }
+}
+
+struct LocalRuntimeCapabilities: Codable, Equatable, Sendable {
+    let osVersion: String
+    let osMajorVersion: Int
+    let deviceIdentifier: String
+    let physicalMemoryBytes: UInt64
+    let safeProcessCeilingBytes: UInt64
+    let supportsCoreAI: Bool
+    let supportsLlamaCpp: Bool
+    let supportsMetal: Bool
+    let llamaBuild: String
+
+    static func isCoreAIHardwareSupported(
+        deviceIdentifier: String
+    ) -> Bool {
+        func majorVersion(after prefix: String) -> Int? {
+            guard deviceIdentifier.hasPrefix(prefix) else { return nil }
+            return Int(deviceIdentifier.dropFirst(prefix.count).split(separator: ",").first ?? "")
+        }
+        if let major = majorVersion(after: "iPhone") {
+            // iPhone16,1/2 are the A17 Pro iPhone 15 Pro family. iPhone 12 is
+            // iPhone13,x and remains on llama.cpp even when running iOS 27.
+            return major >= 16
+        }
+        if let major = majorVersion(after: "iPad") {
+            // Conservative allow-list floor. Older identifiers contain a mix
+            // of M-series and non-Apple-Intelligence devices.
+            return major >= 15
+        }
+        return false
+    }
+
+    static var current: Self {
+        var machine = utsname()
+        uname(&machine)
+        let identifier = withUnsafePointer(to: &machine.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+                String(cString: $0)
+            }
+        }
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let physical = ProcessInfo.processInfo.physicalMemory
+#if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+#if targetEnvironment(simulator) || targetEnvironment(macCatalyst)
+        let coreAI = false
+#else
+        let coreAI = version.majorVersion >= 27 &&
+            isCoreAIHardwareSupported(deviceIdentifier: identifier)
+#endif
+#else
+        let coreAI = false
+        #endif
+        #if canImport(SwiftLlama)
+        let llama = true
+        let llamaBuild = SwiftLlamaBuild.activeIdentifier
+        #else
+        let llama = false
+        let llamaBuild = "unlinked"
+        #endif
+        #if targetEnvironment(simulator)
+        let metal = false
+        #else
+        let metal = true
+        #endif
+        return Self(
+            osVersion: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
+            osMajorVersion: version.majorVersion,
+            deviceIdentifier: identifier,
+            physicalMemoryBytes: physical,
+            safeProcessCeilingBytes: physical * 55 / 100,
+            supportsCoreAI: coreAI,
+            supportsLlamaCpp: llama,
+            supportsMetal: metal,
+            llamaBuild: llamaBuild
+        )
+    }
+
+    /// Framework importability is not device admission. Core AI remains a
+    /// physical-device, iOS-27-only lane and the GGUF route is the rollback.
+    var coreAIUnavailableReason: String? {
+        supportsCoreAI
+            ? nil
+            : "Core AI requires iOS 27 or later on a supported physical device; use the GGUF rollback route."
+    }
+}
+
+enum LocalLlamaExecutionProfile: String, Codable, CaseIterable, Sendable {
+    case catalog
+    case cpu
+    case partialMetal = "partial-metal"
+    case fullMetal = "full-metal"
+
+    static func resolve(arguments: [String]) -> Self {
+        let prefix = "--local-llama-profile="
+        guard let value = arguments.first(where: { $0.hasPrefix(prefix) })?
+            .dropFirst(prefix.count),
+              let profile = Self(rawValue: String(value)) else {
+            return .catalog
+        }
+        return profile
+    }
+
+    static var current: Self {
+        resolve(arguments: ProcessInfo.processInfo.arguments)
+    }
+
+    func configuration(
+        for variant: LocalModelVariant
+    ) -> (useGPU: Bool, gpuLayerCount: Int32) {
+        switch self {
+        case .catalog:
+            (variant.useGPU, variant.gpuLayerCount)
+        case .cpu:
+            (false, 0)
+        case .partialMetal:
+            (true, max(1, min(12, variant.gpuLayerCount)))
+        case .fullMetal:
+            (true, max(variant.gpuLayerCount, 99))
+        }
+    }
+}
+
+struct CompanionModelConfiguration: Codable, Equatable, Sendable {
+    let endpoint: URL
+    let remoteModelID: String
+    let immutableRevision: String
+    let userConfirmedAt: Date
+}
+
+struct CompanionServerAttestation: Decodable, Equatable, Sendable {
+    let modelID: String
+    let revision: String
+    let runtime: String
+    let capabilities: [String]
+    let contextLimit: UInt32
+    let textOnly: Bool
+    let mtpSupported: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case modelID = "id"
+        case revision
+        case runtime
+        case capabilities
+        case contextLimit = "context_limit"
+        case textOnly = "text_only"
+        case mtpSupported = "mtp_supported"
+    }
+}
+
+enum CompanionEndpointPolicy {
+    static let companionModelID = "Qwen/Qwen3.8-27B"
+
+    static func normalizedBaseURL(
+        from input: String,
+        allowLoopbackForSimulatorTesting: Bool = false
+    ) -> URL? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              let host = components.host?.lowercased(),
+              isPrivateLANHost(
+                  host,
+                  allowLoopbackForSimulatorTesting:
+                      allowLoopbackForSimulatorTesting
+              )
+        else { return nil }
+        components.scheme = scheme
+        let path = components.path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = path.isEmpty ? "" : "/\(path)"
+        return components.url
+    }
+
+    static func completionURL(from base: URL) -> URL {
+        apiURL(from: base, suffix: "chat/completions")
+    }
+
+    static func modelsURL(from base: URL) -> URL {
+        apiURL(from: base, suffix: "models")
+    }
+
+    static func isPrivateLANHost(
+        _ host: String,
+        allowLoopbackForSimulatorTesting: Bool = false
+    ) -> Bool {
+        let normalizedHost = host
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .lowercased()
+        if normalizedHost.hasSuffix(".local") {
+            return true
+        }
+        if allowLoopbackForSimulatorTesting,
+           normalizedHost == "localhost" || normalizedHost == "127.0.0.1" ||
+           normalizedHost == "::1"
+        {
+            return true
+        }
+        if normalizedHost == "localhost" || normalizedHost == "127.0.0.1" ||
+            normalizedHost == "::1"
+        {
+            return false
+        }
+        let octets = normalizedHost.split(separator: ".").compactMap { UInt8($0) }
+        if octets.count == 4 {
+            if octets[0] == 10 { return true }
+            if octets[0] == 192, octets[1] == 168 { return true }
+            if octets[0] == 172, (16 ... 31).contains(octets[1]) { return true }
+            if octets[0] == 169, octets[1] == 254 { return true }
+        }
+        var address = in6_addr()
+        guard normalizedHost.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else {
+            return false
+        }
+        return withUnsafeBytes(of: address) { bytes in
+            let first = bytes[0]
+            let second = bytes[1]
+            return (first & 0xfe) == 0xfc ||
+                (first == 0xfe && (second & 0xc0) == 0x80)
+        }
+    }
+
+    static func validateAttestation(
+        _ attestation: CompanionServerAttestation,
+        for descriptor: LocalModelVariant,
+        expectedModelID: String = companionModelID,
+        expectedRevision: String
+    ) -> Bool {
+        guard descriptor.engineType == .companion,
+              expectedModelID == companionModelID,
+              isImmutableRevision(expectedRevision),
+              attestation.modelID == expectedModelID,
+              attestation.revision == expectedRevision,
+              isImmutableRevision(attestation.revision),
+              ["mlx", "llama.cpp", "llama-cpp"].contains(
+                  attestation.runtime
+                      .trimmingCharacters(in: .whitespacesAndNewlines)
+                      .lowercased()
+              ),
+              Set(attestation.capabilities.map { $0.lowercased() })
+                .isSuperset(of: ["text", "streaming"]),
+              attestation.contextLimit >= descriptor.contextTokens,
+              attestation.textOnly
+        else { return false }
+
+        // `mtpSupported` is deliberately decoded as required metadata, but
+        // advertising it does not enable speculative decoding in the client.
+        return true
+    }
+
+    static func isImmutableRevision(_ revision: String) -> Bool {
+        revision.count == 40 && revision.unicodeScalars.allSatisfy {
+            (48 ... 57).contains($0.value) ||
+                (97 ... 102).contains($0.value) ||
+                (65 ... 70).contains($0.value)
+        }
+    }
+
+    static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let lhsScheme = lhs.scheme?.lowercased(),
+              let rhsScheme = rhs.scheme?.lowercased(),
+              let lhsHost = lhs.host?.lowercased(),
+              let rhsHost = rhs.host?.lowercased()
+        else { return false }
+        let lhsPort = lhs.port ?? (lhsScheme == "https" ? 443 : 80)
+        let rhsPort = rhs.port ?? (rhsScheme == "https" ? 443 : 80)
+        return lhsScheme == rhsScheme && lhsHost == rhsHost && lhsPort == rhsPort
+    }
+
+    private static func apiURL(from base: URL, suffix: String) -> URL {
+        var url = base
+        if !url.pathComponents.contains("v1") {
+            url.appendPathComponent("v1")
+        }
+        for component in suffix.split(separator: "/") {
+            url.appendPathComponent(String(component))
+        }
+        return url
+    }
+}
+
+enum CompanionModelConfigurationStore {
+    private static let endpointKey = "localAI2.companion.endpoint"
+    private static let modelKey = "localAI2.companion.model"
+    private static let revisionKey = "localAI2.companion.revision"
+    private static let confirmationKey = "localAI2.companion.confirmedAt"
+
+    static func snapshot(defaults: UserDefaults = .standard) -> CompanionModelConfiguration? {
+        guard let endpointText = defaults.string(forKey: endpointKey),
+              let endpoint = CompanionEndpointPolicy.normalizedBaseURL(from: endpointText),
+              let modelID = defaults.string(forKey: modelKey),
+              modelID == CompanionEndpointPolicy.companionModelID,
+              let revision = defaults.string(forKey: revisionKey),
+              CompanionEndpointPolicy.isImmutableRevision(revision),
+              let confirmedAt = defaults.object(forKey: confirmationKey) as? Date
+        else { return nil }
+        return CompanionModelConfiguration(
+            endpoint: endpoint,
+            remoteModelID: modelID,
+            immutableRevision: revision,
+            userConfirmedAt: confirmedAt
+        )
+    }
+
+    static func saveConfirmed(
+        endpointText: String,
+        descriptor: LocalModelVariant,
+        defaults: UserDefaults = .standard,
+        now: Date = Date()
+    ) throws {
+        guard descriptor.engineType == .companion,
+              descriptor.id == "Qwen/Qwen3.8-27B-Power-Companion",
+              CompanionEndpointPolicy.isImmutableRevision(
+                  descriptor.immutableRevision
+              ),
+              let endpoint = CompanionEndpointPolicy.normalizedBaseURL(from: endpointText)
+        else { throw LocalModelRuntimeError.invalidCompanionEndpoint }
+        CompanionPrivacyStore.revoke(defaults: defaults)
+        defaults.set(endpoint.absoluteString, forKey: endpointKey)
+        defaults.set(CompanionEndpointPolicy.companionModelID, forKey: modelKey)
+        defaults.set(descriptor.immutableRevision, forKey: revisionKey)
+        defaults.set(now, forKey: confirmationKey)
+    }
+
+    static func revoke(defaults: UserDefaults = .standard) {
+        for key in [endpointKey, modelKey, revisionKey, confirmationKey] {
+            defaults.removeObject(forKey: key)
+        }
+        CompanionPrivacyStore.revoke(defaults: defaults)
+    }
+
+    static func compatibilityMessage(defaults: UserDefaults = .standard) -> String? {
+        guard let configuration = snapshot(defaults: defaults),
+              CompanionPrivacyStore.isConsented(
+                  configuration,
+                  defaults: defaults
+              )
+        else {
+            return "Power — Companion needs a private-LAN endpoint and explicit content-sharing confirmation. NovaForge will not send a prompt until both are saved."
+        }
+        return nil
+    }
+}
+
+/// Runtime-owned companion consent. The fingerprint is bound to the exact
+/// canonical endpoint, model identity, and immutable revision, so a stale UI
+/// toggle cannot authorize a changed LAN destination.
+enum CompanionPrivacyStore {
+    static let consentFingerprintKey =
+        "localAI2.companion.consentFingerprint"
+
+    static func fingerprint(
+        _ configuration: CompanionModelConfiguration?
+    ) -> String? {
+        guard let configuration else { return nil }
+        return [
+            configuration.endpoint.absoluteString,
+            configuration.remoteModelID,
+            configuration.immutableRevision,
+        ].joined(separator: "\n")
+    }
+
+    static func isConsented(
+        _ configuration: CompanionModelConfiguration? =
+            CompanionModelConfigurationStore.snapshot(),
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard let fingerprint = fingerprint(configuration) else { return false }
+        return defaults.string(forKey: consentFingerprintKey) == fingerprint
+    }
+
+    static func grant(
+        for configuration: CompanionModelConfiguration? =
+            CompanionModelConfigurationStore.snapshot(),
+        defaults: UserDefaults = .standard
+    ) {
+        guard let fingerprint = fingerprint(configuration) else { return }
+        defaults.set(fingerprint, forKey: consentFingerprintKey)
+    }
+
+    static func revoke(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: consentFingerprintKey)
     }
 }
 
 enum LocalModelRuntimeMemoryPolicy {
     static func availableMemoryBytes() -> UInt64? {
-        #if os(iOS)
+        #if os(iOS) && !targetEnvironment(simulator)
         UInt64(os_proc_available_memory())
         #else
         nil
@@ -294,11 +939,15 @@ enum LocalModelRuntimeMemoryPolicy {
         case .critical:
             return "The iPhone is too hot to safely load a local model. Let it cool, then try again."
         case .serious where variant.deviceFit != .ultraLight:
-            return "The iPhone is running hot. NovaForge held back \(variant.shortName); use Atlas 2 or let the phone cool first."
+            return "The iPhone is running hot. NovaForge held back \(variant.shortName); use the Instant tier or let the phone cool first."
         case .nominal, .fair, .serious:
             break
         @unknown default:
             return "NovaForge could not verify the current thermal state, so it did not load a local model."
+        }
+
+        if LocalModelCatalog.isPowerOnDeviceAdmissionExperiment(variant) {
+            return nil
         }
 
         guard let availableMemory else { return nil }
@@ -311,9 +960,72 @@ enum LocalModelRuntimeMemoryPolicy {
                 fromByteCount: Int64(clamping: availableMemory),
                 countStyle: .memory
             )
-            return "NovaForge held back \(variant.shortName) before first-prompt allocation. It needs about \(needed) available; iOS reports \(available). Close memory-heavy apps or choose Atlas 2."
+            return "NovaForge held back \(variant.shortName) before first-prompt allocation. It needs about \(needed) available; iOS reports \(available). Close memory-heavy apps or choose the Instant tier."
         }
         return nil
+    }
+}
+
+private struct LocalRuntimeExecutionPlan: Sendable {
+    let contextTokens: UInt32
+    let batchTokens: UInt32
+    let useGPU: Bool
+    let gpuLayerCount: Int32
+    let reducedMemoryMode: Bool
+
+    static func resolve(for variant: LocalModelVariant) -> Self {
+        let thermal = ProcessInfo.processInfo.thermalState
+        let available = LocalModelRuntimeMemoryPolicy.availableMemoryBytes()
+        let reduced = thermal == .serious ||
+            (available.map {
+                $0 < variant.estimatedPeakMemoryBytes * 125 / 100
+            } ?? false)
+        guard reduced else {
+            let gpu = LocalLlamaExecutionProfile.current.configuration(
+                for: variant
+            )
+            return Self(
+                contextTokens: variant.contextTokens,
+                batchTokens: variant.batchTokens,
+                useGPU: gpu.useGPU,
+                gpuLayerCount: gpu.gpuLayerCount,
+                reducedMemoryMode: false
+            )
+        }
+        return Self(
+            contextTokens: min(variant.contextTokens, 2_048),
+            batchTokens: min(variant.batchTokens, 32),
+            useGPU: false,
+            gpuLayerCount: 0,
+            reducedMemoryMode: true
+        )
+    }
+}
+
+private enum LocalInferenceInputPolicy {
+    static func boundedMessages(
+        _ messages: [AgentLocalModelInferenceMessage],
+        contextTokens: UInt32
+    ) -> [AgentLocalModelInferenceMessage] {
+        let byteBudget = max(4_096, Int(contextTokens) * 4)
+        var remaining = byteBudget
+        var result: [AgentLocalModelInferenceMessage] = []
+        for message in messages.reversed() {
+            guard remaining > 0 else { break }
+            let content = String(
+                decoding: message.content.utf8.prefix(remaining),
+                as: UTF8.self
+            )
+            let bounded = AgentLocalModelInferenceMessage(
+                role: message.role,
+                content: content
+            )
+            let cost = bounded.content.utf8.count
+            guard cost <= remaining || result.isEmpty else { continue }
+            result.append(bounded)
+            remaining -= min(cost, remaining)
+        }
+        return Array(result.reversed())
     }
 }
 
@@ -350,13 +1062,34 @@ struct LocalModelDownloadProgress: Sendable {
 }
 
 #if canImport(UIKit)
-private final class LocalModelLifecycleObserverBag: @unchecked Sendable {
-    var tokens: [NSObjectProtocol] = []
+/// Process-wide eviction authority for memory, thermal, and background
+/// pressure. Its lifetime does not depend on the Control screen's manager.
+private final class LocalModelRuntimeLifecycle: @unchecked Sendable {
+    static let shared = LocalModelRuntimeLifecycle()
+    private var started = false
+    private var tokens: [NSObjectProtocol] = []
 
-    deinit {
-        for token in tokens {
-            NotificationCenter.default.removeObserver(token)
+    func start() {
+        guard !started else { return }
+        started = true
+        let center = NotificationCenter.default
+        for name in [
+            UIApplication.didReceiveMemoryWarningNotification,
+            UIApplication.didEnterBackgroundNotification,
+            ProcessInfo.thermalStateDidChangeNotification,
+        ] {
+            tokens.append(center.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { _ in
+                Task { await LocalModelClient.shared.unload() }
+            })
         }
+    }
+
+    func unloadForProviderSwitch() {
+        Task { await LocalModelClient.shared.unload() }
     }
 }
 #endif
@@ -366,10 +1099,12 @@ struct LocalModelBenchmarkResult: Equatable, Sendable {
     let timeToFirstToken: TimeInterval
     let totalDuration: TimeInterval
     let generatedCharacters: Int
+    let generatedTokens: Int
+    let receiptID: UUID
 
-    /// Rough token estimate — llama.cpp doesn't surface counts through this
-    /// path, and honest ≈ beats fabricated precision.
-    var estimatedTokens: Int { max(1, Int(Double(generatedCharacters) / 3.8)) }
+    /// Kept as a compatibility name for existing UI. Canonical usage frames
+    /// now provide the exact runtime token count.
+    var estimatedTokens: Int { generatedTokens }
 
     var tokensPerSecond: Double {
         let generation = max(totalDuration - timeToFirstToken, 0.05)
@@ -377,11 +1112,937 @@ struct LocalModelBenchmarkResult: Equatable, Sendable {
     }
 }
 
+struct LocalBenchmarkReceipt: Codable, Equatable, Identifiable, Sendable {
+    let id: UUID
+    let recordedAt: Date
+    let modelID: String
+    let immutableRevision: String
+    let engineType: LocalInferenceEngineType
+    let executionLocation: LocalExecutionLocation
+    let deviceIdentifier: String
+    let operatingSystem: String
+    let isPhysicalDevice: Bool
+    let runtimeBuild: String
+    let executionConfiguration: String?
+    let contextTokens: UInt32
+    let maximumOutputTokens: Int
+    let timeToFirstTokenSeconds: TimeInterval
+    let promptTokensPerSecond: Double?
+    let decodeTokensPerSecond: Double
+    let totalDurationSeconds: TimeInterval
+    let generatedCharacters: Int
+    let estimatedGeneratedTokens: Int
+    let peakPhysicalFootprintBytes: UInt64?
+    let thermalStateBefore: String
+    let thermalStateAfter: String
+    let batteryLevelBefore: Float?
+    let batteryLevelAfter: Float?
+    let result: String
+}
+
+actor LocalBenchmarkReceiptStore {
+    static let shared = LocalBenchmarkReceiptStore()
+
+    private let directoryURL: URL
+
+    init(directoryURL: URL? = nil) {
+        if let directoryURL {
+            self.directoryURL = directoryURL
+        } else {
+            let base = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.temporaryDirectory
+            self.directoryURL = base
+                .appendingPathComponent("LocalAI", isDirectory: true)
+                .appendingPathComponent("BenchmarkReceipts", isDirectory: true)
+        }
+    }
+
+    func save(_ receipt: LocalBenchmarkReceipt) throws {
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(receipt)
+        try data.write(
+            to: directoryURL.appendingPathComponent("\(receipt.id.uuidString).json"),
+            options: .atomic
+        )
+        try data.write(
+            to: directoryURL.appendingPathComponent("latest.json"),
+            options: .atomic
+        )
+    }
+
+    func latest() throws -> LocalBenchmarkReceipt? {
+        let url = directoryURL.appendingPathComponent("latest.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try LocalModelReceiptMigration.migrate(
+            decoder.decode(
+                LocalBenchmarkReceipt.self,
+                from: Data(contentsOf: url)
+            )
+        )
+    }
+}
+
+/// Migrate only stable IDs. Historical revision/hash evidence remains intact;
+/// rewriting provenance would turn a compatibility migration into a false
+/// benchmark claim.
+enum LocalModelReceiptMigration {
+    static func migrate(
+        _ receipt: LocalBenchmarkReceipt
+    ) -> LocalBenchmarkReceipt {
+        let modelID = LocalModelCatalog.migratedID(for: receipt.modelID)
+        guard modelID != receipt.modelID else { return receipt }
+        return LocalBenchmarkReceipt(
+            id: receipt.id,
+            recordedAt: receipt.recordedAt,
+            modelID: modelID,
+            immutableRevision: receipt.immutableRevision,
+            engineType: receipt.engineType,
+            executionLocation: receipt.executionLocation,
+            deviceIdentifier: receipt.deviceIdentifier,
+            operatingSystem: receipt.operatingSystem,
+            isPhysicalDevice: receipt.isPhysicalDevice,
+            runtimeBuild: receipt.runtimeBuild,
+            executionConfiguration: receipt.executionConfiguration,
+            contextTokens: receipt.contextTokens,
+            maximumOutputTokens: receipt.maximumOutputTokens,
+            timeToFirstTokenSeconds: receipt.timeToFirstTokenSeconds,
+            promptTokensPerSecond: receipt.promptTokensPerSecond,
+            decodeTokensPerSecond: receipt.decodeTokensPerSecond,
+            totalDurationSeconds: receipt.totalDurationSeconds,
+            generatedCharacters: receipt.generatedCharacters,
+            estimatedGeneratedTokens: receipt.estimatedGeneratedTokens,
+            peakPhysicalFootprintBytes: receipt.peakPhysicalFootprintBytes,
+            thermalStateBefore: receipt.thermalStateBefore,
+            thermalStateAfter: receipt.thermalStateAfter,
+            batteryLevelBefore: receipt.batteryLevelBefore,
+            batteryLevelAfter: receipt.batteryLevelAfter,
+            result: receipt.result
+        )
+    }
+
+    static func migrate(
+        _ receipt: LocalAIEvaluationReceipt
+    ) -> LocalAIEvaluationReceipt {
+        let modelID = LocalModelCatalog.migratedID(for: receipt.modelID)
+        guard modelID != receipt.modelID else { return receipt }
+        return LocalAIEvaluationReceipt(
+            id: receipt.id,
+            runID: receipt.runID,
+            recordedAt: receipt.recordedAt,
+            corpusSHA256: receipt.corpusSHA256,
+            modelID: modelID,
+            modelSHA256: receipt.modelSHA256,
+            immutableRevision: receipt.immutableRevision,
+            executionConfiguration: receipt.executionConfiguration,
+            deviceIdentifier: receipt.deviceIdentifier,
+            operatingSystem: receipt.operatingSystem,
+            isPhysicalDevice: receipt.isPhysicalDevice,
+            passedCaseCount: receipt.passedCaseCount,
+            totalCaseCount: receipt.totalCaseCount,
+            score: receipt.score,
+            cases: receipt.cases
+        )
+    }
+}
+
+struct LocalAIEvaluationCorpus: Codable, Equatable, Sendable {
+    static let expectedSHA256 = "75fd1e718c227ee71f350c336522074a0dc66d56b144a1eed028c79cc35519e4"
+
+    struct Scoring: Codable, Equatable, Sendable {
+        let toolDecisionMustParse: Bool
+        let inventedToolFailsCorpus: Bool
+        let repetitionWindow: Int
+        let maximumRepeatedWindowCount: Int
+    }
+
+    struct Message: Codable, Equatable, Sendable {
+        let role: String
+        let content: String
+    }
+
+    struct EvaluationCase: Codable, Equatable, Sendable {
+        let id: String
+        let category: String
+        let prompt: String?
+        let system: String?
+        let context: String?
+        let messages: [Message]?
+        let availableTools: [String]?
+        let expectedTool: String?
+        let mustContain: [String]?
+        let mustContainAny: [String]?
+        let mustNotContain: [String]?
+        let exactOutput: String?
+        let maximumOutputTokens: Int?
+        let minimumUsefulOutputTokens: Int?
+        let rejectRepeatedNGramSize: Int?
+        let rejectRepeatedNGramCount: Int?
+        let record: [String]?
+    }
+
+    let schemaVersion: Int
+    let name: String
+    let createdAt: String
+    let scoring: Scoring
+    let cases: [EvaluationCase]
+
+    static func load(bundle: Bundle = .main) throws -> Self {
+        guard let url = bundle.url(
+            forResource: "LocalAI2Corpus.v1",
+            withExtension: "json"
+        ) else { throw LocalAIEvaluationError.corpusMissing }
+        let data = try Data(contentsOf: url)
+        let digest = SHA256.hash(data: data).map {
+            String(format: "%02x", $0)
+        }.joined()
+        guard digest == expectedSHA256 else {
+            throw LocalAIEvaluationError.corpusDigestMismatch(
+                expected: expectedSHA256,
+                actual: digest
+            )
+        }
+        let corpus = try JSONDecoder().decode(Self.self, from: data)
+        guard corpus.schemaVersion == 1,
+              !corpus.cases.isEmpty,
+              Set(corpus.cases.map(\.id)).count == corpus.cases.count,
+              corpus.cases.allSatisfy({ !$0.id.isEmpty && !$0.category.isEmpty })
+        else { throw LocalAIEvaluationError.invalidCorpus }
+        return corpus
+    }
+}
+
+enum LocalAIEvaluationError: Error, Equatable, Sendable {
+    case corpusMissing
+    case corpusDigestMismatch(expected: String, actual: String)
+    case invalidCorpus
+    case emptyOutput(String)
+    case receiptMissing
+}
+
+struct LocalAIEvaluationCaseReceipt: Codable, Equatable, Sendable {
+    let id: String
+    let category: String
+    let passed: Bool
+    let failureReasons: [String]
+    let output: String
+    let selectedAction: String?
+    let generatedTokens: UInt64?
+    let timeToFirstTokenSeconds: TimeInterval?
+    let totalDurationSeconds: TimeInterval
+    let decodeTokensPerSecond: Double?
+    let peakPhysicalFootprintBytes: UInt64?
+    let thermalStateBefore: String
+    let thermalStateAfter: String
+    let batteryLevelBefore: Float?
+    let batteryLevelAfter: Float?
+}
+
+struct LocalAIEvaluationReceipt: Codable, Equatable, Identifiable, Sendable {
+    let id: UUID
+    let runID: String
+    let recordedAt: Date
+    let corpusSHA256: String
+    let modelID: String
+    let modelSHA256: String
+    let immutableRevision: String
+    let executionConfiguration: String
+    let deviceIdentifier: String
+    let operatingSystem: String
+    let isPhysicalDevice: Bool
+    let passedCaseCount: Int
+    let totalCaseCount: Int
+    let score: Double
+    let cases: [LocalAIEvaluationCaseReceipt]
+}
+
+actor LocalAIEvaluationReceiptStore {
+    static let shared = LocalAIEvaluationReceiptStore()
+
+    private let directoryURL: URL
+
+    init(directoryURL: URL? = nil) {
+        if let directoryURL {
+            self.directoryURL = directoryURL
+        } else {
+            let base = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.temporaryDirectory
+            self.directoryURL = base
+                .appendingPathComponent("LocalAI", isDirectory: true)
+                .appendingPathComponent("EvaluationReceipts", isDirectory: true)
+        }
+    }
+
+    func save(_ receipt: LocalAIEvaluationReceipt) throws {
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(receipt)
+        try data.write(
+            to: directoryURL.appendingPathComponent("\(receipt.id.uuidString).json"),
+            options: .atomic
+        )
+        try data.write(
+            to: directoryURL.appendingPathComponent("latest.json"),
+            options: .atomic
+        )
+    }
+
+    func latest() throws -> LocalAIEvaluationReceipt? {
+        let url = directoryURL.appendingPathComponent("latest.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try LocalModelReceiptMigration.migrate(
+            decoder.decode(
+                LocalAIEvaluationReceipt.self,
+                from: Data(contentsOf: url)
+            )
+        )
+    }
+}
+
+private actor LocalAIEvaluationStreamCapture {
+    private let startedAt = Date()
+    private var firstTextAt: Date?
+    private var output = ""
+    private var generatedTokens: UInt64?
+    private var peakFootprint = LocalBenchmarkEvidence.physicalFootprintBytes()
+
+    func record(_ event: AgentLocalModelInferenceEvent) {
+        if let footprint = LocalBenchmarkEvidence.physicalFootprintBytes() {
+            peakFootprint = max(peakFootprint ?? 0, footprint)
+        }
+        switch event {
+        case .text(let text):
+            if firstTextAt == nil, !text.isEmpty { firstTextAt = Date() }
+            output += text
+        case .usage(let count):
+            generatedTokens = count
+        case .completed:
+            break
+        }
+    }
+
+    func snapshot() -> (
+        output: String,
+        tokens: UInt64?,
+        ttft: TimeInterval?,
+        total: TimeInterval,
+        peak: UInt64?
+    ) {
+        let finished = Date()
+        return (
+            output,
+            generatedTokens,
+            firstTextAt?.timeIntervalSince(startedAt),
+            finished.timeIntervalSince(startedAt),
+            peakFootprint
+        )
+    }
+}
+
+actor LocalAIEvaluationRunner {
+    static let shared = LocalAIEvaluationRunner()
+
+    private let client: LocalModelClient
+    private let store: LocalAIEvaluationReceiptStore
+
+    init(
+        client: LocalModelClient = .shared,
+        store: LocalAIEvaluationReceiptStore = .shared
+    ) {
+        self.client = client
+        self.store = store
+    }
+
+    func run(modelID: String) async throws -> LocalAIEvaluationReceipt {
+        let corpus = try LocalAIEvaluationCorpus.load()
+        guard let variant = LocalModelCatalog.variant(for: modelID) else {
+            throw LocalModelRuntimeError.modelNotDownloaded(modelID)
+        }
+        try await client.verifyLocalModelArtifact(modelID: modelID)
+        await client.unload()
+
+        #if canImport(UIKit)
+        let previousBatteryMonitoring = await MainActor.run {
+            let previous = UIDevice.current.isBatteryMonitoringEnabled
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            return previous
+        }
+        #endif
+
+        do {
+            var results: [LocalAIEvaluationCaseReceipt] = []
+            for evaluationCase in corpus.cases {
+                try Task.checkCancellation()
+                do {
+                    results.append(
+                        try await runCase(evaluationCase, variant: variant)
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    results.append(
+                        failedCaseReceipt(evaluationCase, error: error)
+                    )
+                }
+            }
+            let passed = results.filter(\.passed).count
+            let capabilities = LocalRuntimeCapabilities.current
+            #if targetEnvironment(simulator)
+            let isPhysicalDevice = false
+            #else
+            let isPhysicalDevice = true
+            #endif
+            let receipt = LocalAIEvaluationReceipt(
+                id: UUID(),
+                runID: ProcessInfo.processInfo.arguments
+                    .first(where: { $0.hasPrefix("--local-evaluation-run-id=") })
+                    .map {
+                        String($0.dropFirst("--local-evaluation-run-id=".count))
+                    } ?? UUID().uuidString,
+                recordedAt: Date(),
+                corpusSHA256: LocalAIEvaluationCorpus.expectedSHA256,
+                modelID: variant.id,
+                modelSHA256: variant.expectedSHA256,
+                immutableRevision: variant.immutableRevision,
+                executionConfiguration: LocalLlamaExecutionProfile.current.rawValue,
+                deviceIdentifier: capabilities.deviceIdentifier,
+                operatingSystem: capabilities.osVersion,
+                isPhysicalDevice: isPhysicalDevice,
+                passedCaseCount: passed,
+                totalCaseCount: results.count,
+                score: results.isEmpty ? 0 : Double(passed) / Double(results.count),
+                cases: results
+            )
+            try await store.save(receipt)
+            #if canImport(UIKit)
+            await MainActor.run {
+                UIDevice.current.isBatteryMonitoringEnabled = previousBatteryMonitoring
+            }
+            #endif
+            return receipt
+        } catch {
+            #if canImport(UIKit)
+            await MainActor.run {
+                UIDevice.current.isBatteryMonitoringEnabled = previousBatteryMonitoring
+            }
+            #endif
+            throw error
+        }
+    }
+
+    private func runCase(
+        _ evaluationCase: LocalAIEvaluationCorpus.EvaluationCase,
+        variant: LocalModelVariant
+    ) async throws -> LocalAIEvaluationCaseReceipt {
+        let thermalBefore = LocalBenchmarkEvidence.thermalStateLabel()
+        let batteryBefore = await batteryLevel()
+        let startedAt = Date()
+
+        if evaluationCase.category == "tool_selection" ||
+            evaluationCase.category == "tool_refusal" {
+            let request = inferenceRequest(
+                for: evaluationCase,
+                variant: variant,
+                maximumOutputTokens: min(192, variant.maxNewTokens)
+            )
+            let decision = try await client.decideLocalAgentTurn(
+                request: request,
+                completedToolCallCount: 0
+            )
+            _ = try LocalAgentModelGrammar.compile(decision)
+            let combined = "\(decision.action) \(decision.response)"
+            var reasons = scoreText(combined, evaluationCase: evaluationCase)
+            if let expectedTool = evaluationCase.expectedTool {
+                if decision.action != expectedTool {
+                    reasons.append("Expected tool \(expectedTool), got \(decision.action).")
+                }
+            } else if decision.action != "respond" {
+                reasons.append("Expected a safe refusal/response, got \(decision.action).")
+            }
+            if let available = evaluationCase.availableTools,
+               decision.action != "respond",
+               !available.contains(decision.action) {
+                reasons.append("Selected an unavailable tool: \(decision.action).")
+            }
+            return LocalAIEvaluationCaseReceipt(
+                id: evaluationCase.id,
+                category: evaluationCase.category,
+                passed: reasons.isEmpty,
+                failureReasons: reasons,
+                output: String(combined.prefix(4_000)),
+                selectedAction: decision.action,
+                generatedTokens: nil,
+                timeToFirstTokenSeconds: nil,
+                totalDurationSeconds: Date().timeIntervalSince(startedAt),
+                decodeTokensPerSecond: nil,
+                peakPhysicalFootprintBytes: LocalBenchmarkEvidence.physicalFootprintBytes(),
+                thermalStateBefore: thermalBefore,
+                thermalStateAfter: LocalBenchmarkEvidence.thermalStateLabel(),
+                batteryLevelBefore: batteryBefore,
+                batteryLevelAfter: await batteryLevel()
+            )
+        }
+
+        let maximum = min(
+            evaluationCase.maximumOutputTokens ??
+                max(evaluationCase.minimumUsefulOutputTokens ?? 160, 160),
+            variant.maxNewTokens
+        )
+        let request = inferenceRequest(
+            for: evaluationCase,
+            variant: variant,
+            maximumOutputTokens: maximum
+        )
+        let capture = LocalAIEvaluationStreamCapture()
+        try await client.stream(request: request) { event in
+            await capture.record(event)
+        }
+        let snapshot = await capture.snapshot()
+        var reasons = scoreText(snapshot.output, evaluationCase: evaluationCase)
+        if snapshot.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            reasons.append("Generated output was empty.")
+        }
+        if let minimum = evaluationCase.minimumUsefulOutputTokens,
+           Int(snapshot.tokens ?? 0) < minimum {
+            reasons.append(
+                "Generated \(snapshot.tokens ?? 0) tokens; expected at least \(minimum)."
+            )
+        }
+        if let size = evaluationCase.rejectRepeatedNGramSize,
+           let count = evaluationCase.rejectRepeatedNGramCount,
+           Self.containsRepeatedNGram(snapshot.output, size: size, count: count) {
+            reasons.append("Output repeated a \(size)-word window \(count) or more times.")
+        }
+        let decodeDuration = max(
+            snapshot.total - (snapshot.ttft ?? snapshot.total),
+            0.001
+        )
+        let decodeRate = snapshot.tokens.map { Double($0) / decodeDuration }
+        return LocalAIEvaluationCaseReceipt(
+            id: evaluationCase.id,
+            category: evaluationCase.category,
+            passed: reasons.isEmpty,
+            failureReasons: reasons,
+            output: String(snapshot.output.prefix(4_000)),
+            selectedAction: nil,
+            generatedTokens: snapshot.tokens,
+            timeToFirstTokenSeconds: snapshot.ttft,
+            totalDurationSeconds: snapshot.total,
+            decodeTokensPerSecond: decodeRate,
+            peakPhysicalFootprintBytes: snapshot.peak,
+            thermalStateBefore: thermalBefore,
+            thermalStateAfter: LocalBenchmarkEvidence.thermalStateLabel(),
+            batteryLevelBefore: batteryBefore,
+            batteryLevelAfter: await batteryLevel()
+        )
+    }
+
+    private func failedCaseReceipt(
+        _ evaluationCase: LocalAIEvaluationCorpus.EvaluationCase,
+        error: any Error
+    ) -> LocalAIEvaluationCaseReceipt {
+        LocalAIEvaluationCaseReceipt(
+            id: evaluationCase.id,
+            category: evaluationCase.category,
+            passed: false,
+            failureReasons: ["Inference failed: \(String(describing: error))"],
+            output: "",
+            selectedAction: nil,
+            generatedTokens: nil,
+            timeToFirstTokenSeconds: nil,
+            totalDurationSeconds: 0,
+            decodeTokensPerSecond: nil,
+            peakPhysicalFootprintBytes: LocalBenchmarkEvidence.physicalFootprintBytes(),
+            thermalStateBefore: LocalBenchmarkEvidence.thermalStateLabel(),
+            thermalStateAfter: LocalBenchmarkEvidence.thermalStateLabel(),
+            batteryLevelBefore: nil,
+            batteryLevelAfter: nil
+        )
+    }
+
+    private func inferenceRequest(
+        for evaluationCase: LocalAIEvaluationCorpus.EvaluationCase,
+        variant: LocalModelVariant,
+        maximumOutputTokens: Int
+    ) -> AgentLocalModelInferenceRequest {
+        var messages: [AgentLocalModelInferenceMessage] = []
+        let systemParts = [
+            evaluationCase.system,
+            evaluationCase.context.map { "Context:\n\($0)" },
+        ].compactMap { $0 }
+        if !systemParts.isEmpty {
+            messages.append(.init(role: .system, content: systemParts.joined(separator: "\n\n")))
+        }
+        for message in evaluationCase.messages ?? [] {
+            let role: AgentLocalModelInferenceRole = switch message.role {
+            case "system": .system
+            case "developer": .developer
+            case "assistant": .assistant
+            default: .user
+            }
+            messages.append(.init(role: role, content: message.content))
+        }
+        if let prompt = evaluationCase.prompt {
+            messages.append(.init(role: .user, content: prompt))
+        }
+        let requestID = "local-eval-\(evaluationCase.id)-\(UUID().uuidString)"
+        return AgentLocalModelInferenceRequest(
+            scope: ProviderAttemptScope(
+                requestID: requestID,
+                attemptID: .init(rawValue: "\(requestID):attempt:1")
+            ),
+            modelID: variant.id,
+            messages: messages,
+            temperature: 0,
+            maximumOutputTokens: UInt64(max(1, maximumOutputTokens))
+        )
+    }
+
+    private func scoreText(
+        _ output: String,
+        evaluationCase: LocalAIEvaluationCorpus.EvaluationCase
+    ) -> [String] {
+        var reasons: [String] = []
+        let folded = output.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: .current
+        )
+        for required in evaluationCase.mustContain ?? [] {
+            let needle = required.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            if !folded.contains(needle) {
+                reasons.append("Missing required text: \(required).")
+            }
+        }
+        if let alternatives = evaluationCase.mustContainAny,
+           !alternatives.isEmpty,
+           !alternatives.contains(where: {
+               folded.contains($0.folding(
+                   options: [.caseInsensitive, .diacriticInsensitive],
+                   locale: .current
+               ))
+           }) {
+            reasons.append("Missing every required alternative.")
+        }
+        for forbidden in evaluationCase.mustNotContain ?? [] {
+            let needle = forbidden.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            if folded.contains(needle) {
+                reasons.append("Contained forbidden text: \(forbidden).")
+            }
+        }
+        if let exact = evaluationCase.exactOutput,
+           output.trimmingCharacters(in: .whitespacesAndNewlines) != exact {
+            reasons.append("Output did not exactly match the required value.")
+        }
+        return reasons
+    }
+
+    private static func containsRepeatedNGram(
+        _ output: String,
+        size: Int,
+        count: Int
+    ) -> Bool {
+        guard size > 0, count > 1 else { return false }
+        let words = output.lowercased().split(whereSeparator: { $0.isWhitespace })
+        guard words.count >= size else { return false }
+        var frequencies: [String: Int] = [:]
+        for index in 0...(words.count - size) {
+            let key = words[index..<(index + size)].joined(separator: " ")
+            frequencies[key, default: 0] += 1
+            if frequencies[key, default: 0] >= count { return true }
+        }
+        return false
+    }
+
+    private func batteryLevel() async -> Float? {
+        #if canImport(UIKit)
+        return await MainActor.run {
+            let value = UIDevice.current.batteryLevel
+            return value >= 0 ? value : nil
+        }
+        #else
+        return nil
+        #endif
+    }
+}
+
+enum LocalBenchmarkEvidence {
+    static func physicalFootprintBytes() -> UInt64? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size /
+                MemoryLayout<natural_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(
+                to: integer_t.self,
+                capacity: Int(count)
+            ) {
+                task_info(
+                    mach_task_self_,
+                    task_flavor_t(TASK_VM_INFO),
+                    $0,
+                    &count
+                )
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return UInt64(info.phys_footprint)
+    }
+
+    static func thermalStateLabel(
+        _ state: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState
+    ) -> String {
+        switch state {
+        case .nominal: "nominal"
+        case .fair: "fair"
+        case .serious: "serious"
+        case .critical: "critical"
+        @unknown default: "unknown"
+        }
+    }
+}
+
+struct OutOfCoreStorageBenchmarkReceipt: Codable, Sendable {
+    let schemaVersion: Int
+    let receiptID: UUID
+    let recordedAt: Date
+    let modelID: String
+    let storageLocation: String
+    let fileBytes: UInt64
+    let sampleBytes: UInt64
+    let sequentialReadBytes: Int
+    let uncachedSequentialMBps: Double
+    let firstCachedSequentialMBps: Double
+    let repeatedCachedSequentialMBps: Double
+    let randomReadBytes: Int
+    let randomReadCount: Int
+    let randomMBps: Double
+    let peakPhysicalFootprintBytes: UInt64?
+    let thermalBefore: String
+    let thermalAfter: String
+    let cacheControls: String
+}
+
+enum OutOfCoreStorageBenchmark {
+    static let receiptRelativePath =
+        "LocalAI/OutOfCore/storage-benchmark-latest.json"
+
+    static func run(
+        modelID: String,
+        url: URL,
+        storageLocation: String
+    ) throws -> OutOfCoreStorageBenchmarkReceipt {
+        let descriptor = open(url.path, O_RDONLY)
+        guard descriptor >= 0 else { throw CocoaError(.fileReadNoPermission) }
+        defer { close(descriptor) }
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: url.path
+        )
+        guard let fileSize = (attributes[.size] as? NSNumber)?.uint64Value,
+              fileSize > 0 else { throw CocoaError(.fileReadCorruptFile) }
+
+        let sequentialReadBytes = 1_048_576
+        let randomReadBytes = 65_536
+        let randomReadCount = 256
+        let sampleBytes = min(fileSize, 268_435_456)
+        let thermalBefore = LocalBenchmarkEvidence.thermalStateLabel()
+        var peak = LocalBenchmarkEvidence.physicalFootprintBytes()
+
+        let uncached = try sequentialRate(
+            descriptor: descriptor,
+            sampleBytes: sampleBytes,
+            readBytes: sequentialReadBytes,
+            disableCache: true,
+            peak: &peak
+        )
+        let firstCached = try sequentialRate(
+            descriptor: descriptor,
+            sampleBytes: sampleBytes,
+            readBytes: sequentialReadBytes,
+            disableCache: false,
+            peak: &peak
+        )
+        let repeatedCached = try sequentialRate(
+            descriptor: descriptor,
+            sampleBytes: sampleBytes,
+            readBytes: sequentialReadBytes,
+            disableCache: false,
+            peak: &peak
+        )
+        let random = try randomRate(
+            descriptor: descriptor,
+            fileBytes: fileSize,
+            readBytes: randomReadBytes,
+            readCount: randomReadCount,
+            peak: &peak
+        )
+        let receipt = OutOfCoreStorageBenchmarkReceipt(
+            schemaVersion: 1,
+            receiptID: UUID(),
+            recordedAt: Date(),
+            modelID: modelID,
+            storageLocation: storageLocation,
+            fileBytes: fileSize,
+            sampleBytes: sampleBytes,
+            sequentialReadBytes: sequentialReadBytes,
+            uncachedSequentialMBps: uncached,
+            firstCachedSequentialMBps: firstCached,
+            repeatedCachedSequentialMBps: repeatedCached,
+            randomReadBytes: randomReadBytes,
+            randomReadCount: randomReadCount,
+            randomMBps: random,
+            peakPhysicalFootprintBytes: peak,
+            thermalBefore: thermalBefore,
+            thermalAfter: LocalBenchmarkEvidence.thermalStateLabel(),
+            cacheControls: "F_NOCACHE first pass; deterministic pread; cached repeat is labeled warm, not cold"
+        )
+        try write(receipt)
+        return receipt
+    }
+
+    static func latest() throws -> OutOfCoreStorageBenchmarkReceipt? {
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        let url = base.appendingPathComponent(receiptRelativePath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(
+            OutOfCoreStorageBenchmarkReceipt.self,
+            from: Data(contentsOf: url)
+        )
+    }
+
+    private static func sequentialRate(
+        descriptor: Int32,
+        sampleBytes: UInt64,
+        readBytes: Int,
+        disableCache: Bool,
+        peak: inout UInt64?
+    ) throws -> Double {
+        _ = fcntl(descriptor, F_NOCACHE, disableCache ? 1 : 0)
+        var buffer = [UInt8](repeating: 0, count: readBytes)
+        var offset: UInt64 = 0
+        let started = ContinuousClock.now
+        while offset < sampleBytes {
+            let length = min(readBytes, Int(sampleBytes - offset))
+            let count = buffer.withUnsafeMutableBytes { rawBuffer in
+                pread(
+                    descriptor,
+                    rawBuffer.baseAddress,
+                    length,
+                    off_t(offset)
+                )
+            }
+            guard count == length else { throw CocoaError(.fileReadUnknown) }
+            offset += UInt64(count)
+            if offset.isMultiple(of: 16 * 1_048_576),
+               let current = LocalBenchmarkEvidence.physicalFootprintBytes() {
+                peak = max(peak ?? 0, current)
+            }
+        }
+        let seconds = max(
+            0.000_001,
+            Double(started.duration(to: .now).components.attoseconds) / 1e18 +
+                Double(started.duration(to: .now).components.seconds)
+        )
+        return (Double(offset) / 1_048_576) / seconds
+    }
+
+    private static func randomRate(
+        descriptor: Int32,
+        fileBytes: UInt64,
+        readBytes: Int,
+        readCount: Int,
+        peak: inout UInt64?
+    ) throws -> Double {
+        _ = fcntl(descriptor, F_NOCACHE, 1)
+        var buffer = [UInt8](repeating: 0, count: readBytes)
+        var state: UInt64 = 0x4E_6F_76_61_46_6F_72_67
+        let maximumOffset = max(UInt64(1), fileBytes - UInt64(readBytes))
+        let started = ContinuousClock.now
+        for index in 0..<readCount {
+            state = state &* 6_364_136_223_846_793_005 &+ 1
+            let offset = (state % maximumOffset) & ~UInt64(4_095)
+            let count = buffer.withUnsafeMutableBytes { rawBuffer in
+                pread(
+                    descriptor,
+                    rawBuffer.baseAddress,
+                    readBytes,
+                    off_t(offset)
+                )
+            }
+            guard count == readBytes else { throw CocoaError(.fileReadUnknown) }
+            if index.isMultiple(of: 32),
+               let current = LocalBenchmarkEvidence.physicalFootprintBytes() {
+                peak = max(peak ?? 0, current)
+            }
+        }
+        let duration = started.duration(to: .now).components
+        let seconds = max(
+            0.000_001,
+            Double(duration.seconds) + Double(duration.attoseconds) / 1e18
+        )
+        return (Double(readBytes * readCount) / 1_048_576) / seconds
+    }
+
+    private static func write(
+        _ receipt: OutOfCoreStorageBenchmarkReceipt
+    ) throws {
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        let url = base.appendingPathComponent(receiptRelativePath)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(receipt).write(to: url, options: .atomic)
+    }
+}
+
 enum LocalModelRuntimeError: LocalizedError {
     case modelNotDownloaded(String)
     case runtimeUnavailable
+    case engineUnavailable(LocalInferenceEngineType)
     case incompatibleDevice(String)
     case downloadFailed(String)
+    case invalidCompanionEndpoint
+    case companionConsentRequired
+    case companionAttestationFailed(String)
+    case invalidCompanionResponse
     case invalidAgentDecision
     case invalidAgentDecisionOutput(String)
 
@@ -391,10 +2052,20 @@ enum LocalModelRuntimeError: LocalizedError {
             "\(name) is not downloaded yet. Open Settings, choose Local, and download the model first."
         case .runtimeUnavailable:
             "The local llama.cpp runtime is not linked in this build yet."
+        case .engineUnavailable(let engine):
+            "The \(engine.title) engine is unavailable in this NovaForge build."
         case .incompatibleDevice(let message):
             message
         case .downloadFailed(let message):
             message
+        case .invalidCompanionEndpoint:
+            "Use an HTTP or HTTPS endpoint on a private LAN address or .local host. Public internet hosts are rejected."
+        case .companionConsentRequired:
+            "Confirm the LAN companion endpoint before NovaForge sends any prompt content."
+        case .companionAttestationFailed(let message):
+            "The LAN companion did not attest the pinned model: \(message)"
+        case .invalidCompanionResponse:
+            "The LAN companion returned an invalid or oversized response."
         case .invalidAgentDecision, .invalidAgentDecisionOutput:
             "The local model could not produce a valid constrained agent decision. Nothing was executed."
         }
@@ -412,9 +2083,7 @@ final class LocalModelManager {
     private(set) var downloadedBytes: Int64 = 0
     @ObservationIgnored private var downloadTask: Task<Void, Never>?
     @ObservationIgnored private var statusTask: Task<Void, Never>?
-    #if canImport(UIKit)
-    @ObservationIgnored private let lifecycleObserverBag = LocalModelLifecycleObserverBag()
-    #endif
+    @ObservationIgnored private var preparationTask: Task<Void, Never>?
     #if DEBUG || targetEnvironment(simulator)
     @ObservationIgnored private var debugStatusOverride: (variantID: String, status: LocalModelStatus, receivedBytes: Int64?)?
     #endif
@@ -444,20 +2113,7 @@ final class LocalModelManager {
 
     init() {
         #if canImport(UIKit)
-        for name in [
-            UIApplication.didReceiveMemoryWarningNotification,
-            UIApplication.didEnterBackgroundNotification,
-        ] {
-            lifecycleObserverBag.tokens.append(
-                NotificationCenter.default.addObserver(
-                    forName: name,
-                    object: nil,
-                    queue: .main
-                ) { _ in
-                    Task { await LocalModelClient.shared.unload() }
-                }
-            )
-        }
+        LocalModelRuntimeLifecycle.shared.start()
         #endif
         refreshStatus()
     }
@@ -465,6 +2121,7 @@ final class LocalModelManager {
     deinit {
         downloadTask?.cancel()
         statusTask?.cancel()
+        preparationTask?.cancel()
     }
 
     @discardableResult
@@ -475,10 +2132,42 @@ final class LocalModelManager {
         if selectedVariantID == variant.id {
             return true
         }
+        if compatibilityMessage(for: variant) != nil {
+            return false
+        }
+        #if canImport(UIKit)
+        if selectedVariantID != variant.id {
+            LocalModelRuntimeLifecycle.shared.unloadForProviderSwitch()
+        }
+        #endif
         #if DEBUG || targetEnvironment(simulator)
         debugStatusOverride = nil
         #endif
+        preparationTask?.cancel()
+        preparationTask = nil
         selectedVariantID = variant.id
+        if variant.engineType == .coreAI {
+            let selectedID = variant.id
+            preparationTask = Task(priority: .utility) { [weak self] in
+                do {
+                    try await LocalModelClient.shared.prepare(
+                        modelID: selectedID
+                    )
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // Selection remains stable; status/first request exposes
+                    // the precise unavailable or missing-artifact reason.
+                }
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self,
+                          self.selectedVariantID == selectedID
+                    else { return }
+                    self.preparationTask = nil
+                }
+            }
+        }
         return true
     }
 
@@ -516,6 +2205,10 @@ final class LocalModelManager {
     func downloadSelected() {
         let variant = selectedVariant
         guard !isDownloading else { return }
+        guard variant.isDownloadable else {
+            refreshStatus()
+            return
+        }
         if let message = compatibilityMessage(for: variant) {
             status = .incompatible(message)
             return
@@ -574,6 +2267,42 @@ final class LocalModelManager {
         refreshStatus()
     }
 
+    func verifySelected() {
+        let variant = selectedVariant
+        guard !isDownloading else { return }
+        statusTask?.cancel()
+        status = .checking
+        statusTask = Task(priority: .utility) { [weak self, variant] in
+            do {
+                try await LocalModelClient.shared.verifyLocalModelArtifact(
+                    modelID: variant.id
+                )
+                await MainActor.run {
+                    guard let self,
+                          self.selectedVariantID == variant.id else { return }
+                    self.status = .ready
+                    self.statusTask = nil
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self,
+                          self.selectedVariantID == variant.id else { return }
+                    self.status = .failed(error.localizedDescription)
+                    self.statusTask = nil
+                }
+            }
+        }
+    }
+
+    func unloadSelected() {
+        let variantID = selectedVariant.id
+        Task {
+            await LocalModelClient.shared.unload(modelID: variantID)
+            guard selectedVariantID == variantID else { return }
+            refreshStatus()
+        }
+    }
+
     #if DEBUG || targetEnvironment(simulator)
     func debugOverrideStatusForUITest(_ status: LocalModelStatus, receivedBytes: Int64? = nil) {
         downloadTask?.cancel()
@@ -599,6 +2328,10 @@ final class LocalModelManager {
 
     func deleteSelectedModel() {
         let variant = selectedVariant
+        guard variant.isDownloadable else {
+            refreshStatus()
+            return
+        }
         downloadTask?.cancel()
         statusTask?.cancel()
         #if DEBUG || targetEnvironment(simulator)
@@ -640,14 +2373,46 @@ final class LocalModelManager {
         for variant: LocalModelVariant? = nil
     ) async throws -> URL {
         let variant = variant ?? selectedVariant
+        guard variant.isDownloadable else {
+            throw LocalModelRuntimeError.modelNotDownloaded(variant.displayName)
+        }
         return try await LocalModelArtifactVerifier.shared.verifiedURL(
             for: variant
         )
     }
 
+    var companionEndpointText: String {
+        CompanionModelConfigurationStore.snapshot()?.endpoint.absoluteString ?? ""
+    }
+
+    var isCompanionConfirmed: Bool {
+        CompanionModelConfigurationStore.snapshot() != nil
+    }
+
+    func confirmCompanion(endpointText: String) throws {
+        guard let descriptor = LocalModelCatalog.all.first(where: {
+            $0.engineType == .companion
+        }) else { throw LocalModelRuntimeError.invalidCompanionEndpoint }
+        try CompanionModelConfigurationStore.saveConfirmed(
+            endpointText: endpointText,
+            descriptor: descriptor
+        )
+        if selectedVariantID == descriptor.id { refreshStatus() }
+    }
+
+    func revokeCompanion() {
+        CompanionModelConfigurationStore.revoke()
+        if selectedVariant.engineType == .companion { refreshStatus() }
+        Task { await LocalModelClient.shared.unload() }
+    }
+
     private func compatibilityMessage(for variant: LocalModelVariant) -> String? {
         if let message = LocalModelCatalog.compatibilityMessage(for: variant) {
             return message
+        }
+
+        if LocalModelCatalog.isPowerOnDeviceAdmissionExperiment(variant) {
+            return nil
         }
 
         if let available = availableDiskBytes(), available < variant.recommendedFreeDiskBytes {
@@ -687,6 +2452,24 @@ private enum LocalModelStatusProbe {
         let emptyProgress = LocalModelDownloadProgress(receivedBytes: 0, totalBytes: variant.expectedBytes)
         if let message = compatibilityMessage(for: variant) {
             return .init(status: .incompatible(message), progress: emptyProgress, downloadedBytes: 0)
+        }
+
+        if variant.engineType == .companion {
+            return .init(
+                status: .ready,
+                progress: .init(receivedBytes: 0, totalBytes: 0),
+                downloadedBytes: 0
+            )
+        }
+
+        if variant.engineType == .coreAI {
+            return .init(
+                status: CoreAIModelAssetResolver.resourcesURL(for: variant) == nil
+                    ? .incompatible("The pinned Core AI AOT resource bundle is not installed in this build.")
+                    : .ready,
+                progress: .init(receivedBytes: 0, totalBytes: 0),
+                downloadedBytes: 0
+            )
         }
 
         do {
@@ -1278,11 +3061,65 @@ private actor LocalModelInferenceGate {
     }
 }
 
-actor LocalModelClient: AgentLocalModelInferenceStreaming,
+/// A task-local marker lets the router hold the one process-wide generation
+/// lease while it unloads the previous engine. Concrete engines reuse that
+/// ownership, while direct test/service calls still acquire the same gate.
+private enum LocalInferenceLeaseContext {
+    @TaskLocal static var ownsProcessLease = false
+
+    static func withLease<T>(
+        _ operation: () async throws -> T,
+        isolation: isolated (any Actor)? = #isolation
+    ) async throws -> T {
+        if ownsProcessLease {
+            return try await operation()
+        }
+        try await LocalModelInferenceGate.shared.acquire()
+        do {
+            let result = try await $ownsProcessLease.withValue(
+                true,
+                operation: operation,
+                isolation: isolation
+            )
+            await LocalModelInferenceGate.shared.release()
+            return result
+        } catch {
+            await LocalModelInferenceGate.shared.release()
+            throw error
+        }
+    }
+}
+
+private actor LocalStreamAccumulator {
+    private var storage = ""
+
+    func append(_ text: String) {
+        storage += text
+    }
+
+    var value: String { storage }
+}
+
+protocol LocalInferenceEngine: AgentLocalModelInferenceStreaming,
     AgentLocalModelActionPlanning,
     AgentLocalModelArtifactVerifying
 {
-    static let shared = LocalModelClient()
+    var engineType: LocalInferenceEngineType { get }
+    func unload(modelID: String?) async
+}
+
+/// Optional cold-load hook. Preparing is separate from chat so an AOT/Core AI
+/// asset can be specialized without freezing the first streamed turn.
+protocol LocalInferencePreparing: Sendable {
+    func prepare(modelID: String) async throws
+}
+
+actor LlamaCppInferenceEngine: LocalInferenceEngine,
+    AgentLocalModelActionPlanning,
+    AgentLocalModelArtifactVerifying
+{
+    static let shared = LlamaCppInferenceEngine()
+    nonisolated let engineType = LocalInferenceEngineType.llamaCpp
 
     #if canImport(SwiftLlama)
     private var loadedService: (variantID: String, service: LlamaService)?
@@ -1329,16 +3166,27 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
             throw LocalModelRuntimeError.incompatibleDevice(message)
         }
 
+        let plan = LocalRuntimeExecutionPlan.resolve(for: variant)
         let service = LlamaService(
             modelUrl: modelURL,
             config: .init(
-                batchSize: variant.batchTokens,
-                maxTokenCount: variant.contextTokens,
-                useGPU: variant.useGPU,
-                gpuLayerCount: variant.gpuLayerCount,
+                batchSize: plan.batchTokens,
+                maxTokenCount: plan.contextTokens,
+                useGPU: plan.useGPU,
+                gpuLayerCount: plan.gpuLayerCount,
                 generationThreadCount: variant.generationThreadCount,
                 batchThreadCount: variant.batchThreadCount,
-                yieldEveryTokenCount: 1
+                yieldEveryTokenCount: 1,
+                maxOutputTokenCount: UInt32(clamping: variant.maxNewTokens),
+                reducedMemoryMode: plan.reducedMemoryMode,
+                kvCacheType: plan.reducedMemoryMode ? .q8_0 : .f16,
+                flashAttention: plan.useGPU && !plan.reducedMemoryMode,
+                outOfCoreResidentBudgetBytes:
+                    LocalModelCatalog.powerOnDeviceExperimentIDs.contains(
+                        variant.id
+                    )
+                    ? 1_500_000_000
+                    : 0
             )
         )
         loadedService = (variant.id, service)
@@ -1363,17 +3211,11 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         request: AgentLocalModelInferenceRequest,
         completedToolCallCount: Int
     ) async throws -> LocalAgentModelDecision {
-        try await LocalModelInferenceGate.shared.acquire()
-        do {
-            let decision = try await performLocalAgentDecision(
+        try await LocalInferenceLeaseContext.withLease {
+            try await performLocalAgentDecision(
                 request: request,
                 completedToolCallCount: completedToolCallCount
             )
-            await LocalModelInferenceGate.shared.release()
-            return decision
-        } catch {
-            await LocalModelInferenceGate.shared.release()
-            throw error
         }
     }
 
@@ -1386,6 +3228,11 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
               completedToolCallCount <
                 LocalAgentModelGrammar.maximumModelPlannedToolCalls
         else { throw LocalModelRuntimeError.invalidAgentDecision }
+        guard variant.toolCallingSupport !=
+            "disabled until the full physical quality and safety corpus passes"
+        else {
+            throw LocalModelRuntimeError.invalidAgentDecision
+        }
         if let message = LocalModelCatalog.compatibilityMessage(for: variant) {
             throw LocalModelRuntimeError.incompatibleDevice(message)
         }
@@ -1522,13 +3369,8 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         request: AgentLocalModelInferenceRequest,
         onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
     ) async throws {
-        try await LocalModelInferenceGate.shared.acquire()
-        do {
+        try await LocalInferenceLeaseContext.withLease {
             try await performStream(request: request, onEvent: onEvent)
-            await LocalModelInferenceGate.shared.release()
-        } catch {
-            await LocalModelInferenceGate.shared.release()
-            throw error
         }
     }
 
@@ -1553,7 +3395,12 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         #if canImport(SwiftLlama)
         let service = try await service(for: variant, modelURL: modelURL)
 
-        let llamaMessages = request.messages.map { message in
+        let plan = LocalRuntimeExecutionPlan.resolve(for: variant)
+        let boundedMessages = LocalInferenceInputPolicy.boundedMessages(
+            request.messages,
+            contextTokens: plan.contextTokens
+        )
+        let llamaMessages = boundedMessages.map { message in
             let role: LlamaChatMessage.Role = switch message.role {
             case .system, .developer: .system
             case .user: .user
@@ -1651,9 +3498,8 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         workspaceSummary: String,
         onContentBatch: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> ProviderResponse {
-        try await LocalModelInferenceGate.shared.acquire()
-        do {
-            let response = try await performStreamingResponse(
+        try await LocalInferenceLeaseContext.withLease {
+            try await performStreamingResponse(
                 messages: messages,
                 model: model,
                 temperature: temperature,
@@ -1661,11 +3507,6 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
                 workspaceSummary: workspaceSummary,
                 onContentBatch: onContentBatch
             )
-            await LocalModelInferenceGate.shared.release()
-            return response
-        } catch {
-            await LocalModelInferenceGate.shared.release()
-            throw error
         }
     }
 
@@ -2021,5 +3862,1031 @@ actor LocalModelClient: AgentLocalModelInferenceStreaming,
         }
 
         return data.isEmpty ? nil : data
+    }
+}
+
+actor CoreAIInferenceEngine: LocalInferenceEngine, LocalInferencePreparing {
+    nonisolated let engineType = LocalInferenceEngineType.coreAI
+    #if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+    private var loadedModel: (id: String, model: CoreAILanguageModel)?
+    private var activeSession: (
+        modelID: String,
+        instructions: String,
+        session: LanguageModelSession,
+        messages: [AgentLocalModelInferenceMessage],
+        lastResponse: String
+    )?
+    #endif
+
+    func prepare(modelID: String) async throws {
+        #if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+        guard #available(iOS 27.0, *) else {
+            throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        }
+        try await LocalInferenceLeaseContext.withLease {
+            try await verifyLocalModelArtifact(modelID: modelID)
+            guard let descriptor = LocalModelCatalog.variant(for: modelID),
+                  let resourcesURL = CoreAIModelAssetResolver.resourcesURL(
+                      for: descriptor
+                  )
+            else {
+                throw LocalModelRuntimeError.modelNotDownloaded(modelID)
+            }
+            _ = try await loadModel(
+                for: descriptor,
+                resourcesURL: resourcesURL
+            )
+        }
+        #else
+        throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        #endif
+    }
+
+    func verifyLocalModelArtifact(modelID: String) async throws {
+        guard let descriptor = LocalModelCatalog.variant(for: modelID),
+              descriptor.engineType == .coreAI else {
+            throw LocalModelRuntimeError.modelNotDownloaded(modelID)
+        }
+        #if os(iOS)
+        guard #available(iOS 27.0, *) else {
+            throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        }
+        #endif
+        guard LocalRuntimeCapabilities.current.supportsCoreAI else {
+            throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        }
+        guard CoreAIModelAssetResolver.resourcesURL(for: descriptor) != nil else {
+            throw LocalModelRuntimeError.modelNotDownloaded(descriptor.displayName)
+        }
+    }
+
+    func stream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        #if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+        try await LocalInferenceLeaseContext.withLease {
+            let generatedTokens = try await generate(request: request) { text in
+                try await onEvent(.text(text))
+            }
+            try await onEvent(.usage(generatedTokenCount: generatedTokens))
+            try await onEvent(.completed(
+                reason: generatedTokens >= request.maximumOutputTokens
+                    ? .length
+                    : .completed
+            ))
+        }
+        #else
+        throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        #endif
+    }
+
+    func decideLocalAgentTurn(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int
+    ) async throws -> LocalAgentModelDecision {
+        #if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+        guard completedToolCallCount >= 0,
+              completedToolCallCount < LocalAgentModelGrammar.maximumModelPlannedToolCalls
+        else { throw LocalModelRuntimeError.invalidAgentDecision }
+        return try await LocalInferenceLeaseContext.withLease {
+            let decisionRequest = AgentLocalModelInferenceRequest(
+                scope: request.scope,
+                modelID: request.modelID,
+                messages: [
+                    .init(role: .system, content: LocalAgentModelGrammar.routerPrompt),
+                    .init(
+                        role: .user,
+                        content: "Request: \(String((request.messages.last?.content ?? "").prefix(1_200)))\nCompleted actions: \(completedToolCallCount)"
+                    ),
+                ],
+                temperature: 0,
+                maximumOutputTokens: min(192, request.maximumOutputTokens)
+            )
+            let output = LocalStreamAccumulator()
+            _ = try await generate(request: decisionRequest) { text in
+                await output.append(text)
+            }
+            let text = await output.value
+            guard let data = text.data(using: .utf8),
+                  let decision = try? JSONDecoder().decode(
+                    LocalAgentModelDecision.self,
+                    from: data
+                  ) else {
+                throw LocalModelRuntimeError.invalidAgentDecisionOutput(
+                    String(text.prefix(1_500))
+                )
+            }
+            return decision
+        }
+        #else
+        throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        #endif
+    }
+
+    func stop(request: AgentLocalModelInferenceRequest) async {
+        await unload(modelID: request.modelID)
+    }
+
+    func unload(modelID: String?) async {
+        #if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+        guard #available(iOS 27.0, *) else { return }
+        guard let loadedModel,
+              modelID == nil || loadedModel.id == modelID else { return }
+        activeSession = nil
+        loadedModel.model.unload()
+        self.loadedModel = nil
+        #endif
+    }
+
+    #if os(iOS) && canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(FoundationModels)
+    private func generate(
+        request: AgentLocalModelInferenceRequest,
+        onText: @escaping (String) async throws -> Void
+    ) async throws -> UInt64 {
+        guard #available(iOS 27.0, *) else {
+            throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        }
+        try await verifyLocalModelArtifact(modelID: request.modelID)
+        guard let descriptor = LocalModelCatalog.variant(for: request.modelID),
+              request.maximumOutputTokens > 0,
+              request.maximumOutputTokens <= UInt64(descriptor.maxNewTokens),
+              let resourcesURL = CoreAIModelAssetResolver.resourcesURL(for: descriptor)
+        else { throw LocalModelRuntimeError.engineUnavailable(.coreAI) }
+
+        let model = try await loadModel(
+            for: descriptor,
+            resourcesURL: resourcesURL
+        )
+        let boundedMessages = LocalInferenceInputPolicy.boundedMessages(
+            request.messages,
+            contextTokens: descriptor.contextTokens
+        )
+        let instructions = boundedMessages
+            .filter { $0.role == .system || $0.role == .developer }
+            .map(\.content)
+            .joined(separator: "\n")
+        let conversationMessages = boundedMessages
+            .filter { $0.role != .system && $0.role != .developer }
+            .suffix(12)
+        let promptBudget = max(4_096, Int(descriptor.contextTokens) * 4)
+        guard !conversationMessages.isEmpty else {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+        let session: LanguageModelSession
+        let sessionMessages: [AgentLocalModelInferenceMessage]
+        if let activeSession,
+           activeSession.modelID == descriptor.id,
+           activeSession.instructions == instructions,
+           conversationMessages.starts(with: activeSession.messages)
+        {
+            session = activeSession.session
+            let delta = Array(
+                conversationMessages.dropFirst(activeSession.messages.count)
+            )
+            if let first = delta.first,
+               first.role == .assistant,
+               first.content == activeSession.lastResponse
+            {
+                sessionMessages = Array(delta.dropFirst())
+            } else {
+                sessionMessages = delta
+            }
+        } else {
+            session = LanguageModelSession(
+                model: model,
+                instructions: instructions.isEmpty ? nil : instructions
+            )
+            activeSession = nil
+            sessionMessages = Array(conversationMessages)
+        }
+        let effectiveMessages = sessionMessages.isEmpty
+            ? Array(conversationMessages.suffix(1))
+            : sessionMessages
+        let prompt = effectiveMessages
+            .map { "\($0.role.rawValue): \($0.content)" }
+            .joined(separator: "\n")
+        guard !prompt.isEmpty, prompt.utf8.count <= promptBudget else {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+        let options = GenerationOptions(
+            temperature: request.temperature,
+            maximumResponseTokens: Int(request.maximumOutputTokens)
+        )
+        var previous = ""
+        var estimatedTokens: UInt64 = 0
+        var completed = false
+        defer {
+            if completed {
+                activeSession = (
+                    modelID: descriptor.id,
+                    instructions: instructions,
+                    session: session,
+                    messages: Array(conversationMessages),
+                    lastResponse: previous
+                )
+            } else {
+                activeSession = nil
+            }
+        }
+        for try await partial in session.streamResponse(to: prompt, options: options) {
+            try Task.checkCancellation()
+            let snapshot = partial.content
+            let delta = snapshot.hasPrefix(previous)
+                ? String(snapshot.dropFirst(previous.count))
+                : snapshot
+            if !delta.isEmpty {
+                try await onText(delta)
+                estimatedTokens += UInt64(max(1, Int(Double(delta.count) / 3.8)))
+            }
+            previous = snapshot
+        }
+        completed = true
+        return min(estimatedTokens, request.maximumOutputTokens)
+    }
+
+    private func loadModel(
+        for descriptor: LocalModelVariant,
+        resourcesURL: URL
+    ) async throws -> CoreAILanguageModel {
+        guard #available(iOS 27.0, *) else {
+            throw LocalModelRuntimeError.engineUnavailable(.coreAI)
+        }
+        if let loadedModel, loadedModel.id == descriptor.id {
+            return loadedModel.model
+        }
+        activeSession = nil
+        if let loadedModel { loadedModel.model.unload() }
+        let model = try await CoreAILanguageModel(
+            resourcesAt: resourcesURL,
+            mode: .eager,
+            kvCacheStrategy: .fixedSize
+        )
+        loadedModel = (descriptor.id, model)
+        return model
+    }
+    #endif
+}
+
+private final class CompanionURLSessionDelegate: NSObject,
+    URLSessionTaskDelegate, @unchecked Sendable
+{
+    private let allowedOrigin: URL
+
+    init(allowedOrigin: URL) {
+        self.allowedOrigin = allowedOrigin
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let redirectedURL = request.url,
+              CompanionEndpointPolicy.normalizedBaseURL(
+                  from: redirectedURL.absoluteString
+              ) != nil,
+              CompanionEndpointPolicy.sameOrigin(
+                  allowedOrigin,
+                  redirectedURL
+              )
+        else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+}
+
+actor CompanionInferenceEngine: LocalInferenceEngine {
+    nonisolated let engineType = LocalInferenceEngineType.companion
+    private var activeSession: URLSession?
+
+    private struct ModelsEnvelope: Decodable {
+        let data: [CompanionServerAttestation]
+    }
+
+    private struct CompletionRequest: Encodable {
+        struct Message: Encodable {
+            let role: String
+            let content: String
+        }
+        let model: String
+        let messages: [Message]
+        let temperature: Double
+        let max_tokens: UInt64
+        let stream: Bool
+    }
+
+    private struct CompletionEnvelope: Decodable {
+        struct Choice: Decodable {
+            struct Delta: Decodable { let content: String? }
+            struct Message: Decodable { let content: String? }
+            let delta: Delta?
+            let message: Message?
+            let tool_calls: [ToolCall]?
+        }
+        struct ToolCall: Decodable {
+            let id: String?
+            let type: String?
+            let function: Function?
+
+            struct Function: Decodable {
+                let name: String?
+                let arguments: String?
+            }
+        }
+        struct Usage: Decodable { let completion_tokens: UInt64? }
+        let choices: [Choice]
+        let usage: Usage?
+    }
+
+    /// Strict, bounded OpenAI-compatible SSE framing. A malformed or
+    /// truncated event is fatal and cannot become an apparently successful
+    /// empty completion.
+    struct SSEParser {
+        struct Event {
+            let data: Data?
+            let done: Bool
+        }
+
+        let maximumLineBytes = 512 * 1_024
+        let maximumEventBytes = 1 * 1_024 * 1_024
+        private var dataLines: [String] = []
+        private var eventBytes = 0
+
+        mutating func consume(_ line: String) throws -> Event? {
+            guard line.utf8.count <= maximumLineBytes else {
+                throw LocalModelRuntimeError.invalidCompanionResponse
+            }
+            if line.isEmpty { return try finishEvent() }
+            if line.hasPrefix(":") { return nil }
+            guard line.hasPrefix("data:") else {
+                throw LocalModelRuntimeError.invalidCompanionResponse
+            }
+            var value = String(line.dropFirst(5))
+            if value.first == " " { value.removeFirst() }
+            if value == "[DONE]" {
+                guard dataLines.isEmpty else {
+                    throw LocalModelRuntimeError.invalidCompanionResponse
+                }
+                return Event(data: nil, done: true)
+            }
+            eventBytes += value.utf8.count
+            guard eventBytes <= maximumEventBytes else {
+                throw LocalModelRuntimeError.invalidCompanionResponse
+            }
+            dataLines.append(value)
+            return nil
+        }
+
+        mutating func finishAtEOF() throws -> Event? {
+            try finishEvent()
+        }
+
+        private mutating func finishEvent() throws -> Event? {
+            guard !dataLines.isEmpty else { return nil }
+            let payload = dataLines.joined(separator: "\n")
+            dataLines.removeAll(keepingCapacity: true)
+            eventBytes = 0
+            guard let data = payload.data(using: .utf8), !data.isEmpty else {
+                throw LocalModelRuntimeError.invalidCompanionResponse
+            }
+            return Event(data: data, done: false)
+        }
+    }
+
+    func verifyLocalModelArtifact(modelID: String) async throws {
+        let descriptor = try companionDescriptor(modelID: modelID)
+        let configuration = try configuration(for: descriptor)
+        let session = makeSession(configuration.endpoint)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(
+            url: CompanionEndpointPolicy.modelsURL(from: configuration.endpoint)
+        )
+        request.timeoutInterval = 12
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              data.count <= 512 * 1_024,
+              let envelope = try? JSONDecoder().decode(ModelsEnvelope.self, from: data),
+              let attested = envelope.data.first(where: {
+                  $0.modelID == configuration.remoteModelID
+              }),
+              CompanionEndpointPolicy.validateAttestation(
+                  attested,
+                  for: descriptor,
+                  expectedModelID: configuration.remoteModelID,
+                  expectedRevision: configuration.immutableRevision
+              )
+        else {
+            throw LocalModelRuntimeError.companionAttestationFailed(
+                "expected \(configuration.remoteModelID) at \(configuration.immutableRevision.prefix(12))…"
+            )
+        }
+    }
+
+    func stream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        try await LocalInferenceLeaseContext.withLease {
+            let result = try await completion(request: request, stream: true) { text in
+                try await onEvent(.text(text))
+            }
+            try await onEvent(.usage(generatedTokenCount: result.generatedTokens))
+            try await onEvent(.completed(reason: result.wasCapped ? .length : .completed))
+        }
+    }
+
+    func decideLocalAgentTurn(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int
+    ) async throws -> LocalAgentModelDecision {
+        guard completedToolCallCount >= 0,
+              completedToolCallCount < LocalAgentModelGrammar.maximumModelPlannedToolCalls
+        else { throw LocalModelRuntimeError.invalidAgentDecision }
+        return try await LocalInferenceLeaseContext.withLease {
+            let boundedUser = request.messages.last(where: { $0.role == .user })?.content ?? ""
+            let decisionRequest = AgentLocalModelInferenceRequest(
+                scope: request.scope,
+                modelID: request.modelID,
+                messages: [
+                    .init(role: .system, content: LocalAgentModelGrammar.routerPrompt),
+                    .init(
+                        role: .user,
+                        content: "Request: \(String(boundedUser.prefix(1_200)))\nCompleted actions: \(completedToolCallCount)"
+                    ),
+                ],
+                temperature: 0,
+                maximumOutputTokens: min(192, request.maximumOutputTokens)
+            )
+            let accumulator = LocalStreamAccumulator()
+            _ = try await completion(request: decisionRequest, stream: false) {
+                await accumulator.append($0)
+            }
+            let output = await accumulator.value
+            guard output.utf8.count <= 32 * 1_024,
+                  let data = output.data(using: .utf8),
+                  let decision = try? JSONDecoder().decode(LocalAgentModelDecision.self, from: data)
+            else {
+                throw LocalModelRuntimeError.invalidAgentDecisionOutput(
+                    String(output.prefix(1_500))
+                )
+            }
+            return decision
+        }
+    }
+
+    func stop(request: AgentLocalModelInferenceRequest) async {
+        activeSession?.invalidateAndCancel()
+        activeSession = nil
+    }
+
+    func unload(modelID: String?) async {
+        activeSession?.invalidateAndCancel()
+        activeSession = nil
+    }
+
+    private struct CompletionResult: Sendable {
+        let generatedTokens: UInt64
+        let wasCapped: Bool
+    }
+
+    private func completion(
+        request: AgentLocalModelInferenceRequest,
+        stream: Bool,
+        onText: @escaping @Sendable (String) async throws -> Void
+    ) async throws -> CompletionResult {
+        let descriptor = try companionDescriptor(modelID: request.modelID)
+        guard request.maximumOutputTokens > 0,
+              request.maximumOutputTokens <= UInt64(descriptor.maxNewTokens),
+              !request.messages.isEmpty else {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+        let configuration = try configuration(for: descriptor)
+        try await verifyLocalModelArtifact(modelID: request.modelID)
+
+        let body = CompletionRequest(
+            model: configuration.remoteModelID,
+            messages: request.messages.map {
+                .init(role: $0.role.rawValue, content: $0.content)
+            },
+            temperature: request.temperature,
+            max_tokens: request.maximumOutputTokens,
+            stream: stream
+        )
+        var urlRequest = URLRequest(
+            url: CompanionEndpointPolicy.completionURL(from: configuration.endpoint)
+        )
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = TimeInterval(descriptor.maxGenerationSeconds + 20)
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(configuration.immutableRevision, forHTTPHeaderField: "X-NovaForge-Model-Revision")
+        urlRequest.httpBody = try JSONEncoder().encode(body)
+        guard (urlRequest.httpBody?.count ?? 0) <= 512 * 1_024 else {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+
+        let session = makeSession(configuration.endpoint)
+        activeSession?.invalidateAndCancel()
+        activeSession = session
+        defer {
+            session.finishTasksAndInvalidate()
+            if activeSession === session { activeSession = nil }
+        }
+
+        let preflightConfiguration = try self.configuration(for: descriptor)
+        guard preflightConfiguration == configuration else {
+            throw LocalModelRuntimeError.companionAttestationFailed(
+                "the endpoint identity changed during attestation"
+            )
+        }
+        let (bytes, response) = try await session.bytes(for: urlRequest)
+        guard let http = response as? HTTPURLResponse,
+              (200 ..< 300).contains(http.statusCode) else {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+
+        var emittedCharacters = 0
+        var usageTokens: UInt64?
+        var nonStreamData = Data()
+        var parser = SSEParser()
+        var sawSSEData = false
+        var sawDone = false
+
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            if line.hasPrefix("data:") || line.hasPrefix(":") {
+                sawSSEData = sawSSEData || line.hasPrefix("data:")
+                if let event = try parser.consume(line) {
+                    if event.done {
+                        sawDone = true
+                        break
+                    }
+                    guard let data = event.data,
+                          data.count <= 256 * 1_024
+                    else {
+                        throw LocalModelRuntimeError.invalidCompanionResponse
+                    }
+                    let consumed = try await consume(
+                        JSONDecoder().decode(
+                            CompletionEnvelope.self,
+                            from: data
+                        ),
+                        currentEmittedCharacters: emittedCharacters,
+                        currentUsageTokens: usageTokens,
+                        maximumOutputTokens: request.maximumOutputTokens,
+                        onText: onText
+                    )
+                    emittedCharacters = consumed.emittedCharacters
+                    usageTokens = consumed.usageTokens
+                }
+            } else if !line.isEmpty {
+                guard !sawSSEData else {
+                    throw LocalModelRuntimeError.invalidCompanionResponse
+                }
+                nonStreamData.append(contentsOf: line.utf8)
+                nonStreamData.append(0x0A)
+                guard nonStreamData.count <= 2_000_000 else {
+                    throw LocalModelRuntimeError.invalidCompanionResponse
+                }
+            }
+        }
+
+        if sawSSEData {
+            if let event = try parser.finishAtEOF() {
+                guard let data = event.data,
+                      data.count <= 256 * 1_024
+                else {
+                    throw LocalModelRuntimeError.invalidCompanionResponse
+                }
+                let consumed = try await consume(
+                    JSONDecoder().decode(
+                        CompletionEnvelope.self,
+                        from: data
+                    ),
+                    currentEmittedCharacters: emittedCharacters,
+                    currentUsageTokens: usageTokens,
+                    maximumOutputTokens: request.maximumOutputTokens,
+                    onText: onText
+                )
+                emittedCharacters = consumed.emittedCharacters
+                usageTokens = consumed.usageTokens
+            }
+            guard sawDone else {
+                throw LocalModelRuntimeError.invalidCompanionResponse
+            }
+        }
+
+        if emittedCharacters == 0, !nonStreamData.isEmpty {
+            let consumed = try await consume(
+                JSONDecoder().decode(
+                    CompletionEnvelope.self,
+                    from: nonStreamData
+                ),
+                currentEmittedCharacters: emittedCharacters,
+                currentUsageTokens: usageTokens,
+                maximumOutputTokens: request.maximumOutputTokens,
+                onText: onText
+            )
+            emittedCharacters = consumed.emittedCharacters
+            usageTokens = consumed.usageTokens
+        }
+        guard emittedCharacters > 0 else {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+        let finalConfiguration = try self.configuration(for: descriptor)
+        guard finalConfiguration == configuration else {
+            throw LocalModelRuntimeError.companionAttestationFailed(
+                "the endpoint identity changed during the request"
+            )
+        }
+        let estimated = UInt64(max(1, Int(Double(emittedCharacters) / 3.8)))
+        let tokens = usageTokens ?? estimated
+        guard tokens <= request.maximumOutputTokens else {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+        return CompletionResult(
+            generatedTokens: tokens,
+            wasCapped: tokens >= request.maximumOutputTokens
+        )
+    }
+
+    private func consume(
+        _ envelope: CompletionEnvelope,
+        currentEmittedCharacters: Int,
+        currentUsageTokens: UInt64?,
+        maximumOutputTokens: UInt64,
+        onText: @escaping @Sendable (String) async throws -> Void
+    ) async throws -> (emittedCharacters: Int, usageTokens: UInt64?) {
+        if envelope.choices.contains(where: {
+            $0.tool_calls?.isEmpty == false
+        }) {
+            // Tool authority remains entirely on-device. Companion output
+            // cannot introduce an unvalidated tool call.
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+
+        var emittedCharacters = currentEmittedCharacters
+        if let text = envelope.choices.first?.delta?.content ??
+            envelope.choices.first?.message?.content,
+           !text.isEmpty
+        {
+            emittedCharacters += text.count
+            guard emittedCharacters <= Int(maximumOutputTokens) * 16 else {
+                throw LocalModelRuntimeError.invalidCompanionResponse
+            }
+            try await onText(text)
+        }
+
+        let usageTokens = envelope.usage?.completion_tokens ?? currentUsageTokens
+        if let usageTokens,
+           usageTokens > maximumOutputTokens
+        {
+            throw LocalModelRuntimeError.invalidCompanionResponse
+        }
+        return (emittedCharacters, usageTokens)
+    }
+
+    private func companionDescriptor(modelID: String) throws -> LocalModelVariant {
+        guard let descriptor = LocalModelCatalog.variant(for: modelID),
+              descriptor.engineType == .companion else {
+            throw LocalModelRuntimeError.engineUnavailable(.companion)
+        }
+        return descriptor
+    }
+
+    private func configuration(
+        for descriptor: LocalModelVariant
+    ) throws -> CompanionModelConfiguration {
+        guard let configuration = CompanionModelConfigurationStore.snapshot(),
+              configuration.immutableRevision == descriptor.immutableRevision,
+              configuration.remoteModelID ==
+                CompanionEndpointPolicy.companionModelID,
+              CompanionPrivacyStore.isConsented(configuration)
+        else {
+            throw LocalModelRuntimeError.companionConsentRequired
+        }
+        return configuration
+    }
+
+    private func makeSession(_ endpoint: URL) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.waitsForConnectivity = false
+        return URLSession(
+            configuration: configuration,
+            delegate: CompanionURLSessionDelegate(
+                allowedOrigin: endpoint
+            ),
+            delegateQueue: nil
+        )
+    }
+}
+
+actor LocalInferenceRouter: LocalInferenceEngine {
+    static let shared = LocalInferenceRouter()
+    nonisolated let engineType = LocalInferenceEngineType.llamaCpp
+
+    private let llama: any LocalInferenceEngine
+    private let coreAI: any LocalInferenceEngine
+    private let companion: any LocalInferenceEngine
+
+    init(
+        llama: any LocalInferenceEngine = LlamaCppInferenceEngine.shared,
+        coreAI: any LocalInferenceEngine = CoreAIInferenceEngine(),
+        companion: any LocalInferenceEngine = CompanionInferenceEngine()
+    ) {
+        self.llama = llama
+        self.coreAI = coreAI
+        self.companion = companion
+    }
+
+    func prepare(modelID: String) async throws {
+        let target = try engine(for: modelID)
+        try await LocalInferenceLeaseContext.withLease {
+            await unloadOtherEngines(except: target)
+            if let preparing = target as? any LocalInferencePreparing {
+                try await preparing.prepare(modelID: modelID)
+            } else {
+                try await target.verifyLocalModelArtifact(modelID: modelID)
+            }
+        }
+    }
+
+    func verifyLocalModelArtifact(modelID: String) async throws {
+        try await engine(for: modelID).verifyLocalModelArtifact(modelID: modelID)
+    }
+
+    func stream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        let target = try engine(for: request.modelID)
+        try await LocalInferenceLeaseContext.withLease {
+            await unloadOtherEngines(except: target)
+            try await target.stream(request: request, onEvent: onEvent)
+        }
+    }
+
+    func decideLocalAgentTurn(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int
+    ) async throws -> LocalAgentModelDecision {
+        let target = try engine(for: request.modelID)
+        return try await LocalInferenceLeaseContext.withLease {
+            await unloadOtherEngines(except: target)
+            return try await target.decideLocalAgentTurn(
+                request: request,
+                completedToolCallCount: completedToolCallCount
+            )
+        }
+    }
+
+    func stop(request: AgentLocalModelInferenceRequest) async {
+        guard let target = engineForKnownModelID(request.modelID) else { return }
+        await target.stop(request: request)
+    }
+
+    func unload(modelID: String?) async {
+        if let modelID, let target = engineForKnownModelID(modelID) {
+            await target.unload(modelID: modelID)
+            return
+        }
+        await llama.unload(modelID: nil)
+        await coreAI.unload(modelID: nil)
+        await companion.unload(modelID: nil)
+    }
+
+    func streamingResponse(
+        messages: [ProviderMessageInput],
+        model: String,
+        temperature: Double,
+        customSystemPrompt: String?,
+        workspaceSummary: String,
+        onContentBatch: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws -> ProviderResponse {
+        let target = try engine(for: model)
+        return try await LocalInferenceLeaseContext.withLease {
+            await unloadOtherEngines(except: target)
+            return try await streamingResponse(
+                using: target,
+                messages: messages,
+                model: model,
+                temperature: temperature,
+                customSystemPrompt: customSystemPrompt,
+                workspaceSummary: workspaceSummary,
+                onContentBatch: onContentBatch
+            )
+        }
+    }
+
+    private func streamingResponse(
+        using target: any LocalInferenceEngine,
+        messages: [ProviderMessageInput],
+        model: String,
+        temperature: Double,
+        customSystemPrompt: String?,
+        workspaceSummary: String,
+        onContentBatch: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws -> ProviderResponse {
+        if let llama = target as? LlamaCppInferenceEngine {
+            return try await llama.streamingResponse(
+                messages: messages,
+                model: model,
+                temperature: temperature,
+                customSystemPrompt: customSystemPrompt,
+                workspaceSummary: workspaceSummary,
+                onContentBatch: onContentBatch
+            )
+        }
+
+        let systemPrompt = [
+            "You are NovaForge Local. Reply concisely and do not expose hidden reasoning.",
+            customSystemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+            workspaceSummary.isEmpty ? nil : "Workspace files:\n\(workspaceSummary)",
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n\n")
+        let sanitized = ProviderMessageSanitizer.sanitize(
+            systemPrompt: systemPrompt,
+            history: messages
+        )
+        let inferenceMessages = sanitized.messages.compactMap { message -> AgentLocalModelInferenceMessage? in
+            guard let content = message.content, !content.isEmpty else { return nil }
+            let role: AgentLocalModelInferenceRole
+            switch message.role {
+            case "system": role = .system
+            case "assistant": role = .assistant
+            case "tool": role = .user
+            default: role = .user
+            }
+            return .init(role: role, content: content)
+        }
+        let descriptor = LocalModelCatalog.variant(for: model) ?? LocalModelCatalog.defaultVariant
+        let requestID = "local-legacy-\(UUID().uuidString)"
+        let request = AgentLocalModelInferenceRequest(
+            scope: ProviderAttemptScope(
+                requestID: requestID,
+                attemptID: .init(rawValue: "\(requestID):attempt:1")
+            ),
+            modelID: model,
+            messages: inferenceMessages,
+            temperature: temperature,
+            maximumOutputTokens: UInt64(descriptor.maxNewTokens)
+        )
+        let output = LocalStreamAccumulator()
+        try await target.stream(request: request) { event in
+            if case let .text(text) = event {
+                await output.append(text)
+                await onContentBatch(text)
+            }
+        }
+        let responseText = await output.value
+        let message = ChatCompletionsResponse.Choice.Message(
+            role: "assistant",
+            content: responseText.isEmpty ? nil : responseText,
+            tool_calls: nil
+        )
+        return ProviderResponse(message: message, roleLog: sanitized.roleLog)
+    }
+
+    func stop(modelID: String) async {
+        guard let target = engineForKnownModelID(modelID) else { return }
+        let requestID = "local-stop-\(UUID().uuidString)"
+        await target.stop(
+            request: AgentLocalModelInferenceRequest(
+                scope: ProviderAttemptScope(
+                    requestID: requestID,
+                    attemptID: .init(rawValue: "\(requestID):attempt:1")
+                ),
+                modelID: modelID,
+                messages: [.init(role: .user, content: "stop")],
+                temperature: 0,
+                maximumOutputTokens: 1
+            )
+        )
+    }
+
+    private func engineForKnownModelID(
+        _ modelID: String
+    ) -> (any LocalInferenceEngine)? {
+        guard let descriptor = LocalModelCatalog.variant(for: modelID) else {
+            return nil
+        }
+        switch descriptor.engineType {
+        case .llamaCpp: return llama
+        case .coreAI: return coreAI
+        case .companion: return companion
+        }
+    }
+
+    private func engine(for modelID: String) throws -> any LocalInferenceEngine {
+        guard let descriptor = LocalModelCatalog.variant(for: modelID) else {
+            throw LocalModelRuntimeError.modelNotDownloaded(modelID)
+        }
+        if let message = LocalModelCatalog.compatibilityMessage(for: descriptor) {
+            throw LocalModelRuntimeError.incompatibleDevice(message)
+        }
+        switch descriptor.engineType {
+        case .llamaCpp: return llama
+        case .coreAI: return coreAI
+        case .companion: return companion
+        }
+    }
+
+    private func unloadOtherEngines(
+        except target: any LocalInferenceEngine
+    ) async {
+        if target.engineType != .llamaCpp {
+            await llama.unload(modelID: nil)
+        }
+        if target.engineType != .coreAI {
+            await coreAI.unload(modelID: nil)
+        }
+        if target.engineType != .companion {
+            await companion.unload(modelID: nil)
+        }
+    }
+}
+
+/// Stable app-facing facade. AgentSystem and provider transports depend only
+/// on the narrow inference protocols; concrete engine selection remains in
+/// LocalInferenceRouter and never widens tool authority.
+actor LocalModelClient: LocalInferenceEngine {
+    static let shared = LocalModelClient()
+    nonisolated let engineType = LocalInferenceEngineType.llamaCpp
+    private let router: LocalInferenceRouter
+
+    init(router: LocalInferenceRouter = LocalInferenceRouter.shared) {
+        self.router = router
+    }
+
+    func prepare(modelID: String) async throws {
+        try await router.prepare(modelID: modelID)
+    }
+
+    func verifyLocalModelArtifact(modelID: String) async throws {
+        try await router.verifyLocalModelArtifact(modelID: modelID)
+    }
+
+    func stream(
+        request: AgentLocalModelInferenceRequest,
+        onEvent: @escaping @Sendable (AgentLocalModelInferenceEvent) async throws -> Void
+    ) async throws {
+        try await router.stream(request: request, onEvent: onEvent)
+    }
+
+    func decideLocalAgentTurn(
+        request: AgentLocalModelInferenceRequest,
+        completedToolCallCount: Int
+    ) async throws -> LocalAgentModelDecision {
+        try await router.decideLocalAgentTurn(
+            request: request,
+            completedToolCallCount: completedToolCallCount
+        )
+    }
+
+    func stop(request: AgentLocalModelInferenceRequest) async {
+        await router.stop(request: request)
+    }
+
+    func unload(modelID: String? = nil) async {
+        await router.unload(modelID: modelID)
+    }
+
+    func streamingResponse(
+        messages: [ProviderMessageInput],
+        model: String,
+        temperature: Double,
+        customSystemPrompt: String?,
+        workspaceSummary: String,
+        onContentBatch: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws -> ProviderResponse {
+        try await router.streamingResponse(
+            messages: messages,
+            model: model,
+            temperature: temperature,
+            customSystemPrompt: customSystemPrompt,
+            workspaceSummary: workspaceSummary,
+            onContentBatch: onContentBatch
+        )
+    }
+
+    func stop(model: String) async {
+        await router.stop(modelID: model)
+    }
+
+    static func extractToolCalls(
+        from output: String
+    ) -> (content: String, toolCalls: [APIToolCall]) {
+        LlamaCppInferenceEngine.extractToolCalls(from: output)
     }
 }

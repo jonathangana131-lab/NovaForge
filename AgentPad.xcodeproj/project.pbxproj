@@ -47,6 +47,10 @@
 		AA0000000000000000000145 /* LocalModelRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000045 /* LocalModelRuntime.swift */; };
 		AA0000000000000000000146 /* LocalAgentPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000046 /* LocalAgentPlanner.swift */; };
 		AA0000000000000000000150 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000050 /* Assets.xcassets */; };
+		LA2000000000000000000001 /* LocalModelCatalog.v2.json in Resources */ = {isa = PBXBuildFile; fileRef = LA2000000000000000000000 /* LocalModelCatalog.v2.json */; };
+		LA2000000000000000000002 /* LocalModelCatalog.v2.json in Resources */ = {isa = PBXBuildFile; fileRef = LA2000000000000000000000 /* LocalModelCatalog.v2.json */; };
+		LA2000000000000000000003 /* LocalAI2Corpus.v1.json in Resources */ = {isa = PBXBuildFile; fileRef = LA2000000000000000000005 /* LocalAI2Corpus.v1.json */; };
+		LA2000000000000000000004 /* LocalAI2Corpus.v1.json in Resources */ = {isa = PBXBuildFile; fileRef = LA2000000000000000000005 /* LocalAI2Corpus.v1.json */; };
 		AA0000000000000000000163 /* SwiftLlama in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000001602 /* SwiftLlama */; };
 		AA0000000000000000000201 /* SandboxWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000021 /* SandboxWorkspaceTests.swift */; };
 		AA0000000000000000000202 /* CommandRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000022 /* CommandRunnerTests.swift */; };
@@ -68,6 +72,8 @@
 		AA0000000000000000000215 /* LocalAgentPlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000026 /* LocalAgentPlannerTests.swift */; };
 		AA0000000000000000000216 /* LocalAgentPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000046 /* LocalAgentPlanner.swift */; };
 		AA0000000000000000000217 /* AgentRuntimeLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000027 /* AgentRuntimeLifecycleTests.swift */; };
+		CP2000000000000000000001 /* CompanionEndpointPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP0000000000000000000001 /* CompanionEndpointPolicyTests.swift */; };
+		CP2000000000000000000002 /* CompanionHostileEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP0000000000000000000002 /* CompanionHostileEndpointTests.swift */; };
 		AA0000000000000000000218 /* AgentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000006 /* AgentRuntime.swift */; };
 		AH2000000000000000000001 /* AgentActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AH0000000000000000000001 /* AgentActivityPresentation.swift */; };
 		AH2000000000000000000002 /* AgentActivityPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AH0000000000000000000002 /* AgentActivityPresentationTests.swift */; };
@@ -484,6 +490,8 @@
 		NQ0000000000000000000017 /* AgentApprovalPromptCenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentApprovalPromptCenterTests.swift; sourceTree = "<group>"; };
 		NQ0000000000000000000018 /* AgentCanonicalActivityRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCanonicalActivityRepositoryTests.swift; sourceTree = "<group>"; };
 		NQ0000000000000000000019 /* AgentLocalModelProviderTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLocalModelProviderTransportTests.swift; sourceTree = "<group>"; };
+		CP0000000000000000000001 /* CompanionEndpointPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionEndpointPolicyTests.swift; sourceTree = "<group>"; };
+		CP0000000000000000000002 /* CompanionHostileEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionHostileEndpointTests.swift; sourceTree = "<group>"; };
 		NQ0000000000000000000020 /* AgentPolicyEngineMutationAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPolicyEngineMutationAdapterTests.swift; sourceTree = "<group>"; };
 		NQ0000000000000000000021 /* AgentPolicyMutationAppRootChatWriterMigrationSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPolicyMutationAppRootChatWriterMigrationSourceTests.swift; sourceTree = "<group>"; };
 		NQ0000000000000000000022 /* AgentPolicyMutationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPolicyMutationCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -519,6 +527,8 @@
 		HY0000000000000000000002 /* AgentSystemPresentationStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSystemPresentationStoreTests.swift; sourceTree = "<group>"; };
 		HC0000000000000000000003 /* AgentSystemFreshRunRequestFactoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSystemFreshRunRequestFactoryTests.swift; sourceTree = "<group>"; };
 		HC0000000000000000000004 /* AgentSystemActivityCommandRouterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSystemActivityCommandRouterTests.swift; sourceTree = "<group>"; };
+		LA2000000000000000000000 /* LocalModelCatalog.v2.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LocalModelCatalog.v2.json; sourceTree = "<group>"; };
+		LA2000000000000000000005 /* LocalAI2Corpus.v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LocalAI2Corpus.v1.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -589,8 +599,18 @@
 				AA0000000000000000000906 /* Services */,
 				AA0000000000000000000907 /* Tools */,
 				AA0000000000000000000908 /* Views */,
+				LA2000000000000000000900 /* Resources */,
 			);
 			path = AgentPad;
+			sourceTree = "<group>";
+		};
+		LA2000000000000000000900 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				LA2000000000000000000000 /* LocalModelCatalog.v2.json */,
+				LA2000000000000000000005 /* LocalAI2Corpus.v1.json */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		D40000000000000000000901 /* Infrastructure */ = {
@@ -832,6 +852,8 @@
 				NQ0000000000000000000017 /* AgentApprovalPromptCenterTests.swift */,
 				NQ0000000000000000000018 /* AgentCanonicalActivityRepositoryTests.swift */,
 				NQ0000000000000000000019 /* AgentLocalModelProviderTransportTests.swift */,
+				CP0000000000000000000001 /* CompanionEndpointPolicyTests.swift */,
+				CP0000000000000000000002 /* CompanionHostileEndpointTests.swift */,
 				NQ0000000000000000000020 /* AgentPolicyEngineMutationAdapterTests.swift */,
 				NQ0000000000000000000021 /* AgentPolicyMutationAppRootChatWriterMigrationSourceTests.swift */,
 				NQ0000000000000000000022 /* AgentPolicyMutationCoordinatorTests.swift */,
@@ -1037,6 +1059,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA0000000000000000000150 /* Assets.xcassets in Resources */,
+				LA2000000000000000000001 /* LocalModelCatalog.v2.json in Resources */,
+				LA2000000000000000000003 /* LocalAI2Corpus.v1.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1044,6 +1068,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				LA2000000000000000000002 /* LocalModelCatalog.v2.json in Resources */,
+				LA2000000000000000000004 /* LocalAI2Corpus.v1.json in Resources */,
 				GV2000000000000000000002 /* manifest.json in Resources */,
 				GV2000000000000000000003 /* canonical_mutating_run.json in Resources */,
 				GV2000000000000000000004 /* projectos_projection.json in Resources */,
@@ -1292,6 +1318,8 @@
 				NQ2000000000000000000001 /* AgentApprovalPromptCenterTests.swift in Sources */,
 				NQ2000000000000000000002 /* AgentCanonicalActivityRepositoryTests.swift in Sources */,
 				NQ2000000000000000000003 /* AgentLocalModelProviderTransportTests.swift in Sources */,
+				CP2000000000000000000001 /* CompanionEndpointPolicyTests.swift in Sources */,
+				CP2000000000000000000002 /* CompanionHostileEndpointTests.swift in Sources */,
 				NQ2000000000000000000004 /* AgentPolicyEngineMutationAdapterTests.swift in Sources */,
 				NQ2000000000000000000005 /* AgentPolicyMutationAppRootChatWriterMigrationSourceTests.swift in Sources */,
 				NQ2000000000000000000006 /* AgentPolicyMutationCoordinatorTests.swift in Sources */,

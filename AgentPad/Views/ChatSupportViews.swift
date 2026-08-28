@@ -626,7 +626,7 @@ struct FirstRunPowerUp: View {
         case .ready:
             return "100%"
         default:
-            return "PWR"
+            return "FAST"
         }
     }
 
@@ -636,7 +636,7 @@ struct FirstRunPowerUp: View {
         case .partial: return "Power-up paused"
         case .failed: return "Power-up failed"
         case .incompatible: return "Needs a smaller core"
-        default: return "Power up NovaForge"
+        default: return "Install \(variant.shortName)"
         }
     }
 
@@ -651,7 +651,7 @@ struct FirstRunPowerUp: View {
         case .incompatible(let message):
             return message
         default:
-            return "One download and everything — chat, builds, proof — runs entirely on this device. No account, no cloud."
+            return "NovaForge’s \(variant.tier.title) iPhone 12 fallback default runs on this device. Newer candidates stay optional until physical benchmarks pass."
         }
     }
 
@@ -677,7 +677,7 @@ struct FirstRunPowerUp: View {
                 )
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("LOCAL SETUP")
+                    Text("LOCAL SETUP · \(variant.tier.title.uppercased()) DEFAULT")
                         .novaLabel(AgentPalette.tertiaryText)
                     Text(headline)
                         .font(NovaType.display)
@@ -736,13 +736,13 @@ struct FirstRunPowerUp: View {
                 Image(systemName: "externaldrive.fill")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(AgentPalette.cyan)
-                Text("\(variant.expectedSizeLabel) / \(variant.executionLabel) / no API key needed")
+                Text("\(variant.expectedSizeLabel) / iPhone 12 / \(variant.executionLabel)")
                     .font(NovaType.caption)
                     .foregroundStyle(AgentPalette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                 Spacer(minLength: 0)
-                Text("LOCAL-FIRST")
+                Text("ON-DEVICE")
                     .font(NovaType.label)
                     .foregroundStyle(AgentPalette.cyan)
                     .lineLimit(1)

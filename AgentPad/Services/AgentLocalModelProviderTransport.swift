@@ -567,7 +567,10 @@ final class AgentLocalModelProviderTransport: ProviderTransport, Sendable {
               descriptor.requestPath == requestPath,
               let variant = LocalModelCatalog.variant(
                   for: descriptor.route.modelID.rawValue
-              )
+              ),
+              // An on-device descriptor cannot make a LAN/cloud catalog
+              // variant look local merely because it shares the chat dialect.
+              variant.executionLocation == .local
         else {
             throw AgentLocalModelProviderTransportError.invalidDescriptor
         }

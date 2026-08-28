@@ -53,15 +53,12 @@ public final class LlamaSampler {
         let topPSampler = llama_sampler_init_top_p(config.topP, config.minKeep)
         llama_sampler_chain_add(samplerPointer, topPSampler)
 
-        if let penaltyConfig = config.repetitionPenaltyConfig, penaltyConfig.lastN > 0 {
-            let penaltiesSampler = llama_sampler_init_penalties(
-                penaltyConfig.lastN,
-                penaltyConfig.repeatPenalty,
-                penaltyConfig.freqPenalty,
-                penaltyConfig.presentPenalty
-            )
-            llama_sampler_chain_add(samplerPointer, penaltiesSampler)
-        }
+        // llama.cpp b10630 added `n_vocab` to this optional sampler while the
+        // retained Intel simulator slice still exposes the four-argument API.
+        // NovaForge's cross-version wrapper does not bind an ABI-ambiguous C
+        // symbol. Runtime output guards still stop repetitive/unstable text;
+        // a native penalties shim can return after the simulator slice moves
+        // to the same upstream build.
 
         // Always add temperature sampler
         let tempSampler = llama_sampler_init_temp(config.temperature)

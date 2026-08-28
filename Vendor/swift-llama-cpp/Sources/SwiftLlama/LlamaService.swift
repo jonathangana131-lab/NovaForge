@@ -124,7 +124,7 @@ public final actor LlamaService {
                 do {
                     var tokenBuffer: [String] = []
                     var generatedTokenCount = 0
-                    generationLoop: while await (llama.currentTokenPosition < llama.maxTokenCount) {
+                    generationLoop: while await llama.canGenerateMore() {
                         guard !Task.isCancelled else {
                             if !tokenBuffer.isEmpty {
                                 continuation.yield(tokenBuffer.joined())
@@ -159,6 +159,14 @@ public final actor LlamaService {
 
     public func stopCompletion() async {
         await currentTask?.cancelAndWait()
+        currentTask = nil
+    }
+
+    /// Stop generation and release model/context memory. A later request can
+    /// lazily reload the same service configuration.
+    public func unload() async {
+        await stopCompletion()
+        llama = nil
     }
 
     private func initializeLlamaIfNecessary() throws -> Llama {

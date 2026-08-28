@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 EXPECTED_BUNDLE_ID=${EXPECTED_BUNDLE_ID:-com.joey.NovaForge}
 EXPECTED_TEAM_ID=${EXPECTED_TEAM_ID:-93MYZUV85K}
+TIMEOUT_RUNNER="$ROOT_DIR/scripts/codex-timeout-runner.pl"
 
 if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
   echo "usage: $0 /absolute/path/to/NovaForge.app" >&2
@@ -13,6 +14,12 @@ fi
 APP_PATH=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 INFO_PLIST="$APP_PATH/Info.plist"
 [ -f "$INFO_PLIST" ] || { echo "candidate has no Info.plist" >&2; exit 2; }
+SOURCE_COMMIT=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)
+SOURCE_TREE=$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}' 2>/dev/null || true)
+[[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ && "$SOURCE_TREE" =~ ^[0-9a-fA-F]{40}$ ]] || {
+  echo "could not resolve committed source/build provenance" >&2
+  exit 2
+}
 
 BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO_PLIST" 2>/dev/null || true)
 EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO_PLIST" 2>/dev/null || true)
@@ -32,15 +39,22 @@ EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
   exit 1
 }
 
-SIGNING_TEXT=$(codesign -d --verbose=4 "$APP_PATH" 2>&1 || true)
+SIGNING_LOG=$(mktemp "${TMPDIR:-/tmp}/novaforge-codesign-audit.XXXXXX")
+trap 'rm -f "$SIGNING_LOG"' EXIT
+TIMEOUT_RUNNER_LABEL=release-codesign-display \
+  "$TIMEOUT_RUNNER" 60 "$SIGNING_LOG" codesign -d --verbose=4 "$APP_PATH"
+SIGNING_TEXT=$(cat "$SIGNING_LOG")
 TEAM_ID=$(printf '%s\n' "$SIGNING_TEXT" | sed -n 's/^TeamIdentifier=//p' | head -1)
 [ "$TEAM_ID" = "$EXPECTED_TEAM_ID" ] || {
   echo "candidate signing team is ${TEAM_ID:-missing}, expected $EXPECTED_TEAM_ID" >&2
   exit 1
 }
-codesign --verify --deep --strict "$APP_PATH"
+VERIFY_LOG=$(mktemp "${TMPDIR:-/tmp}/novaforge-codesign-verify.XXXXXX")
+trap 'rm -f "$SIGNING_LOG" "$VERIFY_LOG"' EXIT
+TIMEOUT_RUNNER_LABEL=release-codesign-verify \
+  "$TIMEOUT_RUNNER" 120 "$VERIFY_LOG" codesign --verify --deep --strict "$APP_PATH"
 
-/usr/bin/python3 - "$ROOT_DIR" "$APP_PATH" "$EXECUTABLE_PATH" "$BUNDLE_ID" "$TEAM_ID" "$PLATFORM" <<'PY'
+/usr/bin/python3 - "$ROOT_DIR" "$APP_PATH" "$EXECUTABLE_PATH" "$BUNDLE_ID" "$TEAM_ID" "$PLATFORM" "$SOURCE_COMMIT" "$SOURCE_TREE" <<'PY'
 import hashlib
 import json
 import os
@@ -51,7 +65,7 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve()
 app = Path(sys.argv[2]).resolve()
 executable = Path(sys.argv[3]).resolve()
-bundle_id, team_id, platform = sys.argv[4:]
+bundle_id, team_id, platform, source_commit, source_tree = sys.argv[4:]
 
 source_roots = [
     root / "AgentPad",
@@ -123,6 +137,8 @@ report = {
     "bundleID": bundle_id,
     "teamID": team_id,
     "platform": platform,
+    "sourceCommit": source_commit.lower(),
+    "sourceTreeSHA256": "sha256:" + source_tree.lower(),
     "candidateManifestSHA256": "sha256:" + manifest_hasher.hexdigest(),
     "candidateFileCount": file_count,
     "candidateByteCount": byte_count,

@@ -1395,6 +1395,21 @@ private struct ProjectIntakeSheet: View {
                 }
             }
             .task {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--project-intake-demo") {
+                    draft = ProjectIntakeDraft(
+                        workingTitle: "Pocket Orchard",
+                        projectKind: "A cozy farming roguelite for iPhone",
+                        platform: "iPhone",
+                        style: "Warm pixel art",
+                        goal: "Ship a playable harvest loop",
+                        startingPriorities: "Farm plot, inventory, first harvest",
+                        playerExperience: "Cozy and quick to learn",
+                        constraints: "Local-only SwiftUI prototype"
+                    )
+                    return
+                }
+                #endif
                 try? await Task.sleep(for: .milliseconds(450))
                 briefFocused = true
             }

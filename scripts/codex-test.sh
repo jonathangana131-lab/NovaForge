@@ -60,6 +60,12 @@ NOVAFORGE_SOURCE_COMMIT="${NOVAFORGE_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-par
 if [[ "$NOVAFORGE_SCREENSHOT_DIR" != /* ]]; then
   NOVAFORGE_SCREENSHOT_DIR="$ROOT_DIR/$NOVAFORGE_SCREENSHOT_DIR"
 fi
+if [[ "$LOG_DIR" != /* ]]; then
+  LOG_DIR="$ROOT_DIR/$LOG_DIR"
+fi
+if [[ "$RESULT_BUNDLE_PATH" != /* ]]; then
+  RESULT_BUNDLE_PATH="$ROOT_DIR/$RESULT_BUNDLE_PATH"
+fi
 MANAGED_DERIVED_DATA_LOCKED=0
 
 smoke_ui_tests=(
@@ -104,6 +110,7 @@ preflight_scripts=(
   scripts/test-m5-scorecard.sh
   scripts/test-release-candidate-audit.sh
   scripts/test-run-on-iphone-guard.sh
+  scripts/test-local-ai-receipt-gate.py
 )
 
 case "$LANE" in
@@ -246,6 +253,12 @@ cleanup() {
     TIMEOUT_RUNNER_LABEL="simulator-shutdown" \
       "$TIMEOUT_RUNNER" 60 "$LOG_DIR/simulator-shutdown.log" \
       xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
+    if [[ "$SIMULATOR_ID" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+      "$ROOT_DIR/scripts/codex-ci-cleanup.sh" "$SIMULATOR_ID" 0 "$LOG_DIR" || {
+        echo "CI cleanup/process sweep failed." >&2
+        (( exit_status == 0 )) && exit_status=1
+      }
+    fi
   fi
   if (( MANAGED_DERIVED_DATA_LOCKED == 1 )); then
     rm -rf -- "$MANAGED_DERIVED_DATA_LOCK_DIR" || true
@@ -264,6 +277,9 @@ run_preflight() {
     case "$script" in
       scripts/verify-agent-v1-goldens.sh|scripts/test-focused-test-harness.sh)
         zsh "$ROOT_DIR/$script"
+        ;;
+      scripts/test-local-ai-receipt-gate.py)
+        /usr/bin/python3 "$ROOT_DIR/$script"
         ;;
       *)
         bash "$ROOT_DIR/$script"
@@ -353,7 +369,9 @@ validate_xctestrun() {
 
 boot_simulator() {
   echo "==> Simulator $SIMULATOR_ID"
-  xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
+  TIMEOUT_RUNNER_LABEL="simulator-boot-request" \
+    "$TIMEOUT_RUNNER" 60 "$LOG_DIR/simulator-boot-request.log" \
+    xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
   TIMEOUT_RUNNER_LABEL="simulator-boot" \
     "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$LOG_DIR/simulator-boot.log" \
     xcrun simctl bootstatus "$SIMULATOR_ID" -b
@@ -365,7 +383,9 @@ refresh_simulator() {
   TIMEOUT_RUNNER_LABEL="simulator-refresh-shutdown" \
     "$TIMEOUT_RUNNER" 60 "$LOG_DIR/simulator-refresh-$batch-shutdown.log" \
     xcrun simctl shutdown "$SIMULATOR_ID"
-  xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
+  TIMEOUT_RUNNER_LABEL="simulator-refresh-boot-request" \
+    "$TIMEOUT_RUNNER" 60 "$LOG_DIR/simulator-refresh-$batch-boot-request.log" \
+    xcrun simctl boot "$SIMULATOR_ID" >/dev/null 2>&1 || true
   TIMEOUT_RUNNER_LABEL="simulator-refresh-boot" \
     "$TIMEOUT_RUNNER" "$SIM_BOOT_TIMEOUT" "$LOG_DIR/simulator-refresh-$batch-boot.log" \
     xcrun simctl bootstatus "$SIMULATOR_ID" -b
@@ -387,7 +407,53 @@ build_test_bundle() {
   fi
   validate_xctestrun
   print -r -- "$XCTESTRUN_PATH" > "$LOG_DIR/xctestrun.path"
+  record_build_identity
   echo "Using $XCTESTRUN_PATH"
+}
+
+record_build_identity() {
+  local built_app_path app_manifest xctestrun_manifest source_tree
+  [[ "$NOVAFORGE_SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || {
+    echo "NOVAFORGE_SOURCE_COMMIT must be a full committed source SHA." >&2
+    return 2
+  }
+  source_tree="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}' 2>/dev/null || true)"
+  [[ "$source_tree" =~ ^[0-9a-fA-F]{40}$ ]] || {
+    echo "Could not resolve the committed source tree hash." >&2
+    return 2
+  }
+  built_app_path="$(find "$DERIVED_DATA_PATH/Build/Products" -type d -name 'NovaForge.app' -print -quit 2>/dev/null || true)"
+  [[ -n "$built_app_path" ]] || {
+    echo "Build produced no NovaForge.app for identity binding." >&2
+    return 2
+  }
+  app_manifest="$($ROOT_DIR/scripts/codex-app-bundle-manifest.sh "$built_app_path")"
+  xctestrun_manifest="$(shasum -a 256 "$XCTESTRUN_PATH" | awk '{print "sha256:" $1}')"
+  /usr/bin/python3 - \
+    "$LOG_DIR/build-identity.json" \
+    "$NOVAFORGE_SOURCE_COMMIT" \
+    "$source_tree" \
+    "$built_app_path" \
+    "$app_manifest" \
+    "$XCTESTRUN_PATH" \
+    "$xctestrun_manifest" <<'PY'
+import json
+import sys
+
+output, source_commit, source_tree, app_path, app_manifest, xctestrun_path, xctestrun_manifest = sys.argv[1:]
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump({
+        "schemaVersion": 1,
+        "sourceCommit": source_commit.lower(),
+        "sourceTreeSHA256": "sha256:" + source_tree.lower(),
+        "appPath": app_path,
+        "appManifestSHA256": app_manifest,
+        "xctestrunPath": xctestrun_path,
+        "xctestrunSHA256": xctestrun_manifest,
+        "claimsAllowed": False,
+    }, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
 }
 
 run_xctest_selection() {

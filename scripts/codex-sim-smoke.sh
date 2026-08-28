@@ -28,11 +28,16 @@ SIMULATOR_ID="${SIMULATOR_ID:-4B9AB34A-404C-485F-B0BC-964F24D0AE83}"
 AUTO_DETECT_SIMULATOR="${AUTO_DETECT_SIMULATOR:-0}"
 ONLY_ACTIVE_ARCH="${ONLY_ACTIVE_ARCH:-YES}"
 WAIT_SECONDS="${WAIT_SECONDS:-5}"
-LOG_DIR="${LOG_DIR:-$ROOT_DIR/QA/codex-smoke}"
-SCREENSHOT_DIR="${SCREENSHOT_DIR:-$ROOT_DIR/NovaForgeScreenshots}"
-STAMP="$(date +%Y%m%d-%H%M%S)"
+MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-30}"
+STAMP="$(date +%Y%m%d-%H%M%S)-$$"
+LOG_DIR="${LOG_DIR:-$ROOT_DIR/QA/codex-smoke-$STAMP}"
+SCREENSHOT_DIR="${SCREENSHOT_DIR:-$ROOT_DIR/NovaForgeScreenshots/codex-smoke-$STAMP}"
 SCREENSHOT_NAME="${SCREENSHOT_NAME:-codex-smoke-$STAMP.png}"
-NOVAFORGE_SOURCE_COMMIT="${NOVAFORGE_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)}"
+SOURCE_COMMIT="${NOVAFORGE_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)}"
+NOVAFORGE_SOURCE_COMMIT="$SOURCE_COMMIT"
+SOURCE_TREE_HASH="${NOVAFORGE_SOURCE_TREE_HASH:-}"
+RUN_METADATA_PATH="${RUN_METADATA_PATH:-$LOG_DIR/run-metadata.txt}"
+TERMINATE_ON_EXIT="${TERMINATE_ON_EXIT:-1}"
 
 if (( $# > 0 )); then
   LAUNCH_ARGS=("$@")
@@ -64,16 +69,20 @@ latest_app_path() {
 run_with_timeout() {
   local timeout_seconds="$1"
   shift
+  [[ "$timeout_seconds" =~ '^[1-9][0-9]*$' ]] || {
+    echo "Timeout must be a positive integer: $timeout_seconds" >&2
+    return 2
+  }
   "$@" &
   local command_pid=$!
   local elapsed=0
 
   while kill -0 "$command_pid" 2>/dev/null; do
     if (( timeout_seconds > 0 && elapsed >= timeout_seconds )); then
-      kill "$command_pid" 2>/dev/null || true
+      terminate_process_tree "$command_pid" TERM
       sleep 1
-      kill -9 "$command_pid" 2>/dev/null || true
-      disown "$command_pid" 2>/dev/null || true
+      terminate_process_tree "$command_pid" KILL
+      wait "$command_pid" 2>/dev/null || true
       return 124
     fi
     sleep 1
@@ -83,12 +92,86 @@ run_with_timeout() {
   wait "$command_pid"
 }
 
+terminate_process_tree() {
+  local process_pid="$1"
+  local signal="$2"
+  local child_pid
+  local child_pids
+
+  [[ "$process_pid" =~ '^[0-9]+$' ]] || return 0
+  child_pids="$(pgrep -P "$process_pid" 2>/dev/null || true)"
+  for child_pid in ${(f)child_pids}; do
+    terminate_process_tree "$child_pid" "$signal"
+  done
+  kill -s "$signal" "$process_pid" 2>/dev/null || true
+}
+
+source_tree_hash() {
+  local commit_tree tracked_diff_hash untracked_hash diff_hash
+  commit_tree="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}' 2>/dev/null || true)"
+  [[ -n "$commit_tree" ]] || {
+    print -r -- "unknown"
+    return
+  }
+  tracked_diff_hash="$(git -C "$ROOT_DIR" diff --no-ext-diff --binary HEAD 2>/dev/null | shasum -a 256 | awk '{ print $1 }')"
+  untracked_hash="$({
+    # Keep app provenance stable when host-only Codex/Hermes state lives in
+    # the checkout. Those directories are not NovaForge build inputs.
+    git -C "$ROOT_DIR" ls-files --others --exclude-standard -z -- . \
+      ':(exclude).hermes/**' ':(exclude)automation/**' 2>/dev/null |
+      while IFS= read -r -d '' relative_path; do
+        local file_hash
+        if [[ -L "$ROOT_DIR/$relative_path" ]]; then
+          file_hash="symlink:$(readlink "$ROOT_DIR/$relative_path" | shasum -a 256 | awk '{ print $1 }')"
+        elif [[ -f "$ROOT_DIR/$relative_path" ]]; then
+          file_hash="$(shasum -a 256 "$ROOT_DIR/$relative_path" 2>/dev/null | awk '{ print $1 }')"
+        elif [[ -d "$ROOT_DIR/$relative_path" ]]; then
+          file_hash="directory"
+        else
+          file_hash="unreadable"
+        fi
+        print -rn -- "$relative_path\0${file_hash:-unreadable}\0"
+      done
+  } | shasum -a 256 | awk '{ print $1 }')"
+  diff_hash="$(print -rn -- "$tracked_diff_hash\0$untracked_hash" | shasum -a 256 | awk '{ print $1 }')"
+  print -r -- "sha256:${commit_tree}:${diff_hash}"
+}
+
+app_bundle_hash() {
+  local app_path="$1"
+  local bundle_hash
+  bundle_hash="$(find "$app_path" -type f -print0 | sort -z |
+    while IFS= read -r -d '' artifact_path; do
+      local artifact_hash
+      artifact_hash="$(shasum -a 256 "$artifact_path" 2>/dev/null | awk '{ print $1 }')"
+      print -rn -- "$artifact_path\0${artifact_hash:-unreadable}\0"
+    done | shasum -a 256 | awk '{ print $1 }')"
+  print -r -- "sha256:$bundle_hash"
+}
+
+write_run_metadata() {
+  local build_log_hash="unavailable"
+  if [[ -f "$BUILD_LOG" ]]; then
+    build_log_hash="sha256:$(shasum -a 256 "$BUILD_LOG" | awk '{ print $1 }')"
+  fi
+  [[ -n "$SOURCE_TREE_HASH" ]] || SOURCE_TREE_HASH="$(source_tree_hash)"
+  mkdir -p "${RUN_METADATA_PATH:h}"
+  print -r -- "runID=$STAMP" > "$RUN_METADATA_PATH"
+  print -r -- "sourceCommit=$SOURCE_COMMIT" >> "$RUN_METADATA_PATH"
+  print -r -- "sourceTreeHash=$SOURCE_TREE_HASH" >> "$RUN_METADATA_PATH"
+  print -r -- "configuration=$CONFIGURATION" >> "$RUN_METADATA_PATH"
+  print -r -- "simulatorID=$SIMULATOR_ID" >> "$RUN_METADATA_PATH"
+  print -r -- "appPath=$APP_PATH" >> "$RUN_METADATA_PATH"
+  print -r -- "appBundleHash=$(app_bundle_hash "$APP_PATH")" >> "$RUN_METADATA_PATH"
+  print -r -- "buildLogHash=$build_log_hash" >> "$RUN_METADATA_PATH"
+}
+
 require_core_simulator_health() {
   [[ "$CHECK_SIMULATOR_HEALTH" == "1" ]] || return 0
 
   local issues
   if issues="$(ps -axo pid,stat,command | awk '
-    /CoreSimulator|simctl|Simulator\.app/ && $2 ~ /[UZE]/ {
+    /CoreSimulator|simctl|Simulator\.app/ && $2 ~ /[ZE]/ {
       print "  " $0
       found = 1
     }
@@ -112,6 +195,21 @@ if [[ -z "$SIMULATOR_ID" ]]; then
   exit 1
 fi
 
+if ! [[ "$WAIT_SECONDS" =~ '^[0-9]+$' && "$MAX_WAIT_SECONDS" =~ '^[0-9]+$' ]]; then
+  echo "WAIT_SECONDS and MAX_WAIT_SECONDS must be non-negative integers." >&2
+  exit 2
+fi
+if (( WAIT_SECONDS > MAX_WAIT_SECONDS )); then
+  echo "WAIT_SECONDS=${WAIT_SECONDS} exceeds MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS}." >&2
+  exit 2
+fi
+if ! [[ "$SIMCTL_TIMEOUT" =~ '^[1-9][0-9]*$' && "$BUILD_TIMEOUT" =~ '^[1-9][0-9]*$' ]]; then
+  echo "SIMCTL_TIMEOUT and BUILD_TIMEOUT must be positive integers." >&2
+  exit 2
+fi
+
+[[ -n "$SOURCE_TREE_HASH" ]] || SOURCE_TREE_HASH="$(source_tree_hash)"
+
 BUILD_DESTINATION="${BUILD_DESTINATION:-platform=iOS Simulator,id=$SIMULATOR_ID}"
 
 mkdir -p "$LOG_DIR" "$SCREENSHOT_DIR"
@@ -121,6 +219,32 @@ INSTALL_LOG="$LOG_DIR/install-$STAMP.log"
 LAUNCH_LOG="$LOG_DIR/launch-$STAMP.log"
 SCREENSHOT_LOG="$LOG_DIR/screenshot-$STAMP.log"
 SCREENSHOT_PATH="${SCREENSHOT_PATH:-$SCREENSHOT_DIR/$SCREENSHOT_NAME}"
+mkdir -p "${SCREENSHOT_PATH:h}"
+
+APP_LAUNCHED=0
+
+terminate_app() {
+  if [[ "$APP_LAUNCHED" != "1" ]]; then
+    return 0
+  fi
+  if run_with_timeout "$SIMCTL_TIMEOUT" xcrun simctl terminate "$SIMULATOR_ID" "$BUNDLE_ID" >/dev/null 2>&1; then
+    APP_LAUNCHED=0
+  else
+    echo "Warning: unable to terminate $BUNDLE_ID during smoke cleanup." >&2
+  fi
+}
+
+cleanup_on_exit() {
+  local exit_status=$?
+  if [[ "$TERMINATE_ON_EXIT" == "1" && "$APP_LAUNCHED" == "1" ]]; then
+    terminate_app || true
+  fi
+  return "$exit_status"
+}
+
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [[ "$BUILD_FIRST" == "1" ]]; then
   echo "Building $SCHEME with $BUILD_SDK..."
@@ -132,7 +256,8 @@ if [[ "$BUILD_FIRST" == "1" ]]; then
     -destination "$BUILD_DESTINATION" \
     ONLY_ACTIVE_ARCH="$ONLY_ACTIVE_ARCH" \
     CODE_SIGNING_ALLOWED=NO \
-    NOVAFORGE_SOURCE_COMMIT="$NOVAFORGE_SOURCE_COMMIT" \
+    NOVAFORGE_SOURCE_COMMIT="$SOURCE_COMMIT" \
+    NOVAFORGE_SOURCE_TREE_HASH="$SOURCE_TREE_HASH" \
     -quiet \
     build >"$BUILD_LOG" 2>&1; then
     :
@@ -177,6 +302,7 @@ if [[ "$ENSURE_BOOTED" == "1" ]]; then
 fi
 
 if [[ "$LAUNCH_APP" != "1" ]]; then
+  write_run_metadata
   echo "Skipping launch. Set LAUNCH_APP=1 to launch before screenshot."
   echo "Smoke build/setup passed."
   echo "Simulator: $SIMULATOR_ID"
@@ -221,10 +347,12 @@ else
   tail -n 80 "$LAUNCH_LOG" >&2
   exit 1
 fi
+APP_LAUNCHED=1
 
 sleep "$WAIT_SECONDS"
 
 if [[ "$CAPTURE_SCREENSHOT" != "1" ]]; then
+  write_run_metadata
   echo "Skipping screenshot. Set CAPTURE_SCREENSHOT=1 to capture after launch."
   echo "Smoke launch passed."
   echo "Simulator: $SIMULATOR_ID"
@@ -249,6 +377,8 @@ else
   exit 1
 fi
 
+write_run_metadata
+
 echo "Smoke passed."
 echo "Simulator: $SIMULATOR_ID"
 echo "Build first: $BUILD_FIRST"
@@ -256,3 +386,4 @@ echo "Install app: $INSTALL_APP"
 echo "App: $APP_PATH"
 echo "Screenshot: $SCREENSHOT_PATH"
 echo "Logs: $LOG_DIR"
+echo "Run metadata: $RUN_METADATA_PATH"

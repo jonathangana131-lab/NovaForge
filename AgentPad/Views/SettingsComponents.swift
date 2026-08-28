@@ -651,14 +651,14 @@ struct LocalModelVariantRow: View {
                         }
 
                         HStack(spacing: 6) {
-                            modelBadge(variant.deviceFit.title, color: fitColor)
+                            modelBadge(variant.tier.title.uppercased(), color: tierColor)
+                            modelBadge(variant.executionLocation.title, color: executionColor)
                             if variant.isNewRelease {
                                 modelBadge("NEW", color: AgentPalette.rose)
                             }
-                            modelBadge(variant.quantization, color: AgentPalette.green)
                         }
 
-                        Text("\(variant.parameterLabel) · \(variant.releaseDateLabel) · \(variant.expectedSizeLabel)")
+                        Text("\(variant.parameterLabel) · \(variant.engineType.title) · \(variant.quantization) · \(variant.expectedSizeLabel)")
                             .font(.caption.monospacedDigit().weight(.semibold))
                             .foregroundStyle(AgentPalette.secondaryText)
                             .lineLimit(1)
@@ -707,8 +707,10 @@ struct LocalModelVariantRow: View {
                 ) {
                     detailStat("Peak cap", variant.estimatedPeakMemoryLabel)
                     detailStat("Context", "\(variant.contextTokens) tokens")
-                    detailStat("Runtime", variant.executionLabel)
+                    detailStat("Runtime", "\(variant.executionLocation.title) · \(variant.executionLabel)")
                     detailStat("License", variant.licenseLabel)
+                    detailStat("Revision", String(variant.immutableRevision.prefix(12)) + "…")
+                    detailStat("Checksum", variant.expectedSHA256.isEmpty ? "Build asset" : String(variant.expectedSHA256.prefix(12)) + "…")
                 }
 
                 Label(variant.capabilitySummary, systemImage: "hammer.fill")
@@ -717,6 +719,11 @@ struct LocalModelVariantRow: View {
 
                 Text(variant.details)
                     .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AgentPalette.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("Released \(variant.releaseDateLabel) · \(variant.compressionDetails)")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(AgentPalette.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -762,6 +769,23 @@ struct LocalModelVariantRow: View {
         case .deviceProven: AgentPalette.green
         case .ultraLight: AgentPalette.cyan
         case .memorySaver: AgentPalette.lilac
+        }
+    }
+
+    private var tierColor: Color {
+        switch variant.tier {
+        case .instant: AgentPalette.cyan
+        case .fast: AgentPalette.green
+        case .balanced: AgentPalette.lilac
+        case .power: AgentPalette.rose
+        }
+    }
+
+    private var executionColor: Color {
+        switch variant.executionLocation {
+        case .local: AgentPalette.green
+        case .lan: AgentPalette.lilac
+        case .cloud: AgentPalette.cyan
         }
     }
 
@@ -811,18 +835,23 @@ struct LocalModelDownloadPanel: View {
 
             HStack(spacing: 10) {
                 if manager.isDownloading {
-                    SettingsActionButton(title: "Cancel", symbol: "xmark", tint: AgentPalette.rose, prominent: false) {
+                    SettingsActionButton(title: "Pause", symbol: "pause.fill", tint: AgentPalette.lilac, prominent: false) {
                         manager.cancelDownload()
                     }
                 } else if manager.isDownloaded {
-                    SettingsActionButton(title: "Ready", symbol: "checkmark.circle.fill", tint: AgentPalette.green, prominent: true) {
-                        manager.refreshStatus()
+                    SettingsActionButton(title: "Verify", symbol: "checkmark.shield.fill", tint: AgentPalette.green, prominent: true) {
+                        manager.verifySelected()
                     }
                     .accessibilityIdentifier("settingsLocalModelReadyButton")
-                    SettingsActionButton(title: "Remove", symbol: "trash", tint: AgentPalette.rose, prominent: false) {
-                        pendingDestructiveAction = .remove
+                    SettingsActionButton(title: "Unload", symbol: "eject.fill", tint: AgentPalette.lilac, prominent: false) {
+                        manager.unloadSelected()
                     }
-                    .accessibilityIdentifier("settingsLocalModelRemoveButton")
+                    if manager.selectedVariant.isDownloadable {
+                        SettingsActionButton(title: "Remove", symbol: "trash", tint: AgentPalette.rose, prominent: false) {
+                            pendingDestructiveAction = .remove
+                        }
+                        .accessibilityIdentifier("settingsLocalModelRemoveButton")
+                    }
                 } else if manager.isPartial {
                     SettingsActionButton(title: "Resume", symbol: "arrow.down.circle.fill", tint: AgentPalette.green, prominent: true) {
                         manager.downloadSelected()
@@ -893,13 +922,17 @@ struct LocalModelDownloadPanel: View {
     private var statusDetail: String {
         switch manager.status {
         case .ready:
-            "Installed locally. Runs offline with capped context for smooth chat."
+            manager.selectedVariant.executionLocation == .lan
+                ? "Connected only to the confirmed private-LAN companion. Prompts never route there without consent."
+                : "Installed locally. Runs offline with capped context for smooth chat."
         case .downloading:
             "Downloading in the app model. You can switch tabs; keep NovaForge foregrounded."
         case .partial:
             "Download paused. Resume keeps the existing bytes instead of starting over."
         case .missing:
-            "Download \(manager.selectedVariant.expectedSizeLabel) before using Local chat."
+            manager.selectedVariant.isDownloadable
+                ? "Download \(manager.selectedVariant.expectedSizeLabel) before using Local chat."
+                : "This route is prepared outside chat; review its compatibility and configuration below."
         case .checking:
             "Checking device storage and model file."
         case .incompatible(let message), .failed(let message):
