@@ -51,12 +51,20 @@ assert_processes_gone() {
   local attempt=0
   local process_id=""
   local role=""
+  local state=""
   local alive=0
   for attempt in $(seq 1 100); do
     alive=0
     while read -r process_id role; do
       if kill -0 "$process_id" 2>/dev/null; then
-        alive=1
+        # A killed orphan can remain as a zombie until the hosted runner's
+        # init process reaps it. `kill -0` still succeeds for that already
+        # terminated process, so match the supervisor's definition of a
+        # drained tree and count only non-zombie descendants as active.
+        state=$(ps -o state= -p "$process_id" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$state" ] && [[ "$state" != Z* ]]; then
+          alive=1
+        fi
       fi
     done < "$pid_file"
     [ "$alive" -eq 0 ] && return 0
@@ -65,7 +73,10 @@ assert_processes_gone() {
 
   while read -r process_id role; do
     if kill -0 "$process_id" 2>/dev/null; then
-      echo "still alive: pid=$process_id role=$role" >&2
+      state=$(ps -o state= -p "$process_id" 2>/dev/null | tr -d '[:space:]')
+      if [ -n "$state" ] && [[ "$state" != Z* ]]; then
+        echo "still active: pid=$process_id role=$role state=$state" >&2
+      fi
     fi
   done < "$pid_file"
   fail "timeout supervisor left a descendant alive"
