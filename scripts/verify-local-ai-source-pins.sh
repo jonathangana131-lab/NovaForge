@@ -66,6 +66,23 @@ verify_revision_date() {
   print "Verified ${repository}@${revision} (${expected_date})"
 }
 
+github_commit_metadata() {
+  local repository="$1"
+  local revision="$2"
+  local -a request_headers
+  request_headers=(
+    -H "Accept: application/vnd.github+json"
+    -H "X-GitHub-Api-Version: 2022-11-28"
+    -H "User-Agent: NovaForge-source-pin-verifier"
+  )
+  if [[ -n "${GITHUB_API_TOKEN:-}" ]]; then
+    request_headers+=(-H "Authorization: Bearer ${GITHUB_API_TOKEN}")
+  fi
+  curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 45 \
+    "${request_headers[@]}" \
+    "https://api.github.com/repos/${repository}/commits/${revision}"
+}
+
 while IFS= read -r model_json; do
   verify_hugging_face_artifact "${model_json}"
 done < <(jq -c '.models[] | select(.artifactKind == "downloadable")' "${CATALOG_PATH}")
@@ -76,8 +93,7 @@ verify_revision_date "Qwen/Qwen3.8-27B" "${POWER_REVISION}" "${POWER_DATE}"
 
 readonly COREAI_REVISION="$(jq -r '.models[] | select(.engineType == "coreAI") | .immutableRevision' "${CATALOG_PATH}")"
 readonly COREAI_DATE="$(jq -r '.models[] | select(.engineType == "coreAI") | .releaseDateISO8601' "${CATALOG_PATH}")"
-readonly COREAI_METADATA="$(curl -fsSL --retry 3 --connect-timeout 15 --max-time 45 \
-  "https://api.github.com/repos/apple/coreai-models/commits/${COREAI_REVISION}")"
+readonly COREAI_METADATA="$(github_commit_metadata "apple/coreai-models" "${COREAI_REVISION}")"
 if [[ "$(jq -r '.sha // empty' <<<"${COREAI_METADATA}")" != "${COREAI_REVISION}" || \
       "$(jq -r '.commit.committer.date // empty' <<<"${COREAI_METADATA}" | cut -c 1-10)" != "${COREAI_DATE}" ]]; then
   print -u2 "Apple Core AI source revision/date no longer matches the catalog."
